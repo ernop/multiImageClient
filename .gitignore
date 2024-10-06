@@ -1,0 +1,9 @@
+**/ideogram.log
+**/saves/**
+**/settings.json
+**/bin/**
+**/obj/**
+**/.vs/**
+**/.vscode/**
+**/ideogram_pages/**
+**/ideogram_data_all.json

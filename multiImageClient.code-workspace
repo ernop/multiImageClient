@@ -1,0 +1,28 @@
+{
+	"folders": [
+		{
+			"name": "multiImageClient",
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.exclude": {
+			"**/.vs": true,
+			"**/.vscode": true,
+			"**/bin": true,
+			"**/obj": true,
+			"**/ideogram_pages": true,
+			"**/saves": true,
+			"**/*.log": true
+		},
+		"search.exclude": {
+			"**/.vs": true,
+			"**/.vscode": true,
+			"**/bin": true,
+			"**/obj": true,
+			"**/ideogram_pages": true,
+			"**/saves": true,
+			"**/*.log": true
+		}
+	}
+}

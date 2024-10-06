@@ -1,0 +1,14 @@
+﻿{
+  "LoadPromptsFrom": "D:\\proj\\IdeogramAPI\\prompts.txt",
+  "IdeogramApiKey": "FILL IN YOUR IDEOGRAM API KEY HERE from https://ideogram.ai/manage-api which you have to pay for",
+  "OpenAIApiKey": "Optional: Fill in the OpenAI key here: from https://platform.openai.com/api-keys which you have to pay for",
+  "BFLApiKey": "Optional: Fill in the BFL key here: from https://beta.bigfriendly.com/ which you have to pay for",
+  "AnthropicApiKey": "Optionally: fill in the anthropic key here.  from https://console.anthropic.com/settings/keys which you have to pay for",
+  "ImageDownloadBaseFolder": "D:\\proj\\IdeogramAPI\\ideogramSaves",
+  "LogFilePath": "D:\\proj\\IdeogramAPI\\ideogram.log",
+  "SaveJsonLog": true,
+  "SaveRawImage": true,
+  "SaveAnnotatedImage": true,
+  "EnableLogging": true,
+  "AnnotationSide": "right"
+}
