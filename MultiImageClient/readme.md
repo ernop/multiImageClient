@@ -4,7 +4,7 @@
 
 1. Download the code
 2. Open the solution in Visual Studio
-3. Copy the sample `ideogram-settings.json` file and rename it to the actual name so it can be found
+3. Copy the sample `settings.json` file and rename it to the actual name so it can be found
 4. Get an Ideogram API key (e.g., at https://ideogram.ai/manage-api)
 5. Fill in the API key in the settings file
 6. Fill in the other settings like the folder to save the images to, the folders, etc.
@@ -12,7 +12,7 @@
 
 ## Sample Settings File
 
-There is a sample settings file in the repo but the name doesn't match. Copy that, rename it "ideogram-settings.json" and then fill in your settings.
+There is a sample settings file in the repo but the name doesn't match. Copy that, rename it "settings.json" and then fill in your settings.
 
 ## Usage:
 
@@ -47,7 +47,7 @@ https://photos.app.goo.gl/QJn5xPUNEg1uuNdaA
 ```c#
 static async Task Main(string[] args)
 {
-    var settingsFilePath = "ideogram-settings.json";
+    var settingsFilePath = "settings.json";
     var settings = IdeogramSettings.LoadFromFile(settingsFilePath);
     settings.Validate();
 

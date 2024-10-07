@@ -11,23 +11,10 @@ namespace IdeogramAPIClient
 {
     public static class IdeogramUtils
     {
-        //public static void LogRequestAndResponse(string logFilePath, IdeogramGenerateRequest request, GenerateResponse response, string errorMessage = null, System.Net.HttpStatusCode? statusCode = null)
-        //{
-        //    var logEntry = new
-        //    {
-        //        Timestamp = DateTime.UtcNow,
-        //        Request = request,
-        //        Response = response,
-        //        ErrorMessage = errorMessage,
-        //        StatusCode = statusCode
-        //    };
-
-        //    var json = JsonConvert.SerializeObject(logEntry, Formatting.Indented);
-        //    File.AppendAllText(logFilePath, json + Environment.NewLine + Environment.NewLine);
-        //}
-
-        public static string StringifyAspectRatio(IdeogramAspectRatio ratio)
+        public static string StringifyAspectRatio(IdeogramAspectRatio? ratio)
         {
+            if (!ratio.HasValue)
+                return "";
             return ratio switch
             {
                 IdeogramAspectRatio.ASPECT_10_16 => "10x16",
@@ -44,6 +31,8 @@ namespace IdeogramAPIClient
                 _ => throw new ArgumentOutOfRangeException(nameof(ratio), ratio, null),
             };
         }
+
+        
 
     }
 }

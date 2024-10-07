@@ -1,141 +1,163 @@
 ﻿using System;
 using System.Net.Http;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
 using System.Collections.Generic;
-using System.IO;
-using Anthropic.SDK.Constants;
-using Anthropic.SDK.Messaging;
-using Anthropic.SDK;
-
-using System.Threading;
 using IdeogramAPIClient;
+using Newtonsoft.Json;
+using System.IO;
 
 namespace MultiClientRunner
 {
     public class Program
     {
+        private static readonly HttpClient httpClient = new HttpClient();
+
         static async Task Main(string[] args)
         {
             Console.WriteLine("Initializing MultiClientRunner...");
             var settingsFilePath = "settings.json";
             var settings = Settings.LoadFromFile(settingsFilePath);
-            
-            // Print settings
+
             Console.WriteLine("Current settings:");
-            Console.WriteLine($"Image Download Base Folder: {settings.ImageDownloadBaseFolder}");
-            Console.WriteLine($"Save Raw Image: {settings.SaveRawImage}");
-            Console.WriteLine($"Save Annotated Image: {settings.SaveAnnotatedImage}");
-            Console.WriteLine($"Save JSON Log: {settings.SaveJsonLog}");
-            Console.WriteLine($"Enable Logging: {settings.EnableLogging}");
-            Console.WriteLine($"Annotation Side: {settings.AnnotationSide}");
-            Console.WriteLine($"Load Prompts From: {settings.LoadPromptsFrom}");
-            // Add any other relevant settings here, but exclude API keys
+            Console.WriteLine($"Image Download Base:\t{settings.ImageDownloadBaseFolder}");
+            Console.WriteLine($"Save Raw:\t\t{settings.SaveRawImage}");
+            Console.WriteLine($"Save Annotated?:\t{settings.SaveAnnotatedImage}");
+            Console.WriteLine($"Save JSON Log:\t\t{settings.SaveJsonLog}");
+            Console.WriteLine($"Enable Logging:\t\t{settings.EnableLogging}");
+            Console.WriteLine($"Annotation Side:\t{settings.AnnotationSide}");
+            //TextFormatting.TestImageAnnotationAndSaving();
+            BFLService.Initialize(settings.BFLApiKey, 5);
+            IdeogramService.Initialize(settings.IdeogramApiKey, 5);
+            var claudeService = new ClaudeService(settings.AnthropicApiKey, 5);
 
-            var ideogramClient = new IdeogramClient(settings.IdeogramApiKey);
-            var anthropicApikeyAuth = new APIAuthentication(settings.AnthropicApiKey);
-            var anthropicClient = new AnthropicClient(anthropicApikeyAuth);
+            // here is where you have a choice. Super specific stuff like managing a run with repeats, targets etc can be controlled
+            // with specific classes which inherit from AbstractPromptGenerator. e.g. DeckOfCards
+            var basePromptGenerator = new LoadFromFile(settings, settings.LoadPromptsFrom);
 
-            settings.Validate();
-            var basePromptGenerator = new DeckOfCards(settings);
+            Console.WriteLine($"Starting prompt generation. Base generator: {basePromptGenerator.Name}");
+            var tasks = new List<Task<TaskProcessResult>>();
 
-            var semaphore = new SemaphoreSlim(5);
-
-            Console.WriteLine($"Starting prompt generation. Base generator: {basePromptGenerator.GetType().Name}");
-            var tasks = new List<Task<IdeogramProcessResult>>();
-
-            var claudeService = new ClaudeService(anthropicClient);
-
+            var doClaude = true;
+            var useBfl = true;
+            var useIdeogram = true;
+            
             var stats = new MultiClientRunStats();
 
             foreach (var promptDetails in basePromptGenerator.Run())
             {
-                Console.WriteLine($"\n\n * Processing prompt: {promptDetails.Prompt}...");
-                string claudeResponse;
-                try
+                Console.WriteLine($"\n * Processing prompt: {promptDetails.Prompt}...");
+                if (doClaude)
                 {
-                    claudeResponse = await claudeService.RewritePromptAsync(promptDetails.Prompt,stats);
+                    string claudeResponse;
+                    try
+                    {
+                        // TODO I'm unhappy that there is more text hardcoded inside claudeService.`
+                        claudeResponse = await claudeService.RewritePromptAsync(promptDetails.Prompt, stats);
+                        promptDetails.ReplacePrompt(claudeResponse, "claude's rewritten version:", claudeResponse);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"\tCladue error: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
+
+                if (useIdeogram)
                 {
-                    Console.WriteLine($"An error occurred while having Claude rewrite the prompt. {ex.Message}");
-                    continue;
+                    var ideogramDetails = new IdeogramDetails
+                    {
+                        AspectRatio = IdeogramAspectRatio.ASPECT_1_1,
+                        Model = IdeogramModel.V_2,
+                        MagicPromptOption = IdeogramMagicPromptOption.OFF,
+                        StyleType = IdeogramStyleType.GENERAL
+                    };
+                    promptDetails.IdeogramDetails = ideogramDetails;
+
+                    tasks.Add(IdeogramService.ProcessIdeogramPromptAsync(promptDetails, stats));
+                }
+                if (useBfl)
+                {
+                    var bflDetails = new BFLDetails
+                    {
+                        Width = 1024,
+                        Height = 1024,
+                        PromptUpsampling = false,
+                        SafetyTolerance = 6
+                    };
+
+                    promptDetails.BFLDetails = bflDetails;
+
+                    tasks.Add(BFLService.ProcesBFLPromptAsync(promptDetails, stats));
                 }
 
-                Console.WriteLine($"\tClaude =>. {claudeResponse}");
-                var step = new ImageConstructionStep("claude's rewritten version", claudeResponse);
-                promptDetails.ImageConstructionSteps.Add(step);
 
-                var ideogramDetails = new IdeogramDetails
+                while (tasks.Count > 0)
                 {
-                    AspectRatio = IdeogramAspectRatio.ASPECT_2_3,
-                    Model = IdeogramModel.V_2,
-                    MagicPromptOption = IdeogramMagicPromptOption.OFF,
-                    StyleType = IdeogramStyleType.GENERAL
-                };
-                promptDetails.IdeogramDetails = ideogramDetails;
-                
-                var request = new IdeogramGenerateRequest(claudeResponse, ideogramDetails);
-                stats.IdeogramRequestCount++;
-                tasks.Add(ProcessIdeogramPromptAsync(ideogramClient, promptDetails, request, semaphore, settings, stats));
+                    var completedTask = await Task.WhenAny(tasks);
+                    tasks.Remove(completedTask);
 
-                // Print metrics after each loop
+                    try
+                    {
+                        var result = await completedTask;
+                        if (result.IsSuccess)
+                        {
+                            if (string.IsNullOrEmpty(result.Url))
+                            {
+                                Console.WriteLine($"No result Url though, {result.ErrorMessage}");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Downloading image from URL: {result.Url}");
+                                byte[] imageBytes;
+
+
+                                if (settings.SaveRawImage)
+                                {
+                                    imageBytes = await DownloadImageAsync(result.Url);
+
+                                    await ImageSaving.SaveRawImageAsync(imageBytes, result.Generator, result.PromptDetails, settings, stats);
+
+                                    if (settings.SaveAnnotatedImage)
+                                    {
+                                        // you can't save annotated unless you save the raw, fix later.
+                                        await ImageSaving.SaveAnnotatedImageAsync(imageBytes, result.Generator, result.PromptDetails, settings, stats);
+                                    }
+                                }
+
+                                if (settings.SaveJsonLog)
+                                {
+                                    // do nothing right now.
+                                }
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Task failed: {result.ErrorMessage}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"An error occurred while processing a task: {ex.Message}");
+                    }
+                }
+
                 stats.PrintStats();
             }
 
-            Console.WriteLine($"All tasks queued. Awaiting completion of {tasks.Count} tasks.");
-            var results = await Task.WhenAll(tasks);
-
-            int successCount = 0;
-            int failureCount = 0;
-
-            foreach (var result in results)
-            {
-                if (result.IsSuccess)
-                {
-                    successCount++;
-                }
-                else
-                {
-                    failureCount++;
-                    Console.WriteLine($"Failed to generate image. Error: {result.ErrorMessage}");
-                }
-            }
-
-            Console.WriteLine($"Processing complete. Successes: {successCount}, Failures: {failureCount}");
-            Console.WriteLine("Final stats:");
+            Console.WriteLine("All tasks completed.");
             stats.PrintStats();
         }
 
-        private static async Task<IdeogramProcessResult> ProcessIdeogramPromptAsync(IdeogramClient client, PromptDetails promptDetails, IdeogramGenerateRequest request, SemaphoreSlim semaphore, Settings settings, MultiClientRunStats stats)
+        public static async Task<byte[]> DownloadImageAsync(string imageUrl)
         {
-            await semaphore.WaitAsync();
             try
             {
-                GenerateResponse response = await client.GenerateImageAsync(request);
-                if (response?.Data?.Count > 0)
-                {
-                    Console.WriteLine($"\tIdeogram generation successful. Images: {response.Data.Count}");
-                    await ImageAnnotation.SaveGeneratedImagesAsync(response, promptDetails, request, settings, stats);
-                    return new IdeogramProcessResult { Response = response, IsSuccess = true };
-                }
-                else
-                {
-                    Console.WriteLine("\tIdeogram generation failed. No images returned.");
-                    return new IdeogramProcessResult { IsSuccess = false, ErrorMessage = "No images generated" };
-                }
+                return await httpClient.GetByteArrayAsync(imageUrl);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"\tIdeogram generation error: {ex.GetType().Name}. Message: {ex.Message}");
-                return new IdeogramProcessResult { IsSuccess = false, ErrorMessage = ex.Message };
-            }
-            finally
-            {
-                semaphore.Release();
+                Console.WriteLine($"Failed to download image from {imageUrl}: {ex.Message}");
+                return Array.Empty<byte>();
             }
         }
-
     }
 }

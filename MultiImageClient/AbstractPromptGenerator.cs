@@ -9,15 +9,15 @@ namespace MultiClientRunner
     /// </summary>
     public abstract class AbstractPromptGenerator
     {
-        public abstract IEnumerable<PromptDetails> GetPrompts();
-        public abstract Func<string, string> GetCleanPrompt();
-        public abstract int GetImageCreationLimit();
-        public abstract int GetCopiesPer();
-        public abstract string GetPrefix();
-        public abstract IEnumerable<string> GetVariants();
-        public abstract string GetSuffix();
-        public abstract bool GetRandomizeOrder();
-        public abstract string GetName();
+        public abstract IEnumerable<PromptDetails> Prompts { get; }
+        public abstract Func<string, string> CleanPrompt { get; }
+        public abstract int ImageCreationLimit { get; }
+        public abstract int CopiesPer { get; }
+        public abstract string Prefix { get; }
+        public abstract IEnumerable<string> Variants { get; }
+        public abstract string Suffix { get; }
+        public abstract bool RandomizeOrder { get; }
+        public abstract string Name { get; }
         public Settings Settings { get; set; }
 
         public AbstractPromptGenerator(Settings settings)
@@ -25,39 +25,41 @@ namespace MultiClientRunner
             Settings = settings;
         }
 
+        /// Implementers should have their .Run method called from Program.cs to iterate through your prompts.
         public IEnumerable<PromptDetails> Run()
         {
             var returnedCount = 0;
-            foreach (var variantText in GetVariants())
+            foreach (var variantText in Variants)
             {
-                for (var ii = 0; ii < GetCopiesPer(); ii++)
+                for (var ii = 0; ii < CopiesPer; ii++)
                 {
-                    foreach (var prompt in GetPrompts())
+                    foreach (var promptDetails in Prompts)
                     {
-                        var cleanPrompt = GetCleanPrompt()(prompt.Prompt);
+                        var cleanPrompt = CleanPrompt(promptDetails.Prompt);
                         if (string.IsNullOrWhiteSpace(cleanPrompt)) { 
                             continue; 
                         }
-                        var usingPrompt = $"{GetPrefix()} {variantText} \"{cleanPrompt}\" {GetSuffix()}";
-                        var initialStep = new ImageConstructionStep("original prompt", prompt.Prompt);
-                        var cleanedStep = new ImageConstructionStep("prepared prompt", usingPrompt);
-                        var filename = $"{GetName()}_{prompt.Filename}";
+                        var usingPrompt = $"{Prefix} {variantText} \"{cleanPrompt}\" {Suffix}";
+                        var promptToDisplayForUsers = usingPrompt;
+                        if (promptToDisplayForUsers.Contains(promptDetails.Prompt))
+                        {
+                            promptToDisplayForUsers = promptToDisplayForUsers.Replace(promptDetails.Prompt, "{PROMPT}");
+                        }
+                        promptDetails.ReplacePrompt(usingPrompt, "cleaned and added pre/suffixes", promptToDisplayForUsers);
+                        
+                        var filename = $"{Name}_{promptDetails.Filename}";
                         if (!string.IsNullOrWhiteSpace(variantText))
                         {
-                            filename = $"{GetName()}_{variantText}_{prompt.Filename}";
+                            filename = $"{Name}_{variantText}_{promptDetails.Filename}";
                         }
-                        yield return new PromptDetails
-                        {
-                            Prompt = usingPrompt,
-                            Filename = filename,
-                            ImageConstructionSteps = new List<ImageConstructionStep> { initialStep, cleanedStep }
-                        };
+
+                        yield return promptDetails;
                         returnedCount++;
-                        if (returnedCount >= GetImageCreationLimit()) yield break;
+                        if (returnedCount >= ImageCreationLimit) yield break;
                     }
-                    if (returnedCount >= GetImageCreationLimit()) yield break;
+                    if (returnedCount >= ImageCreationLimit) yield break;
                 }
-                if (returnedCount >= GetImageCreationLimit()) yield break;
+                if (returnedCount >= ImageCreationLimit) yield break;
             }
         }
     }

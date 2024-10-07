@@ -6,6 +6,8 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace BFLAPIClient
 {
@@ -14,141 +16,102 @@ namespace BFLAPIClient
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
         private const string BaseUrl = "https://api.bfl.ml";
+        public int DefaultPollingIntervalMs { get; set; } = 2000;
 
-        public BFLClient(string apiKey)
+        public BFLClient(string apiKey, int defaultPollingIntervalMs = 2000)
         {
             _apiKey = apiKey;
             _httpClient = new HttpClient();
             _httpClient.DefaultRequestHeaders.Add("x-key", _apiKey);
+            DefaultPollingIntervalMs = defaultPollingIntervalMs;
         }
 
-        public async Task<GenerationResult> GetResultAsync(string id)
+        public async Task<GenerationResponse> GetResultAsync(string id)
         {
             var response = await _httpClient.GetAsync($"{BaseUrl}/v1/get_result?id={id}");
             response.EnsureSuccessStatusCode();
             var content = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<GenerationResult>(content);
+            return JsonConvert.DeserializeObject<GenerationResponse>(content);
         }
 
-        private async Task<string> GenerateAsync<TRequest>(string endpoint, TRequest request)
+        private async Task<GenerationResponse> GenerateAndWaitForResultAsync<TRequest>(string endpoint, TRequest request)
         {
-            var content = new StringContent(JsonConvert.SerializeObject(request), System.Text.Encoding.UTF8, "application/json");
+            var generationResponse = await GenerateAsync(endpoint, request);
+            var id = generationResponse.Id;
+
+            generationResponse = await GetResultAsync(id);
+
+            while (generationResponse.Status == "Pending")
+            {
+                await Task.Delay(DefaultPollingIntervalMs);
+                generationResponse = await GetResultAsync(id);
+            }
+
+            return generationResponse;
+        }
+
+        /// private since it's only called by the more convenient e.g. GenerateFluxPro11Async methods
+        private async Task<GenerationResponse> GenerateAsync<TRequest>(string endpoint, TRequest request)
+        {
+            var serialized = JsonConvert.SerializeObject(request);
+            var content = new StringContent(serialized, System.Text.Encoding.UTF8, "application/json");
             var response = await _httpClient.PostAsync($"{BaseUrl}/v1/{endpoint}", content);
+            
+            if (response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                throw new HttpRequestException($"422 Unprocessable Entity: {errorContent}", null, System.Net.HttpStatusCode.UnprocessableEntity);
+            }
+            if (response.StatusCode == System.Net.HttpStatusCode.PaymentRequired)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                throw new HttpRequestException($"402 Payment Required: {errorContent}", null, System.Net.HttpStatusCode.PaymentRequired);
+            }
+
             response.EnsureSuccessStatusCode();
             var responseContent = await response.Content.ReadAsStringAsync();
-            var result = JsonConvert.DeserializeObject<GenerationResponse>(responseContent);
-            return result.Id;
+            var response2 = JsonConvert.DeserializeObject<GenerationResponse>(responseContent);
+            return response2;
         }
 
-        /// Generates an image using the Flux Pro 1.1 model.
-        /// <param name="request">The request parameters for image generation.</param>
-        /// <returns>The ID of the generated image request.</returns>
-        public Task<string> GenerateFluxPro11Async(FluxPro11Request request) =>
-            GenerateAsync("flux-pro-1.1", request);
+        public Task<GenerationResponse> GenerateFluxPro11Async(FluxPro11Request request)
+        {
+            return GenerateAndWaitForResultAsync("flux-pro-1.1", request);
+        }
 
-        /// Generates an image using the Flux Pro model.
-        /// <param name="request">The request parameters for image generation.</param>
-        /// <returns>The ID of the generated image request.</returns>
-        public Task<string> GenerateFluxProAsync(FluxProRequest request) =>
-            GenerateAsync("flux-pro", request);
+        public Task<GenerationResponse> GenerateFluxProAsync(FluxProRequest request)
+        {
+            return GenerateAndWaitForResultAsync("flux-pro", request);
+        }
 
-        /// Generates an image using the Flux Dev model.
-        /// <param name="request">The request parameters for image generation.</param>
-        /// <returns>The ID of the generated image request.</returns>
-        public Task<string> GenerateFluxDevAsync(FluxDevRequest request) =>
-            GenerateAsync("flux-dev", request);
-    }
+        public Task<GenerationResponse> GenerateFluxDevAsync(FluxDevRequest request)
+        {
+            return GenerateAndWaitForResultAsync("flux-dev", request);
+        }
 
-    public class GenerationResult
-    {
-        public string Id { get; set; }
-        public string Status { get; set; }
-        public object Result { get; set; }
+        
     }
 
     public class GenerationResponse
     {
+        [JsonProperty("id")]
         public string Id { get; set; }
+
+        [JsonProperty("status")]
+        public string Status { get; set; }
+        
+        [JsonProperty("result")]
+        public GenerationResult Result { get; set; }
     }
 
-    /// Request parameters for the Flux Pro 1.1 model.
-    public class FluxPro11Request
+    public class GenerationResult
     {
-        /// Text prompt for image generation.
+        /// The url pointing to the image
+        [JsonProperty("sample")]
+        public string Sample { get; set; }
+
+        /// The revised prompt (?)
+        [JsonProperty("prompt")]
         public string Prompt { get; set; }
-
-        /// Width of the generated image in pixels. Must be a multiple of 32 and between 256 and 1440.
-        public int Width { get; set; }
-
-        /// Height of the generated image in pixels. Must be a multiple of 32 and between 256 and 1440.
-        public int Height { get; set; }
-
-        /// Whether to perform upsampling on the prompt.
-        public bool PromptUpsampling { get; set; }
-
-        /// Optional seed for reproducibility.
-        public int? Seed { get; set; }
-
-        /// Tolerance level for input and output moderation. Between 0 and 6, 0 being most strict, 6 being least strict.
-        public int SafetyTolerance { get; set; }
-    }
-
-    /// Request parameters for the Flux Pro model.
-    public class FluxProRequest
-    {
-        /// Text prompt for image generation.
-        public string Prompt { get; set; }
-
-        /// Width of the generated image in pixels. Must be a multiple of 32 and between 256 and 1440.
-        public int Width { get; set; }
-
-        /// Height of the generated image in pixels. Must be a multiple of 32 and between 256 and 1440.
-        public int Height { get; set; }
-
-        /// Number of steps for the image generation process. Must be between 1 and 50.
-        public int? NumSteps { get; set; }
-
-        /// Whether to perform upsampling on the prompt.
-        public bool PromptUpsampling { get; set; }
-
-        /// Optional seed for reproducibility.
-        public int? Seed { get; set; }
-
-        /// Guidance scale for image generation. Must be between 1.5 and 5.0.
-        public float? Guidance { get; set; }
-
-        /// Interval for image generation. Must be between 1.0 and 4.0.
-        public float? Interval { get; set; }
-
-        /// Tolerance level for input and output moderation. Between 0 and 6, 0 being most strict, 6 being least strict.
-        public int SafetyTolerance { get; set; }
-    }
-
-    /// Request parameters for the Flux Dev model.
-    public class FluxDevRequest
-    {
-        /// Text prompt for image generation.
-        public string Prompt { get; set; }
-
-        /// Width of the generated image in pixels. Must be a multiple of 32 and between 256 and 1440.
-        public int Width { get; set; }
-
-        /// Height of the generated image in pixels. Must be a multiple of 32 and between 256 and 1440.
-        public int Height { get; set; }
-
-        /// Number of steps for the image generation process. Must be between 1 and 50.
-        public int? NumSteps { get; set; }
-
-        /// Whether to perform upsampling on the prompt.
-        public bool PromptUpsampling { get; set; }
-
-        /// Optional seed for reproducibility.
-        public int? Seed { get; set; }
-
-        /// Guidance scale for image generation. Must be between 1.5 and 5.0.
-        public float? Guidance { get; set; }
-
-        /// Tolerance level for input and output moderation. Between 0 and 6, 0 being most strict, 6 being least strict.
-        public int SafetyTolerance { get; set; }
     }
 }

@@ -1,12 +1,8 @@
 ﻿namespace MultiClientRunner
 {
-    
-    
-        /// <summary>
         /// a step along the pipeline of generating the prompt.
-        /// The idea is that you generate these as you go along expanding/modifying the prompt, and then at least have them 
-        /// to accompany the actual image output.
-        /// </summary>
+        /// The idea is that you generate these as you go along expanding/modifying the prompt, 
+        /// and then at least have them to accompany the actual image output to know its history.
         public class ImageConstructionStep
         {
             public ImageConstructionStep(string description, string details)
