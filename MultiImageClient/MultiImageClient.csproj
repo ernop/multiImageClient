@@ -17,10 +17,10 @@
     <None Remove="saves\**" />
   </ItemGroup>
 
-
   <ItemGroup>
     <PackageReference Include="Anthropic.SDK" Version="4.1.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="OpenAI" Version="2.0.0" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.2" />
   </ItemGroup>
 
@@ -36,6 +36,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="testImage.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="claude-bad.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

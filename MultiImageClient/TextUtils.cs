@@ -28,39 +28,44 @@ namespace MultiClientRunner
 
         public static string GenerateUniqueFilename(string saveType, PromptDetails promptDetails, string baseFolder, GeneratorApiType generator)
         {
-            var truncatedPrompt = !string.IsNullOrWhiteSpace(promptDetails.Filename)
-                ? (promptDetails.Filename.Length > 100 ? promptDetails.Filename.Substring(0, 100) : promptDetails.Filename)
+            var truncatedPrompt = !string.IsNullOrWhiteSpace(promptDetails.OriginalPromptIdea)
+                ? (promptDetails.OriginalPromptIdea.Length > 100 ? promptDetails.OriginalPromptIdea.Substring(0, 100) : promptDetails.OriginalPromptIdea)
                 : (promptDetails.Prompt.Length > 100 ? promptDetails.Prompt.Substring(0, 100) : promptDetails.Prompt);
 
             var combined = truncatedPrompt;
-            if (generator == GeneratorApiType.Ideogram)
+            string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+            switch (generator)
             {
-                var aspectRatioText = promptDetails.IdeogramDetails.AspectRatio.HasValue
-                    ? IdeogramUtils.StringifyAspectRatio(promptDetails.IdeogramDetails.AspectRatio.Value)
-                    : "";
+                case GeneratorApiType.Ideogram:
 
-                combined = $"{truncatedPrompt}_{aspectRatioText}_{promptDetails.IdeogramDetails.Model}_{promptDetails.IdeogramDetails.MagicPromptOption}";
+                    var aspectRatioText = promptDetails.IdeogramDetails.AspectRatio.HasValue
+                        ? IdeogramUtils.StringifyAspectRatio(promptDetails.IdeogramDetails.AspectRatio.Value)
+                        : "";
 
-                if (promptDetails.IdeogramDetails.StyleType.HasValue)
-                {
-                    combined += $"_{promptDetails.IdeogramDetails.StyleType}";
-                }
+                    combined = $"{truncatedPrompt}_{generator}_{aspectRatioText}_{promptDetails.IdeogramDetails.Model}_{promptDetails.IdeogramDetails.MagicPromptOption}";
 
-                if (!string.IsNullOrWhiteSpace(promptDetails.IdeogramDetails.NegativePrompt))
-                {
-                    combined += $"_{promptDetails.IdeogramDetails.NegativePrompt}";
-                }
-            }
-            else if (generator == GeneratorApiType.BFL)
-            {
-                combined = $"{truncatedPrompt}_{promptDetails.BFLDetails.Width}x{promptDetails.BFLDetails.Height}";
-                
-                if (promptDetails.BFLDetails.PromptUpsampling)
-                {
-                    combined += "_upsampled";
-                }
+                    if (promptDetails.IdeogramDetails.StyleType.HasValue)
+                    {
+                        combined += $"_{promptDetails.IdeogramDetails.StyleType}";
+                    }
 
-                combined += $"_safety{promptDetails.BFLDetails.SafetyTolerance}";
+                    if (!string.IsNullOrWhiteSpace(promptDetails.IdeogramDetails.NegativePrompt))
+                    {
+                        combined += $"_{promptDetails.IdeogramDetails.NegativePrompt}";
+                    }
+                    combined += $"_{timestamp}_{saveType}";
+                    break;
+
+                case GeneratorApiType.BFL:
+                    combined = $"{truncatedPrompt}_{generator}_{promptDetails.BFLDetails.Width}x{promptDetails.BFLDetails.Height}_safety{promptDetails.BFLDetails.SafetyTolerance}_{timestamp}_{saveType}";
+                    break;
+
+                case GeneratorApiType.Dalle3:
+                    combined = $"{truncatedPrompt}_{generator}_{promptDetails.Dalle3Details.Size}_{promptDetails.Dalle3Details.Quality}_{timestamp}_{saveType}";
+                    break;
+
+                default:
+                    throw new Exception($"Unknown generator type: {generator}");
             }
 
             // Add generator type to the combined string
@@ -80,21 +85,19 @@ namespace MultiClientRunner
             }
 
             // Ensure the filename is unique by appending a timestamp and a sequential number if needed
-            string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-            string baseFilename = $"{sanitized}_{timestamp}_{generator}_{saveType}";
-
+            
             lock (_lockObject)
             {
                 int count = 0;
                 string uniqueFilename;
                 do
                 {
-                    uniqueFilename = count == 0 ? baseFilename : $"{baseFilename}_{count:D4}";
+                    uniqueFilename = count == 0 ? sanitized : $"{sanitized}_{count:D4}";
                     count++;
                 } while (File.Exists(Path.Combine(baseFolder, $"{uniqueFilename}.png")));
 
-                _filenameCounts[baseFilename] = count;
-                return uniqueFilename+".png";
+                _filenameCounts[sanitized] = count;
+                return uniqueFilename + ".png";
             }
         }
     }

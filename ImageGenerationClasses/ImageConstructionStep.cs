@@ -10,7 +10,18 @@
                 Description = description;
                 Details = details;
             }
+            public ImageConstructionStep(ImageConstructionStep other)
+            {
+                Description = other.Description;
+                Details = other.Details;
+            }
             public string Description { get; set; }
             public string Details { get; set; }
+
+        //a method to make mousing over this object show the description and details:
+        public override string ToString()
+        {
+            return $"{Description} {Details}";
         }
     }
+}

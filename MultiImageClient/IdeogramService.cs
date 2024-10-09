@@ -49,6 +49,12 @@ namespace MultiClientRunner
                         foreach (var imageObject in response.Data)
                         {
                             //there is only actually one ever.
+                            var returnedPrompt = imageObject.Prompt;
+                            if (returnedPrompt != promptDetails.Prompt)
+                            {
+                                //BFL replaced the prompt.
+                                promptDetails.ReplacePrompt(returnedPrompt, "Ideogram rewrite", returnedPrompt);
+                            }
                             return new TaskProcessResult { Response = response, IsSuccess = true, Url = imageObject.Url, PromptDetails = promptDetails, Generator= GeneratorApiType.Ideogram};
                         }
                         throw new Exception("No images returned");

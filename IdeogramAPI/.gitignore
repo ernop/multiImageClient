@@ -7,3 +7,5 @@ obj/**
 .vscode/**
 ideogram_pages/**
 ideogram_data_all.json
+**/claude-bad.txt
+claude-bad.txt

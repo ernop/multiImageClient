@@ -43,7 +43,7 @@ namespace MultiClientRunner
                 Console.WriteLine($"\tFrom BFL: '{generationResult.Status}'");
                 if (generationResult.Status != "Ready")
                 {
-                    Console.WriteLine($"Non-ready status. {generationResult.Status}");
+                    Console.WriteLine($"Non-ready status. {generationResult.Status} for {request.Prompt}");
                     return new TaskProcessResult { IsSuccess = false, ErrorMessage = generationResult.Status, PromptDetails = promptDetails, Generator = GeneratorApiType.BFL };
                 }
                 else
@@ -61,6 +61,7 @@ namespace MultiClientRunner
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"BFL error: {ex.Message}");
                 return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, Generator = GeneratorApiType.BFL };
             }
             finally

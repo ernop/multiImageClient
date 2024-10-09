@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Reflection.Metadata.Ecma335;
@@ -12,36 +13,49 @@ namespace MultiClientRunner
     public class LoadFromFile : AbstractPromptGenerator
     {
         private string FilePath { get; set; }
-        public LoadFromFile(Settings settings, string filePath) : base(settings)
+        public LoadFromFile(Settings settings, string path) : base(settings)
         {
-            FilePath = filePath;
+            if (!System.IO.File.Exists(path))
+            {
+                new Exception("Requested path: " + path + " does not exist, ending.");
+            }
+            FilePath = path;
         }
         public override string Name => nameof(LoadFromFile);
-        
-        public override int ImageCreationLimit => 500;
+
+        public override int ImageCreationLimit => 400;
         public override int CopiesPer => 1;
         public override bool RandomizeOrder => true;
         public override string Prefix => "";
         public override IEnumerable<string> Variants => new List<string> { "" };
-        public override string Suffix => " Based on the prior prompt, help the user by expanding this core of an idea into a long, detailed description of an image in some particular format, describing specific aspects of it such as style, coloring, lighting, format, what's going on in the image etc. Use about 120 words, as prose with no newlines, full of details matching the THEME and optionally including text and/or the word 'typography' if you think it would benefit from having text within it, based on the input as you see and the apparent desire of the user!";
+        public override string Suffix => "";
         public override Func<string, string> CleanPrompt => (arg) => arg.Trim().Trim('"').Trim('\'').Trim();
+        public override bool UseIdeogram => true;
+        public override bool AlsoDoVersionSkippingClaude => true;
 
-        private IEnumerable<PromptDetails> GetPrompts() {
+        private IEnumerable<PromptDetails> GetPrompts()
         {
-            var prompts = File.ReadAllLines(FilePath);
-            var res = new List<PromptDetails>();
-            foreach (var prompt in prompts)
             {
-                if (prompt.Contains("{") || prompt.Contains("["))
-                    continue;
-                var pd = new PromptDetails();
-                pd.ReplacePrompt(prompt, "initial prompt", prompt);
-                pd.Filename = prompt;
-                res.Add(pd);
-            }
+                var prompts = File.ReadAllLines(FilePath);
+                var res = new List<PromptDetails>();
+                foreach (var prompt in prompts)
+                {
+                    var usePrompt = prompt;
+                    if (usePrompt.Contains("{") || usePrompt.Contains("["))
+                        continue;
+                    var pd = new PromptDetails();
+                    while (usePrompt.Contains("  "))
+                    {
+                        usePrompt = usePrompt.Replace("  ", " ");
+                    }
+                    usePrompt = usePrompt.Trim();
+                    pd.ReplacePrompt(usePrompt, "initial prompt", usePrompt);
+                    pd.OriginalPromptIdea = usePrompt;
+                    res.Add(pd);
+                }
 
-            return res.OrderBy(x => Random.Shared.Next());
-        }
+                return res.OrderBy(x => Random.Shared.Next());
+            }
         }
 
         public override IEnumerable<PromptDetails> Prompts => GetPrompts();

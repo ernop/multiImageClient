@@ -18,6 +18,15 @@ namespace MultiClientRunner
         public abstract string Suffix { get; }
         public abstract bool RandomizeOrder { get; }
         public abstract string Name { get; }
+        
+        //defaults
+        public virtual bool UseClaude => true;
+        public virtual bool UseIdeogram => true;
+        public virtual bool UseBFL => true;
+        public virtual bool UseDalle3 => false;
+
+        public virtual bool AlsoDoVersionSkippingClaude => false;
+
         public Settings Settings { get; set; }
 
         public AbstractPromptGenerator(Settings settings)
@@ -39,20 +48,27 @@ namespace MultiClientRunner
                         if (string.IsNullOrWhiteSpace(cleanPrompt)) { 
                             continue; 
                         }
-                        var usingPrompt = $"{Prefix} {variantText} \"{cleanPrompt}\" {Suffix}";
-                        var promptToDisplayForUsers = usingPrompt;
-                        if (promptToDisplayForUsers.Contains(promptDetails.Prompt))
+                        var usingPrompt = $"{Prefix} {variantText} {cleanPrompt} {Suffix}".Trim();
+                        if (usingPrompt == cleanPrompt)
                         {
-                            promptToDisplayForUsers = promptToDisplayForUsers.Replace(promptDetails.Prompt, "{PROMPT}");
+
                         }
-                        promptDetails.ReplacePrompt(usingPrompt, "cleaned and added pre/suffixes", promptToDisplayForUsers);
+                        else
+                        {
+                            var promptToDisplayForUsers = usingPrompt;
+                            if (promptToDisplayForUsers.Contains(promptDetails.Prompt))
+                            {
+                                promptToDisplayForUsers = promptToDisplayForUsers.Replace(promptDetails.Prompt, "{PROMPT}");
+                            }
+                            promptDetails.ReplacePrompt(usingPrompt, "cleaned and added pre/suffixes", promptToDisplayForUsers);
+                        }
                         
-                        var filename = $"{Name}_{promptDetails.Filename}";
+                        var revisedPromptIdea = $"{Name}_{promptDetails.OriginalPromptIdea}";
                         if (!string.IsNullOrWhiteSpace(variantText))
                         {
-                            filename = $"{Name}_{variantText}_{promptDetails.Filename}";
+                            revisedPromptIdea = $"{Name}_{promptDetails.OriginalPromptIdea}_{variantText}";
                         }
-
+                        promptDetails.OriginalPromptIdea = revisedPromptIdea;
                         yield return promptDetails;
                         returnedCount++;
                         if (returnedCount >= ImageCreationLimit) yield break;

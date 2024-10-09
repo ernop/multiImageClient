@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection.Metadata.Ecma335;
 using System.Threading;
 using System.Threading.Tasks;
 using Anthropic.SDK;
@@ -20,26 +22,48 @@ namespace MultiClientRunner
             _claudeSemaphore = new SemaphoreSlim(maxConcurrency);
         }
 
-        public async Task<string> RewritePromptAsync(string prompt, MultiClientRunStats stats)
+        ///Claude gets mad when you ask it to do ceratin things.
+        internal static bool CheckClaudeUnhappiness(string claudeResponse)
+        {
+            var unhappyClaudeResponses = new List<string>
+            {
+                "i'm sorry, i can't",
+                "sexualized",
+                "i will not produce",
+                "harmful stereotypes",
+                "i apologize",
+                "don't feel comfortable",
+                "that is overtly", 
+            };
+
+            foreach (var unhappyClaudeResponse in unhappyClaudeResponses)
+            {
+                if (claudeResponse.Contains(unhappyClaudeResponse, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public async Task<string> RewritePromptAsync(string prompt, MultiClientRunStats stats, decimal tempterature)
         {
             await _claudeSemaphore.WaitAsync();
             try
             {
-                var preparedClaudePrompt = $"Rewrite this image generation prompt to be much better and more detailed with interesting obscure details, unified themes and brilliance. {prompt}";
-                preparedClaudePrompt = $"Help the user expand this kernel of an idea into a fully detailed image description, carefully following the style they seem to be indicating they are interested in. Output the description. '{prompt}'";
+
                 var messages = new List<Message>()
                 {
-                    new Message(RoleType.User, preparedClaudePrompt),
+                    new Message(RoleType.User, prompt),
                 };
 
-                var myTemp = 1.0m;
                 var parameters = new MessageParameters()
                 {
                     Messages = messages,
                     MaxTokens = 1024,
-                    Model = AnthropicModels.Claude35Sonnet,
+                    Model = AnthropicModels.Claude3Opus,
                     Stream = false,
-                    Temperature = myTemp,
+                    Temperature = tempterature,
                 };
 
                 stats.ClaudeRequestCount++;
@@ -51,6 +75,19 @@ namespace MultiClientRunner
             {
                 _claudeSemaphore.Release();
             }
+        }
+
+        public static IEnumerable<string> WordsClaudeHates => 
+            System.IO.File.Exists("claude-bad.txt")
+                ? System.IO.File.ReadAllLines("claude-bad.txt")
+                    .Select(el => el.Trim())
+                    .OrderBy(el => el)
+                    .Distinct()
+                : Enumerable.Empty<string>();
+
+        public static bool ClaudeWillHateThis(string prompt)
+        {
+            return WordsClaudeHates.Any(word => prompt.Contains(word, StringComparison.OrdinalIgnoreCase));
         }
     }
 }
