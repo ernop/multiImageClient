@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 
-using MultiClientRunner;
-
 using Newtonsoft.Json;
 
 namespace IdeogramAPIClient

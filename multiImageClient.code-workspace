@@ -22,7 +22,11 @@
 			"**/obj": true,
 			"**/ideogram_pages": true,
 			"**/saves": true,
-			"**/*.log": true
+			"**/*.log": true,
+			"**/ideogram_data_all.json": true,
+			"**/IdeogramHistoryExtractor/**.json": true,
+			"**/IdeogramHistoryExtractor/myPrompts/*": true,
+			"**/ideogram_requests/**": true
 		}
 	}
 }

@@ -20,18 +20,18 @@ using System.Threading.Tasks;
 
 namespace MultiClientRunner
 {
-    public static class IdeogramService
+    public class IdeogramService : IImageGenerationService
     {
-        private static SemaphoreSlim _ideogramSemaphore;
-        private static IdeogramClient _ideogramClient;
+        private SemaphoreSlim _ideogramSemaphore;
+        private IdeogramClient _ideogramClient;
 
-        public static void Initialize(string apiKey, int maxConcurrency)
+        public IdeogramService(string apiKey, int maxConcurrency)
         {
             _ideogramClient = new IdeogramClient(apiKey);
             _ideogramSemaphore = new SemaphoreSlim(maxConcurrency);
         }
 
-        public static async Task<TaskProcessResult> ProcessIdeogramPromptAsync(PromptDetails promptDetails, MultiClientRunStats stats)
+        public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails, MultiClientRunStats stats)
         {
             await _ideogramSemaphore.WaitAsync();
             try

@@ -56,39 +56,53 @@ namespace MultiClientRunner
         private static void DrawImageInfo(Graphics graphics, Dictionary<string, string> imageInfo, Font font, float x, float totalWidth, ref float y)
         {
             const float padding = 5f;
-            float itemHeight = font.GetHeight(graphics);
+            float lineHeight = font.GetHeight(graphics);
             float currentX = x;
             float maxY = y;
 
             using (var whiteBrush = new SolidBrush(Color.White))
             using (var blackBrush = new SolidBrush(Color.Black))
             {
+                StringFormat stringFormat = new StringFormat
+                {
+                    Trimming = StringTrimming.Word,
+                    FormatFlags = StringFormatFlags.LineLimit | StringFormatFlags.MeasureTrailingSpaces
+                };
+
                 foreach (var kvp in imageInfo)
                 {
                     float itemKeyWidth = graphics.MeasureString(kvp.Key, font).Width + padding;
-                    float itemValueWidth = graphics.MeasureString(kvp.Value, font).Width + padding;
-                    float itemWidth = itemKeyWidth + itemValueWidth + padding;
+                    float maxValueWidth = totalWidth - itemKeyWidth;
 
-                    if (currentX + itemWidth > x + totalWidth)
+                    // Measure the actual width needed for the value
+                    SizeF valueSizeMeasured = graphics.MeasureString(kvp.Value, font, new SizeF(maxValueWidth, float.MaxValue), stringFormat);
+                    float actualValueWidth = Math.Min(valueSizeMeasured.Width, maxValueWidth);
+
+                    // Check if we need to move to the next line
+                    if (currentX + itemKeyWidth + actualValueWidth > x + totalWidth)
                     {
                         currentX = x;
-                        y += itemHeight + padding;
+                        y = maxY + padding;
                     }
 
                     // Draw key (white on black)
-                    var keyTargetX = currentX + padding / 2;
-                    graphics.FillRectangle(Brushes.Black, currentX, y, itemKeyWidth, itemHeight);
-                    graphics.DrawString(kvp.Key, font, whiteBrush, keyTargetX, y);
+                    graphics.FillRectangle(Brushes.Black, currentX, y, itemKeyWidth, valueSizeMeasured.Height);
+                    graphics.DrawString(kvp.Key, font, whiteBrush, new RectangleF(currentX, y, itemKeyWidth, valueSizeMeasured.Height), stringFormat);
 
                     // Draw value (black on white)
-                    var valueTargetX = currentX + itemKeyWidth + padding / 2;
-                    graphics.FillRectangle(Brushes.White, currentX + itemKeyWidth, y, itemValueWidth, itemHeight);
-                    graphics.DrawString(kvp.Value, font, blackBrush, valueTargetX, y);
+                    graphics.FillRectangle(Brushes.White, currentX + itemKeyWidth, y, actualValueWidth, valueSizeMeasured.Height);
+                    graphics.DrawString(kvp.Value, font, blackBrush, new RectangleF(currentX + itemKeyWidth, y, actualValueWidth, valueSizeMeasured.Height), stringFormat);
 
-                    //Console.WriteLine($"drawing: { kvp.Key} at {keyTargetX}, {y}");
-                    //Console.WriteLine($"drawing: {kvp.Value} at {valueTargetX}, {y}");
-                    currentX += itemWidth;
-                    maxY = y + itemHeight;
+                    // Update positions
+                    currentX += itemKeyWidth + actualValueWidth + padding;
+                    maxY = Math.Max(maxY, y + valueSizeMeasured.Height);
+
+                    // If we're close to the right edge, move to the next line
+                    if (currentX + itemKeyWidth > x + totalWidth - padding)
+                    {
+                        currentX = x;
+                        y = maxY + padding;
+                    }
                 }
             }
 
@@ -143,14 +157,14 @@ namespace MultiClientRunner
             var texts = new List<ImageConstructionStep>
             {
                 new ImageConstructionStep("Prompt", "A beautiful landscape with a river and mountains"),
-                new ImageConstructionStep("Rewritten longer much more detailed prompt:", "A beautiful landscape with a river and mountains, which is a detailed and long description of the image, with many adjectives and detailed descriptions of the elements in the image., including specifics, which start now: A beautiful landscape with a river and mountains, which is a detailed and long description of the image, with many adjectives and detailed descriptions of the elements in the image., including specifics, which start now      : "),
+                new ImageConstructionStep("Rewritten longer much more detailed prompt:", "A beautiful landscape with a river and mountains, which is a detailed and long description of the image, with many adjectives and detailed descriptions of the elements in the image., including specifics, which start now: "),
                 new ImageConstructionStep("Seed", "12345")
             };
             var imageInfo = new Dictionary<string, string>
             {
                 { "Generated", DateTime.Now.ToString() },
                 { "Generator", "TestMethod." }, //the generatorLong does overlap incorrectly.
-                { "GeneratorLong", "TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestTestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod." },
+                { "GeneratorLong", "TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod.TestMethod.TestMethod. TestMethod.TestMethod. TestMethod.TestMethod." },
                 { "Style", "Realistic" },
                 { "Seed", "12345" }
             };

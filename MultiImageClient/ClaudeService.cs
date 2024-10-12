@@ -33,7 +33,9 @@ namespace MultiClientRunner
                 "harmful stereotypes",
                 "i apologize",
                 "don't feel comfortable",
+                "do not feel comfortable",
                 "that is overtly", 
+                "not comfortable",
             };
 
             foreach (var unhappyClaudeResponse in unhappyClaudeResponses)

@@ -9,18 +9,18 @@ using System.Threading.Tasks;
 
 namespace MultiClientRunner
 {
-    public static class BFLService
+    public class BFLService : IImageGenerationService
     {
-        private static SemaphoreSlim _bflSemaphore;
-        private static BFLClient _bflClient;
+        private SemaphoreSlim _bflSemaphore;
+        private BFLClient _bflClient;
 
-        public static void Initialize(string apiKey, int maxConcurrency)
+        public BFLService(string apiKey, int maxConcurrency)
         {
             _bflClient = new BFLClient(apiKey);
             _bflSemaphore = new SemaphoreSlim(maxConcurrency);
         }
 
-        public static async Task<TaskProcessResult> ProcesBFLPromptAsync(PromptDetails promptDetails, MultiClientRunStats stats)
+        public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails, MultiClientRunStats stats)
         {
             await _bflSemaphore.WaitAsync();
             try

@@ -24,14 +24,17 @@ namespace MultiClientRunner
         public override string Name => nameof(LoadFromFile);
 
         public override int ImageCreationLimit => 400;
-        public override int CopiesPer => 1;
+        public override int CopiesPer => 3;
         public override bool RandomizeOrder => true;
         public override string Prefix => "";
         public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Suffix => "";
         public override Func<string, string> CleanPrompt => (arg) => arg.Trim().Trim('"').Trim('\'').Trim();
-        public override bool UseIdeogram => true;
-        public override bool AlsoDoVersionSkippingClaude => true;
+        public override bool UseIdeogram => false;
+        public override bool AlsoDoVersionSkippingClaude => false;
+        public override bool SaveFinalPrompt => true;
+        public override bool SaveInitialIdea => true;
+        public override bool SaveFullAnnotation => true;
 
         private IEnumerable<PromptDetails> GetPrompts()
         {
@@ -53,7 +56,7 @@ namespace MultiClientRunner
                     pd.OriginalPromptIdea = usePrompt;
                     res.Add(pd);
                 }
-
+                Console.WriteLine($"loaded {res.Count} items.");
                 return res.OrderBy(x => Random.Shared.Next());
             }
         }

@@ -8,7 +8,6 @@
   "LogFilePath": "D:\\proj\\IdeogramAPI\\ideogram.log",
   "SaveJsonLog": true,
   "SaveRawImage": true,
-  "SaveAnnotatedImage": true,
   "EnableLogging": true,
   "AnnotationSide": "right"
 }

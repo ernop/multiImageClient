@@ -10,10 +10,8 @@ namespace MultiClientRunner
 {
     public class Program
     {
-        public static async Task Main(string[] args)
-        {
-            Console.WriteLine("End");
-        }
+        // Remove the Main method from here
+        // If there's any functionality you want to keep, consider moving it to a separate method
+        // that can be called from BFLClient if needed
     }
-    
 }

@@ -16,6 +16,7 @@ using System.Windows.Forms;
 using IdeogramAPIClient;
 using System.Text.RegularExpressions;
 using static MultiClientRunner.TextFormatting;
+using System.Xml.Linq;
 
 namespace MultiClientRunner
 {
@@ -26,79 +27,66 @@ namespace MultiClientRunner
         private static readonly float KEY_WIDTH_PROPORTION = 0.15f;
         private static readonly float VALUE_WIDTH_PROPORTION = 1f - KEY_WIDTH_PROPORTION;
 
-        public static string GenerateUniqueFilename(string saveType, PromptDetails promptDetails, string baseFolder, GeneratorApiType generator)
+        public static string GenerateUniqueFilename(TaskProcessResult result, string baseFolder, string promptGeneratorName, SaveType saveType)
         {
-            var truncatedPrompt = !string.IsNullOrWhiteSpace(promptDetails.OriginalPromptIdea)
-                ? (promptDetails.OriginalPromptIdea.Length > 100 ? promptDetails.OriginalPromptIdea.Substring(0, 100) : promptDetails.OriginalPromptIdea)
-                : (promptDetails.Prompt.Length > 100 ? promptDetails.Prompt.Substring(0, 100) : promptDetails.Prompt);
-
-            var combined = truncatedPrompt;
-            string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-            switch (generator)
+            var components = new List<string>
             {
-                case GeneratorApiType.Ideogram:
+                promptGeneratorName,
+                result.Generator.ToString(),
+                TruncatePrompt(result.PromptDetails.Prompt, 90),
+                
+                //GetResolution(result.PromptDetails),
+                //GetSafetyTolerance(result.PromptDetails),
+                DateTime.Now.ToString("yyyyMMddHHmmss"),
+                saveType.ToString(),
+            };
 
-                    var aspectRatioText = promptDetails.IdeogramDetails.AspectRatio.HasValue
-                        ? IdeogramUtils.StringifyAspectRatio(promptDetails.IdeogramDetails.AspectRatio.Value)
-                        : "";
+            string combined = string.Join("_", components.Where(c => !string.IsNullOrEmpty(c)));
+            string sanitized = SanitizeFilename(combined);
 
-                    combined = $"{truncatedPrompt}_{generator}_{aspectRatioText}_{promptDetails.IdeogramDetails.Model}_{promptDetails.IdeogramDetails.MagicPromptOption}";
+            // Ensure the filename is unique
+            int count = 0;
+            string uniqueFilename;
+            do
+            {
+                uniqueFilename = count == 0 ? sanitized : $"{sanitized}_{count:D4}";
+                count++;
+            } while (File.Exists(Path.Combine(baseFolder, $"{uniqueFilename}{result.Generator.GetFileExtension()}")));
 
-                    if (promptDetails.IdeogramDetails.StyleType.HasValue)
-                    {
-                        combined += $"_{promptDetails.IdeogramDetails.StyleType}";
-                    }
+            return uniqueFilename;
+        }
 
-                    if (!string.IsNullOrWhiteSpace(promptDetails.IdeogramDetails.NegativePrompt))
-                    {
-                        combined += $"_{promptDetails.IdeogramDetails.NegativePrompt}";
-                    }
-                    combined += $"_{timestamp}_{saveType}";
-                    break;
+        private static string TruncatePrompt(string prompt, int maxLength)
+        {
+            return prompt.Length > maxLength ? prompt.Substring(0, maxLength) : prompt;
+        }
 
-                case GeneratorApiType.BFL:
-                    combined = $"{truncatedPrompt}_{generator}_{promptDetails.BFLDetails.Width}x{promptDetails.BFLDetails.Height}_safety{promptDetails.BFLDetails.SafetyTolerance}_{timestamp}_{saveType}";
-                    break;
+        private static string GetResolution(PromptDetails details)
+        {
+            if (details.BFLDetails != null && details.BFLDetails.Width != default && details.BFLDetails.Height != default)
+                return $"{details.BFLDetails.Width}x{details.BFLDetails.Height}";
+            if (details.Dalle3Details != null)
+                return details.Dalle3Details.Size.ToString();
+            if (details.IdeogramDetails?.AspectRatio != null)
+                return IdeogramUtils.StringifyAspectRatio(details.IdeogramDetails.AspectRatio.Value);
+            return "";
+        }
 
-                case GeneratorApiType.Dalle3:
-                    combined = $"{truncatedPrompt}_{generator}_{promptDetails.Dalle3Details.Size}_{promptDetails.Dalle3Details.Quality}_{timestamp}_{saveType}";
-                    break;
+        private static string GetSafetyTolerance(PromptDetails details)
+        {
+            if (details.BFLDetails != null && details.BFLDetails.SafetyTolerance != default)
+                return $"safety{details.BFLDetails.SafetyTolerance}";
+            return "";
+        }
 
-                default:
-                    throw new Exception($"Unknown generator type: {generator}");
-            }
-
-            // Add generator type to the combined string
-
-            // Remove invalid characters
-            string sanitized = Regex.Replace(combined, @"[^a-zA-Z0-9_\-]", "_");
-
+        private static string SanitizeFilename(string filename)
+        {
+            string sanitized = Regex.Replace(filename, @"[^a-zA-Z0-9_\-]", "_");
             while (sanitized.Contains("__"))
             {
                 sanitized = sanitized.Replace("__", "_");
             }
-
-            // Truncate to a reasonable length if necessary
-            if (sanitized.Length > 200)
-            {
-                sanitized = sanitized.Substring(0, 200);
-            }
-
-            // Ensure the filename is unique by appending a timestamp and a sequential number if needed
-            
-            lock (_lockObject)
-            {
-                int count = 0;
-                string uniqueFilename;
-                do
-                {
-                    uniqueFilename = count == 0 ? sanitized : $"{sanitized}_{count:D4}";
-                    count++;
-                } while (File.Exists(Path.Combine(baseFolder, $"{uniqueFilename}.png")));
-
-                _filenameCounts[sanitized] = count;
-                return uniqueFilename + ".png";
-            }
+            return sanitized.Length > 200 ? sanitized.Substring(0, 200) : sanitized;
         }
     }
 }

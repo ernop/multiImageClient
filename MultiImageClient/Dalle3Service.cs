@@ -26,19 +26,20 @@ using System.Threading.Tasks;
 
 namespace MultiClientRunner
 {
-    public static class Dalle3Service
-    {
-        private static SemaphoreSlim _dalle3Semaphore;
-        private static ImageClient _openAIImageClient;
 
-        public static void Initialize(string apiKey, int maxConcurrency)
+    public class Dalle3Service : IImageGenerationService
+    {
+        private SemaphoreSlim _dalle3Semaphore;
+        private ImageClient _openAIImageClient;
+
+        public Dalle3Service(string apiKey, int maxConcurrency)
         {
             var openAIClient = new OpenAIClient(apiKey);
             _openAIImageClient = openAIClient.GetImageClient("dall-e-3");
             _dalle3Semaphore = new SemaphoreSlim(maxConcurrency);
         }
 
-        public static async Task<TaskProcessResult> ProcessDalle3PromptAsync(PromptDetails promptDetails, MultiClientRunStats stats)
+        public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails, MultiClientRunStats stats)
         {
             await _dalle3Semaphore.WaitAsync();
             try
@@ -68,5 +69,6 @@ namespace MultiClientRunner
             }
 
         }
+
     }
 }

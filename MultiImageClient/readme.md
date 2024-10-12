@@ -1,35 +1,83 @@
-﻿# Ideogram.AI Image Generation C# API Client
+﻿# Multi image client.  APIClients for BFL (Black Forest Lab), Ideogram, and Dalle3 (copied)
 
-## How to Use This
+## The program controls "runs" against those endpoints
+
+Set up multiple types of runs:
+
+* based on a list of prompts in a file or in code
+* can systematically expand the list / powerset / permutation etc.
+* also can make more complex steps
+* hooks for better "rewriters", that is, prompt pre-processing steps such as 'idea' => rewrite with claude/openAi => make image out of it
+* repeated images, etc.
+
+## Todos
+
+* Working on a local django app to manage all image inputs and experiment with new combination UIs and things
+* That is, from a gallery view, automatically see the related "image2text"s generated in teh past, and maybe drag and drop images to combine them, with a helpful rewriter step.
+
+## Target product design
+
+### Easily compose, order, text, and manage compositions of image to text and text to image operations
+
+* Ideal goal would be to easily compose and control and view the results of complex combinations of actions like "text to image" via multiple endpoint services, "image to text" via claude, gpt, local prompt rewriters, "outer prompt personalities" i.e. a text instruction which are useful for evoking a certain type of image.
+
+* An ideal workflow to aim at would be: for a given interesting prompt, experiment with all the ways you can expand it into various text blobs, then 
+
+
+
+### Profiling Image and text APIs:
+* for a given prompt text, create a combined image of what each current generator would generate, with annotations, for distribution. i.e. this is a sample of what bfl, de3 and ideogram would produce for a prompt, which is in the image, for distribution and understanding
+* Also, eventually each image api will probably have a known "ability" area which you can get at with the right customized prompt. I.e. automatic assistance by adding text/options to queries to dalle3 would be specific to it directly and different for each type of endpoint
+* image annotation - i hate seeing AI images that are floating around with no details on what prompt & settings create them. Find a way to bake that in, or have a sidecar file which can automatically be read.
+
+### Assist in helping make a good image from a core idea
+* Iterate testing
+
+### Manage censorship
+* no point in sending requests which will be blocked
+* Local data on each system's censorship patterns to save time and effort
+
+### Viewing & browsing history
+
+* And ALSO to easily be able to view all the images, really well, jumping by tag, between related, generation histories, plus to easily test a prompt in all APIs
+* When viewing be able to see the original image
+
+## Scope
+
+### Basic endpoints:
+
+#### Text to image
+
+* Ideogram (working)
+* BFL (working)
+* Dalle3 (working)
+* Midjourney (no api)
+* other local (FLUX, etc.) (not set up)
+
+#### Text to image
+
+* None beyond the existing de3 and ideogram rewriters
+* many to add, including local
+* i.e. a non-censored rewriter would be useful.
+
+# How to Use This
 
 1. Download the code
 2. Open the solution in Visual Studio
 3. Copy the sample `settings.json` file and rename it to the actual name so it can be found
-4. Get an Ideogram API key (e.g., at https://ideogram.ai/manage-api)
+4. Get an Ideogram API key (e.g., at https://ideogram.ai/manage-api), OpenAI Key, BFL key etc and put them into settings.
 5. Fill in the API key in the settings file
 6. Fill in the other settings like the folder to save the images to, the folders, etc.
-7. Fill in your prompts file
+7. Fill in your prompts file or modify the source 
+8. Right now, the system is easiest to use if you just open it in Visual Studio and edit the code yourself and build. Eventually it might be nice to have entire run configuration details within non-c sharp files such as json or other complex configurators, so it would be distributable as a bare exe.
 
 ## Sample Settings File
 
 There is a sample settings file in the repo but the name doesn't match. Copy that, rename it "settings.json" and then fill in your settings.
 
-## Usage:
+## Gallery of Ideogram
 
-The client is super simple, and only covers Generate so far.  You can incorporate it directly. The client has options which imply it will do more than just generate images, like download them, create annotated versions etc.
-
-## Prompts.txt
-```text
-
-The streets of Singapore are bustling with people and various street food stalls, creating a lively and multicultural atmosphere. The area is full of guava, cheese, broccoli, kimchi, hardboiled eggs, vinegar, and durian. Each smell seems to waft through the crowd attacking people and animals who are particularly weak to it, striking them with brutal overwhelming negative sensations. This is a biological weapon attack! the image is a schema overhead view with detailed performance analysis
-A light switch that is clearly in the "ON" not "OFF" position. Please describe this close-up 3d depth image in high detail exactly describing the light switch panel and its material and color, the switch which sticks out, its position and what the position represents.
-A 4x4 grid of super magiscule, block font dense intense incredibly meaningful, profound, ethereal, and subtle KANJI characters. The characters are illustrated in super high resolution, partially 3d style, feeling like they almost emerge from the flat screen, in a super clear image utilizing one or more of: subtle coloration, unusual line thicknesses or variations, unusual kerning, pen and ink, hand-drawn custom artisinal creative characters, and/or super evocative, personalized textures.  
-Introducing the "Rogue" card, an exciting new addition between the Queen and Jack of Diamonds in a standard playing card deck. The Rogue card features a dashing figure with a masked face, holding a small, curved dagger. The figure is adorned with a cape and a diamond-encrusted hat, symbolizing the connection to the Diamonds suit. The single-letter symbol for the Rogue card is "X", which is displayed in each corner along with the suit of Diamonds. The card's design maintains the simplicity of traditional playing cards, with the "X" and diamonds in the corners and a captivating, yet minimalist, pattern in the middle, featuring a subtle diamond-like motif. The Rogue card captures the essence of cunning and deception, adding an exciting twist to the classic deck.
-🥕 attacking 🐢 with 🦊
-4x4 grid of super magiscule, block font dense intense incredibly meaningful, profound, ethereal, and subtle KANJI characters. The characters are illustrated in super high resolution, partially 3d style, feeling like they almost emerge from the flat screen, in a super clear image utilizing one or more of: subtle coloration, unusual line thicknesses or variations, unusual kerning, pen and ink, hand-drawn custom artisinal creative characters, and/or super evocative, personalized textures.  
-```
-
-## Gallery
+### Note: BFL is quite a bit better than Ideogram
 
 https://photos.app.goo.gl/QJn5xPUNEg1uuNdaA
 

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h2 class="mt-4 mb-4">Text Input</h2>
+    <form method="post">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label for="text_content" class="form-label">Enter your text:</label>
+            <textarea class="form-control" id="text_content" name="text_content" rows="10" required></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Submit</button>
+    </form>
+
+    {% if messages %}
+    <div class="mt-4">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

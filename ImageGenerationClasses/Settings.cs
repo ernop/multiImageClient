@@ -18,10 +18,12 @@ namespace MultiClientRunner
         public bool EnableLogging { get; set; }
         public string LogFilePath { get; set; }
         public bool SaveJsonLog { get; set; }
-        public bool SaveRawImage { get; set; }
-        public bool SaveAnnotatedImage { get; set; }
+        /// save just image.jpg or image.png etc.
+        
         public string ImageDownloadBaseFolder { get; set; }
-        public string AnnotationSide { get; set; } = "right";
+        
+        /// unused yet.
+        public string AnnotationSide { get; set; } = "bottom";
 
         public static Settings LoadFromFile(string filePath)
         {
@@ -58,11 +60,6 @@ namespace MultiClientRunner
             if (!Directory.Exists(ImageDownloadBaseFolder))
             {
                 Directory.CreateDirectory(ImageDownloadBaseFolder);
-            }
-            if ( SaveAnnotatedImage)
-            {
-                var annotatedPath = Path.Combine(ImageDownloadBaseFolder, "annotated");
-                Directory.CreateDirectory(annotatedPath);
             }
         }
     }

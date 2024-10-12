@@ -3,19 +3,13 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net6.0</TargetFramework>
-    <LangVersion>10.0</LangVersion>
-    <ProjectGuid>{3DFD03FC-9AAC-40A4-A883-AF9CA25D0055}</ProjectGuid>
-    <Platforms>AnyCPU;ARM64</Platforms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Anthropic.SDK" Version="4.1.1" />
+    <PackageReference Include="CommandLineParser" Version="2.9.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="System.Drawing.Common" Version="8.0.2" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\ImageGenerationClasses\ImageGenerationClasses.csproj" />
   </ItemGroup>
 
 </Project>

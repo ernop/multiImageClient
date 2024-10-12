@@ -1,13 +1,8 @@
-﻿using Newtonsoft.Json;
-
+﻿using CommandLine;
+using Newtonsoft.Json;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net.Http;
-using System.Text;
 using System.Threading.Tasks;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace BFLAPIClient
 {
@@ -89,7 +84,109 @@ namespace BFLAPIClient
             return GenerateAndWaitForResultAsync("flux-dev", request);
         }
 
-        
+        [STAThread]
+        public static async Task Main(string[] args)
+        {
+            await Parser.Default.ParseArguments<CommandLineOptions>(args)
+                .WithParsedAsync(RunAsync);
+        }
+
+        private static async Task RunAsync(CommandLineOptions opts)
+        {
+            var client = new BFLClient(opts.ApiKey, opts.PollingInterval);
+
+            GenerationResponse response;
+            switch (opts.Model)
+            {
+                case "flux-pro-1.1":
+                    var request11 = new FluxPro11Request
+                    {
+                        Prompt = opts.Prompt,
+                        Width = opts.Width,
+                        Height = opts.Height,
+                        PromptUpsampling = opts.PromptUpsampling,
+                        SafetyTolerance = opts.SafetyTolerance,
+                        Seed = opts.Seed
+                    };
+                    response = await client.GenerateFluxPro11Async(request11);
+                    break;
+                case "flux-pro":
+                    var requestPro = new FluxProRequest
+                    {
+                        Prompt = opts.Prompt,
+                        Width = opts.Width,
+                        Height = opts.Height,
+                        NumSteps = opts.NumSteps,
+                        PromptUpsampling = opts.PromptUpsampling,
+                        Seed = opts.Seed,
+                        Guidance = opts.Guidance,
+                        Interval = opts.Interval,
+                        SafetyTolerance = opts.SafetyTolerance
+                    };
+                    response = await client.GenerateFluxProAsync(requestPro);
+                    break;
+                case "flux-dev":
+                    var requestDev = new FluxDevRequest
+                    {
+                        Prompt = opts.Prompt,
+                        Width = opts.Width,
+                        Height = opts.Height,
+                        NumSteps = opts.NumSteps,
+                        PromptUpsampling = opts.PromptUpsampling,
+                        Seed = opts.Seed,
+                        Guidance = opts.Guidance,
+                        SafetyTolerance = opts.SafetyTolerance
+                    };
+                    response = await client.GenerateFluxDevAsync(requestDev);
+                    break;
+                default:
+                    Console.WriteLine($"Invalid model: {opts.Model}");
+                    return;
+            }
+
+            Console.WriteLine($"Status: {response.Status}");
+            Console.WriteLine($"Image URL: {response.Result?.Sample}");
+            Console.WriteLine($"Revised Prompt: {response.Result?.Prompt}");
+        }
+    }
+
+    public class CommandLineOptions
+    {
+        [Option('k', "api-key", Required = true, HelpText = "API key for BFL.")]
+        public string ApiKey { get; set; }
+
+        [Option('m', "model", Required = true, HelpText = "Model to use (flux-pro-1.1, flux-pro, or flux-dev).")]
+        public string Model { get; set; }
+
+        [Option('p', "prompt", Required = true, HelpText = "Prompt for image generation.")]
+        public string Prompt { get; set; }
+
+        [Option('w', "width", Default = 1024, HelpText = "Width of the generated image.")]
+        public int Width { get; set; }
+
+        [Option('h', "height", Default = 1024, HelpText = "Height of the generated image.")]
+        public int Height { get; set; }
+
+        [Option("num-steps", HelpText = "Number of steps (for flux-pro and flux-dev).")]
+        public int? NumSteps { get; set; }
+
+        [Option("prompt-upsampling", Default = false, HelpText = "Enable prompt upsampling.")]
+        public bool PromptUpsampling { get; set; }
+
+        [Option('s', "seed", HelpText = "Seed for image generation.")]
+        public int? Seed { get; set; }
+
+        [Option('g', "guidance", HelpText = "Guidance value (for flux-pro and flux-dev).")]
+        public float? Guidance { get; set; }
+
+        [Option('i', "interval", HelpText = "Interval value (for flux-pro).")]
+        public float? Interval { get; set; }
+
+        [Option("safety-tolerance", Default = 6, HelpText = "Safety tolerance level.")]
+        public int SafetyTolerance { get; set; }
+
+        [Option("polling-interval", Default = 2000, HelpText = "Polling interval in milliseconds.")]
+        public int PollingInterval { get; set; }
     }
 
     public class GenerationResponse

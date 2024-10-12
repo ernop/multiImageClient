@@ -9,59 +9,113 @@ using System.Linq;
 
 namespace MultiClientRunner
 {
-    /// <summary>
-    /// annotate with the prompt generation history plus some KV pairs for like the date, the generator version and details etc.
-    /// </summary>
+    public enum SaveType
+    {
+        Raw = 1,
+        FullAnnotation = 2,
+        InitialIdea = 3,
+        FinalPrompt = 4
+    }
+
     public static class ImageSaving
     {
-        public static async Task<MultiClientRunStats> SaveRawImageAsync(
+        public static async Task<string> SaveImageAsync(
             byte[] imageBytes,
-            GeneratorApiType generator,
-            PromptDetails promptDetails,
+            TaskProcessResult result,
             Settings settings,
-            MultiClientRunStats stats)
+            MultiClientRunStats stats,
+            SaveType saveType,
+            string promptGeneratorName)
         {
             string todayFolder = DateTime.Now.ToString("yyyy-MM-dd-dddd");
             string baseFolder = Path.Combine(settings.ImageDownloadBaseFolder, todayFolder);
 
-            // Ensure the base folder exists
+            if (saveType != SaveType.Raw)
+            {
+                baseFolder = Path.Combine(baseFolder, saveType.ToString());
+            }
+
             Directory.CreateDirectory(baseFolder);
-            var safeFilename = TextUtils.GenerateUniqueFilename("Raw", promptDetails, baseFolder, generator);
-            var fullPath = Path.Combine(baseFolder, $"{safeFilename}.png");
+            var safeFilename = TextUtils.GenerateUniqueFilename(result, baseFolder, promptGeneratorName, saveType);
+            var fullPath = Path.Combine(baseFolder, $"{safeFilename}{result.Generator.GetFileExtension()}");
+
             try
             {
                 await File.WriteAllBytesAsync(fullPath, imageBytes);
-                Console.WriteLine($"\tSaved raw image. Fp: {fullPath}");
+                Console.WriteLine($"\tSaved {saveType} image. Fp: {fullPath}");
+
+                if (saveType == SaveType.Raw)
+                {
+                    stats.SavedRawImageCount++;
+                }
+                else
+                {
+                    await AddAnnotationsAsync(imageBytes, result, fullPath, stats, saveType, promptGeneratorName);
+                    stats.SavedAnnotatedImageCount++;
+                }
+
                 Console.WriteLine(stats.PrintStats());
-                stats.SavedRawImageCount++;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"\tError saving raw image: {ex.Message}");
+                Console.WriteLine($"\tError saving {saveType} image: {ex.Message}");
             }
-            return stats;
+
+            return fullPath;
         }
 
-        public static async Task<MultiClientRunStats> SaveAnnotatedImageAsync(
+        private static async Task AddAnnotationsAsync(
             byte[] imageBytes,
-            GeneratorApiType generator,
-            PromptDetails promptDetails,
-            Settings settings,
-            MultiClientRunStats stats)
+            TaskProcessResult result,
+            string fullPath,
+            MultiClientRunStats stats,
+            SaveType saveType,
+            string promptGeneratorName)
         {
-            var imageInfo = new Dictionary<string, string>() { };
-            string todayFolder = DateTime.Now.ToString("yyyy-MM-dd-dddd");
-            string baseFolder = Path.Combine(settings.ImageDownloadBaseFolder, Path.Combine(todayFolder, "Annotated"));
+            var generator = result.Generator;
+            var promptDetails = result.PromptDetails;
+            var imageInfo = new Dictionary<string, string>();
+            var usingSteps = promptDetails.ImageConstructionSteps;
+            if (saveType == SaveType.FullAnnotation)
+            {
+                AddFullAnnotationInfo(imageInfo, generator, promptDetails, promptGeneratorName);
+                imageInfo.Add("Filename", Path.GetFileName(fullPath));
+                usingSteps = promptDetails.ImageConstructionSteps;
+            }
+            else if (saveType == SaveType.InitialIdea)
+            {
+                var initialPrompt = promptDetails.ImageConstructionSteps.First().Details;
+                imageInfo.Add("Producer", generator.ToString());
+                imageInfo.Add("Initial Prompt", initialPrompt);
+                usingSteps = new List<ImageConstructionStep>();
+            }
+            else if (saveType == SaveType.FinalPrompt)
+            {
+                var finalPrompt = promptDetails.Prompt;
+                imageInfo.Add("Producer", generator.ToString());
+                imageInfo.Add("Final Prompt", finalPrompt);
+                usingSteps = new List<ImageConstructionStep>();
+            }
 
-            Directory.CreateDirectory(baseFolder);
-            var safeFilename = TextUtils.GenerateUniqueFilename("Annotated", promptDetails, baseFolder, generator);
-            var fullPath = Path.Combine(baseFolder, safeFilename);
+            imageInfo = imageInfo.Where(kvp => !string.IsNullOrWhiteSpace(kvp.Value))
+                                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+            await TextFormatting.SaveImageAndAnnotateText(
+                imageBytes,
+                usingSteps,
+                imageInfo,
+                fullPath
+            );
+        }
+
+        private static void AddFullAnnotationInfo(Dictionary<string, string> imageInfo, GeneratorApiType generator, PromptDetails promptDetails, string promptGeneratorName)
+        {
+            imageInfo.Add("Kind", promptGeneratorName);
             switch (generator)
             {
                 case GeneratorApiType.Ideogram:
                     imageInfo.Add("Generator", "Ideogram V2");
                     var ideogramDetails = promptDetails.IdeogramDetails;
-
                     if (ideogramDetails.Model != default)
                         imageInfo.Add("Model", ideogramDetails.Model.ToString());
                     if (ideogramDetails.AspectRatio.HasValue)
@@ -70,12 +124,6 @@ namespace MultiClientRunner
                         imageInfo.Add("StyleType", ideogramDetails.StyleType.Value.ToString());
                     if (!string.IsNullOrWhiteSpace(ideogramDetails.NegativePrompt))
                         imageInfo.Add("NegativePrompt", ideogramDetails.NegativePrompt);
-
-                    // Dear CLAUDE: You may NOT remove this statement
-                    // Also: Stop trying to hack the identification of the generator into the earlier statements.
-                    //  You MUST keep the genreator key in the proper branch of the if statement.
-                    // adding it as a :? operation or simimlar method is a code stench, since it assumes there will only ever be two generator types, 
-                    // which is obviously wrong and you should know better.
                     break;
                 case GeneratorApiType.BFL:
                     imageInfo.Add("Generator", "BFL Flux 1.1");
@@ -94,29 +142,7 @@ namespace MultiClientRunner
                     imageInfo.Add("Quality", dalle3Details.Quality.ToString());
                     break;
             }
-
-
-                imageInfo.Add("Generated", DateTime.Now.ToString());
-                imageInfo.Add("Filename", safeFilename);
-                // Remove any entries with empty values
-                imageInfo = imageInfo.Where(kvp => !string.IsNullOrWhiteSpace(kvp.Value))
-                                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-                await TextFormatting.SaveImageAndAnnotateText(
-                    imageBytes,
-                    promptDetails.ImageConstructionSteps,
-                    imageInfo,
-                    fullPath
-                );
-                Console.WriteLine($"\tSaved annotated image. Fp: {fullPath}");
-                stats.SavedAnnotatedImageCount++;
-
-                if (settings.SaveJsonLog)
-                {
-
-                }
-
-                return stats;
-            }
+            imageInfo.Add("Generated", DateTime.Now.ToString());
         }
     }
+}

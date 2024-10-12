@@ -18,12 +18,16 @@ namespace MultiClientRunner
         public abstract string Suffix { get; }
         public abstract bool RandomizeOrder { get; }
         public abstract string Name { get; }
-        
+
         //defaults
         public virtual bool UseClaude => true;
-        public virtual bool UseIdeogram => true;
+        public virtual bool UseIdeogram => false;
         public virtual bool UseBFL => true;
         public virtual bool UseDalle3 => false;
+        public virtual bool SaveRaw => true;
+        public virtual bool SaveFullAnnotation => true;
+        public virtual bool SaveFinalPrompt => true;
+        public virtual bool SaveInitialIdea => true;
 
         public virtual bool AlsoDoVersionSkippingClaude => false;
 

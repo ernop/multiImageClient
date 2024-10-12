@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Maker</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        footer {
+            margin-top: 2rem;
+            padding: 1rem;
+            background-color: #f8f9fa;
+            text-align: center;
+        }
+
+        footer nav ul {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        footer nav ul li {
+            display: inline;
+            margin: 0 10px;
+        }
+
+        footer nav ul li a {
+            text-decoration: none;
+            color: #007bff;
+        }
+
+        footer nav ul li a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <!-- Add your header content here -->
+    </header>
+
+    <main class="container mt-4">
+        {% block content %}
+        {% endblock %}
+    </main>
+
+    <footer>
+        <nav>
+            <ul>
+                <li><a href="{% url 'admin:index' %}">Admin</a></li>
+                <li><a href="{% url 'upload_json' %}">Upload JSON</a></li>
+                <li><a href="{% url 'text_input' %}">Text Input</a></li>
+                <!-- Add more footer links as needed -->
+            </ul>
+        </nav>
+    </footer>
+
+    <!-- Bootstrap JS Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>
