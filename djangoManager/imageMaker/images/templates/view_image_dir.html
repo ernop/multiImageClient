@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div id="fullscreen-viewer" class="fullscreen-viewer">
+    <img id="fullscreen-image" src="">
+    <div class="controls">
+        <button id="prev-button">&lt; Previous</button>
+        <button id="next-button">Next &gt;</button>
+    </div>
+</div>
+
+<script>
+    const imageDir = "{{ image_dir }}";
+</script>
+<script src="{% static 'js/image_viewer.js' %}"></script>
+{% endblock %}

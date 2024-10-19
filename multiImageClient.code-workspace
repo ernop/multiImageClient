@@ -13,7 +13,9 @@
 			"**/obj": true,
 			"**/ideogram_pages": true,
 			"**/saves": true,
-			"**/*.log": true
+			"**/*.log": true,
+			"**/env": true,
+			"**/env2": true
 		},
 		"search.exclude": {
 			"**/.vs": true,
@@ -26,7 +28,11 @@
 			"**/ideogram_data_all.json": true,
 			"**/IdeogramHistoryExtractor/**.json": true,
 			"**/IdeogramHistoryExtractor/myPrompts/*": true,
-			"**/ideogram_requests/**": true
-		}
+			"**/ideogram_requests/**": true,
+			"**/env": true,
+			"**/env2": true
+		},
+		"files.autoSave": "afterDelay",
+		"files.autoSaveDelay": 1
 	}
 }

@@ -36,7 +36,10 @@ class BaseModelAdmin(admin.ModelAdmin):
 
 @admin.register(Prompt)
 class PromptAdmin(BaseModelAdmin):
-    list_display = ('id', 'Text', 'get_creator', 'get_creation_type', 'get_tags', 'get_image_generations')
+    list_display = ('id', 'Text', 'Creator', 'CreationType',)
+    list_filter = ('CreationType',)
+    search_fields = ('Text', 'Creator__username')  # Add this line
+    
     actions = ['produce_generation']
     
     def get_creator(self, obj):
@@ -144,7 +147,7 @@ class PromptAdmin(BaseModelAdmin):
 
 @admin.register(CreationType)
 class CreationTypeAdmin(BaseModelAdmin):
-    list_display = ('id', 'Name')
+    list_display = ('Name',)
 
 @admin.register(Rewriter)
 class RewriterAdmin(BaseModelAdmin):

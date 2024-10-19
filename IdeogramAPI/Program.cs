@@ -8,22 +8,52 @@ namespace IdeogramAPIClient
     {
         static async Task<int> Main(string[] args)
         {
+            // Hardcoded args for testing
+            args = new[]
+            {
+                "--api-key", "",
+                "--prompt", "A cute puppy playing in a garden",
+                "--aspect-ratio", "ASPECT_16_9",
+                "--model", "V_2",
+                "--magic-prompt", "ON",
+                "--negative-prompt", "cat, kitten"
+            };
+
             try
             {
-                return await Parser.Default.ParseArguments<CommandLineOptions>(args)
+                var task = Parser.Default.ParseArguments<CommandLineOptions>(args)
                     .MapResult(
                         async (CommandLineOptions opts) => await RunAsync(opts),
-                        _ => Task.FromResult(1) // Return 1 for parsing errors
+                        _ => Task.FromResult<GenerateResponse>(null) // Return null for parsing errors
                     );
+
+                var response = await task; // Wait for the task to complete
+                
+                if (response != null)
+                {
+                    Console.WriteLine($"Image URL: {response.Data[0].Url}");
+                    Console.WriteLine($"Revised Prompt: {response.Data[0].Prompt}");
+                    return 0; // Success
+                }
+                else
+                {
+                    Console.WriteLine("Failed to generate image or parse arguments.");
+                    return 1; // Error
+                }
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Unhandled exception: {ex.Message}");
                 return 2; // Return 2 for unhandled exceptions
             }
+            finally
+            {
+                Console.WriteLine("Press Enter to exit...");
+                Console.ReadLine();
+            }
         }
 
-        private static async Task<int> RunAsync(CommandLineOptions opts)
+        private static async Task<GenerateResponse> RunAsync(CommandLineOptions opts)
         {
             var client = new IdeogramClient(opts.ApiKey);
             var ideogramDetails = new IdeogramDetails
@@ -41,20 +71,18 @@ namespace IdeogramAPIClient
                 var response = await client.GenerateImageAsync(req);
                 if (response.Data != null && response.Data.Count > 0)
                 {
-                    Console.WriteLine($"Image URL: {response.Data[0].Url}");
-                    Console.WriteLine($"Revised Prompt: {response.Data[0].Prompt}");
-                    return 0; // Success
+                    return response;
                 }
                 else
                 {
                     Console.WriteLine("No images generated.");
-                    return 3; // No images generated
+                    return null;
                 }
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Error: {ex.Message}");
-                return 4; // API or network error
+                return null;
             }
         }
     }

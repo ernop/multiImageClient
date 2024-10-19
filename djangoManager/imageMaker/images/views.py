@@ -1,3 +1,6 @@
+import os
+from django.conf import settings
+ 
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from django.core.files.storage import default_storage
@@ -5,8 +8,37 @@ from django.core.files.base import ContentFile
 import json
 from .models import *
 from typing import Any, List
+from django.http import JsonResponse
+from django.db.models import Q
+from .models import Prompt
 
 # Create your views here.
+
+def index(request: Any) -> Any:
+    links = [
+
+    ]
+    return render(request, 'index.html', {})
+
+
+
+def prompt_search(request):
+    query = request.GET.get('q', '')
+    page = int(request.GET.get('page', 1))
+    per_page = 30
+    offset = (page - 1) * per_page
+
+    prompts = Prompt.objects.filter(Q(Text__icontains=query) | Q(id__icontains=query))[offset:offset+per_page]
+    total_count = Prompt.objects.filter(Q(Text__icontains=query) | Q(id__icontains=query)).count()
+
+    results = [{'id': prompt.id, 'text': f"{prompt.id}: {prompt.Text[:100]}"} for prompt in prompts]
+    return JsonResponse({
+        'results': results,
+        'total_count': total_count,
+        'pagination': {
+            'more': total_count > (page * per_page)
+        }
+    })
 
 def upload_json(request):
     if request.method == 'POST' and request.FILES['json_file']:
@@ -67,3 +99,4 @@ def process_text_input(text: str) -> List[str]:
     else:
         # Split by lines, strip each line, and filter out empty lines
         return [line.strip() for line in text.split('\n') if line.strip()]
+

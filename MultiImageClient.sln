@@ -11,8 +11,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MultiImageClient", "MultiIm
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ImageGenerationClasses", "ImageGenerationClasses\ImageGenerationClasses.csproj", "{3E7F378B-7AC6-4904-B775-E4B4CC69AB5B}"
 EndProject
-Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "djangoManager", "djangoManager\djangoManager.pyproj", "{19FF410A-88E1-4558-8F50-8C6FCCAC2B07}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -53,10 +51,6 @@ Global
 		{3E7F378B-7AC6-4904-B775-E4B4CC69AB5B}.Release|Any CPU.Build.0 = Release|Any CPU
 		{3E7F378B-7AC6-4904-B775-E4B4CC69AB5B}.Release|ARM64.ActiveCfg = Release|ARM64
 		{3E7F378B-7AC6-4904-B775-E4B4CC69AB5B}.Release|ARM64.Build.0 = Release|ARM64
-		{19FF410A-88E1-4558-8F50-8C6FCCAC2B07}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{19FF410A-88E1-4558-8F50-8C6FCCAC2B07}.Debug|ARM64.ActiveCfg = Debug|Any CPU
-		{19FF410A-88E1-4558-8F50-8C6FCCAC2B07}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{19FF410A-88E1-4558-8F50-8C6FCCAC2B07}.Release|ARM64.ActiveCfg = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

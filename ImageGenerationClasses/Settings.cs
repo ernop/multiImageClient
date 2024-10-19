@@ -1,13 +1,11 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-namespace MultiClientRunner
+namespace MultiImageClient
 {
-    /// <summary>
-    /// General settings file.
-    /// </summary>
     public class Settings
     {
         public string IdeogramApiKey { get; set; }
@@ -22,7 +20,7 @@ namespace MultiClientRunner
         
         public string ImageDownloadBaseFolder { get; set; }
         
-        /// unused yet.
+        /// unused yet we always do RIGHT
         public string AnnotationSide { get; set; } = "bottom";
 
         public static Settings LoadFromFile(string filePath)

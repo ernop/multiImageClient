@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 import os
+from images.settings_loader import load_settings
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -30,6 +31,7 @@ ALLOWED_HOSTS = []
 
 
 # Application definition
+STATIC_URL = '/static/'
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -39,6 +41,10 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'images',
+]
+
+STATICFILES_DIRS = [
+    BASE_DIR / "static",
 ]
 
 MIDDLEWARE = [
@@ -174,10 +180,30 @@ LOGGING = {
 }
 
 # Ensure the logs directory exists
-LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+LOGS_DIR = os.path.join(BASE_DIR, 'logs') 
 os.makedirs(LOGS_DIR, exist_ok=True)
 
 # Add this to enable request logging
 LOCAL = True
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600 # 100MB
+
+# Load custom settings
+CUSTOM_SETTINGS = load_settings()
+
+if CUSTOM_SETTINGS:
+    # Use the custom settings in your Django configuration
+    MEDIA_ROOT = CUSTOM_SETTINGS.image_download_base_folder
+    IDEOGRAM_API_KEY = CUSTOM_SETTINGS.ideogram_api_key
+    OPENAI_API_KEY = CUSTOM_SETTINGS.openai_api_key
+    ANTHROPIC_API_KEY = CUSTOM_SETTINGS.anthropic_api_key
+    BFL_API_KEY = CUSTOM_SETTINGS.bfl_api_key
+    
+    # You can add more custom settings as needed
+else:
+    # Fallback values if settings couldn't be loaded
+    MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+    IDEOGRAM_API_KEY = 'your_fallback_ideogram_api_key_here'
+    OPENAI_API_KEY = 'your_fallback_openai_api_key_here'
+    ANTHROPIC_API_KEY = 'your_fallback_anthropic_api_key_here'
+    BFL_API_KEY = 'your_fallback_bfl_api_key_here'

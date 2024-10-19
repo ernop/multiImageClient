@@ -69,6 +69,7 @@ class CreationType(BaseModel):
 class Rewriter(BaseModel):
     class RewriterChoices(models.TextChoices):
         CLAUDE = 'Claude', 'Claude'
+        LLAMA = 'Llama', 'Llama'
 
     id = models.AutoField(primary_key=True)
     Name = models.CharField(
@@ -111,6 +112,14 @@ class ImageGeneration(BaseModel):
     def __str__(self):
         return f"Gen {self.Prompt.Text[:20]} by {self.User.username} on {self.ImageProducerVersion.ImageProducerType.Name} {self.ImageProducerVersion.Version}"
 
+#okay so the way requests from all image producers except BFL are async is annoying
+# whereas BFL just has two steps - 1. upload the request (sync) then an endpoing 2. to check if its done yet.
+# so this class holds the request before it can be finally saved into an ImageGeneration
+class BFLRequest(BaseModel):
+    id = models.AutoField(primary_key=True)
+    Prompt = models.ForeignKey(Prompt, on_delete=models.CASCADE)
+    Status = models.BooleanField(default=False)
+    User = models.ForeignKey(User, on_delete=models.CASCADE)
 
 # raw or the various types of annotations for saved images.
 class ImageSaveType(BaseModel):
@@ -129,7 +138,6 @@ class ImageSaveType(BaseModel):
 
     def __str__(self):
         return self.Name
-
 
 # we saved a version of an image 
 class ImageSave(BaseModel):

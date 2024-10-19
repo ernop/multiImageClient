@@ -11,7 +11,8 @@
     <OutputPath>.</OutputPath>
     <ProjectTypeGuids>{888888a0-9f3d-457c-b088-3a5042f75d52}</ProjectTypeGuids>
     <LaunchProvider>Standard Python launcher</LaunchProvider>
-    <InterpreterId>MSBuild|env|$(MSBuildProjectFullPath)</InterpreterId>
+    <InterpreterId>
+    </InterpreterId>
     <SuppressConfigureTestFrameworkPrompt>true</SuppressConfigureTestFrameworkPrompt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)' == 'Debug'" />
@@ -19,6 +20,14 @@
   <PropertyGroup>
     <VisualStudioVersion Condition=" '$(VisualStudioVersion)' == '' ">10.0</VisualStudioVersion>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="env2/**" />
+    <Compile Remove="env/**" />
+    <EmbeddedResource Remove="env2/**" />
+    <EmbeddedResource Remove="env/**" />
+    <None Remove="env2/**" />
+    <None Remove="env/**" />
+  </ItemGroup>
   <ItemGroup>
     <Content Include=".gitignore" />
     <Content Include="imageMaker\images\templates\admin\base_site.html" />
@@ -55,17 +64,6 @@
     <Folder Include="imageMaker\images\migrations" />
     <Folder Include="imageMaker\images\templates" />
     <Folder Include="imageMaker\images\templates\admin" />
-  </ItemGroup>
-  <ItemGroup>
-    <Interpreter Include="env\">
-      <Id>env</Id>
-      <Description>env (Python 3.12 (64-bit))</Description>
-      <InterpreterPath>Scripts\python.exe</InterpreterPath>
-      <WindowsInterpreterPath>Scripts\pythonw.exe</WindowsInterpreterPath>
-      <Version>0.0</Version>
-      <Architecture>X64</Architecture>
-      <PathEnvironmentVariable>PYTHONPATH</PathEnvironmentVariable>
-    </Interpreter>
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Python Tools\Microsoft.PythonTools.targets" />
 </Project>
