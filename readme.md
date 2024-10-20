@@ -19,6 +19,15 @@ There are various ways to customize your runs, from:
 * iterating through a bunch of prompts from a list
 * etc.
 
+# Gallery
+
+If you haven't tried BFL/Flux, you should. It's really, really good. Way better than De3.
+* Much much better composition
+* 2x as many pixels
+* Not quite as good at text as ideogram.
+* But in other ways they also are clearly better than ideogram 2, also.
+* See this gallery: https://photos.app.goo.gl/baJNz9SWX1fq1tT77
+
 ## Future
 
 I will add image2text steps, and other text rewrite steps (hopefully cheaper & more open than claude's current setup).
