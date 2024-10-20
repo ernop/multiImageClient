@@ -5,7 +5,7 @@ using Anthropic.SDK.Messaging;
 using BFLAPIClient;
 
 using IdeogramAPIClient;
-using MultiImageClient.Implementation;
+
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 

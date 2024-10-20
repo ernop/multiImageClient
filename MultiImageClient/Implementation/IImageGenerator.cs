@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace MultiImageClient.Implementation
+namespace MultiImageClient
 {
     public interface IImageGenerator
     {

@@ -4,9 +4,8 @@ using System.Linq;
 using System.Runtime;
 using System.Text;
 using System.Threading.Tasks;
-using MultiImageClient.Implementation;
 
-namespace MultiImageClient.promptTransformation
+namespace MultiImageClient
 {
     public class Alias
     {

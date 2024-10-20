@@ -1,5 +1,4 @@
 ﻿using IdeogramAPIClient;
-using MultiImageClient.Implementation;
 using OpenAI.Images;
 
 using System;

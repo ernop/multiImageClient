@@ -6,7 +6,6 @@ using BFLAPIClient;
 
 using IdeogramAPIClient;
 using MultiImageClient.Enums;
-using MultiImageClient.Implementation;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 
