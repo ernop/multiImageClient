@@ -1,4 +1,30 @@
-﻿# Multi image client.  APIClients for BFL (Black Forest Lab), Ideogram, and Dalle3 (copied)
+# MultiImageClient
+
+## It lets you compose a bunch of image generation steps like randomize prompt,add styles etc, and then run them through BFL/Flux, Ideogram or De3.
+
+example:
+
+"a cat" =(randomizer step)=> "a cat, weather conditions: sleet, location: intergalactic crossroads" =(claude rewrite: dear claude, please put this in terms an insane medieval hierophant would use, emitting 100 obscure words)> '<insane prompt>' =(BFL Labs image generation)>
+
+![image](https://github.com/user-attachments/assets/60bf7179-4f4b-4486-a74c-2142fd6a6916)
+
+## how to use it
+
+You do need to be able to run C# code. I use Visual Studio 2022 (NOT visual studio code) to do this. Once you download it, get it to build.
+
+Then, experiment with modifying multiImageClient/Program.cs to do different runs.
+
+There are various ways to customize your runs, from:
+* programmatically generating prompts and manipulating them
+* iterating through a bunch of prompts from a list
+* etc.
+
+## Future
+
+I will add image2text steps, and other text rewrite steps (hopefully cheaper & more open than claude's current setup).
+ 
+
+# Multi image client.  APIClients for BFL (Black Forest Lab), Ideogram, and Dalle3 (copied)
 
 ## The program controls "runs" against those endpoints
 
