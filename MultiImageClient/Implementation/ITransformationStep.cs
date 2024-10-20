@@ -1,6 +1,6 @@
 ﻿using System.Threading.Tasks;
 
-namespace MultiImageClient.Implementation
+namespace MultiImageClient
 {
     public interface ITransformationStep
     {

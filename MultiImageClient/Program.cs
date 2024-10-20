@@ -15,8 +15,6 @@ using System.Numerics;
 using System.Xml.Linq;
 using System.Xml;
 using System.Security.Cryptography.X509Certificates;
-using MultiImageClient.promptTransformation;
-using MultiImageClient.Implementation;
 
 namespace MultiImageClient
 {
@@ -45,42 +43,42 @@ namespace MultiImageClient
 
             // here is where you have a choice. Super specific stuff like managing a run with repeats, targets etc can be controlled
             // with specific classes which inherit from AbstractPromptGenerator. e.g. DeckOfCards
-            var basePromptGenerator = new LoadFromFile(settings, "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrivatePrompts.txt");
+            //var basePromptGenerator = new LoadFromFile(settings, "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrivatePrompts.txt");
             //var basePromptGenerator = new WriteHere(settings);
+            var steps = new List<ITransformationStep>();
+
             var stats = new MultiClientRunStats();
             var processingTasks = new List<Task>();
 
-            var steps = new List<ITransformationStep>();
-
-            //var llamaRewriteStep = new LLAMARewriteStep("Rewrite this, adding details: ","Output 100 words of clear, simple text, describing an image which you imagine in detail.",llamaService);
-            //steps.Add(llamaRewriteStep);
-
+            var basePromptGenerator = new SinglePromptGenerator(new List<string>() { "A partially hidden cat who is more than he seems, trying to save humanity during a sudden disaster." }, 10, 4, 100, settings);
             var rstep = new RandomizerStep();
             steps.Add(rstep);
 
-            //var claudeStep = new ClaudeRewriteStep("", "Expand the preceding INPUT data with unusual but fitting obscure, archiac, poetic, punning words which still focus on the ultimate goal, to elucidate new, created-by-you, well-chosen details on her style, beliefs, life, heart, mind, soul, appearance, and habits, to produce a hyper-ULTRA-condensed prose output which still encapsulates [mystery-universe-gaia-purity-edge-tao] in all wonder, while retaining a thrilling environment, glitchcore, unspoken musings of null-thought, arcana, jargon, mumbled transliterations of mega-negative dimensional thought space and poetry CONCRETE illustration style. DO IT.  ALSO: you must emit MANY words and arrange them in a beautiful ASCII ART style of width 50 characters.", claudeService, 1.0m);
-            //steps.Add(claudeStep);
-
-            var claudeStep = new ClaudeRewriteStep("", "Draw this making it full of many details, into a specific, news-paper photography style description of an image, most important and largest elements first as well as textures, colors, styles, then going into super details about the rest of it, which you should create to make the visual effect intense, interesting, and exceptional. Generate MANY words such as 500 or even 600, and then add a caption/title in the form of a beautiful ASCII ART style of width 50 characters. Our overall theme is purity, simplicity, natural forms, SATISFYING images that are fun to look at;", claudeService, 1.0m);
+            var claudeStep = new ClaudeRewriteStep("dear claude, please put this in terms an insane medieval hierophant would use, emitting 100 obscure words)", "", claudeService, 0.9m);
             steps.Add(claudeStep);
 
+            var stylizerStep = new StylizerStep();
+            steps.Add(stylizerStep);
+
+            var generators = new List<IImageGenerator>();
+            generators.Add(new BFLGenerator(_BFLService));
 
 
+            //generators.Add(new IdeogramGenerator(_IdeogramService));
+            //generators.Add(new Dalle3Generator(_Dalle3Service));
+            //var claudeStep = new ClaudeRewriteStep("", "Expand the preceding INPUT data with unusual but fitting obscure, archiac, poetic, punning words which still focus on the ultimate goal, to elucidate new, created-by-you, well-chosen details on her style, beliefs, life, heart, mind, soul, appearance, and habits, to produce a hyper-ULTRA-condensed prose output which still encapsulates [mystery-universe-gaia-purity-edge-tao] in all wonder, while retaining a thrilling environment, glitchcore, unspoken musings of null-thought, arcana, jargon, mumbled transliterations of mega-negative dimensional thought space and poetry CONCRETE illustration style. DO IT.  ALSO: you must emit MANY words and arrange them in a beautiful ASCII ART style of width 50 characters.", claudeService, 1.0m);
+            //steps.Add(claudeStep);
+            //var llamaRewriteStep = new LLAMARewriteStep("Rewrite this, adding details: ","Output 100 words of clear, simple text, describing an image which you imagine in detail.",llamaService);
+            //steps.Add(llamaRewriteStep);
 
             //var stylizerStep = new StylizerStep();
             //steps.Add(stylizerStep);
 
+
+            //var claudeStep = new ClaudeRewriteStep("", "Draw this making it full of many details, into a specific, news-paper photography style description of an image, most important and largest elements first as well as textures, colors, styles, then going into super details about the rest of it, which you should create to make the visual effect intense, interesting, and exceptional. Generate MANY words such as 500 or even 600, and then add a caption/title in the form of a beautiful ASCII ART style of width 50 characters. Our overall theme is purity, simplicity, natural forms, SATISFYING images that are fun to look at;", claudeService, 1.0m);
+
             //var mmstep = new ManualModificationStep("A dramatically simple, emotional, lush and colorful razor-sharp vector art graphic illustration style glowing and pure muted or intense, evocative image on the following theme: ","");
             //steps.Add(mmstep);
-
-
-
-            var generators = new List<IImageGenerator>();
-            
-            generators.Add(new BFLGenerator(_BFLService));
-            //generators.Add(new IdeogramGenerator(_IdeogramService));
-            //generators.Add(new Dalle3Generator(_Dalle3Service));
-
             foreach (var promptDetails in basePromptGenerator.Run())
             {
                 Console.WriteLine(stats.PrintStats());

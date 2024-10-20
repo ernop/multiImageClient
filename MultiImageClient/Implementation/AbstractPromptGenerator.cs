@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection.Emit;
 
-namespace MultiImageClient.Implementation
+namespace MultiImageClient
 {
     /// <summary>
     /// generate as much as you can of the prompt in here.

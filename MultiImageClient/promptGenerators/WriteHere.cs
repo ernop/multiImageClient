@@ -1,7 +1,7 @@
 ﻿using CommandLine;
 
 using Microsoft.VisualBasic;
-using MultiImageClient.Implementation;
+
 using Newtonsoft.Json.Linq;
 
 using System;

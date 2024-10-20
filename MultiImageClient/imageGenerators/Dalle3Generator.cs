@@ -1,5 +1,4 @@
-﻿using MultiImageClient.Implementation;
-using OpenAI.Images;
+﻿using OpenAI.Images;
 
 using System;
 using System.Collections.Generic;
