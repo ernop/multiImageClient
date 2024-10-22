@@ -4,9 +4,10 @@ using System.Collections.Generic;
 using IdeogramAPIClient;
 
 
+
 namespace MultiImageClient
 {
-    public class PromptDetails
+    public partial class PromptDetails
     {
         
         /// This should track the "active" prompt which the next step in the process should care about.  Earlier versions are in ImageConstructionSteps. <summary>
@@ -26,6 +27,11 @@ namespace MultiImageClient
         public IdeogramDetails IdeogramDetails { get; set; }
         public Dalle3Details Dalle3Details { get; set; }
 
+        public void ReplacePrompt(string newPrompt, string explanation, TransformationType transformationType)
+        {
+            ReplacePrompt(newPrompt, explanation, transformationType, null);    
+        }
+
         /// <summary>
         /// This item's "Prompt" field is always the active prompt which will be really used to send to external consuemrs
         /// however, often times it is really composed of like: $"Outer prompt stuff {previous version} Tail suffix stuff" and for user understanding we oftenw ant to show that.
@@ -34,7 +40,7 @@ namespace MultiImageClient
         /// 
         /// This is a helper method which forces callers to fill in the history of a request when they change the prompt. That way we won't lose track of it.
         /// </summary>
-        public void ReplacePrompt(string newPrompt, string explanation, TransformationType transformationType)
+        public void ReplacePrompt(string newPrompt, string explanation, TransformationType transformationType, PromptReplacementMetadata promptReplacementMetadata)
         {
             var currentPromptText = Prompt;
             if (string.IsNullOrEmpty(currentPromptText))
@@ -46,7 +52,7 @@ namespace MultiImageClient
                 explanation = explanation.Replace(currentPromptText, "{PROMPT}");
             }
             
-            var item = new PromptHistoryStep(newPrompt, explanation, transformationType);
+            var item = new PromptHistoryStep(newPrompt, explanation, transformationType, promptReplacementMetadata);
             TransformationSteps.Add(item);
             Prompt = newPrompt.Trim();
         }
@@ -89,7 +95,7 @@ namespace MultiImageClient
                 BFLDetails = BFLDetails != null ? new BFLDetails(BFLDetails) : null,
                 IdeogramDetails = IdeogramDetails != null ? new IdeogramDetails(IdeogramDetails) : null,
                 Dalle3Details = Dalle3Details != null ? new Dalle3Details(Dalle3Details) : null,
-                TransformationSteps = new List<PromptHistoryStep>()
+                TransformationSteps = new List<PromptHistoryStep>(),
             };
 
             foreach (var step in TransformationSteps)

@@ -16,7 +16,7 @@ using System.Windows.Forms;
 using IdeogramAPIClient;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
-using MultiImageClient.Enums;
+
 
 namespace MultiImageClient
 {

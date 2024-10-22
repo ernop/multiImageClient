@@ -1,7 +1,7 @@
 ﻿using BFLAPIClient;
 
 using IdeogramAPIClient;
-using MultiImageClient.Enums;
+
 
 using System;
 using System.Net.Http;
@@ -71,7 +71,7 @@ namespace MultiImageClient
                     if (returnedPrompt.Trim() != promptDetails.Prompt.Trim())
                     {
                         //BFL replaced the prompt. Never actually happens.
-                        promptDetails.ReplacePrompt(returnedPrompt.Trim(), returnedPrompt.Trim(), TransformationType.BFLRewrite);
+                        promptDetails.ReplacePrompt(returnedPrompt, returnedPrompt, TransformationType.BFLRewrite);
                     }
                     return new TaskProcessResult { IsSuccess = true, Url = generationResult.Result.Sample, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFL };
                 }

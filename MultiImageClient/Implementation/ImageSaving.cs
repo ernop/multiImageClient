@@ -6,7 +6,7 @@ using System.IO;
 
 using IdeogramAPIClient;
 using System.Linq;
-using MultiImageClient.Enums;
+
 
 namespace MultiImageClient
 {

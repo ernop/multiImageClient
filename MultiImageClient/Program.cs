@@ -50,15 +50,18 @@ namespace MultiImageClient
             var stats = new MultiClientRunStats();
             var processingTasks = new List<Task>();
 
-            var basePromptGenerator = new SinglePromptGenerator(new List<string>() { "A partially hidden cat who is more than he seems, trying to save humanity during a sudden disaster." }, 10, 4, 100, settings);
+            var basePromptGenerator = new SinglePromptGenerator(new List<string>() { "A heist of IDEAS from the No-osphere, by a man undergoing 'Internal LLM Systems' therapy (the modern version of IFS; this new system hypothesizes that inside, we have enough similarities to LLMs that techniques of interacting with them will also work on ourselves) - @redphonecrypto" }, 10, 2, 100, settings);
             var rstep = new RandomizerStep();
             steps.Add(rstep);
 
-            var claudeStep = new ClaudeRewriteStep("dear claude, please put this in terms an insane medieval hierophant would use, emitting 100 obscure words)", "", claudeService, 0.9m);
-            steps.Add(claudeStep);
-
             var stylizerStep = new StylizerStep();
             steps.Add(stylizerStep);
+
+            //var claudeStep = new ClaudeRewriteStep("dear claude, please put this in terms an insane medieval hierophant would use, emitting 100 obscure words, line noise, negations, OVERLOAD acronyms, japonisme, latin rosicrutian texts with a flair for the visually appealing and brutalist architure settings of fascination, retaining  refs to $GOAT and backrooms. NO newlines, condensed abstract words, wildness. Include references to LLM-based AI cryptocoins, the Crypto is getting intelligent and 'waking up' to spend a buck on coffee. Who is the NEXT?  ", "", claudeService, 0.876456m);
+            //steps.Add(claudeStep);
+
+            var claudeStep2 = new ClaudeRewriteStep("Clearly summarize this and create a diagram as well as an illustration and schematic.  The consumer of your output will be a crack team of AI-human artist hybrids so please give them all detail you can in the transl8n, to help us fully illustrate it. Emit 200 words no newlines ", "", claudeService, 1.0m);
+            steps.Add(claudeStep2);
 
             var generators = new List<IImageGenerator>();
             generators.Add(new BFLGenerator(_BFLService));
@@ -182,7 +185,7 @@ namespace MultiImageClient
             {
                 string jsonFilePath = Path.ChangeExtension(rawImagePath, ".json");
                 await File.WriteAllTextAsync(jsonFilePath, jsonString);
-                Console.WriteLine($"\tJSON log saved to: {jsonFilePath}");
+                //Console.WriteLine($"\tJSON log saved to: {jsonFilePath}");
             }
             else
             {

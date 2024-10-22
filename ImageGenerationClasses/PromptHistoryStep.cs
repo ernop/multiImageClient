@@ -5,18 +5,22 @@
     /// and then at least have them to accompany the actual image output to know its history.
     public class PromptHistoryStep
     {
-        public PromptHistoryStep(string newPrompt, string humanExplanation, TransformationType transformationType)
+        public PromptHistoryStep(string newPrompt, string humanExplanation, TransformationType transformationType, PromptReplacementMetadata pmd = null)
         {
             Prompt = newPrompt;
             Explanation = humanExplanation;
             TransformationType = transformationType;
+            PromptReplacementMetadata = pmd;
         }
         public PromptHistoryStep(PromptHistoryStep other)
         {
             Prompt = other.Prompt;
             Explanation = other.Explanation;
             TransformationType = other.TransformationType;
+            PromptReplacementMetadata = other.PromptReplacementMetadata?.Copy();
         }
+
+        public PromptReplacementMetadata PromptReplacementMetadata { get; set; }
 
         /// You transformed the prompt somehow and got this new version!  This is always internal; when annotating, always use the explanation.
         public string Prompt { get; set; }
