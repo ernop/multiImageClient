@@ -1,5 +1,5 @@
 ﻿using IdeogramAPIClient;
-using MultiImageClient.Enums;
+
 
 namespace MultiImageClient
 {

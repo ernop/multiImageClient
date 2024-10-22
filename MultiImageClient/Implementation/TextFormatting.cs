@@ -30,7 +30,14 @@ namespace MultiImageClient
             {
                 var key = $"{step.TransformationType}";
                 var value = $"{step.Explanation}";
-
+                if (step.PromptReplacementMetadata != null)
+                {
+                    //also write temp here.
+                }
+                if (value.Length > 1000)
+                {
+                    value = value.Substring(0, 1000)+"...";
+                }
                 using (var keyFont = GetSupportedFont(key, fontSize, FontStyle.Regular))
                 using (var valueFont = GetMonospacedFont(value, fontSize, FontStyle.Regular))
                 {
@@ -191,12 +198,14 @@ namespace MultiImageClient
                 {
                     if (font.Name == fontFamily && CanDisplayText(font, text))
                     {
+                        Console.WriteLine($"chose font: {font.Name} cause it could display all.");
                         return new Font(fontFamily, fontSize, style);
                     }
                 }
             }
 
             // If no monospaced font can display all characters, return a default monospaced font
+            Console.WriteLine($"Failed to choose font, fallback to genri mono");
             return new Font(FontFamily.GenericMonospace, fontSize, style);
         }
     }

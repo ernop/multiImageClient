@@ -1,4 +1,4 @@
-﻿namespace MultiImageClient.Enums
+﻿namespace MultiImageClient
 {
     public enum GenericImageGenerationErrorType
     {
