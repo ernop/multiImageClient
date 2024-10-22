@@ -7,7 +7,7 @@ using IdeogramAPIClient;
 
 namespace MultiImageClient
 {
-    public partial class PromptDetails
+    public class PromptDetails
     {
         
         /// This should track the "active" prompt which the next step in the process should care about.  Earlier versions are in ImageConstructionSteps. <summary>
