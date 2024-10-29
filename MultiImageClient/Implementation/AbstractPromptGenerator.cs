@@ -17,7 +17,7 @@ namespace MultiImageClient
         public abstract int CopiesPer { get; }
 
         /// i.e. how many times we send it to each image generator, after applying all prior manipulation steps
-        public virtual int FullyResolvedCopiesPer { get; } = 3;
+        public virtual int FullyResolvedCopiesPer { get; } = 1;
         public abstract string Prefix { get; }
         /// <summary>
         ///  Variant leading texts, if any, which you want to include after the global prefix.

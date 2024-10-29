@@ -38,7 +38,7 @@ namespace MultiImageClient
                     var pd = new PromptDetails();
                     var prompt = $"The {jobs} of {suits[ii]} using the style of {artists[ii]} using the color {themes[ii]} and emotion: {emotionThemes[ii]}";
                     pd.ReplacePrompt(prompt, prompt, TransformationType.InitialPrompt);
-                    pd.OverrideFilename = $"{artists[ii]}_{suits[ii]}_{jobs}.";
+                    pd.IdentifyingConcept = $"{artists[ii]}_{suits[ii]}_{jobs}.";
                     yield return pd;
                 }
             }

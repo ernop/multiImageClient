@@ -65,7 +65,7 @@ namespace MultiImageClient
                 usePrompt = usePrompt.Trim();
                 var pd = new PromptDetails();
                 pd.ReplacePrompt(usePrompt,usePrompt, TransformationType.InitialPrompt);
-                pd.OverrideFilename = "";
+                pd.IdentifyingConcept = "";
                 
                 res.Add(pd);
             }
