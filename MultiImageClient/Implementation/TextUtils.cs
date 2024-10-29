@@ -29,11 +29,17 @@ namespace MultiImageClient
 
         public static string GenerateUniqueFilename(TaskProcessResult result, string baseFolder, string promptGeneratorName, SaveType saveType)
         {
+            var usingPromptTextPart = TruncatePrompt(result.PromptDetails.Prompt, 90);
+            if (!string.IsNullOrEmpty(result.PromptDetails.IdentifyingConcept))
+            {
+                usingPromptTextPart = result.PromptDetails.IdentifyingConcept;
+            }
+
             var components = new List<string>
             {
                 promptGeneratorName,
                 result.ImageGenerator.ToString(),
-                TruncatePrompt(result.PromptDetails.Prompt, 90),
+                usingPromptTextPart,
 
                 GetResolution(result.PromptDetails),
                 GetIfAPIServiceDoesRewrites(result.PromptDetails),

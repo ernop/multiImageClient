@@ -62,11 +62,11 @@ namespace MultiImageClient
             {
                 var pd = new PromptDetails();
                 pd.ReplacePrompt(prompt, prompt, TransformationType.InitialPrompt);
-                pd.OverrideFilename = prompt;
+                pd.IdentifyingConcept = prompt;
                 yield return pd;
             }
         }
-        public override IEnumerable<PromptDetails> Prompts => GetPrompts();
+        public override IEnumerable<PromptDetails> Prompts => GetPrompts().OrderBy(el=> Random.Shared.Next());
     }
 }
 

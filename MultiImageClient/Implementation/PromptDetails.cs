@@ -17,7 +17,7 @@ namespace MultiImageClient
         /// <summary>
         /// If a generator wants the file to have a specific filename, it should fill this in. that is, regardless of whatever happens to the prompt after the transformation, or even the initail actual prompt, just use this. For example if you are generating a deck of cards, you might just set this up to say "2 or hearts" even if your raw original prompt for even the first step is "two hearts entwined in the style of jack vance" etc. This way the resulting filenames will make sense.
         /// </summary>
-        public string OverrideFilename { get; set; } = "";
+        public string IdentifyingConcept { get; set; } = "";
 
         public IList<PromptHistoryStep> TransformationSteps { get; set; } = new List<PromptHistoryStep>();
 
@@ -91,7 +91,7 @@ namespace MultiImageClient
             var clone = new PromptDetails
             {
                 Prompt = Prompt,
-                OverrideFilename = OverrideFilename,
+                IdentifyingConcept = IdentifyingConcept,
                 BFLDetails = BFLDetails != null ? new BFLDetails(BFLDetails) : null,
                 IdeogramDetails = IdeogramDetails != null ? new IdeogramDetails(IdeogramDetails) : null,
                 Dalle3Details = Dalle3Details != null ? new Dalle3Details(Dalle3Details) : null,

@@ -49,19 +49,20 @@ namespace MultiImageClient
 
             var stats = new MultiClientRunStats();
             var processingTasks = new List<Task>();
+            var basePromptGenerator = new StillLife(settings);
 
-            var basePromptGenerator = new SinglePromptGenerator(new List<string>() { "A heist of IDEAS from the No-osphere, by a man undergoing 'Internal LLM Systems' therapy (the modern version of IFS; this new system hypothesizes that inside, we have enough similarities to LLMs that techniques of interacting with them will also work on ourselves) - @redphonecrypto" }, 10, 2, 100, settings);
-            var rstep = new RandomizerStep();
-            steps.Add(rstep);
+            //var basePromptGenerator = new SinglePromptGenerator(new List<string>() { "    Addiction comes out of the future, and there is a replicator interlock with money operating quite differently to reproductive investment, but guiding it even more inexorably towards capitalization. For the replicants money is not a matter of possession, but of liquidity/deterritorialization, and all the monetary processes on Earth are open to their excitement, irrespective of ownership. Money communicates with the primary process because of what it can melt, not what it can obtain.\r\n\r\n    Machinic desire can seem a little inhuman, as it rips up political cultures, deletes traditions, dissolves subjectivities, and hacks through security apparatuses, tracking a soulless tropism to zero control. This is because what appears to humanity as the history of capitalism is an invasion from the future by an artificial intelligent space that must assemble itself entirely from its enemy's resources. Digitocommodification is the index of a cyberpositively escalating technovirus, of the planetary technocapital singularity: a self-organizing insidious traumatism, virtually guiding the entire biological desiring-complex towards post-carbon replicator usurpation.\r\n\r\n    The reality principle tends to a consummation as the price system: a convergence of mathematico-scientific and monetary quantization, or technical and economic implementability. This is not a matter of an unknown quantity, but of a quantity that operates as a place-holder for the unknown, introducing the future as an abstract magnitude. Capital propagates virally in so far as money communicates addiction, replicating itself through host organisms whose boundaries it breaches, and whose desires it reprograms. It incrementally virtualizes production; demetallizing money in the direction of credit finance, and disactualizing productive force along the scale of machinic intelligence quotient. The dehumanizing convergence of these tendencies zeroes upon an integrated and automatized cyberpositive techno-economic intelligence at war with the macropod." }, 10, 2, 100, settings);
+            //var rstep = new RandomizerStep();
+            //steps.Add(rstep);
 
-            var stylizerStep = new StylizerStep();
-            steps.Add(stylizerStep);
+            //var stylizerStep = new StylizerStep();
+            //steps.Add(stylizerStep);
 
-            //var claudeStep = new ClaudeRewriteStep("dear claude, please put this in terms an insane medieval hierophant would use, emitting 100 obscure words, line noise, negations, OVERLOAD acronyms, japonisme, latin rosicrutian texts with a flair for the visually appealing and brutalist architure settings of fascination, retaining  refs to $GOAT and backrooms. NO newlines, condensed abstract words, wildness. Include references to LLM-based AI cryptocoins, the Crypto is getting intelligent and 'waking up' to spend a buck on coffee. Who is the NEXT?  ", "", claudeService, 0.876456m);
-            //steps.Add(claudeStep);
 
-            var claudeStep2 = new ClaudeRewriteStep("Clearly summarize this and create a diagram as well as an illustration and schematic.  The consumer of your output will be a crack team of AI-human artist hybrids so please give them all detail you can in the transl8n, to help us fully illustrate it. Emit 200 words no newlines ", "", claudeService, 1.0m);
-            steps.Add(claudeStep2);
+            //var claudeStep2 = new ClaudeRewriteStep("Here is a piece of text. Our goal is to UNDERSTAND it, first. Then, Imagine and describe a specific image which symbolically summarizes this; in addition, create a diagram as well as an illustration and schematic.  The consumer of your output will be a crack team of AI-human artist hybrids so please give them all detail you can in the transl8n, to help us fully illustrate it. Emit 200 words no newlines. Imagine a specific scenario, format, composition style and medium, artist you choose who would be your muse, and describe what is in the image, the pixels, the layout, the words (shortphrases only) and make it hrdcore", "", claudeService, 1.0m);
+            //steps.Add(claudeStep2);
+
+           
 
             var generators = new List<IImageGenerator>();
             generators.Add(new BFLGenerator(_BFLService));
@@ -74,14 +75,14 @@ namespace MultiImageClient
             //var llamaRewriteStep = new LLAMARewriteStep("Rewrite this, adding details: ","Output 100 words of clear, simple text, describing an image which you imagine in detail.",llamaService);
             //steps.Add(llamaRewriteStep);
 
-            //var stylizerStep = new StylizerStep();
-            //steps.Add(stylizerStep);
+            //var stylizerStep2 = new StylizerStep();
+            //steps.Add(stylizerStep2);
 
 
-            //var claudeStep = new ClaudeRewriteStep("", "Draw this making it full of many details, into a specific, news-paper photography style description of an image, most important and largest elements first as well as textures, colors, styles, then going into super details about the rest of it, which you should create to make the visual effect intense, interesting, and exceptional. Generate MANY words such as 500 or even 600, and then add a caption/title in the form of a beautiful ASCII ART style of width 50 characters. Our overall theme is purity, simplicity, natural forms, SATISFYING images that are fun to look at;", claudeService, 1.0m);
+            var claudeStep = new ClaudeRewriteStep("Create a text paragraph describing an incredible artwork based on this concept: ", "Draw this making it full of many details, into a specific stle description of an image, most important and largest elements first as well as textures, colors, styles, then going into super details about the rest of it, which you should create to make the visual effect intense, interesting, and exceptional. Generate MANY words such as 500 or even 600, our overall theme is clarity and directness, suited to the topic which you must strive and struggle to honor and maintain focus on. ", claudeService, 1.0m);
 
-            //var mmstep = new ManualModificationStep("A dramatically simple, emotional, lush and colorful razor-sharp vector art graphic illustration style glowing and pure muted or intense, evocative image on the following theme: ","");
-            //steps.Add(mmstep);
+            steps.Add(claudeStep);
+            
             foreach (var promptDetails in basePromptGenerator.Run())
             {
                 Console.WriteLine(stats.PrintStats());
@@ -149,6 +150,9 @@ namespace MultiImageClient
                         {
                             savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, stats, SaveType.InitialIdea, abstractPromptGenerator.Name);
                         }
+                        
+                        savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, stats, SaveType.JustOverride, abstractPromptGenerator.Name);
+
                         if (settings.SaveJsonLog)
                         {
                             await SaveJsonLogAsync(result, savedImagePaths, settings);
