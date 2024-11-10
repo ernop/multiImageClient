@@ -34,9 +34,9 @@ namespace MultiImageClient
                 {
                     //also write temp here.
                 }
-                if (value.Length > 1000)
+                if (value.Length > 2500)
                 {
-                    value = value.Substring(0, 1000)+"...";
+                    value = value.Substring(0, 2500)+"...";
                 }
                 using (var keyFont = GetSupportedFont(key, fontSize, FontStyle.Regular))
                 using (var valueFont = GetMonospacedFont(value, fontSize, FontStyle.Regular))

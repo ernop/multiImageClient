@@ -54,7 +54,7 @@ namespace MultiImageClient
         }
 
 
-        public async Task<TaskProcessResult> RewritePromptAsync(PromptDetails promptDetails, MultiClientRunStats stats, decimal tempterature)
+        public async Task<TaskProcessResult> RewritePromptAsync(PromptDetails promptDetails, MultiClientRunStats stats, decimal temp)
         {
             if (ClaudeWillHateThis(promptDetails.Prompt))
             {
@@ -77,7 +77,7 @@ namespace MultiImageClient
                     MaxTokens = 2048,
                     Model = AnthropicModels.Claude3Haiku,
                     Stream = false,
-                    Temperature = tempterature,
+                    Temperature = temp,
                 };
 
                 MessageResponse firstResult = await _anthropicClient.Messages.GetClaudeMessageAsync(parameters);

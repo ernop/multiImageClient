@@ -60,7 +60,8 @@ namespace MultiImageClient
         public string Show()
         {
             var shortText = Prompt.Length > 150 ? Prompt.Substring(0, 150) + "..." : Prompt;
-            return shortText;
+            return Prompt;
+            //return shortText;
         }
 
         public void UndoLastStep()
