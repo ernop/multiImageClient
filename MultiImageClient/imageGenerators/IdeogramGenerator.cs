@@ -12,6 +12,8 @@ namespace MultiImageClient
 
     public class IdeogramGenerator : AbstractImageGenerator, IImageGenerator
     {
+        public ImageGeneratorApiType GetApiType => ImageGeneratorApiType.Ideogram;
+
         public IdeogramGenerator(IImageGenerationService svc) : base(svc)
         {
         }
@@ -27,7 +29,7 @@ namespace MultiImageClient
             };
             pd.IdeogramDetails = ideogramDetails;
 
-            Console.WriteLine($"\t\tSubmitting to Ideogram: {pd.Prompt}");
+            Logger.Log($"\t\tSubmitting to Ideogram: {pd.Prompt}");
             var res = await _svc.ProcessPromptAsync(pd, stats);
             return res;
         }

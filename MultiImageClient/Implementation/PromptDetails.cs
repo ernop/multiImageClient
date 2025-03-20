@@ -3,13 +3,19 @@ using System.Collections.Generic;
 
 using IdeogramAPIClient;
 
+using RecraftAPIClient;
+
+using SixLabors.ImageSharp;
+
 
 
 namespace MultiImageClient
 {
+    /// <summary>
+    /// This is generic at above the generator level. This means that generators which allow specification of specific styles will be tough since other ones won't accept those params!
+    /// </summary>
     public class PromptDetails
     {
-        
         /// This should track the "active" prompt which the next step in the process should care about.  Earlier versions are in ImageConstructionSteps. <summary>
         /// To modify it call ReplacePrompt to also fix up history.
         public string Prompt { get; set; }
@@ -23,7 +29,7 @@ namespace MultiImageClient
 
         /// Send these along and maybe one of the image consumers can use them to make a better image path etc.?
         public BFLDetails BFLDetails { get; set; }
-
+        public RecraftDetails RecraftDetails { get; set; }
         public IdeogramDetails IdeogramDetails { get; set; }
         public Dalle3Details Dalle3Details { get; set; }
 
@@ -59,9 +65,29 @@ namespace MultiImageClient
 
         public string Show()
         {
-            var shortText = Prompt.Length > 150 ? Prompt.Substring(0, 150) + "..." : Prompt;
-            return Prompt;
-            //return shortText;
+            var parts = new List<string>();
+            if (BFLDetails != null)
+            {
+                parts.Add(BFLDetails.GetDescription());
+            }
+            if (RecraftDetails != null)
+            {
+                parts.Add(RecraftDetails.GetDescription());
+            }
+            if (IdeogramDetails != null)
+            {
+                parts.Add(IdeogramDetails.GetDescription());
+            }
+            if (Dalle3Details != null)
+            {
+                parts.Add(Dalle3Details.GetDescription());
+            }
+            var detailsPart = string.Empty;
+            if (parts.Count > 0)
+            {
+                detailsPart = $" {string.Join(", ", parts)}";
+            }
+            return Prompt+detailsPart;
         }
 
         public void UndoLastStep()
@@ -94,6 +120,7 @@ namespace MultiImageClient
                 Prompt = Prompt,
                 IdentifyingConcept = IdentifyingConcept,
                 BFLDetails = BFLDetails != null ? new BFLDetails(BFLDetails) : null,
+                RecraftDetails = RecraftDetails != null ? new RecraftDetails(RecraftDetails) : null,
                 IdeogramDetails = IdeogramDetails != null ? new IdeogramDetails(IdeogramDetails) : null,
                 Dalle3Details = Dalle3Details != null ? new Dalle3Details(Dalle3Details) : null,
                 TransformationSteps = new List<PromptHistoryStep>(),

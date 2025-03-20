@@ -8,7 +8,7 @@
          
 
         ClaudeRewrite = 20,
-        ClauedeRewriteRequest = 21,
+        ClaudeRewriteRequest = 21,
         ClaudeWouldRefuseRewrite = 22,
         ClaudeDidRefuseRewrite = 23,
 

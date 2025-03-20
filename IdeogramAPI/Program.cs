@@ -1,4 +1,7 @@
 ﻿using CommandLine;
+
+using MultiImageClient;
+
 using System;
 using System.Threading.Tasks;
 
@@ -31,13 +34,13 @@ namespace IdeogramAPIClient
                 
                 if (response != null)
                 {
-                    Console.WriteLine($"Image URL: {response.Data[0].Url}");
-                    Console.WriteLine($"Revised Prompt: {response.Data[0].Prompt}");
+                    Logger.Log($"Image URL: {response.Data[0].Url}");
+                    Logger.Log($"Revised Prompt: {response.Data[0].Prompt}");
                     return 0; // Success
                 }
                 else
                 {
-                    Console.WriteLine("Failed to generate image or parse arguments.");
+                    Logger.Log("Failed to generate image or parse arguments.");
                     return 1; // Error
                 }
             }
@@ -48,7 +51,7 @@ namespace IdeogramAPIClient
             }
             finally
             {
-                Console.WriteLine("Press Enter to exit...");
+                Logger.Log("Press Enter to exit...");
                 Console.ReadLine();
             }
         }
@@ -75,13 +78,13 @@ namespace IdeogramAPIClient
                 }
                 else
                 {
-                    Console.WriteLine("No images generated.");
+                    Logger.Log("No images generated.");
                     return null;
                 }
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error: {ex.Message}");
+                Console.Error.WriteLine($"Exception, the error is: {ex.Message}");
                 return null;
             }
         }

@@ -59,7 +59,7 @@ namespace MultiImageClient
             if (ClaudeWillHateThis(promptDetails.Prompt))
             {
                 promptDetails.AddStep("Claude wouldn't have touched this prompt", TransformationType.ClaudeWouldRefuseRewrite);
-                Console.WriteLine($"\t\tClaude would have refused to rewrite: {promptDetails.Show()}");
+                Logger.Log($"\t\tClaude would have refused to rewrite: {promptDetails.Show()}");
                 stats.ClaudeWouldRefuseCount++;
                 return new TaskProcessResult { IsSuccess = false, ErrorMessage = "Claude wouldn't have touched this prompt", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude, GenericImageErrorType = GenericImageGenerationErrorType.RequestModerated};
             }
@@ -87,14 +87,15 @@ namespace MultiImageClient
                 if (isClaudeUnhappy)
                 {
                     stats.ClaudeRefusedCount++;
-                    Console.WriteLine($"\t\tClaude was unhappy about\n\t\t\t{promptDetails.Show()}\n\t\t\t{claudeResponse}");
+                    Logger.Log($"\t\tClaude was unhappy about\n\t\t\t{promptDetails.Show()}\n\t\t\t{claudeResponse}");
                     return new TaskProcessResult { IsSuccess = false, ErrorMessage = $"Claude was unhappy about the prompt and refused to rewrite it. {claudeResponse}", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude, GenericTextErrorType = GenericTextGenerationErrorType.RequestModerated };
                 }
                 else
                 {
-                    Console.WriteLine($"\t\tClaude rewrote it to: {claudeResponse}");
+                    Logger.Log($"\t___Step:Claude____ => rewrote to: {claudeResponse}");
                     promptDetails.ReplacePrompt(claudeResponse, claudeResponse, TransformationType.ClaudeRewrite);
                     stats.ClaudeRewroteCount++;
+
                     return new TaskProcessResult { IsSuccess = true, ErrorMessage = "", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude };
                 }
             }

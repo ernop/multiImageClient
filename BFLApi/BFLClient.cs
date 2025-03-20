@@ -1,5 +1,9 @@
 ﻿using CommandLine;
+
+using MultiImageClient;
+
 using Newtonsoft.Json;
+
 using System;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -140,13 +144,13 @@ namespace BFLAPIClient
                     response = await client.GenerateFluxDevAsync(requestDev);
                     break;
                 default:
-                    Console.WriteLine($"Invalid model: {opts.Model}");
+                    Logger.Log("Invalid model: {opts.Model}");
                     return;
             }
 
-            Console.WriteLine($"Status: {response.Status}");
-            Console.WriteLine($"Image URL: {response.Result?.Sample}");
-            Console.WriteLine($"Revised Prompt: {response.Result?.Prompt}");
+            Logger.Log($"Status: {response.Status}");
+            Logger.Log($"Image URL: {response.Result?.Sample}");
+            Logger.Log($"Revised Prompt: {response.Result?.Prompt}");
         }
     }
 

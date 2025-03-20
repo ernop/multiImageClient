@@ -9,6 +9,7 @@ namespace MultiImageClient
 {
     public class BFLGenerator : AbstractImageGenerator, IImageGenerator
     {
+        public ImageGeneratorApiType GetApiType => ImageGeneratorApiType.BFL;
         public BFLGenerator(IImageGenerationService svc) : base(svc)
         {
         }
@@ -17,14 +18,12 @@ namespace MultiImageClient
             var bflDetails = new BFLDetails
             {
                 Width = 1440,
-                Height = 960,
+                Height = 1440, //1376
                 PromptUpsampling = false,
                 SafetyTolerance = 6,
             };
             pd.BFLDetails = bflDetails;
-            var shortened = pd.Prompt.Length > 100 ? pd.Prompt.Substring(0, 100) + "..." : pd.Prompt;
-            shortened = pd.Prompt;
-            Console.WriteLine($"\tSubmitting to BFL: {shortened}");
+            Logger.Log($"\tSubmitting to BFL: {pd.Prompt}");
             var res = await _svc.ProcessPromptAsync(pd, stats);
             return res;
         }

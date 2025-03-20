@@ -1,6 +1,8 @@
-﻿namespace IdeogramAPIClient
+﻿using MultiImageClient;
+
+namespace IdeogramAPIClient
 {
-    public class IdeogramDetails
+    public class IdeogramDetails:IDetails
     {
         public IdeogramAspectRatio? AspectRatio { get; set; }
         public IdeogramModel Model { get; set; }
@@ -16,6 +18,16 @@
             MagicPromptOption = other.MagicPromptOption;
             StyleType = other.StyleType;
             NegativePrompt = other.NegativePrompt;
+        }
+
+        public string GetDescription()
+        {
+            return $"{StyleType}";
+        }
+
+        public IDetails Clone()
+        {
+            throw new NotImplementedException();
         }
     }
 }

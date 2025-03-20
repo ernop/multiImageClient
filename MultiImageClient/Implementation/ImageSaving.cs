@@ -1,26 +1,45 @@
 ﻿using System;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
-using System.Collections.Generic;
 using System.IO;
-
-using IdeogramAPIClient;
 using System.Linq;
-
+using System.Net.Http;
+using System.Collections.Generic;
+using IdeogramAPIClient;
 
 namespace MultiImageClient
 {
-    public enum SaveType
-    {
-        Raw = 1,
-        FullAnnotation = 2,
-        InitialIdea = 3,
-        FinalPrompt = 4,
-        JustOverride = 5, // when w generate the prompt sometimes we just have a core word/phrase called the "IdentifyingConcept" which we want to make visible in both the filename and in this version with the subtitle for illustrative purposes. If you get one of these then just draw the text large, centered, in a nice font, with no other junk.
-    }
-
     public static class ImageSaving
     {
+        private static readonly HttpClient httpClient = new HttpClient();
+
+        public static async Task<byte[]> DownloadImageAsync(TaskProcessResult result)
+        {
+            try
+            {
+                using var response = await httpClient.GetAsync(result.Url);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Log($"Failed to download image: {response.StatusCode}");
+                    return Array.Empty<byte>();
+                }
+
+                var res = await response.Content.ReadAsByteArrayAsync();
+                if (res.Length == 0)
+                {
+                    Logger.Log($"Downloaded image is empty");
+                    return Array.Empty<byte>();
+                }
+
+                Logger.Log($"\tDownloading image from: {result.Url}, bytes:{res.Length}");
+                return res;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Failed to download image from {result.Url}: {ex.Message}");
+                return Array.Empty<byte>();
+            }
+        }
+
         public static async Task<string> SaveImageAsync(
             byte[] imageBytes,
             TaskProcessResult result,
@@ -38,77 +57,97 @@ namespace MultiImageClient
             }
 
             Directory.CreateDirectory(baseFolder);
-            var safeFilename = TextUtils.GenerateUniqueFilename(result, baseFolder, promptGeneratorName, saveType);
-            var fullPath = Path.Combine(baseFolder, $"{safeFilename}{result.ImageGenerator.GetFileExtension()}");
+            var safeFilename = FilenameGenerator.GenerateUniqueFilename(result, baseFolder, promptGeneratorName, saveType);
+            var fullPath = Path.Combine(baseFolder, safeFilename);
 
             try
             {
                 if (File.Exists(fullPath))
                 {
-                    Console.WriteLine("Overwriting!", fullPath);
                     throw new Exception("no overwriting!");
                 }
                 await File.WriteAllBytesAsync(fullPath, imageBytes);
-                if (saveType == SaveType.Raw)
-                {
-                    Console.WriteLine($"\tSaved {saveType} image. Fp: {fullPath}");
-                }
 
                 if (saveType == SaveType.Raw)
                 {
+                    Logger.Log($"\tSaved {saveType} image. Fp: {fullPath}");
                     stats.SavedRawImageCount++;
                 }
                 else
                 {
-                    await AddAnnotationsAsync(imageBytes, result, fullPath, stats, saveType, promptGeneratorName);
-                    stats.SavedAnnotatedImageCount++;
+                    if (!fullPath.EndsWith(".svg"))
+                    {
+                        var imageInfo = GetAnnotationDefaultData(result, fullPath, saveType, promptGeneratorName);
+                        var usingSteps = GetUsingSteps(saveType, result.PromptDetails);
+                        if (saveType == SaveType.JustOverride)
+                        {
+                            await TextFormatting.JustAddSimpleTextToBottomAsync(
+                                imageBytes,
+                                usingSteps,
+                                imageInfo,
+                                fullPath,
+                                saveType
+                            );
+                        }
+                        else
+                        {
+                            await TextFormatting.SaveImageAndAnnotate(
+                                imageBytes,
+                                usingSteps,
+                                imageInfo,
+                                fullPath,
+                                saveType
+                            );
+                        }
+                        stats.SavedAnnotatedImageCount++;
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"\tError saving {saveType} image: {ex.Message}");
+                Logger.Log($"\tError saving {saveType} image: {ex.Message}\r\n{ex}");
             }
 
             return fullPath;
         }
 
-        private static async Task AddAnnotationsAsync(
-            byte[] imageBytes,
+        private static IEnumerable<PromptHistoryStep> GetUsingSteps(SaveType saveType, PromptDetails promptDetails)
+        {
+            return saveType switch
+            {
+                SaveType.FullAnnotation => promptDetails.TransformationSteps,
+                SaveType.InitialIdea or SaveType.FinalPrompt or SaveType.Raw or SaveType.JustOverride => new List<PromptHistoryStep>(),
+                _ => throw new Exception("Invalid SaveType")
+            };
+        }
+
+        private static Dictionary<string, string> GetAnnotationDefaultData(
             TaskProcessResult result,
             string fullPath,
-            MultiClientRunStats stats,
             SaveType saveType,
             string promptGeneratorName)
         {
-            var generator = result.ImageGenerator;
-            var promptDetails = result.PromptDetails;
             var imageInfo = new Dictionary<string, string>();
-            var usingSteps = promptDetails.TransformationSteps;
+            var promptDetails = result.PromptDetails;
+
             switch (saveType)
             {
                 case SaveType.FullAnnotation:
-
-                    AddFullAnnotationInfo(imageInfo, generator, promptDetails, promptGeneratorName);
+                    AddFullAnnotationInfo(imageInfo, result.ImageGenerator, promptDetails, promptGeneratorName, result);
                     imageInfo.Add("Filename", Path.GetFileName(fullPath));
-                    usingSteps = promptDetails.TransformationSteps;
                     break;
                 case SaveType.InitialIdea:
-
                     var initialPrompt = promptDetails.TransformationSteps.First().Explanation;
-                    imageInfo.Add("Producer", generator.ToString());
+                    imageInfo.Add("Producer", result.ImageGenerator.ToString());
                     imageInfo.Add("Initial Prompt", initialPrompt);
-                    usingSteps = new List<PromptHistoryStep>();
                     break;
                 case SaveType.FinalPrompt:
-
                     var finalPrompt = promptDetails.Prompt;
-                    imageInfo.Add("Producer", generator.ToString());
+                    imageInfo.Add("Producer", result.ImageGenerator.ToString());
                     imageInfo.Add("Final Prompt", finalPrompt);
-                    usingSteps = new List<PromptHistoryStep>();
                     break;
                 case SaveType.Raw:
-                    imageInfo = new Dictionary<string, string>();
-                    usingSteps = new List<PromptHistoryStep>();
+                    // No annotation
                     break;
                 case SaveType.JustOverride:
                     imageInfo.Add("JUST", result.PromptDetails.IdentifyingConcept);
@@ -116,20 +155,12 @@ namespace MultiImageClient
             }
 
             imageInfo = imageInfo.Where(kvp => !string.IsNullOrWhiteSpace(kvp.Value))
-                                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-            await TextFormatting.SaveImageAndAnnotateText(
-                imageBytes,
-                usingSteps,
-                imageInfo,
-                fullPath,
-                saveType
-            );
+                                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            return imageInfo;
         }
 
-        private static void AddFullAnnotationInfo(Dictionary<string, string> imageInfo, ImageGeneratorApiType generator, PromptDetails promptDetails, string promptGeneratorName)
+        private static void AddFullAnnotationInfo(Dictionary<string, string> imageInfo, ImageGeneratorApiType generator, PromptDetails promptDetails, string promptGeneratorName, TaskProcessResult result)
         {
-            
             switch (generator)
             {
                 case ImageGeneratorApiType.Ideogram:
@@ -146,10 +177,8 @@ namespace MultiImageClient
                     break;
                 case ImageGeneratorApiType.BFL:
                     var bflDetails = promptDetails.BFLDetails;
-
                     imageInfo.Add("Generator", "BFL Flux 1.1");
-                    //imageInfo.Add("Rewriting prompt", bflDetails.PromptUpsampling.ToString());
-                    if (bflDetails.Seed != default)
+                    if (bflDetails.Seed.HasValue)
                         imageInfo.Add("Seed", bflDetails.Seed.Value.ToString());
                     if (bflDetails.Width != default && bflDetails.Height != default)
                         imageInfo.Add("Size", $"{bflDetails.Width}x{bflDetails.Height}");
@@ -161,6 +190,13 @@ namespace MultiImageClient
                     var dalle3Details = promptDetails.Dalle3Details;
                     imageInfo.Add("Size", $"{dalle3Details.Size}");
                     imageInfo.Add("Quality", dalle3Details.Quality.ToString());
+                    break;
+                case ImageGeneratorApiType.Recraft:
+                    imageInfo.Add("Generator", "Recraft");
+                    imageInfo.Add("Mimetype", result.ContentType);
+                    var recraftDetails = promptDetails.RecraftDetails;
+                    imageInfo.Add("Size", $"{recraftDetails.size}");
+                    imageInfo.Add("Style", recraftDetails.GetFullStyleName());
                     break;
             }
             imageInfo.Add("Kind", promptGeneratorName);

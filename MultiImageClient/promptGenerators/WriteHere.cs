@@ -4,6 +4,8 @@ using Microsoft.VisualBasic;
 
 using Newtonsoft.Json.Linq;
 
+using RecraftAPIClient;
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -13,11 +15,13 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Numerics;
 using System.Reflection;
 using System.Reflection.Metadata.Ecma335;
 using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Xml.Linq;
 
@@ -47,17 +51,19 @@ namespace MultiImageClient
 
         private IEnumerable<PromptDetails> GetPrompts()
         {
-            var prompts = new List<string>() {
-                "A completely normal light switch for a 1990s american north eastern area wall, in the 'on' position",
-                "a hybrid cat-turtle creature enjoying sunning herself on a log.",
-                "A modern building with a reflective glass facade. The building's reflection captures another tower, possibly a skyscraper. The image has text overlay that reads 'How Buildings Learn' written in white font against a dark background. The text 'written and presented by Stewart Brand' is also visible at the bottom.",
-                "Close-up of a super clear and sharp photo of a perfectly preserved tablet covered with many ancient, alien styles of kanji characters created with the finest jewels, obsidian, intensely emotional and creative, in a semi-grid, clean and pure incredible macro photograph.",
-                "The streets of Singapore are bustling with people and various street food stalls, creating a lively and multicultural atmosphere. The area is full of guava, cheese, broccoli, kimchi, hardboiled eggs, vinegar, and durian. Each smell seems to waft through the crowd attacking people and animals who are particularly weak to it, striking them with brutal overwhelming negative sensations. This is a biological weapon attack! the image is a schema overhead view with detailed performance analysis\r\nA light switch that is clearly in the \"ON\" not \"OFF\" position. Please describe this close-up 3d depth image in high detail exactly describing the light switch panel and its material and color, the switch which sticks out, its position and what the position represents.",
-                "A 4x4 grid of super magiscule, block font dense intense incredibly meaningful, profound, ethereal, and subtle KANJI characters. The characters are illustrated in super high resolution, partially 3d style, feeling like they almost emerge from the flat screen, in a super clear image utilizing one or more of: subtle coloration, unusual line thicknesses or variations, unusual kerning, pen and ink, hand-drawn custom artisinal creative characters, and/or super evocative, personalized textures.",
-                "Introducing the \"Rogue\" card, an exciting new addition between the Queen and Jack of Diamonds in a standard playing card deck. The Rogue card features a dashing figure with a masked face, holding a small, curved dagger. The figure is adorned with a cape and a diamond-encrusted hat, symbolizing the connection to the Diamonds suit. The single-letter symbol for the Rogue card is \"X\", which is displayed in each corner along with the suit of Diamonds. The card's design maintains the simplicity of traditional playing cards, with the \"X\" and diamonds in the corners and a captivating, yet minimalist, pattern in the middle, featuring a subtle diamond-like motif. The Rogue card captures the essence of cunning and deception, adding an exciting twist to the classic deck.\r\n\U0001f955 attacking 🐢 with \U0001f98a",
-"An immense tower of magical prortions, ancient, surrounded by a barren environment with just a hint of change and evolution, incredibly deep depth of field, epic ancient",
-
-            };
+            List<string> prompts = new List<string>
+{
+    "A highly detailed digital painting, warmly lit, showing Charles—an extraordinarily thin young man with messy black hair—inside his cramped studio apartment at night, facing an old, grandfatherly figure in a red-and-white Santa suit who just appeared unexpectedly. Locks on the apartment door and simple, industrial-themed furnishings are visible, emphasizing the surreal intrusion of the old Santa amid the mundane setting.",
+    "An intricate illustration of the North Pole’s List Room: a vast, stadium-like interior lined with tens of thousands of polished wooden desks in concentric rings. Enormous scrolls of paper hang from the high domed ceiling, each so thick they coil around metal bars. Scores of pointed-eared elves—dressed in red, green, and gold—hunch over their desks, writing and scrutinizing three-dimensional viewers that float above the angled surfaces, all under a diffuse, magical glow.",
+    "A richly detailed image of Kelvin, a head elf with golden epaulettes and a serious expression, guiding Charles through the List Room. They stand at one particular desk, angled like an architect’s drafting table, where a flat, crystal-clear viewer shows a child walking along a city sidewalk. The elves around them wear festive but restrained outfits of red and green, and behind them loom the monumental scrolls and countless workstations.",
+    "A large workshop filled with warm lamplight and rows of sturdy wooden benches, each bearing a strange metal iris connected to a glass pipe filled with gray magical ‘dough.’ Elves in festive attire carefully shape the dough into children’s gifts—a small plastic frog in one case—by hand. Tools, ribbons, and bright wrapping papers are scattered about, with half-finished trinkets and toys lending a tactile, handcrafted atmosphere.",
+    "A meticulously rendered stable scene, where elegant, strong-limbed reindeer stand in neat rows, their antlers adorned with subtle silver bells. The wooden stable walls are hung with wreaths and holly. At the center, the gleaming red sleigh awaits, its runners reflecting the straw and hay below, while elves tend lovingly to the creatures and ensure everything is perfectly prepared.",
+    "A grand set of private chambers designed for Santa: luxurious, slightly gaudy furnishings, plush rugs, and carved wood accents. Among these comforts stands Charles, now wearing the red-and-white suit that still doesn’t quite fit. Beside him is Matilda, a petite elf with long black hair, offering him exquisite notebooks and pens. On a side table is the mechanical viewer, dials and levers gleaming, ready to reveal the Earth from orbit.",
+    "Inside the workshop again, this time focusing closely on a single elf holding a shape-shifting ball of gray dough, trying to form an impossible gift that would maximize a child’s happiness. The elf’s brow is furrowed in concentration, the device half-transformed into something ominous. In the background, Charles stands horrified, notebooks in hand, as colorful presents and decorations create a bizarre contrast to his moral dilemma.",
+    "A dramatic nighttime rooftop scene in some metropolitan area on Earth. Two indistinguishable copies of Charles—both strong and fluid in motion—confront James, the old Santa now in a human disguise. The air crackles with tension. Below them, city lights and confused pedestrians blur. The style remains painterly and detailed, capturing the swift, inhuman fight through elongated shadows and dynamic poses.",
+    "A vast emptiness where the North Pole once stood: the cavernous List Room and workshops are gone, leaving only a blank white expanse with faint echoes of candy canes, wreaths, and gold trim. A subtle shimmer in the air hints that the elves, once so numerous and devout, have departed entirely. The atmosphere is both peaceful and melancholic, shafts of pale light accenting the pristine emptiness.",
+    "A serene, intimate nighttime bedroom in rural China. A small girl, Li Xiu Yang, lies asleep in a simple bed. Charles, now appearing gentler and more resolved, stands beside her, pressing a tiny silver marble to her forehead. Outside the window, the moonlight bathes quiet rooftops. The style remains consistent and painterly, every detail—her soft blanket, modest furniture, a stray toy on the floor—rendered lovingly as he bestows this final, hopeful gift."
+};
             foreach (var prompt in prompts)
             {
                 var pd = new PromptDetails();
@@ -66,7 +72,8 @@ namespace MultiImageClient
                 yield return pd;
             }
         }
-        public override IEnumerable<PromptDetails> Prompts => GetPrompts().OrderBy(el=> Random.Shared.Next());
+        public override IEnumerable<PromptDetails> Prompts => GetPrompts().OrderBy(el => Random.Shared.Next());
     }
 }
+
 
