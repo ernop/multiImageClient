@@ -3,7 +3,7 @@ using OpenAI.Images;
 
 namespace MultiImageClient
 {
-    public class Dalle3Details
+    public class Dalle3Details : IDetails
     {
         public string Model { get; set; }
         public GeneratedImageSize Size { get; set; }
@@ -17,6 +17,11 @@ namespace MultiImageClient
             Size = other.Size;
             Quality = other.Quality;
             Format = other.Format;
+        }
+
+        public string GetDescription()
+        {
+            return $"{Model}-{Size}-{Quality}-{Format}";
         }
     }
 }

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection.Emit;
+using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
@@ -38,6 +39,12 @@ namespace MultiImageClient
         public virtual bool SaveFullAnnotation => true;
         public virtual bool SaveFinalPrompt => true;
         public virtual bool SaveInitialIdea => true;
+        
+
+        /// <summary>
+        /// the version with just a simple below-image word/phrase set during prompt expansion
+        /// </summary>
+        public virtual bool SaveJustOverride => true;
         public virtual bool TryBothBFLUpsamplingAndNot => false;
 
         /// Whether or not claude rewriting succeeds, just toss in a raw direct version of whatever you have to the image generator anyway.
@@ -50,7 +57,10 @@ namespace MultiImageClient
             Settings = settings;
         }
 
+        
+
         /// Implementers should have their .Run method called from Program.cs to iterate through your prompts.
+        // expand the things we've set up into all the prmopts wanted.
         public IEnumerable<PromptDetails> Run()
         {
             var useVariants = new List<string>() { "" };

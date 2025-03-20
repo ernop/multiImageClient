@@ -15,7 +15,8 @@ namespace MultiImageClient
                 ImageGeneratorApiType.Ideogram => ".png",
                 ImageGeneratorApiType.BFL => ".jpg",
                 ImageGeneratorApiType.Dalle3 => ".png",
-                _ => throw new ArgumentException("Unknown generator type", nameof(generator))
+                ImageGeneratorApiType.Recraft => ".png", //actually, I should use the value read from head since it sometimes shows up as .svg.
+                _ => throw new ArgumentException("Unknown image generator type while picking file extension:", nameof(generator))
             };
         }
     }

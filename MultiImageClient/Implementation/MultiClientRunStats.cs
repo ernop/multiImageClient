@@ -8,19 +8,27 @@ namespace MultiImageClient
         public int SavedRawImageCount { get; set; }
         public int SavedAnnotatedImageCount { get; set; }
         public int SavedJsonLogCount { get; set; }
+        
         public int IdeogramRequestCount { get; set; }
         public int IdeogramRefusedCount { get; set; }
+        
         public int ClaudeRequestCount { get; set; }
         public int ClaudeWouldRefuseCount { get; set; }
         public int ClaudeRefusedCount { get; set; }
         public int ClaudeRewroteCount { get; set; }
+        
         public int Dalle3RequestCount { get; set; }
         public int Dalle3RefusedCount { get; set; }
+        
         public int BFLImageGenerationRequestCount { get; set; }
         public int BFLImageGenerationSuccessCount { get; set; }
         public int BFLImageGenerationErrorCount { get; set; }
+        
+        public int RecraftImageGenerationRequestCount { get; set; }
+        public int RecraftImageGenerationSuccessCount { get; set; }
+        public int RecraftImageGenerationErrorCount { get; set; }
 
-        public string PrintStats()
+        public void PrintStats()
         {
             var nonZeroStats = new List<string>();
 
@@ -51,7 +59,11 @@ namespace MultiImageClient
             if (BFLImageGenerationRequestCount > 0 | BFLImageGenerationErrorCount>0 | BFLImageGenerationRequestCount > 0)
                 nonZeroStats.Add($"BFL: total:{BFLImageGenerationRequestCount}, ok:{BFLImageGenerationSuccessCount}, bad:{BFLImageGenerationErrorCount} ");
 
-            return $"Stats: {string.Join(", ", nonZeroStats)}";
+            if (RecraftImageGenerationRequestCount > 0 | RecraftImageGenerationErrorCount > 0 | RecraftImageGenerationRequestCount > 0)
+                nonZeroStats.Add($"Recraft: total:{RecraftImageGenerationRequestCount}, ok:{RecraftImageGenerationSuccessCount}, bad:{RecraftImageGenerationErrorCount} ");
+
+            var res = $"Stats: {string.Join(", ", nonZeroStats)}";
+            Console.WriteLine(res);
         }
     }
 }

@@ -9,5 +9,6 @@ namespace MultiImageClient
     public interface IImageGenerator
     {
         Task<TaskProcessResult> ProcessPromptAsync(PromptDetails pd, MultiClientRunStats stats);
+        public ImageGeneratorApiType GetApiType { get; }
     }
 }

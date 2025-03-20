@@ -12,6 +12,7 @@ namespace MultiImageClient
         public string OpenAIApiKey { get; set; }
         public string BFLApiKey {get;set;}
         public string AnthropicApiKey{ get; set; }
+        public string RecraftApiKey { get; set; }
         public string LoadPromptsFrom { get; set; }
         public bool EnableLogging { get; set; }
         public string LogFilePath { get; set; }
@@ -34,15 +35,21 @@ namespace MultiImageClient
             string json = File.ReadAllText(filePath);
             var settings = JsonConvert.DeserializeObject<Settings>(json);
             settings.Validate();
+            Logger.Log("Current settings:");
+            Logger.Log($"Image Download Base:\t{settings.ImageDownloadBaseFolder}");
+            Logger.Log($"Save JSON Log:\t\t{settings.SaveJsonLog}");
+            Logger.Log($"Enable Logging:\t\t{settings.EnableLogging}");
+            Logger.Log($"Annotation Side:\t{settings.AnnotationSide}");
+
             return settings;
         }
 
         public void Validate()
         {
-            if (string.IsNullOrWhiteSpace(IdeogramApiKey))
-            {
-                throw new ArgumentException("IdeogramApiKey is required");
-            }
+            //if (string.IsNullOrWhiteSpace(IdeogramApiKey))
+            //{
+            //    throw new ArgumentException("IdeogramApiKey is required");
+            //}
 
             if (string.IsNullOrWhiteSpace(LogFilePath))
             {

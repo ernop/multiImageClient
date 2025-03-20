@@ -14,11 +14,14 @@ namespace MultiImageClient
     {
         private SemaphoreSlim _bflSemaphore;
         private BFLClient _bflClient;
+        private HttpClient _httpClient;
+
 
         public BFLService(string apiKey, int maxConcurrency)
         {
             _bflClient = new BFLClient(apiKey);
             _bflSemaphore = new SemaphoreSlim(maxConcurrency);
+            _httpClient = new HttpClient();
         }
 
         public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails, MultiClientRunStats stats)
@@ -40,7 +43,7 @@ namespace MultiImageClient
                 stats.BFLImageGenerationRequestCount++;
 
                 var generationResult = await _bflClient.GenerateFluxPro11Async(request);
-                Console.WriteLine($"\tFrom BFL: '{generationResult.Status}'");
+                Logger.Log($"\tFrom BFL: '{generationResult.Status}'");
 
                 // this is where we handle generator-specific error types.
                 if (generationResult.Status != "Ready")
@@ -65,7 +68,7 @@ namespace MultiImageClient
                 }
                 else
                 {
-                    Console.WriteLine($"BFL image generated: {generationResult.Result.Sample}");
+                    Logger.Log($"BFL image generated: {generationResult.Result.Sample}");
                     stats.BFLImageGenerationRequestCount++;
                     var returnedPrompt = generationResult.Result.Prompt.Trim();
                     if (returnedPrompt.Trim() != promptDetails.Prompt.Trim())
@@ -73,13 +76,16 @@ namespace MultiImageClient
                         //BFL replaced the prompt. Never actually happens.
                         promptDetails.ReplacePrompt(returnedPrompt, returnedPrompt, TransformationType.BFLRewrite);
                     }
-                    return new TaskProcessResult { IsSuccess = true, Url = generationResult.Result.Sample, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFL };
+
+                    var headResponse = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, generationResult.Result.Sample));
+                    var contentType = headResponse.Content.Headers.ContentType?.MediaType;
+                    return new TaskProcessResult { IsSuccess = true, Url = generationResult.Result.Sample, ContentType = contentType, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFL };
                 }
 
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"BFL error: {ex.Message}");
+                Logger.Log($"BFL error: {ex.Message}");
                 return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFL };
             }
             finally

@@ -10,6 +10,7 @@ namespace MultiImageClient
 {
     public class Dalle3Generator : AbstractImageGenerator, IImageGenerator  
     {
+        public ImageGeneratorApiType GetApiType => ImageGeneratorApiType.Dalle3;
         public Dalle3Generator(IImageGenerationService svc) : base(svc)
         {
         }
@@ -24,7 +25,7 @@ namespace MultiImageClient
             };
             pd.Dalle3Details = dalle3Details;
 
-            Console.WriteLine($"\t\tSubmitting to Dalle3: {pd.Prompt}");
+            Logger.Log($"\t\tSubmitting to Dalle3: {pd.Prompt}");
             var res = await _svc.ProcessPromptAsync(pd, stats);
             return res;
         }

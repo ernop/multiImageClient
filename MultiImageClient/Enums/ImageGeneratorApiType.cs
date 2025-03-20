@@ -8,5 +8,6 @@ namespace MultiImageClient
         Dalle3 = 2,
         Ideogram = 3,
         BFL = 4,
+        Recraft= 5,
     }
 }

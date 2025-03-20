@@ -1,6 +1,8 @@
-﻿namespace IdeogramAPIClient
+﻿using MultiImageClient;
+
+namespace IdeogramAPIClient
 {
-    public class BFLDetails
+    public class BFLDetails : IDetails
     {
         private int _width = 1024;
         private int _height = 1024;
@@ -62,6 +64,11 @@
                 throw new System.ArgumentException("Image height must be less than or equal to 1440");
             }
             _height = value;
+        }
+
+        public string GetDescription()
+        {
+            return $"{Width}x{Height}, {Seed}";
         }
     }
 }

@@ -5,6 +5,7 @@
     /// and then at least have them to accompany the actual image output to know its history.
     public class PromptHistoryStep
     {
+        public PromptHistoryStep() { }
         public PromptHistoryStep(string newPrompt, string humanExplanation, TransformationType transformationType, PromptReplacementMetadata pmd = null)
         {
             Prompt = newPrompt;

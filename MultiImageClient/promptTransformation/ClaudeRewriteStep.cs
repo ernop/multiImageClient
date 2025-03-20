@@ -28,15 +28,15 @@ namespace MultiImageClient
         {
             var preparedClaudePrompt = $"{_prefix}\nHere is the topic:\n'{pd.Prompt}'\n{_suffix}".Trim();
             var preparedClaudePromptWithTemp = $"temp={_temperature} {preparedClaudePrompt}";
-            pd.ReplacePrompt(preparedClaudePrompt, preparedClaudePromptWithTemp, TransformationType.ClauedeRewriteRequest);
+            pd.ReplacePrompt(preparedClaudePrompt, preparedClaudePromptWithTemp, TransformationType.ClaudeRewriteRequest);
 
             var response = await _claudeService.RewritePromptAsync(pd, stats, _temperature);
             if (!response.IsSuccess)
             {
-                Console.WriteLine($"\tClaude fail so reverting FROM: {pd.Show()}");
+                Logger.Log($"\tClaude fail so reverting FROM: {pd.Show()}");
                 pd.UndoLastStep();
                 //pd.UndoLastStep();
-                Console.WriteLine($"\tClaude fail so reverted TO: {pd.Show()}");
+                Logger.Log($"\tClaude fail so reverted TO: {pd.Show()}");
                 pd.ReplacePrompt(pd.Prompt, response.ErrorMessage, TransformationType.ClaudeDidRefuseRewrite);
                 
                 return false;

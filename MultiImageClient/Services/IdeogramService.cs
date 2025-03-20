@@ -22,6 +22,7 @@ namespace MultiImageClient
     {
         private SemaphoreSlim _ideogramSemaphore;
         private IdeogramClient _ideogramClient;
+        private HttpClient _httpClient = new HttpClient();
 
         public IdeogramService(string apiKey, int maxConcurrency)
         {
@@ -50,6 +51,8 @@ namespace MultiImageClient
                             //Ideogram replaced the prompt.
                             promptDetails.ReplacePrompt(returnedPrompt, returnedPrompt, TransformationType.IdeogramRewrite);
                         }
+                        var headResponse = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, imageObject.Url));
+                        var contentType = headResponse.Content.Headers.ContentType?.MediaType;
                         return new TaskProcessResult { IsSuccess = true, Url = imageObject.Url, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram };
                     }
                     throw new Exception("No images returned");

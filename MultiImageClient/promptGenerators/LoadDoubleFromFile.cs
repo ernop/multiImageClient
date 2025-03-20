@@ -32,7 +32,7 @@ namespace MultiImageClient.promptGenerators
 
         public override int ImageCreationLimit => 400;
         public override int CopiesPer => 2;
-        public override int FullyResolvedCopiesPer =>4;
+        public override int FullyResolvedCopiesPer => 2;
         public override bool RandomizeOrder => true;
         public override string Prefix => "";
         public override IEnumerable<string> Variants => new List<string> { "" };
@@ -82,14 +82,16 @@ namespace MultiImageClient.promptGenerators
                 }
             }
 
-            Console.WriteLine($"loaded {sourceFPs.Count} prompts total.");
-            var countToInclude = 8;
-            var onlyFirstNChars = 300;
+            Logger.Log($"loaded {sourcePrompts.Count} prompts total.");
+            var countToInclude = 4;
+            var totalLengthCount = 3000;            
 
             for (var ii = 0; ii < ImageCreationLimit * 2; ii++)
             {
+                var usingCountToInclude=Random.Shared.Next(1, countToInclude);
+                var onlyFirstNChars = totalLengthCount / countToInclude;
                 var allthem = new List<string>();
-                for (var jj = 0; jj < countToInclude; jj++)
+                for (var jj = 0; jj < usingCountToInclude; jj++)
                 {
                     var randomIndex = Random.Shared.Next(0, sourcePrompts.Count);
 
@@ -108,7 +110,8 @@ namespace MultiImageClient.promptGenerators
                 var joined = string.Join("\r\n--- ", allthem.OrderBy(el=>el.Length));
 
                 var combined = $"{joined}";
-                Console.WriteLine(combined);
+
+                Logger.Log(combined);
                 var pd = new PromptDetails();
                 pd.ReplacePrompt(combined, combined, TransformationType.InitialPrompt);
                 pd.IdentifyingConcept = "";

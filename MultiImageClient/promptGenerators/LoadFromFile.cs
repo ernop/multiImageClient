@@ -25,9 +25,9 @@ namespace MultiImageClient.promptGenerators
 
         public override string Name => nameof(LoadFromFile);
 
-        public override int ImageCreationLimit => 900;
-        public override int CopiesPer => 1;
-        public override int FullyResolvedCopiesPer => 3;
+        public override int ImageCreationLimit => 40;
+        public override int CopiesPer => 2;
+        public override int FullyResolvedCopiesPer => 2;
         public override bool RandomizeOrder => true;
         public override string Prefix => "";
         public override IEnumerable<string> Variants => new List<string> { "" };
@@ -45,12 +45,15 @@ namespace MultiImageClient.promptGenerators
             var sourceFPs = new List<string>() {
                 "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrivatePrompts.txt",
                 "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts-private.txt",
-                "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts.txt",
-                "D:\\proj\\prompts3.txt" };
+                //"D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts.txt",
+                //"D:\\proj\\prompts3.txt" 
+            };
             
             if (!string.IsNullOrEmpty(FilePath)) {
                 sourceFPs.Add(FilePath);
             }
+
+            var allPromptsRaw = new List<string>();
 
             foreach (var fp in sourceFPs)
             {
@@ -61,17 +64,21 @@ namespace MultiImageClient.promptGenerators
                     {
                         continue;
                     }
-                    sourceFPs.Add(usePrompt);
+                    if (string.IsNullOrEmpty(usePrompt))
+                    {
+                        continue;
+                    }
+                    allPromptsRaw.Add(usePrompt);
                 }
             }
 
-            Console.WriteLine($"loaded {sourceFPs.Count} prompts total.");
+            Logger.Log($"loaded {allPromptsRaw.Count} prompts total.");
 
             for (var ii = 0; ii < ImageCreationLimit; ii++)
             {
-                var aa = Random.Shared.Next(0, sourceFPs.Count);
+                var aa = Random.Shared.Next(0, allPromptsRaw.Count);
                 var pd = new PromptDetails();
-                var usePrompt = sourceFPs[aa];
+                var usePrompt = allPromptsRaw[aa];
                 pd.ReplacePrompt(usePrompt, usePrompt, TransformationType.InitialPrompt);
                 pd.IdentifyingConcept = "";
 
