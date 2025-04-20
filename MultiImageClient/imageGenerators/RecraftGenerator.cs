@@ -70,7 +70,7 @@ namespace MultiImageClient
                 pd.RecraftDetails = GetDefaultRecraftDetails();
             }
             
-            Logger.Log($"\tSubmitting to Recraft with style {pd.RecraftDetails.GetFullStyleName()}");
+            Logger.Log($"Submitting to Recraft with style {pd.RecraftDetails.GetFullStyleName()}");
             var res = await _svc.ProcessPromptAsync(pd, stats);
             return res;
         }

@@ -30,13 +30,27 @@ namespace MultiImageClient
             _ClaudeService = new ClaudeService(settings.AnthropicApiKey, concurrency);
         }
 
-        private static IWorkflow CreateWorkflow(GeneralActionType actionType, WorkflowContext context, AbstractPromptGenerator apg, Settings settings){
+        private static IWorkflow CreateWorkflow(GeneralActionType actionType, WorkflowContext context, AbstractPromptGenerator abstractPromptGenerator, Settings settings){
+            
+            var generators = new List<IImageGenerator>
+            {
+                new BFLGenerator(_BFLService),
+                new IdeogramGenerator(_IdeogramService),
+                new Dalle3Generator(_Dalle3Service),
+                new RecraftGenerator(_RecraftService),
+            };
             return actionType switch
             {
                 GeneralActionType.PromptToImageWithSteps =>
                     new PromptToImageWithStepsWorkflow(context, _BFLService, _IdeogramService, _Dalle3Service, _RecraftService, _ClaudeService),
                 GeneralActionType.SamePromptMultipleTargets =>
-                    new SamePromptMultipleTargetsWorkflow(context, _BFLService, _IdeogramService, _Dalle3Service, _RecraftService, _ClaudeService, apg, settings),
+                    new SamePromptMultipleTargetsWorkflow(context, generators, abstractPromptGenerator, settings),
+
+            //WorkflowContext workflowContext,
+            //List<IImageGenerator> generators,
+            //AbstractPromptGenerator abstractPromptGenerator,
+            //Settings settings)
+
                 GeneralActionType.ImageToTextToImageWithSteps => throw new NotImplementedException(),
                 _ => throw new NotImplementedException("Unknown workflow")
             };
@@ -46,16 +60,16 @@ namespace MultiImageClient
         {
             var settingsFilePath = "settings.json";
             var settings = Settings.LoadFromFile(settingsFilePath);
-            var concurrency = 6;
+            var concurrency = 12;
             
             InitializeServices(settings, concurrency);
 
             GeneralActionType gat = GeneralActionType.SamePromptMultipleTargets;
-            var apg = new LoadFromFile(settings, "");
+            var abstractPromptGenerator = new LoadFromFile(settings, "");
 
             var im = new ImageManager(settings);
             var workflowContext = new WorkflowContext(settings, new MultiClientRunStats(), im);
-            var workflow = CreateWorkflow(gat, workflowContext, apg, settings);
+            var workflow = CreateWorkflow(gat, workflowContext, abstractPromptGenerator, settings);
             await workflow.RunAsync();
         }
     }

@@ -12,7 +12,6 @@ namespace MultiImageClient
     public abstract class AbstractPromptGenerator
     {
         public abstract IEnumerable<PromptDetails> Prompts { get; }
-        public abstract Func<string, string> CleanPrompt { get; }
         public abstract int ImageCreationLimit { get; }
         /// how many times we send this prompt as of this level.
         public abstract int CopiesPer { get; }
@@ -31,10 +30,6 @@ namespace MultiImageClient
         public abstract string Name { get; }
 
         //defaults
-        public virtual bool UseClaude => true;
-        public virtual bool UseIdeogram => false;
-        public virtual bool UseBFL => true;
-        public virtual bool UseDalle3 => false;
         public virtual bool SaveRaw => true;
         public virtual bool SaveFullAnnotation => true;
         public virtual bool SaveFinalPrompt => true;
@@ -45,11 +40,8 @@ namespace MultiImageClient
         /// the version with just a simple below-image word/phrase set during prompt expansion
         /// </summary>
         public virtual bool SaveJustOverride => true;
-        public virtual bool TryBothBFLUpsamplingAndNot => false;
 
-        /// Whether or not claude rewriting succeeds, just toss in a raw direct version of whatever you have to the image generator anyway.
-        public virtual bool AlsoDoVersionSkippingClaude => false;
-
+        
         public Settings Settings { get; set; }
 
         public AbstractPromptGenerator(Settings settings)
@@ -72,7 +64,7 @@ namespace MultiImageClient
 
             foreach (var promptDetails in Prompts)
             {
-                var cleanPrompt = CleanPrompt(promptDetails.Prompt).Trim();
+                var cleanPrompt = TextUtils.CleanPrompt(promptDetails.Prompt).Trim();
                 if (string.IsNullOrWhiteSpace(cleanPrompt))
                 {
                     continue;

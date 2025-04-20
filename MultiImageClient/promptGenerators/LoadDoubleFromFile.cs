@@ -37,13 +37,9 @@ namespace MultiImageClient.promptGenerators
         public override string Prefix => "";
         public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Suffix => "";
-        public override Func<string, string> CleanPrompt => (arg) => arg.Trim().Trim();
-        public override bool UseIdeogram => false;
-        public override bool AlsoDoVersionSkippingClaude => false;
         public override bool SaveFinalPrompt => true;
         public override bool SaveInitialIdea => true;
         public override bool SaveFullAnnotation => true;
-        public override bool TryBothBFLUpsamplingAndNot => true;
 
         private IEnumerable<PromptDetails> GetPrompts()
         {

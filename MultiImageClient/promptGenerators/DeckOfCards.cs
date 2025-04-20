@@ -18,7 +18,6 @@ namespace MultiImageClient
         public override int CopiesPer => 1;
         public override bool RandomizeOrder => false;
         public override string Suffix => " Describe the design of this new card in detail, using about 120 words. Output a description of such a card, as prose, without newlines. Playing cards always have a white background. The number and type of card must appear in the corner, and they should use the color theme.";
-        public override Func<string, string> CleanPrompt => (arg) => arg;
 
         private IEnumerable<PromptDetails> GetPrompts()
         {
