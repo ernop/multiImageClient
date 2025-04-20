@@ -44,10 +44,6 @@ namespace MultiImageClient
         public override string Prefix => "";
         public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Suffix => "";
-        public override Func<string, string> CleanPrompt => (arg) => arg.Trim().Trim();
-        public override bool AlsoDoVersionSkippingClaude => true;
-        public override bool UseIdeogram => false;
-        public override bool UseClaude => true;
 
         private IEnumerable<PromptDetails> GetPrompts()
         {

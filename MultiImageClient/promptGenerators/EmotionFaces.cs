@@ -20,7 +20,7 @@ namespace MultiImageClient
         public override bool RandomizeOrder => false;
         public override int FullyResolvedCopiesPer => 2;
         public override string Suffix => "";
-        public override Func<string, string> CleanPrompt => (arg) => arg;
+        
 
         private IEnumerable<PromptDetails> GetPrompts()
         {

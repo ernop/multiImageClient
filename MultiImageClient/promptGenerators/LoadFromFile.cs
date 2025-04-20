@@ -25,21 +25,17 @@ namespace MultiImageClient.promptGenerators
 
         public override string Name => nameof(LoadFromFile);
 
-        public override int ImageCreationLimit => 40;
+        public override int ImageCreationLimit => 400;
         public override int CopiesPer => 2;
         public override int FullyResolvedCopiesPer => 2;
         public override bool RandomizeOrder => true;
         public override string Prefix => "";
         public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Suffix => "";
-        public override Func<string, string> CleanPrompt => (arg) => arg.Trim().Trim();
-        public override bool UseIdeogram => false;
-        public override bool AlsoDoVersionSkippingClaude => false;
         public override bool SaveFinalPrompt => true;
         public override bool SaveInitialIdea => true;
         public override bool SaveFullAnnotation => true;
-        public override bool TryBothBFLUpsamplingAndNot => true;
-
+        
         private IEnumerable<PromptDetails> GetPrompts()
         {
             var sourceFPs = new List<string>() {
@@ -65,6 +61,15 @@ namespace MultiImageClient.promptGenerators
                         continue;
                     }
                     if (string.IsNullOrEmpty(usePrompt))
+                    {
+                        continue;
+                    }
+                    var good = false;
+                    if (usePrompt.ToLower().Contains("japan") || usePrompt.ToLower().Contains("girl")|| usePrompt.ToLower().Contains("woman") || usePrompt.ToLower().Contains("high school") || usePrompt.ToLower().Contains("chinese") || usePrompt.ToLower().Contains("x"))
+                    {
+                        good = true;
+                    }
+                    if (!good)
                     {
                         continue;
                     }

@@ -26,7 +26,15 @@ namespace MultiImageClient
         private static readonly Dictionary<string, int> _filenameCounts = new Dictionary<string, int>();
         private static readonly float KEY_WIDTH_PROPORTION = 0.15f;
         private static readonly float VALUE_WIDTH_PROPORTION = 1f - KEY_WIDTH_PROPORTION;
-        
+        public static List<string> bads = new List<string>() { "[", "]", "(", ")", "{", "}","\\","\"","\'", ":", };
+        public static string CleanPrompt(string prompt)
+        {
+            foreach (var bad in bads)
+            {
+                prompt = prompt.Replace(bad, "");
+            }
+            return prompt.Trim();
+        }
 
        
     }
