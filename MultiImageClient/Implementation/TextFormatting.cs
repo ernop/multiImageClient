@@ -4,12 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
-using System.Reflection;
-using System.Timers;
-using System.Text;
-using System.Windows.Forms;
+
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using IdeogramAPIClient;

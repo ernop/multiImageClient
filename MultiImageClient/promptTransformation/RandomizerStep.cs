@@ -215,7 +215,7 @@ namespace MultiImageClient
             return string.Join(", ", sampledAliases);
         }
 
-        public Task<bool> DoTransformation(PromptDetails pd, MultiClientRunStats stats)
+        public Task<bool> DoTransformation(PromptDetails pd)
         {
             var randoms = GetRandomSampling();
             var newVersion = $"'{pd.Prompt}' {randoms}";

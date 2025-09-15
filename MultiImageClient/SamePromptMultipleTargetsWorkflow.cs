@@ -9,41 +9,75 @@ namespace MultiImageClient
 {
     public class SamePromptMultipleTargetsWorkflow : IWorkflow
     {
-        private readonly WorkflowContext _workflowContext;
-        private readonly IEnumerable<IImageGenerator> _generators;
-        private readonly AbstractPromptGenerator _abstractPromptGenerator;
+        private readonly Dictionary<ImageGeneratorApiType, IImageGenerator> _generators;
+        private readonly AbstractPromptSource _abstractPromptSource;
         private readonly Settings _settings;
+        private readonly ImageManager _imageManager;
+        private readonly MultiClientRunStats _stats;
 
         public SamePromptMultipleTargetsWorkflow(
-            WorkflowContext workflowContext,
-            IEnumerable<IImageGenerator> generators,
-            AbstractPromptGenerator abstractPromptGenerator,
-            Settings settings)
+            Dictionary<ImageGeneratorApiType, IImageGenerator> generators,
+            AbstractPromptSource abstractPromptSource,
+            Settings settings, MultiClientRunStats stats)
         {
-            _workflowContext = workflowContext;
             _generators = generators;
-            _abstractPromptGenerator = abstractPromptGenerator;
+            _abstractPromptSource = abstractPromptSource;
             _settings = settings;
+            _stats = stats;
         }
 
         public async Task RunAsync()
         {
             var stats = new MultiClientRunStats();
-            foreach (var promptDetails in _abstractPromptGenerator.Run())
+            foreach (var promptDetails in _abstractPromptSource.Prompts)
             {
-                // Process all generators asynchronously
-                var tasks = _generators.Select(async generator =>
+                var tasks = new List<Task<TaskProcessResult>>();
+                foreach (var kvp in _generators)
                 {
-                    var theCopy = promptDetails.Clone();
-                    var result = await generator.ProcessPromptAsync(theCopy, stats);
-                    await _workflowContext.ImageManager.ProcessAndSaveAsync(result, _abstractPromptGenerator, stats);
-                }).ToList();
+                    var nam = kvp.Key;
+                    var generator = kvp.Value;
+                    //var theCopy = promptDetails.Clone();
+                    TaskProcessResult result = await kvp.Value.ProcessPromptAsync(promptDetails);
+                    await _imageManager.ProcessAndSaveAsync(result, generator);
+                    tasks.Add(Task.FromResult(result));
+                }
+
+                foreach (var t in tasks)
+                {
+                    await t.ContinueWith(OnFinished, TaskScheduler.Default);
+                }
+
+                //// Process all generators asynchronously
+                //var tasks = _generators.Select(async generator =>
+                //{
+                //    var theCopy = promptDetails.Clone();
+                //    var result = await generator.ProcessPromptAsync(theCopy, stats);
+                //    await _workflowContext.ImageManager.ProcessAndSaveAsync(result, _abstractPromptSource, stats);
+                //}).ToList();
                 
                 await Task.WhenAll(tasks);
 
                 var combiner = new ImageCombiner();
-                //combiner.SaveMultipleImagesWithSubtitle(tasks, _settings, promptDetails.Prompt);
+                //combiner.Save(tasks, _settings, promptDetails.Prompt);
             }
+        }
+
+        private void OnFinished(Task<TaskProcessResult> task)
+        {
+
+            if (task.IsFaulted)
+            {
+                Logger.Log($"Task faulted: {task.Exception?.Flatten().InnerException}");
+                return;
+            }
+            if (task.IsCanceled)
+            {
+                Logger.Log("Task was canceled.");
+                return;
+            }
+
+            var res = task.Result;
+            Logger.Log($"Finished in {res.CreateTotalMs + res.DownloadTotalMs} ms, {res.PromptDetails.Show()}");
         }
     }
 }

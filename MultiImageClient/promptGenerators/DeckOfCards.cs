@@ -5,14 +5,13 @@ using System.Linq;
 
 namespace MultiImageClient
 {
-    public class DeckOfCards : AbstractPromptGenerator
+    public class DeckOfCards : AbstractPromptSource
     {
         public DeckOfCards(Settings settings) : base(settings)
         {
         }
 
         public override string Name => nameof(DeckOfCards);
-        public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Prefix => "Describe the design of new playing card: ";
         public override int ImageCreationLimit => 500;
         public override int CopiesPer => 1;
@@ -37,7 +36,6 @@ namespace MultiImageClient
                     var pd = new PromptDetails();
                     var prompt = $"The {jobs} of {suits[ii]} using the style of {artists[ii]} using the color {themes[ii]} and emotion: {emotionThemes[ii]}";
                     pd.ReplacePrompt(prompt, prompt, TransformationType.InitialPrompt);
-                    pd.IdentifyingConcept = $"{artists[ii]}_{suits[ii]}_{jobs}.";
                     yield return pd;
                 }
             }

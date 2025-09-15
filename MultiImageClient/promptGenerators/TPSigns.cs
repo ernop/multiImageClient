@@ -6,14 +6,13 @@ using System.Linq;
 
 namespace MultiImageClient
 {
-    public class TPSigns : AbstractPromptGenerator
+    public class TPSigns : AbstractPromptSource
     {
         public TPSigns(Settings settings) : base(settings)
         {
         }
 
         public override string Name => "Emotional Man";
-        public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Prefix => "";
         public override int ImageCreationLimit => 300;
         public override int CopiesPer => 3;
@@ -32,7 +31,6 @@ namespace MultiImageClient
                 //var prompt = $"Your subject is the very concept of the feeling: {emotion}. Portray this concept thoroughly, and focus on this specific single concept and feeling, only.  Be OVERLY symbolic and abstract in the symbology, intensifying the effect. Your overall composition style should be eminently high class, suitable, no matter what, for display in the ultimate Louvre, even more elite than the current one. Identify the specific aspects of this feeling in highly technical terms, specifically excluding all nearby emotions. Then, compose a still life whose design, elements, style, colors, textures, orientation, complexity or simplicity, taste, the form of the artwork, the apparent age, tradition, or modernity of the image, its composition, and every other aspect of it fully embody the very specific aspects of this singular emotion in an extremely intense, poignant, deeply moving, and very clear, obvious and distinct way. There should be a deep and complex   relationship between the elements. Use specific styles, ranging from hypermodern to traditional, conservative, ancient, foreign, european, etc.  Include the following for things which appear: their orientation, light sources, facing direction, and interanl relationships as well as relation to the viewer, symbolisms, the way they are drawn, etc. Be extremely specific on exactly what should appear, and where, within the image. No human face appears at all. Exclude all textual elements. You may need to be very wordy with your output, more than normal, to make sure you cover all the required elements. This is required; you MUST output a very long and hyper specific prompt with specific artists and styles mentioned.";
                 var prompt = $"Your Subject is: '{emotion.Trim()}'";
                 pd.ReplacePrompt(prompt, prompt, TransformationType.InitialPrompt);
-                pd.IdentifyingConcept = emotion; 
                 yield return pd;
             }
 

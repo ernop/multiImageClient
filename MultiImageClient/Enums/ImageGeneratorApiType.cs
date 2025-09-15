@@ -9,7 +9,7 @@ namespace MultiImageClient
         Ideogram = 3,
         BFLv11 = 4,
         Recraft = 5,
-        GptImage1 = 6,
+        GptImage1 = 6, 
         BFLv11Ultra = 7,
     }
 }

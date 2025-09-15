@@ -10,7 +10,7 @@ using System.Runtime.CompilerServices;
 namespace MultiImageClient
 {
     /// If you have a file of a bunch of prompts, you can use this to load them rather than using some kind of custom iteration system.
-    public class SinglePromptGenerator : AbstractPromptGenerator
+    public class SinglePromptGenerator : AbstractPromptSource
     {
         private int _copiesPer;
         private int _fullyResolvedCopiesPer;
@@ -29,11 +29,8 @@ namespace MultiImageClient
         public override int FullyResolvedCopiesPer => _fullyResolvedCopiesPer;
         public override bool RandomizeOrder => false;
         public override string Prefix => "";
-        public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Suffix => "";
-        public override bool SaveFinalPrompt => true;
-        public override bool SaveInitialIdea => true;
-        public override bool SaveFullAnnotation => true;
+
         public override IEnumerable<PromptDetails> Prompts
         {
             get

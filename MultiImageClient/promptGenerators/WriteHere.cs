@@ -30,7 +30,7 @@ using static System.Formats.Asn1.AsnWriter;
 namespace MultiImageClient
 {
     /// If you have a file of a bunch of prompts, you can use this to load them rather than using some kind of custom iteration system.
-    public class WriteHere : AbstractPromptGenerator
+    public class WriteHere : AbstractPromptSource
     {
 
         public WriteHere(Settings settings) : base(settings)
@@ -42,7 +42,6 @@ namespace MultiImageClient
         public override int CopiesPer => 4;
         public override bool RandomizeOrder => true;
         public override string Prefix => "";
-        public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Suffix => "";
 
         private IEnumerable<PromptDetails> GetPrompts()
@@ -64,7 +63,6 @@ namespace MultiImageClient
             {
                 var pd = new PromptDetails();
                 pd.ReplacePrompt(prompt, prompt, TransformationType.InitialPrompt);
-                pd.IdentifyingConcept = prompt;
                 yield return pd;
             }
         }

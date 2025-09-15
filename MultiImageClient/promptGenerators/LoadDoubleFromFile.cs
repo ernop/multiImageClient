@@ -7,10 +7,10 @@ using System.Reflection.Metadata.Ecma335;
 using System.Runtime.Intrinsics.X86;
 using System.Security.Cryptography.X509Certificates;
 
-namespace MultiImageClient.promptGenerators
+namespace MultiImageClient
 {
     /// If you have a file of a bunch of prompts, you can use this to load them rather than using some kind of custom iteration system.
-    public class LoadDoubleFromFile : AbstractPromptGenerator
+    public class LoadDoubleFromFile : AbstractPromptSource
     {
         private string FilePath { get; set; }
         private bool _IncludePublic { get; set; }
@@ -35,12 +35,7 @@ namespace MultiImageClient.promptGenerators
         public override int FullyResolvedCopiesPer => 2;
         public override bool RandomizeOrder => true;
         public override string Prefix => "";
-        public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Suffix => "";
-        public override bool SaveFinalPrompt => true;
-        public override bool SaveInitialIdea => true;
-        public override bool SaveFullAnnotation => true;
-
         private IEnumerable<PromptDetails> GetPrompts()
         {
             var sourceFPs = new List<string>() { };
@@ -110,7 +105,6 @@ namespace MultiImageClient.promptGenerators
                 Logger.Log(combined);
                 var pd = new PromptDetails();
                 pd.ReplacePrompt(combined, combined, TransformationType.InitialPrompt);
-                pd.IdentifyingConcept = "";
 
                 yield return pd;
             }
