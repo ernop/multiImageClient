@@ -34,7 +34,7 @@ namespace MultiImageClient
                     Logger.Log("Truncating the prompt for Recraft.");
                 }
                 var generationResult = await _recraftClient.GenerateImageAsync(usingPrompt, recraftDetails);
-                Logger.Log($"\tFrom Recraft: '{generationResult.Created}'");
+                Logger.Log($"\tFrom Recraft: {promptDetails.Show()} '{generationResult.Created}'");
                 stats.RecraftImageGenerationSuccessCount++;
                 var theUrl = generationResult.Data[0].Url;
 

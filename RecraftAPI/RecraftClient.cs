@@ -23,6 +23,7 @@ namespace RecraftAPIClient
             _apiKey = apiKey;
             _httpClient = new HttpClient();
             _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+            //_httpClient.DefaultRequestHeaders.Add("x-api-key", $"{apiKey}");
         }
 
 
@@ -67,6 +68,7 @@ namespace RecraftAPIClient
             );
 
             var response = await _httpClient.PostAsync($"{_baseUrl}/images/generations", content);
+            //var response = await _httpClient.PostAsync($"{_baseUrl}", content);
             await EnsureSuccessfulResponse(response);
 
             var responseContent = await response.Content.ReadAsStringAsync();

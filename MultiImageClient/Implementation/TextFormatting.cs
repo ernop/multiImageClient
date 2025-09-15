@@ -15,10 +15,17 @@ using SixLabors.ImageSharp.PixelFormats;
 using IdeogramAPIClient;
 using System.Text.RegularExpressions;
 using SixLabors.ImageSharp.Processing;
-using System.Drawing.Text;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp.Drawing.Processing;
-using System.Threading;
+using System.Drawing;
+using RectangleF = SixLabors.ImageSharp.RectangleF;
+using Color = SixLabors.ImageSharp.Color;
+using PointF = SixLabors.ImageSharp.PointF;
+using SystemFonts = SixLabors.Fonts.SystemFonts;
+using Rectangle = SixLabors.ImageSharp.Rectangle;
+using Point = SixLabors.ImageSharp.Point;
+using Image = SixLabors.ImageSharp.Image;
+using FontStyle = SixLabors.Fonts.FontStyle;
 
 
 namespace MultiImageClient
@@ -30,11 +37,10 @@ namespace MultiImageClient
 
         private static void DrawKeyValuePair(IImageProcessingContext ctx, string key, string value, float fontSize, float x, float keyWidth, float valueWidth, ref float y)
         {
-            //var key = $"{step.TransformationType}";
-            //var value = step.Explanation;
+            // just trunc. ugh.
             value = value.Length > 2500 ? value[..2500] + "..." : value;
 
-            var font = SystemFonts.CreateFont("Arial", fontSize, FontStyle.Regular);
+            var font = SixLabors.Fonts.SystemFonts.CreateFont("Arial", fontSize, SixLabors.Fonts.FontStyle.Regular);
             const float PADDING = 4;
 
             // Measure text height with wrapping
@@ -75,41 +81,79 @@ namespace MultiImageClient
 
         public static async Task JustAddSimpleTextToBottomAsync(byte[] imageBytes, IEnumerable<PromptHistoryStep> historySteps, Dictionary<string, string> imageInfo, string outputPath, SaveType saveType)
         {
-            using var originalImage = Image.Load<Rgba32>(imageBytes);
-            int annotationHeight = 100;
-            int newHeight = originalImage.Height + annotationHeight;
+            Console.WriteLine(outputPath);
+            using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
+            var imageWidth = originalImage.Width;
+            var intendedFontSize = 24;
+            
+            var theText = historySteps.First().Prompt ?? "failed to get text";
+            SixLabors.Fonts.FontFamily fontFamily;
+            if (!SystemFonts.TryGet("Segoe UI", out fontFamily))
+            {
+                if (!SystemFonts.TryGet("Arial", out fontFamily))
+                {
+                    fontFamily = SystemFonts.Families.First(); // Fallback
+                }
+            }
+            var testFont = fontFamily.CreateFont(intendedFontSize, FontStyle.Regular);
+
+            var horizontalPadding = 10;
+            var verticalPadding = 10;
+            var availableXPixels = imageWidth - (horizontalPadding * 2);
+
+            //we can measure font length with:
+            var textOptions = new RichTextOptions(testFont)
+            {
+                WrappingLength = availableXPixels,
+                LineSpacing = 1.15f,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Dpi= 72,
+                FallbackFontFamilies = new[] { SystemFonts.Families.First() }
+            };
+
+            // Using the correct TextMeasurer method from SixLabors.Fonts
+            var keyBounds = TextMeasurer.MeasureBounds(theText, textOptions);
+
+            int textHeight = (int)Math.Ceiling(keyBounds.Height);
+            int yPixelsToAdd = textHeight + (verticalPadding * 2);
+            int newHeight = originalImage.Height + yPixelsToAdd;
 
             using var annotatedImage = new Image<Rgba32>(originalImage.Width, newHeight);
 
             annotatedImage.Mutate(ctx =>
             {
+                // antialiasing.
+                ctx.SetGraphicsOptions(new GraphicsOptions
+                {
+                    Antialias = true,
+                    AntialiasSubpixelDepth = 16
+                });
+
                 // Draw original image
                 ctx.DrawImage(originalImage, new Point(0, 0), 1f);
 
                 // Set up the annotation area at the bottom
-                ctx.Fill(Color.Black, new Rectangle(0, originalImage.Height, originalImage.Width, annotationHeight));
+                ctx.Fill(Color.Black, new Rectangle(0, originalImage.Height, originalImage.Width, yPixelsToAdd));
 
-                // Setup text positioning
-                float y = originalImage.Height + 10;
-                float leftMargin = 10;
-                float rightMargin = annotatedImage.Width - 10;
-                float totalWidth = rightMargin - leftMargin;
+                // Position text with proper padding
+                textOptions.Origin = new PointF(horizontalPadding, originalImage.Height + verticalPadding);
 
-                // Get text from imageInfo if available
-                var theText = imageInfo.FirstOrDefault().Value ?? "";
+                ctx.DrawText(textOptions, theText, Color.White);
 
-                // Draw the text in white on the black background
-                var font = SystemFonts.CreateFont("Arial", 48, FontStyle.Bold);
-                var textOptions = new TextOptions(font)
+
+                var meta = imageInfo["Producer"] ?? "no gen";
+                // Create smaller font for metadata
+                var metaFont = fontFamily.CreateFont(intendedFontSize * 0.75f, FontStyle.Regular);
+                var metaOptions = new RichTextOptions(metaFont)
                 {
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    WrappingLength = totalWidth
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Bottom,
+                    Dpi = 72,
+                    Origin = new PointF(imageWidth - horizontalPadding, newHeight - verticalPadding)
                 };
 
-                var textBounds = TextMeasurer.MeasureBounds(theText, textOptions);
-                float x = leftMargin + (totalWidth - textBounds.Width) / 2;
-
-                ctx.DrawText(theText, font, Color.White, new PointF(x, y));
+                ctx.DrawText(metaOptions, meta, new Color(new Rgba32(200, 200, 200)));
             });
 
             await annotatedImage.SaveAsPngAsync(outputPath);
@@ -134,7 +178,7 @@ namespace MultiImageClient
                     Logger.Log($"{ex2} failed normal load");
                     try
                     {
-                        originalImage = Image.Load<Rgba32>(imageBytes);
+                        originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
                     }
                     catch (Exception ex3)
                     {

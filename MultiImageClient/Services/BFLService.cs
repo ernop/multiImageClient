@@ -27,66 +27,96 @@ namespace MultiImageClient
         public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails, MultiClientRunStats stats)
         {
             await _bflSemaphore.WaitAsync();
+            
+            ImageGeneratorApiType genType;
             try
             {
-                var bflDetails = promptDetails.BFLDetails;
-                var request = new FluxPro11Request
+                GenerationResponse generationResponse = null;
+                if (promptDetails.BFL11UltraDetails != null)
                 {
-                    Prompt = promptDetails.Prompt,
-                    Width = bflDetails.Width,
-                    Height = bflDetails.Height,
-                    PromptUpsampling = bflDetails.PromptUpsampling,
-                    SafetyTolerance = bflDetails.SafetyTolerance,
-                    Seed = bflDetails.Seed
-                };
+                    genType = ImageGeneratorApiType.BFLv11Ultra;
+                    var request2 = new FluxPro11UltraRequest
+                    {
+                        Prompt = promptDetails.Prompt,
+                        AspectRatio = "1:1",
+                        //Width = 2048,
+                        //Height = 2048,
+                        PromptUpsampling = promptDetails.BFL11UltraDetails.PromptUpsampling,
+                        SafetyTolerance = promptDetails.BFL11UltraDetails.SafetyTolerance,
+                        Seed = promptDetails.BFL11UltraDetails.Seed
 
+                    };
+                    generationResponse = await _bflClient.GenerateFluxPro11UltraAsync(request2);
+                }
+                else
+                {
+                    genType = ImageGeneratorApiType.BFLv11;
+                    var request = new FluxPro11Request
+                    {
+                        Prompt = promptDetails.Prompt,
+                        Width = promptDetails.BFL11Details.Width,
+                        Height = promptDetails.BFL11Details.Height,
+                        PromptUpsampling = promptDetails.BFL11Details.PromptUpsampling,
+                        SafetyTolerance = promptDetails.BFL11Details.SafetyTolerance,
+                        Seed = promptDetails.BFL11Details.Seed
+                    };
+
+                    generationResponse = await _bflClient.GenerateFluxPro11Async(request);
+                }
+                    //var bflDetails = promptDetails.BFL11Details;
+                    
                 stats.BFLImageGenerationRequestCount++;
 
-                var generationResult = await _bflClient.GenerateFluxPro11Async(request);
-                Logger.Log($"\tFrom BFL: '{generationResult.Status}'");
+                
+                Logger.Log($"{promptDetails.Index} From BFL: '{generationResponse.Status}'");
 
                 // this is where we handle generator-specific error types.
-                if (generationResult.Status != "Ready")
+                if (generationResponse.Status != "Ready")
                 {
-                    if (generationResult.Status == "Content Moderated")
+                    var baseResponse = new TaskProcessResult { IsSuccess = false, PromptDetails = promptDetails, ImageGenerator = genType, ErrorMessage = generationResponse.Status };
+                    if (generationResponse.Status == "Content Moderated")
                     {
                         stats.BFLImageGenerationErrorCount++;
-                        return new TaskProcessResult { IsSuccess = false, ErrorMessage = generationResult.Status, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFL, GenericImageErrorType = GenericImageGenerationErrorType.ContentModerated};
+                        baseResponse.GenericImageErrorType = GenericImageGenerationErrorType.ContentModerated;
+                        return baseResponse;
                     }
-                    else if (generationResult.Status == "Request Moderated")
+                    else if (generationResponse.Status == "Request Moderated")
                     {
                         stats.BFLImageGenerationErrorCount++;
-                        return new TaskProcessResult { IsSuccess = false, ErrorMessage = generationResult.Status, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFL, GenericImageErrorType = GenericImageGenerationErrorType.RequestModerated };
+                        baseResponse.GenericImageErrorType = GenericImageGenerationErrorType.RequestModerated;
+                        return baseResponse;
+
                     }
                     else
                     {
                         // also you have to handle the out of money case.
                         stats.BFLImageGenerationErrorCount++;
-                        return new TaskProcessResult { IsSuccess = false, ErrorMessage = generationResult.Status, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFL, GenericImageErrorType = GenericImageGenerationErrorType.Unknown };
+                        baseResponse.GenericImageErrorType = GenericImageGenerationErrorType.Unknown;
+                        return baseResponse;
                     }
                         
                 }
                 else
                 {
-                    Logger.Log($"BFL image generated: {generationResult.Result.Sample}");
+                    Logger.Log($"{promptDetails.Index} BFL image generated: {generationResponse.Result.Sample}");
                     stats.BFLImageGenerationRequestCount++;
-                    var returnedPrompt = generationResult.Result.Prompt.Trim();
+                    var returnedPrompt = generationResponse.Result.Prompt.Trim();
                     if (returnedPrompt.Trim() != promptDetails.Prompt.Trim())
                     {
-                        //BFL replaced the prompt. Never actually happens.
+                        //BFL replaced the prompt. It actually happens!
                         promptDetails.ReplacePrompt(returnedPrompt, returnedPrompt, TransformationType.BFLRewrite);
                     }
 
-                    var headResponse = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, generationResult.Result.Sample));
+                    var headResponse = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, generationResponse.Result.Sample));
                     var contentType = headResponse.Content.Headers.ContentType?.MediaType;
-                    return new TaskProcessResult { IsSuccess = true, Url = generationResult.Result.Sample, ContentType = contentType, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFL };
+                    return new TaskProcessResult { IsSuccess = true, Url = generationResponse.Result.Sample, ContentType = contentType, PromptDetails = promptDetails, ImageGenerator = genType };
                 }
 
             }
             catch (Exception ex)
             {
-                Logger.Log($"BFL error: {ex.Message}");
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFL };
+                Logger.Log($"{promptDetails.Index} BFL error: {ex.Message}");
+                return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFLv11 };
             }
             finally
             {

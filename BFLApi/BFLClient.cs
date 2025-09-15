@@ -78,6 +78,11 @@ namespace BFLAPIClient
             return GenerateAndWaitForResultAsync("flux-pro-1.1", request);
         }
 
+        public Task<GenerationResponse> GenerateFluxPro11UltraAsync(FluxPro11UltraRequest request)
+        {
+            return GenerateAndWaitForResultAsync("flux-pro-1.1-ultra", request);
+        }
+
         public Task<GenerationResponse> GenerateFluxProAsync(FluxProRequest request)
         {
             return GenerateAndWaitForResultAsync("flux-pro", request);
@@ -113,6 +118,20 @@ namespace BFLAPIClient
                         Seed = opts.Seed
                     };
                     response = await client.GenerateFluxPro11Async(request11);
+                    break;
+                case "flux-pro-1.1-Ultra":
+                    var request11Ultra = new FluxPro11UltraRequest
+                    {
+                        Prompt = opts.Prompt,
+                        AspectRatio = "16:9",
+                        Width = opts.Width,
+                        Height = opts.Height,
+                        PromptUpsampling = opts.PromptUpsampling,
+                        SafetyTolerance = opts.SafetyTolerance,
+                        Seed = opts.Seed
+                    };
+                    // Note: There's no separate endpoint for Ultra; it's determined by account settings.
+                    response = await client.GenerateFluxPro11UltraAsync(request11Ultra);
                     break;
                 case "flux-pro":
                     var requestPro = new FluxProRequest

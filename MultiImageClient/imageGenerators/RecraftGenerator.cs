@@ -13,7 +13,7 @@ namespace MultiImageClient
         public ImageGeneratorApiType GetApiType => ImageGeneratorApiType.Recraft;
         private static Random random = new Random();
 
-        public RecraftGenerator(IImageGenerationService svc) : base(svc)
+        public RecraftGenerator(IImageGenerationService svc, ImageGeneratorApiType imageGeneratorApiType) : base(svc, imageGeneratorApiType)
         {
         }
 
@@ -38,24 +38,36 @@ namespace MultiImageClient
             details.style = styles[random.Next(styles.Count)].ToString();
 
             // Based on chosen style, select appropriate substyle
+
+            bool coinFlip = true;
+
             switch (details.style)
             {
                 case "digital_illustration":
                     var digitalStyles = Enum.GetValues(typeof(RecraftDigitalIllustrationSubstyles))
                         .Cast<RecraftDigitalIllustrationSubstyles>().ToList();
-                    details.substyle = digitalStyles[random.Next(digitalStyles.Count)].ToString();
+                    if (coinFlip)
+                    {
+                        details.substyle = digitalStyles[random.Next(digitalStyles.Count)].ToString();
+                    }
                     break;
 
                 case "realistic_image":
                     var realisticStyles = Enum.GetValues(typeof(RecraftRealisticImageSubstyles))
                         .Cast<RecraftRealisticImageSubstyles>().ToList();
-                    details.substyle = realisticStyles[random.Next(realisticStyles.Count)].ToString();
+                    if (coinFlip)
+                    {
+                        details.substyle = realisticStyles[random.Next(realisticStyles.Count)].ToString();
+                    }
                     break;
 
                 case "vector_illustration":
                     var vectorStyles = Enum.GetValues(typeof(RecraftVectorIllustrationSubstyles))
                         .Cast<RecraftVectorIllustrationSubstyles>().ToList();
-                    details.substyle = vectorStyles[random.Next(vectorStyles.Count)].ToString();
+                    if (coinFlip)
+                    {
+                        details.substyle = vectorStyles[random.Next(vectorStyles.Count)].ToString();
+                    }
                     break;
             }
 
@@ -66,11 +78,11 @@ namespace MultiImageClient
         {
             if (pd.RecraftDetails == null)
             {
-                //pd.RecraftDetails = GetRandomRecraftStyleAndSubstyleDetails();
-                pd.RecraftDetails = GetDefaultRecraftDetails();
+                pd.RecraftDetails = GetRandomRecraftStyleAndSubstyleDetails();
+                //pd.RecraftDetails = GetDefaultRecraftDetails();
             }
             
-            Logger.Log($"Submitting to Recraft with style {pd.RecraftDetails.GetFullStyleName()}");
+            Logger.Log($"{pd.Show()} Submitting to Recraft");
             var res = await _svc.ProcessPromptAsync(pd, stats);
             return res;
         }

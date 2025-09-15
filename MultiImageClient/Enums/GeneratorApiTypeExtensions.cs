@@ -13,9 +13,11 @@ namespace MultiImageClient
             return generator switch
             {
                 ImageGeneratorApiType.Ideogram => ".png",
-                ImageGeneratorApiType.BFL => ".jpg",
+                ImageGeneratorApiType.BFLv11 => ".png",
+                ImageGeneratorApiType.BFLv11Ultra => ".png",
                 ImageGeneratorApiType.Dalle3 => ".png",
                 ImageGeneratorApiType.Recraft => ".png", //actually, I should use the value read from head since it sometimes shows up as .svg.
+                ImageGeneratorApiType.GptImage1 => ".png",
                 _ => throw new ArgumentException("Unknown image generator type while picking file extension:", nameof(generator))
             };
         }

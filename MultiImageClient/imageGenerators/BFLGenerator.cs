@@ -9,21 +9,39 @@ namespace MultiImageClient
 {
     public class BFLGenerator : AbstractImageGenerator, IImageGenerator
     {
-        public ImageGeneratorApiType GetApiType => ImageGeneratorApiType.BFL;
-        public BFLGenerator(IImageGenerationService svc) : base(svc)
+        public BFLGenerator(IImageGenerationService svc, ImageGeneratorApiType specificGenerator) : base(svc, specificGenerator)
         {
         }
         public override async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails pd, MultiClientRunStats stats)
         {
-            var bflDetails = new BFLDetails
+            //this is where we set up the details actually.
+            if (GetApiType == ImageGeneratorApiType.BFLv11)
+            { 
+                var bflDetails = new BFL11Details
+                {
+                    Width = 1440,
+                    Height = 1440, //1376
+                    PromptUpsampling = true,
+                    SafetyTolerance = 6,
+                };
+                pd.BFL11Details = bflDetails;
+            }
+            else if (GetApiType == ImageGeneratorApiType.BFLv11Ultra)
             {
-                Width = 1440,
-                Height = 1440, //1376
-                PromptUpsampling = false,
-                SafetyTolerance = 6,
-            };
-            pd.BFLDetails = bflDetails;
-            Logger.Log($"\tSubmitting to BFL: {pd.Prompt}");
+                var bflDetails11Ultra = new BFL11UltraDetails
+                {
+                    AspectRatio = "1:1",
+                    PromptUpsampling = true,
+                    SafetyTolerance = 6,
+                };
+                pd.BFL11UltraDetails = bflDetails11Ultra;
+            }
+            else
+            {
+                Logger.Log("erro.?");
+            }
+
+            Logger.Log($"{pd.Index} Submitting to {GetApiType}");
             var res = await _svc.ProcessPromptAsync(pd, stats);
             return res;
         }

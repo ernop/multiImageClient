@@ -11,7 +11,7 @@ namespace MultiImageClient
     public class Dalle3Generator : AbstractImageGenerator, IImageGenerator  
     {
         public ImageGeneratorApiType GetApiType => ImageGeneratorApiType.Dalle3;
-        public Dalle3Generator(IImageGenerationService svc) : base(svc)
+        public Dalle3Generator(IImageGenerationService svc, ImageGeneratorApiType imageGeneratorApiType) : base(svc, imageGeneratorApiType)
         {
         }
         public override async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails pd, MultiClientRunStats stats)
@@ -25,7 +25,7 @@ namespace MultiImageClient
             };
             pd.Dalle3Details = dalle3Details;
 
-            Logger.Log($"\t\tSubmitting to Dalle3: {pd.Prompt}");
+            Logger.Log($"{pd.Show()} Submitting to Dalle3");
             var res = await _svc.ProcessPromptAsync(pd, stats);
             return res;
         }

@@ -1,16 +1,28 @@
-﻿using System;
-using System.Threading.Tasks;
+﻿using IdeogramAPIClient;
+
+using ImageMagick;
+
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Collections.Generic;
-using IdeogramAPIClient;
+using System.Threading.Tasks;
+
+using static System.Net.Mime.MediaTypeNames;
 
 namespace MultiImageClient
 {
     public static class ImageSaving
     {
         private static readonly HttpClient httpClient = new HttpClient();
+
+        public static void ConvertWebpTopng(string inputFp)
+        {
+            var im = new MagickImage(inputFp);
+            var newFp = Path.ChangeExtension(inputFp, ".png");
+            im.Write(newFp);
+        }
 
         public static async Task<byte[]> DownloadImageAsync(TaskProcessResult result)
         {
@@ -57,6 +69,35 @@ namespace MultiImageClient
             }
 
             Directory.CreateDirectory(baseFolder);
+
+            if (result.ContentType == "image/webp")
+            {
+                var fakeImage = new MagickImage(imageBytes, MagickFormat.WebP);
+                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
+            }
+            else if (result.ContentType == "image/svg+xml")
+            {
+                var fakeImage = new MagickImage(imageBytes, MagickFormat.Svg);
+                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);             
+            }
+            else if (result.ContentType == "image/jpeg")
+            {
+                var fakeImage = new MagickImage(imageBytes, MagickFormat.Jpg);
+                imageBytes = fakeImage.ToByteArray(MagickFormat.Png); 
+            }
+            else if (result.ContentType == "image/png")
+            {
+                //Console.WriteLine("png do nothing, all good");
+            }
+            else if (result.ContentType == null)
+            {
+                //Console.WriteLine("contentType null, so fall into .png");
+            }
+            else
+            {
+                Console.WriteLine("some other weird contenttype. {result.ContentType}");
+            }
+
             var safeFilename = FilenameGenerator.GenerateUniqueFilename(result, baseFolder, promptGeneratorName, saveType);
             var fullPath = Path.Combine(baseFolder, safeFilename);
 
@@ -70,37 +111,34 @@ namespace MultiImageClient
 
                 if (saveType == SaveType.Raw)
                 {
-                    Logger.Log($"\tSaved {saveType} image. Fp: {fullPath}");
+                    //Logger.Log($"Saved {saveType} image. Fp: {fullPath}");
                     stats.SavedRawImageCount++;
                 }
                 else
                 {
-                    if (!fullPath.EndsWith(".svg"))
+                    var imageInfo = GetAnnotationDefaultData(result, fullPath, saveType, promptGeneratorName);
+                    var usingSteps = GetUsingSteps(saveType, result.PromptDetails);
+                    if (saveType == SaveType.JustOverride)
                     {
-                        var imageInfo = GetAnnotationDefaultData(result, fullPath, saveType, promptGeneratorName);
-                        var usingSteps = GetUsingSteps(saveType, result.PromptDetails);
-                        if (saveType == SaveType.JustOverride)
-                        {
-                            await TextFormatting.JustAddSimpleTextToBottomAsync(
-                                imageBytes,
-                                usingSteps,
-                                imageInfo,
-                                fullPath,
-                                saveType
-                            );
-                        }
-                        else
-                        {
-                            await TextFormatting.SaveImageAndAnnotate(
-                                imageBytes,
-                                usingSteps,
-                                imageInfo,
-                                fullPath,
-                                saveType
-                            );
-                        }
-                        stats.SavedAnnotatedImageCount++;
+                        await TextFormatting.JustAddSimpleTextToBottomAsync(
+                            imageBytes,
+                            usingSteps,
+                            imageInfo,
+                            fullPath,
+                            saveType
+                        );
                     }
+                    else
+                    {
+                        await TextFormatting.SaveImageAndAnnotate(
+                            imageBytes,
+                            usingSteps,
+                            imageInfo,
+                            fullPath,
+                            saveType
+                        );
+                    }
+                    stats.SavedAnnotatedImageCount++;
                 }
             }
             catch (Exception ex)
@@ -116,7 +154,7 @@ namespace MultiImageClient
             return saveType switch
             {
                 SaveType.FullAnnotation => promptDetails.TransformationSteps,
-                SaveType.InitialIdea or SaveType.FinalPrompt or SaveType.Raw or SaveType.JustOverride => new List<PromptHistoryStep>(),
+                SaveType.InitialIdea or SaveType.FinalPrompt or SaveType.Raw or SaveType.JustOverride => new List<PromptHistoryStep>() { promptDetails.TransformationSteps.First() },
                 _ => throw new Exception("Invalid SaveType")
             };
         }
@@ -150,7 +188,10 @@ namespace MultiImageClient
                     // No annotation
                     break;
                 case SaveType.JustOverride:
+                    var initialPrompt2 = promptDetails.TransformationSteps.First().Explanation;
                     imageInfo.Add("JUST", result.PromptDetails.IdentifyingConcept);
+                    imageInfo.Add("Producer", result.ImageGenerator.ToString());
+                    imageInfo.Add("Initial Prompt", initialPrompt2);
                     break;
             }
 
@@ -175,8 +216,8 @@ namespace MultiImageClient
                     if (!string.IsNullOrWhiteSpace(ideogramDetails.NegativePrompt))
                         imageInfo.Add("NegativePrompt", ideogramDetails.NegativePrompt);
                     break;
-                case ImageGeneratorApiType.BFL:
-                    var bflDetails = promptDetails.BFLDetails;
+                case ImageGeneratorApiType.BFLv11:
+                    var bflDetails = promptDetails.BFL11Details;
                     imageInfo.Add("Generator", "BFL Flux 1.1");
                     if (bflDetails.Seed.HasValue)
                         imageInfo.Add("Seed", bflDetails.Seed.Value.ToString());
@@ -185,11 +226,28 @@ namespace MultiImageClient
                     if (bflDetails.SafetyTolerance != default)
                         imageInfo.Add("SafetyTolerance", bflDetails.SafetyTolerance.ToString());
                     break;
+                case ImageGeneratorApiType.BFLv11Ultra:
+                    var bflDetails2 = promptDetails.BFL11UltraDetails;
+                    imageInfo.Add("Generator", "BFL Flux 1.1 Ultra");
+                    if (bflDetails2.Seed.HasValue)
+                        imageInfo.Add("Seed", bflDetails2.Seed.Value.ToString());
+                    if (bflDetails2.AspectRatio != default)
+                        imageInfo.Add("AR", $"{bflDetails2.AspectRatio}");
+                    if (bflDetails2.SafetyTolerance != default)
+                        imageInfo.Add("SafetyTolerance", bflDetails2.SafetyTolerance.ToString());
+                    break;
                 case ImageGeneratorApiType.Dalle3:
                     imageInfo.Add("Generator", "Dall-e 3");
                     var dalle3Details = promptDetails.Dalle3Details;
                     imageInfo.Add("Size", $"{dalle3Details.Size}");
                     imageInfo.Add("Quality", dalle3Details.Quality.ToString());
+                    break;
+                case ImageGeneratorApiType.GptImage1:
+                    imageInfo.Add("Generator", "gpt-Image-1");
+                    var gptImageOneDetails = promptDetails.GptImageOneDetails;
+                    imageInfo.Add("Size", $"{gptImageOneDetails.size}");
+                    imageInfo.Add("Moderation", $"{gptImageOneDetails.moderation}");
+                    imageInfo.Add("Quality", $"{gptImageOneDetails.quality}");
                     break;
                 case ImageGeneratorApiType.Recraft:
                     imageInfo.Add("Generator", "Recraft");

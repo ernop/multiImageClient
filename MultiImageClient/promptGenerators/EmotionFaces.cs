@@ -15,7 +15,7 @@ namespace MultiImageClient
         public override string Name => "Paintings";
         public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Prefix => "";
-        public override int ImageCreationLimit => 20;
+        public override int ImageCreationLimit => 30;
         public override int CopiesPer => 1;
         public override bool RandomizeOrder => false;
         public override int FullyResolvedCopiesPer => 2;
