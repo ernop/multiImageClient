@@ -12,13 +12,15 @@ namespace MultiImageClient
     public class ImageManager
     {
         private readonly Settings _settings;
+        private readonly MultiClientRunStats _stats;
 
-        public ImageManager(Settings settings)
+        public ImageManager(Settings settings, MultiClientRunStats stats)
         {
             _settings = settings;
+            _stats = stats;
         }
 
-        public async Task<Dictionary<SaveType, string>> DoSaveAsync(AbstractPromptGenerator generator, byte[] imageBytes, TaskProcessResult result, MultiClientRunStats stats, Settings settings)
+        public async Task<Dictionary<SaveType, string>> DoSaveAsync(IImageGenerator generator, byte[] imageBytes, TaskProcessResult result, Settings settings)
         {
             if (imageBytes == null || imageBytes.Length == 0)
             {
@@ -26,31 +28,17 @@ namespace MultiImageClient
                 throw new Exception("Bad image.");
             }
             var savedImagePaths = new Dictionary<SaveType, string>();
-            if (generator.SaveRaw)
-            {
-                savedImagePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, stats, SaveType.Raw, generator.Name);
-            }
-            if (generator.SaveFullAnnotation)
-            {
-                savedImagePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, stats, SaveType.FullAnnotation, generator.Name);
-            }
-            if (generator.SaveFinalPrompt)
-            {
-                savedImagePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, stats, SaveType.FinalPrompt, generator.Name);
-            }
-            if (generator.SaveInitialIdea)
-            {
-                savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, stats, SaveType.InitialIdea, generator.Name);
-            }
-            if (generator.SaveJustOverride)
-            {
-                savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, stats, SaveType.JustOverride, generator.Name);
-            }
+
+            savedImagePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.Raw, generator);
+            savedImagePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.FullAnnotation, generator);
+            savedImagePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.FinalPrompt, generator);
+            savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.InitialIdea, generator);
+            savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.JustOverride, generator);
 
             return savedImagePaths;
         }
 
-        public async Task<TaskProcessResult> ProcessAndSaveAsync(TaskProcessResult result, AbstractPromptGenerator promptGenerator, MultiClientRunStats stats)
+        public async Task<TaskProcessResult> ProcessAndSaveAsync(TaskProcessResult result, IImageGenerator generator)
         {
             try
             {
@@ -64,7 +52,7 @@ namespace MultiImageClient
                 {
                     imageBytes = await ImageSaving.DownloadImageAsync(result);
                     result.DownloadTotalMs = sw.ElapsedMilliseconds;
-                    var downloadResults = await DoSaveAsync(promptGenerator, imageBytes, result, stats, _settings);
+                    var downloadResults = await DoSaveAsync(generator, imageBytes, result, _settings);
                     await SaveJsonLogAsync(result, downloadResults);
                     return result;
                 }
@@ -75,7 +63,7 @@ namespace MultiImageClient
                     {
                         //Console.WriteLine($"Saving one things: {ii}");
                         imageBytes = Convert.FromBase64String(qq);
-                        var downloadResults = await DoSaveAsync(promptGenerator, imageBytes, result, stats, _settings);
+                        var downloadResults = await DoSaveAsync(generator, imageBytes, result, _settings);
                         ii++;
                         await SaveJsonLogAsync(result, downloadResults);
                     }
@@ -83,7 +71,7 @@ namespace MultiImageClient
                     return result;
                 }
 
-                
+
             }
             catch (Exception ex)
             {
@@ -103,7 +91,7 @@ namespace MultiImageClient
                 result.PromptDetails,
                 GeneratedImageUrl = result.Url,
                 SavedImagePaths = savedImagePaths,
-                ServiceUsed = result.ImageGenerator,
+                GeneratorUsed = result.ImageGenerator,
                 result.ErrorMessage,
             };
 

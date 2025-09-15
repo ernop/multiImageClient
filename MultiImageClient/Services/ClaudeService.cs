@@ -16,12 +16,14 @@ namespace MultiImageClient
     {
         private readonly AnthropicClient _anthropicClient;
         private readonly SemaphoreSlim _claudeSemaphore;
+        private MultiClientRunStats stats;
 
-        public ClaudeService(string apiKey, int maxConcurrency)
+        public ClaudeService(string apiKey, int maxConcurrency, MultiClientRunStats stats)
         {
             var anthropicApikeyAuth = new APIAuthentication(apiKey);
             _anthropicClient = new AnthropicClient(anthropicApikeyAuth);
             _claudeSemaphore = new SemaphoreSlim(maxConcurrency);
+            this.stats = stats;
         }
 
         ///Claude gets mad sometimes. This is for detecting this and optionally derailing since you probably don't want to continue with this bad rewrite output.
@@ -54,7 +56,7 @@ namespace MultiImageClient
         }
 
 
-        public async Task<TaskProcessResult> RewritePromptAsync(PromptDetails promptDetails, MultiClientRunStats stats, decimal temp)
+        public async Task<TaskProcessResult> RewritePromptAsync(PromptDetails promptDetails, decimal temp)
         {
             if (ClaudeWillHateThis(promptDetails.Prompt))
             {

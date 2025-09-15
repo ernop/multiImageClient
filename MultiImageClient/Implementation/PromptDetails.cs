@@ -1,12 +1,9 @@
-﻿using System;
+﻿
 using System.Collections.Generic;
-using System.Linq;
 
 using IdeogramAPIClient;
-
+using BFLAPIClient;
 using RecraftAPIClient;
-
-using SixLabors.ImageSharp;
 
 namespace MultiImageClient
 {
@@ -15,34 +12,31 @@ namespace MultiImageClient
     /// </summary>
     public class PromptDetails
     {
-        public static int NextIndex = 1;
-        public int Index { get; private set; }
-        /// This should track the "active" prompt which the next step in the process should care about.  Earlier versions are in ImageConstructionSteps. <summary>
-        /// To modify it call ReplacePrompt to also fix up history.
         public string Prompt { get; set; }
 
         /// <summary>
-        /// If a generator wants the file to have a specific filename, it should fill this in. that is, regardless of whatever happens to the prompt after the transformation, or even the initail actual prompt, just use this. For example if you are generating a deck of cards, you might just set this up to say "2 or hearts" even if your raw original prompt for even the first step is "two hearts entwined in the style of jack vance" etc. This way the resulting filenames will make sense.
+        /// These are for programmatic manipulation. For example, a user of this program first adds a concept like "fire" then maps that into 4 different variants by using an internal Claude client or something like that.
+        /// Then it'll be sent to the actual image generator (which may do more steps of its own). For now these steps are both handled by this class; the only latter type is when the remote thing say, rewrites the prompt again.
+        /// For us things to do are cool ones like: choose an aspect ratio.
         /// </summary>
-        public string IdentifyingConcept { get; set; } = "";
-
         public IList<PromptHistoryStep> TransformationSteps { get; set; } = new List<PromptHistoryStep>();
 
         /// Send these along and maybe one of the image consumers can use them to make a better image path etc.?
         /// these are effectively specs and should also contain the methods to generate subtitles, filenames etc for this type of job.
-        public BFL11Details BFL11Details { get; set; }
-        public BFL11UltraDetails BFL11UltraDetails { get; set; }
-        public RecraftDetails RecraftDetails { get; set; }
-        public IdeogramDetails IdeogramDetails { get; set; }
-        public Dalle3Details Dalle3Details { get; set; }
-        public GptImageOneDetails GptImageOneDetails { get; set; }
 
-        public PromptDetails()
-        {
-            Index = NextIndex;
-            NextIndex++;
-        }
+        /// whatever the user input stuff is from the PromptDetails, we later blow that out into actual work orders to the various services.
+        //public BFL11Details BFL11Details { get; set; }
+        //public BFL11UltraDetails BFL11UltraDetails { get; set; }
+        //public RecraftDetails RecraftDetails { get; set; }
+        //public IdeogramDetails IdeogramDetails { get; set; }
+        //public XDalle3Details Dalle3Details { get; set; }
+        //public GptImageOneDetails GptImageOneDetails { get; set; }
 
+        public PromptDetails() { }
+
+        /// <summary>
+        /// These are generally for internal prompt manipulations before we send it out anywhere. So they'll mostly be shared before going out to an actual image generator.
+        /// </summary>
         public void ReplacePrompt(string newPrompt, string explanation, TransformationType transformationType)
         {
             ReplacePrompt(newPrompt, explanation, transformationType, null);    
@@ -77,36 +71,13 @@ namespace MultiImageClient
         {
             var parts = new List<string>();
 
-            if (BFL11Details != null)
-            {
-                parts.Add(BFL11Details.GetDescription());
-            }
-            if (BFL11UltraDetails != null)
-            {
-                parts.Add(BFL11UltraDetails.GetDescription());
-            }
-            if (RecraftDetails != null)
-            {
-                parts.Add(RecraftDetails.GetDescription());
-            }
-            if (IdeogramDetails != null)
-            {
-                parts.Add(IdeogramDetails.GetDescription());
-            }
-            if (Dalle3Details != null)
-            {
-                parts.Add(Dalle3Details.GetDescription());
-            }
-            if (GptImageOneDetails!= null)
-            {
-                parts.Add(GptImageOneDetails.GetDescription());
-            }
+            
             var detailsPart = string.Empty;
             if (parts.Count > 0)
             {
                 detailsPart = $" {string.Join(", ", parts)}";
             }
-            return $"Index:{Index} \'{Prompt}\' {detailsPart}";
+            return $"\'{Prompt}\' {detailsPart}";
         }
 
         public void UndoLastStep()
@@ -130,35 +101,6 @@ namespace MultiImageClient
         {
             var item = new PromptHistoryStep(Prompt, stepDescription, transformationType);
             TransformationSteps.Add(item);
-        }
-
-        public PromptDetails Clone()
-        {
-            var clone = new PromptDetails
-            {
-                Prompt = Prompt,
-                IdentifyingConcept = IdentifyingConcept,
-                BFL11Details = BFL11Details != null ? new BFL11Details(BFL11Details) : null,
-                BFL11UltraDetails = BFL11UltraDetails != null ? new BFL11UltraDetails(BFL11UltraDetails) : null,
-                RecraftDetails = RecraftDetails != null ? new RecraftDetails(RecraftDetails) : null,
-                IdeogramDetails = IdeogramDetails != null ? new IdeogramDetails(IdeogramDetails) : null,
-                Dalle3Details = Dalle3Details != null ? new Dalle3Details(Dalle3Details) : null,
-                TransformationSteps = new List<PromptHistoryStep>(),
-            };
-
-            foreach (var step in TransformationSteps)
-            {
-                clone.TransformationSteps.Add(new PromptHistoryStep(step));
-            }
-
-            return clone;
-        }
-
-        //a method to make mousing over this object show the basic info on it:
-        public override string ToString()
-        {
-
-            return $"{Prompt}";
         }
     }
 }

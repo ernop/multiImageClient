@@ -13,24 +13,26 @@ namespace MultiImageClient
         private string _suffix { get; set; }
         private ClaudeService _claudeService { get; set; }
         private decimal _temperature { get; set; }
+        private MultiClientRunStats _stats { get; set; }
 
         public string Name => nameof(ClaudeRewriteStep);
 
-        public ClaudeRewriteStep(string prefix, string suffix, ClaudeService svc, decimal temperature)
+        public ClaudeRewriteStep(string prefix, string suffix, ClaudeService svc, decimal temperature, MultiClientRunStats stats)
         {
             _claudeService = svc;
             _prefix = prefix;
             _suffix = suffix;
             _temperature = temperature;
+            _stats = stats;
         }
 
-        public async Task<bool> DoTransformation(PromptDetails pd, MultiClientRunStats stats)
+        public async Task<bool> DoTransformation(PromptDetails pd)
         {
             var preparedClaudePrompt = $"{_prefix}\nHere is the topic:\n'{pd.Prompt}'\n{_suffix}".Trim();
             var preparedClaudePromptWithTemp = $"temp={_temperature} {preparedClaudePrompt}";
             pd.ReplacePrompt(preparedClaudePrompt, preparedClaudePromptWithTemp, TransformationType.ClaudeRewriteRequest);
 
-            var response = await _claudeService.RewritePromptAsync(pd, stats, _temperature);
+            var response = await _claudeService.RewritePromptAsync(pd, _temperature);
             if (!response.IsSuccess)
             {
                 Logger.Log($"\tClaude fail so reverting FROM: {pd.Show()}");

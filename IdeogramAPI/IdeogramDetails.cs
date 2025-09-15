@@ -20,11 +20,6 @@ namespace IdeogramAPIClient
             NegativePrompt = other.NegativePrompt;
         }
 
-        public string GetDescription()
-        {
-            return $"{StyleType}";
-        }
-
         public IDetails Clone()
         {
             throw new NotImplementedException();

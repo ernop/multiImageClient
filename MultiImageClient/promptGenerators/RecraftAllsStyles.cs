@@ -30,7 +30,7 @@ using static System.Formats.Asn1.AsnWriter;
 namespace MultiImageClient
 {
     /// If you have a file of a bunch of prompts, you can use this to load them rather than using some kind of custom iteration system.
-    public class RecraftAllsStyles : AbstractPromptGenerator
+    public class RecraftAllsStyles : AbstractPromptSource
     {
 
         public RecraftAllsStyles(Settings settings) : base(settings)
@@ -42,12 +42,7 @@ namespace MultiImageClient
         public override int CopiesPer => 1;
         public override bool RandomizeOrder => false;
         public override string Prefix => "";
-        public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Suffix => "";
-        public override bool SaveFullAnnotation => true;
-        public override bool SaveInitialIdea => false;
-        public override bool SaveFinalPrompt => false;
-        public override bool SaveJustOverride => true;
 
         private IEnumerable<PromptDetails> GetPrompts()
         {
@@ -76,9 +71,7 @@ namespace MultiImageClient
                     var prompt = "A magnificent tower in an epic plain, ruins and hidden secrets, super detailed and high resolution, incredibly deep and profound, with hidden creatures and erosion, and a cute semi-hidden kitten.";
                     pd.ReplacePrompt(prompt, prompt , TransformationType.InitialPrompt);
                     
-                    pd.IdentifyingConcept = $"{style}\t{usingSub}\tmagnificent tower in an epic plain";
-                    
-                    pd.RecraftDetails = recraftDetails;
+                    //pd.RecraftDetails = recraftDetails;
                     Logger.Log($"Trying style, substyle: {style} {usingSub}");
                     res.Add(pd);
                 }

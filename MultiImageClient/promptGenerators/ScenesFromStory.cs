@@ -6,14 +6,13 @@ using System.Linq;
 
 namespace MultiImageClient
 {
-    public class ScenesFromStory : AbstractPromptGenerator
+    public class ScenesFromStory : AbstractPromptSource
     {
         public ScenesFromStory(Settings settings) : base(settings)
         {
         }
 
         public override string Name => "Scenes from Equinoctal";
-        public override IEnumerable<string> Variants => new List<string> { "" };
         public override string Prefix => "";
         public override int ImageCreationLimit => 300;
         public override int CopiesPer => 3;

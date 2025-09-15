@@ -26,7 +26,6 @@ namespace MultiImageClient
 
         public static Settings LoadFromFile(string filePath)
         {
-            
             if (!File.Exists(filePath))
             {
                 throw new FileNotFoundException($"Settings file not found: {filePath}");

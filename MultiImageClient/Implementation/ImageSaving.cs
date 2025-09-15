@@ -56,9 +56,8 @@ namespace MultiImageClient
             byte[] imageBytes,
             TaskProcessResult result,
             Settings settings,
-            MultiClientRunStats stats,
             SaveType saveType,
-            string promptGeneratorName)
+            IImageGenerator generator)
         {
             string todayFolder = DateTime.Now.ToString("yyyy-MM-dd-dddd");
             string baseFolder = Path.Combine(settings.ImageDownloadBaseFolder, todayFolder);
@@ -98,7 +97,10 @@ namespace MultiImageClient
                 Console.WriteLine("some other weird contenttype. {result.ContentType}");
             }
 
-            var safeFilename = FilenameGenerator.GenerateUniqueFilename(result, baseFolder, promptGeneratorName, saveType);
+            var usingPromptTextPart = FilenameGenerator.TruncatePrompt(result.PromptDetails.Prompt, 90);
+            var generatorFilename = generator.GetFilenamePart(result.PromptDetails);
+
+            var safeFilename = FilenameGenerator.GenerateUniqueFilename($"{usingPromptTextPart}_{generatorFilename}", result, baseFolder, saveType);
             var fullPath = Path.Combine(baseFolder, safeFilename);
 
             try
@@ -112,11 +114,11 @@ namespace MultiImageClient
                 if (saveType == SaveType.Raw)
                 {
                     //Logger.Log($"Saved {saveType} image. Fp: {fullPath}");
-                    stats.SavedRawImageCount++;
+                    //stats.SavedRawImageCount++;
                 }
                 else
                 {
-                    var imageInfo = GetAnnotationDefaultData(result, fullPath, saveType, promptGeneratorName);
+                    var imageInfo = GetAnnotationDefaultData(result, fullPath, saveType, generator);
                     var usingSteps = GetUsingSteps(saveType, result.PromptDetails);
                     if (saveType == SaveType.JustOverride)
                     {
@@ -138,7 +140,7 @@ namespace MultiImageClient
                             saveType
                         );
                     }
-                    stats.SavedAnnotatedImageCount++;
+                    //stats.SavedAnnotatedImageCount++;
                 }
             }
             catch (Exception ex)
@@ -163,7 +165,7 @@ namespace MultiImageClient
             TaskProcessResult result,
             string fullPath,
             SaveType saveType,
-            string promptGeneratorName)
+            IImageGenerator generator)
         {
             var imageInfo = new Dictionary<string, string>();
             var promptDetails = result.PromptDetails;
@@ -171,7 +173,7 @@ namespace MultiImageClient
             switch (saveType)
             {
                 case SaveType.FullAnnotation:
-                    AddFullAnnotationInfo(imageInfo, result.ImageGenerator, promptDetails, promptGeneratorName, result);
+                    //AddFullAnnotationInfo(imageInfo, result.ImageGenerator, promptDetails, promptGeneratorName, result);
                     imageInfo.Add("Filename", Path.GetFileName(fullPath));
                     break;
                 case SaveType.InitialIdea:
@@ -189,7 +191,6 @@ namespace MultiImageClient
                     break;
                 case SaveType.JustOverride:
                     var initialPrompt2 = promptDetails.TransformationSteps.First().Explanation;
-                    imageInfo.Add("JUST", result.PromptDetails.IdentifyingConcept);
                     imageInfo.Add("Producer", result.ImageGenerator.ToString());
                     imageInfo.Add("Initial Prompt", initialPrompt2);
                     break;
@@ -202,61 +203,62 @@ namespace MultiImageClient
 
         private static void AddFullAnnotationInfo(Dictionary<string, string> imageInfo, ImageGeneratorApiType generator, PromptDetails promptDetails, string promptGeneratorName, TaskProcessResult result)
         {
-            switch (generator)
-            {
-                case ImageGeneratorApiType.Ideogram:
-                    imageInfo.Add("Generator", "Ideogram V2");
-                    var ideogramDetails = promptDetails.IdeogramDetails;
-                    if (ideogramDetails.Model != default)
-                        imageInfo.Add("Model", ideogramDetails.Model.ToString());
-                    if (ideogramDetails.AspectRatio.HasValue)
-                        imageInfo.Add("AspectRatio", IdeogramUtils.StringifyAspectRatio(ideogramDetails.AspectRatio.Value));
-                    if (ideogramDetails.StyleType.HasValue)
-                        imageInfo.Add("StyleType", ideogramDetails.StyleType.Value.ToString());
-                    if (!string.IsNullOrWhiteSpace(ideogramDetails.NegativePrompt))
-                        imageInfo.Add("NegativePrompt", ideogramDetails.NegativePrompt);
-                    break;
-                case ImageGeneratorApiType.BFLv11:
-                    var bflDetails = promptDetails.BFL11Details;
-                    imageInfo.Add("Generator", "BFL Flux 1.1");
-                    if (bflDetails.Seed.HasValue)
-                        imageInfo.Add("Seed", bflDetails.Seed.Value.ToString());
-                    if (bflDetails.Width != default && bflDetails.Height != default)
-                        imageInfo.Add("Size", $"{bflDetails.Width}x{bflDetails.Height}");
-                    if (bflDetails.SafetyTolerance != default)
-                        imageInfo.Add("SafetyTolerance", bflDetails.SafetyTolerance.ToString());
-                    break;
-                case ImageGeneratorApiType.BFLv11Ultra:
-                    var bflDetails2 = promptDetails.BFL11UltraDetails;
-                    imageInfo.Add("Generator", "BFL Flux 1.1 Ultra");
-                    if (bflDetails2.Seed.HasValue)
-                        imageInfo.Add("Seed", bflDetails2.Seed.Value.ToString());
-                    if (bflDetails2.AspectRatio != default)
-                        imageInfo.Add("AR", $"{bflDetails2.AspectRatio}");
-                    if (bflDetails2.SafetyTolerance != default)
-                        imageInfo.Add("SafetyTolerance", bflDetails2.SafetyTolerance.ToString());
-                    break;
-                case ImageGeneratorApiType.Dalle3:
-                    imageInfo.Add("Generator", "Dall-e 3");
-                    var dalle3Details = promptDetails.Dalle3Details;
-                    imageInfo.Add("Size", $"{dalle3Details.Size}");
-                    imageInfo.Add("Quality", dalle3Details.Quality.ToString());
-                    break;
-                case ImageGeneratorApiType.GptImage1:
-                    imageInfo.Add("Generator", "gpt-Image-1");
-                    var gptImageOneDetails = promptDetails.GptImageOneDetails;
-                    imageInfo.Add("Size", $"{gptImageOneDetails.size}");
-                    imageInfo.Add("Moderation", $"{gptImageOneDetails.moderation}");
-                    imageInfo.Add("Quality", $"{gptImageOneDetails.quality}");
-                    break;
-                case ImageGeneratorApiType.Recraft:
-                    imageInfo.Add("Generator", "Recraft");
-                    imageInfo.Add("Mimetype", result.ContentType);
-                    var recraftDetails = promptDetails.RecraftDetails;
-                    imageInfo.Add("Size", $"{recraftDetails.size}");
-                    imageInfo.Add("Style", recraftDetails.GetFullStyleName());
-                    break;
-            }
+            // fix this by making the appropriate direct GetLabelBitmap calls within each service.
+            //switch (generator)
+            //{
+            //    case ImageGeneratorApiType.Ideogram:
+            //        imageInfo.Add("Generator", "Ideogram V2");
+            //        var ideogramDetails = promptDetails.IdeogramDetails;
+            //        if (ideogramDetails.Model != default)
+            //            imageInfo.Add("Model", ideogramDetails.Model.ToString());
+            //        if (ideogramDetails.AspectRatio.HasValue)
+            //            imageInfo.Add("AspectRatio", IdeogramUtils.StringifyAspectRatio(ideogramDetails.AspectRatio.Value));
+            //        if (ideogramDetails.StyleType.HasValue)
+            //            imageInfo.Add("StyleType", ideogramDetails.StyleType.Value.ToString());
+            //        if (!string.IsNullOrWhiteSpace(ideogramDetails.NegativePrompt))
+            //            imageInfo.Add("NegativePrompt", ideogramDetails.NegativePrompt);
+            //        break;
+            //    case ImageGeneratorApiType.BFLv11:
+            //        var bflDetails = promptDetails.BFL11Details;
+            //        imageInfo.Add("Generator", "BFL Flux 1.1");
+            //        if (bflDetails.Seed.HasValue)
+            //            imageInfo.Add("Seed", bflDetails.Seed.Value.ToString());
+            //        if (bflDetails.Width != default && bflDetails.Height != default)
+            //            imageInfo.Add("Size", $"{bflDetails.Width}x{bflDetails.Height}");
+            //        if (bflDetails.SafetyTolerance != default)
+            //            imageInfo.Add("SafetyTolerance", bflDetails.SafetyTolerance.ToString());
+            //        break;
+            //    case ImageGeneratorApiType.BFLv11Ultra:
+            //        var bflDetails2 = promptDetails.BFL11UltraDetails;
+            //        imageInfo.Add("Generator", "BFL Flux 1.1 Ultra");
+            //        if (bflDetails2.Seed.HasValue)
+            //            imageInfo.Add("Seed", bflDetails2.Seed.Value.ToString());
+            //        if (bflDetails2.AspectRatio != default)
+            //            imageInfo.Add("AR", $"{bflDetails2.AspectRatio}");
+            //        if (bflDetails2.SafetyTolerance != default)
+            //            imageInfo.Add("SafetyTolerance", bflDetails2.SafetyTolerance.ToString());
+            //        break;
+            //    case ImageGeneratorApiType.Dalle3:
+            //        imageInfo.Add("Generator", "Dall-e 3");
+            //        var dalle3Details = promptDetails.Dalle3Details;
+            //        imageInfo.Add("Size", $"{dalle3Details.Size}");
+            //        imageInfo.Add("Quality", dalle3Details.Quality.ToString());
+            //        break;
+            //    case ImageGeneratorApiType.GptImage1:
+            //        imageInfo.Add("Generator", "gpt-Image-1");
+            //        var gptImageOneDetails = promptDetails.GptImageOneDetails;
+            //        imageInfo.Add("Size", $"{gptImageOneDetails.size}");
+            //        imageInfo.Add("Moderation", $"{gptImageOneDetails.moderation}");
+            //        imageInfo.Add("Quality", $"{gptImageOneDetails.quality}");
+            //        break;
+            //    case ImageGeneratorApiType.Recraft:
+            //        imageInfo.Add("Generator", "Recraft");
+            //        imageInfo.Add("Mimetype", result.ContentType);
+            //        var recraftDetails = promptDetails.RecraftDetails;
+            //        imageInfo.Add("Size", $"{recraftDetails.size}");
+            //        imageInfo.Add("Style", recraftDetails.GetFullStyleName());
+            //        break;
+            //}
             imageInfo.Add("Kind", promptGeneratorName);
             imageInfo.Add("Generated", DateTime.Now.ToString());
         }

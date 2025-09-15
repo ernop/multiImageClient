@@ -21,7 +21,7 @@ namespace MultiImageClient
             return artists.OrderBy(el => random.Next()).ToList().First().Trim();
         }
 
-        public Task<bool> DoTransformation(PromptDetails pd, MultiClientRunStats stats)
+        public Task<bool> DoTransformation(PromptDetails pd)
         {
             var artist = GetRandomArtist();
             var newVersion = $"In the style of {artist}, {pd.Prompt}";

@@ -7,13 +7,15 @@ namespace MultiImageClient
         public string Name => nameof(ManualModificationStep);
         private string Prefix { get; set; }
         private string Suffix { get; set; }
-        public ManualModificationStep(string prefix, string suffix)
+        private MultiClientRunStats _stats { get; set; }
+        public ManualModificationStep(string prefix, string suffix, MultiClientRunStats stats)
         {
             Prefix = prefix;
             Suffix = suffix;
+            _stats = stats;
         }
 
-        public Task<bool> DoTransformation(PromptDetails pd, MultiClientRunStats stats)
+        public Task<bool> DoTransformation(PromptDetails pd)
         {
             var newp = $"{Prefix} {pd.Prompt} {Suffix}".Trim();
             pd.ReplacePrompt(newp, newp, TransformationType.ManualSuffixation);
