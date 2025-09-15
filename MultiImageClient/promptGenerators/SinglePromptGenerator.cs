@@ -39,8 +39,9 @@ namespace MultiImageClient
             get
             {
                 foreach (var prompt in _prompts)
-                {
+                {   
                     var details = new PromptDetails();
+
                     details.ReplacePrompt(prompt, prompt, TransformationType.InitialPrompt);
                     yield return details;
                 }

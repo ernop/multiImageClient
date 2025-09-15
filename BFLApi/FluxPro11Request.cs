@@ -21,6 +21,9 @@ namespace BFLAPIClient
         [JsonProperty("safety_tolerance")]
         public int SafetyTolerance { get; set; }
 
+        [JsonProperty("output_format")]
+        public string OutputFormat { get; set; } = "png";
+
         [JsonProperty("seed")]
         public int? Seed { get; set; }
     }

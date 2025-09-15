@@ -1,13 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using IdeogramAPIClient;
 
 using RecraftAPIClient;
 
 using SixLabors.ImageSharp;
-
-
 
 namespace MultiImageClient
 {
@@ -16,6 +15,8 @@ namespace MultiImageClient
     /// </summary>
     public class PromptDetails
     {
+        public static int NextIndex = 1;
+        public int Index { get; private set; }
         /// This should track the "active" prompt which the next step in the process should care about.  Earlier versions are in ImageConstructionSteps. <summary>
         /// To modify it call ReplacePrompt to also fix up history.
         public string Prompt { get; set; }
@@ -28,10 +29,19 @@ namespace MultiImageClient
         public IList<PromptHistoryStep> TransformationSteps { get; set; } = new List<PromptHistoryStep>();
 
         /// Send these along and maybe one of the image consumers can use them to make a better image path etc.?
-        public BFLDetails BFLDetails { get; set; }
+        /// these are effectively specs and should also contain the methods to generate subtitles, filenames etc for this type of job.
+        public BFL11Details BFL11Details { get; set; }
+        public BFL11UltraDetails BFL11UltraDetails { get; set; }
         public RecraftDetails RecraftDetails { get; set; }
         public IdeogramDetails IdeogramDetails { get; set; }
         public Dalle3Details Dalle3Details { get; set; }
+        public GptImageOneDetails GptImageOneDetails { get; set; }
+
+        public PromptDetails()
+        {
+            Index = NextIndex;
+            NextIndex++;
+        }
 
         public void ReplacePrompt(string newPrompt, string explanation, TransformationType transformationType)
         {
@@ -66,9 +76,14 @@ namespace MultiImageClient
         public string Show()
         {
             var parts = new List<string>();
-            if (BFLDetails != null)
+
+            if (BFL11Details != null)
             {
-                parts.Add(BFLDetails.GetDescription());
+                parts.Add(BFL11Details.GetDescription());
+            }
+            if (BFL11UltraDetails != null)
+            {
+                parts.Add(BFL11UltraDetails.GetDescription());
             }
             if (RecraftDetails != null)
             {
@@ -82,12 +97,16 @@ namespace MultiImageClient
             {
                 parts.Add(Dalle3Details.GetDescription());
             }
+            if (GptImageOneDetails!= null)
+            {
+                parts.Add(GptImageOneDetails.GetDescription());
+            }
             var detailsPart = string.Empty;
             if (parts.Count > 0)
             {
                 detailsPart = $" {string.Join(", ", parts)}";
             }
-            return Prompt+detailsPart;
+            return $"Index:{Index} \'{Prompt}\' {detailsPart}";
         }
 
         public void UndoLastStep()
@@ -119,7 +138,8 @@ namespace MultiImageClient
             {
                 Prompt = Prompt,
                 IdentifyingConcept = IdentifyingConcept,
-                BFLDetails = BFLDetails != null ? new BFLDetails(BFLDetails) : null,
+                BFL11Details = BFL11Details != null ? new BFL11Details(BFL11Details) : null,
+                BFL11UltraDetails = BFL11UltraDetails != null ? new BFL11UltraDetails(BFL11UltraDetails) : null,
                 RecraftDetails = RecraftDetails != null ? new RecraftDetails(RecraftDetails) : null,
                 IdeogramDetails = IdeogramDetails != null ? new IdeogramDetails(IdeogramDetails) : null,
                 Dalle3Details = Dalle3Details != null ? new Dalle3Details(Dalle3Details) : null,

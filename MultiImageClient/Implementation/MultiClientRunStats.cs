@@ -16,10 +16,13 @@ namespace MultiImageClient
         public int ClaudeWouldRefuseCount { get; set; }
         public int ClaudeRefusedCount { get; set; }
         public int ClaudeRewroteCount { get; set; }
-        
+
         public int Dalle3RequestCount { get; set; }
         public int Dalle3RefusedCount { get; set; }
-        
+
+        public int GptImageOneRequestCount { get; set; }
+        public int GptImageOneRefusedCount  { get; set; }
+
         public int BFLImageGenerationRequestCount { get; set; }
         public int BFLImageGenerationSuccessCount { get; set; }
         public int BFLImageGenerationErrorCount { get; set; }
@@ -55,6 +58,11 @@ namespace MultiImageClient
                 nonZeroStats.Add($"Dalle3 Requests:{Dalle3RequestCount}");
             if (Dalle3RefusedCount > 0)
                 nonZeroStats.Add($"Dalle3 Requests:{Dalle3RefusedCount}");
+
+            if (GptImageOneRequestCount > 0)
+                nonZeroStats.Add($"Dalle3 Requests:{GptImageOneRequestCount}");
+            if (GptImageOneRefusedCount > 0)
+                nonZeroStats.Add($"Dalle3 Requests:{GptImageOneRefusedCount}");
 
             if (BFLImageGenerationRequestCount > 0 | BFLImageGenerationErrorCount>0 | BFLImageGenerationRequestCount > 0)
                 nonZeroStats.Add($"BFL: total:{BFLImageGenerationRequestCount}, ok:{BFLImageGenerationSuccessCount}, bad:{BFLImageGenerationErrorCount} ");

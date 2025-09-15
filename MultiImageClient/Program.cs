@@ -18,6 +18,7 @@ namespace MultiImageClient
         private static BFLService _BFLService;
         private static IdeogramService _IdeogramService;
         private static Dalle3Service _Dalle3Service;
+        private static GptImageOneService _GptImageOneService;
         private static RecraftService _RecraftService;
         private static ClaudeService _ClaudeService;
  
@@ -26,6 +27,7 @@ namespace MultiImageClient
             _BFLService = new BFLService(settings.BFLApiKey, concurrency);
             _IdeogramService = new IdeogramService(settings.IdeogramApiKey, concurrency);
             _Dalle3Service = new Dalle3Service(settings.OpenAIApiKey, concurrency);
+            _GptImageOneService = new GptImageOneService(settings.OpenAIApiKey, concurrency);
             _RecraftService = new RecraftService(settings.RecraftApiKey, concurrency);
             _ClaudeService = new ClaudeService(settings.AnthropicApiKey, concurrency);
         }
@@ -34,22 +36,19 @@ namespace MultiImageClient
             
             var generators = new List<IImageGenerator>
             {
-                new BFLGenerator(_BFLService),
-                new IdeogramGenerator(_IdeogramService),
-                new Dalle3Generator(_Dalle3Service),
-                new RecraftGenerator(_RecraftService),
+                new BFLGenerator(_BFLService, ImageGeneratorApiType.BFLv11),
+                new BFLGenerator(_BFLService, ImageGeneratorApiType.BFLv11Ultra),
+                new IdeogramGenerator(_IdeogramService, ImageGeneratorApiType.Ideogram),
+                new Dalle3Generator(_Dalle3Service, ImageGeneratorApiType.Dalle3),
+                new GptImageOneGenerator(_GptImageOneService, ImageGeneratorApiType.GptImage1),
+                new RecraftGenerator(_RecraftService, ImageGeneratorApiType.Recraft),
             };
             return actionType switch
             {
                 GeneralActionType.PromptToImageWithSteps =>
-                    new PromptToImageWithStepsWorkflow(context, _BFLService, _IdeogramService, _Dalle3Service, _RecraftService, _ClaudeService),
+                   new PromptToImageWithStepsWorkflow(context, generators, abstractPromptGenerator, settings),
                 GeneralActionType.SamePromptMultipleTargets =>
                     new SamePromptMultipleTargetsWorkflow(context, generators, abstractPromptGenerator, settings),
-
-            //WorkflowContext workflowContext,
-            //List<IImageGenerator> generators,
-            //AbstractPromptGenerator abstractPromptGenerator,
-            //Settings settings)
 
                 GeneralActionType.ImageToTextToImageWithSteps => throw new NotImplementedException(),
                 _ => throw new NotImplementedException("Unknown workflow")
@@ -60,11 +59,12 @@ namespace MultiImageClient
         {
             var settingsFilePath = "settings.json";
             var settings = Settings.LoadFromFile(settingsFilePath);
-            var concurrency = 12;
+            var concurrency = 1;
             
             InitializeServices(settings, concurrency);
 
             GeneralActionType gat = GeneralActionType.SamePromptMultipleTargets;
+            gat = GeneralActionType.PromptToImageWithSteps;
             var abstractPromptGenerator = new LoadFromFile(settings, "");
 
             var im = new ImageManager(settings);

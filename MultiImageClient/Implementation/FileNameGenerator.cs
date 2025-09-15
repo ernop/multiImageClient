@@ -20,21 +20,28 @@ namespace MultiImageClient
 
         private static string DescribeResolution(PromptDetails details)
         {
-            if (details.BFLDetails != null && details.BFLDetails.Width != default && details.BFLDetails.Height != default)
-                return $"{details.BFLDetails.Width}x{details.BFLDetails.Height}";
-            if (details.Dalle3Details != null)
+            if (details.BFL11Details != null && details.BFL11Details.Width != default && details.BFL11Details.Height != default)
+                return $"{details.BFL11Details.Width}x{details.BFL11Details.Height}";
+            else if (details.Dalle3Details != null)
                 return details.Dalle3Details.Size.ToString();
-            if (details.IdeogramDetails?.AspectRatio != null)
+            else if (details.IdeogramDetails?.AspectRatio != null)
                 return IdeogramUtils.StringifyAspectRatio(details.IdeogramDetails.AspectRatio.Value);
-            if (details.RecraftDetails != null)
+            else if (details.RecraftDetails != null)
                 return details.RecraftDetails.size.ToString().TrimStart('_');
-            return "NONE?";
+            else if (details.GptImageOneDetails != null)
+                return $"{details.GptImageOneDetails.size}";
+            else if (details.BFL11UltraDetails != null)
+                return $"{details.BFL11UltraDetails.AspectRatio}";
+            else
+                Console.WriteLine("failed to get any details for esolution description");
+
+            return "resolution_unknown";
         }
 
         private static string DescribeSafetyTolerance(PromptDetails details)
         {
-            if (details.BFLDetails != null && details.BFLDetails.SafetyTolerance != default)
-                return $"safety{details.BFLDetails.SafetyTolerance}";
+            if (details.BFL11Details != null && details.BFL11Details.SafetyTolerance != default)
+                return $"safety{details.BFL11Details.SafetyTolerance}";
             return "";
         }
 
@@ -50,9 +57,9 @@ namespace MultiImageClient
 
         private static string GetIfAPIServiceDoesRewrites(PromptDetails details)
         {
-            if (details.BFLDetails != null)
+            if (details.BFL11Details != null)
             {
-                if (details.BFLDetails.PromptUpsampling)
+                if (details.BFL11Details.PromptUpsampling)
                 {
                     return "BFL_upsampling";
                 }
@@ -90,9 +97,10 @@ namespace MultiImageClient
 
             var components = new List<string>() { };
 
-            components.Add(promptGeneratorName);
-            components.Add(usingPromptTextPart);
+            //components.Add(promptGeneratorName);
+            components.Add(DateTime.Now.ToString("yyyyMMddHHmmss"));
             components.Add(result.ImageGenerator.ToString());
+            components.Add(usingPromptTextPart);
             if (result.PromptDetails.RecraftDetails != null)
             {
                 components.Add(result.PromptDetails.RecraftDetails.style.ToString());
@@ -112,7 +120,7 @@ namespace MultiImageClient
 
             components.Add(DescribeResolution(result.PromptDetails));
             components.Add(GetIfAPIServiceDoesRewrites(result.PromptDetails));
-            components.Add(DateTime.Now.ToString("yyyyMMddHHmmss"));
+            
             components.Add(saveType.ToString());
 
             string combined = string.Join("_", components.Where(c => !string.IsNullOrEmpty(c)));
@@ -121,31 +129,7 @@ namespace MultiImageClient
             // Ensure the filename is unique
             int count = 0;
             string uniqueFilename;
-            var ext = "";
-            if (string.IsNullOrEmpty(result.ContentType))
-            {
-                //in future, this should never happen; we 
-                ext = result.ImageGenerator.GetFileExtension();
-            }
-            else
-            {
-                if (result.ContentType == "image/webp")
-                {
-                    ext = ".webp";
-                }
-                else if (result.ContentType == "image/svg+xml")
-                {
-                    ext = ".svg";
-                }
-                else if (result.ContentType == "image/jpeg")
-                {
-                    ext = ".jpg";
-                }
-                else
-                {
-                    ext = result.ContentType; //.Split("/")[1]
-                }
-            }
+            var ext = ".png";
 
             do
             {

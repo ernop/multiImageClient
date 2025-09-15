@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -49,29 +50,46 @@ namespace MultiImageClient
             return savedImagePaths;
         }
 
-        public async Task ProcessAndSaveAsync(TaskProcessResult result, AbstractPromptGenerator promptGenerator, MultiClientRunStats stats)
+        public async Task<TaskProcessResult> ProcessAndSaveAsync(TaskProcessResult result, AbstractPromptGenerator promptGenerator, MultiClientRunStats stats)
         {
             try
             {
                 if (!result.IsSuccess)
                 {
-                    Logger.Log(result.ToString());
-                    return;
+                    return result;
                 }
-                if (string.IsNullOrEmpty(result.Url))
+                var sw = Stopwatch.StartNew();
+                byte[] imageBytes;
+                if (!string.IsNullOrEmpty(result.Url))
                 {
-                    Logger.Log($"No URL: {result.ErrorMessage}");
-                    return;
+                    imageBytes = await ImageSaving.DownloadImageAsync(result);
+                    result.DownloadTotalMs = sw.ElapsedMilliseconds;
+                    var downloadResults = await DoSaveAsync(promptGenerator, imageBytes, result, stats, _settings);
+                    await SaveJsonLogAsync(result, downloadResults);
+                    return result;
+                }
+                else
+                {
+                    var ii = 0;
+                    foreach (var qq in result.Base64ImageDatas)
+                    {
+                        //Console.WriteLine($"Saving one things: {ii}");
+                        imageBytes = Convert.FromBase64String(qq);
+                        var downloadResults = await DoSaveAsync(promptGenerator, imageBytes, result, stats, _settings);
+                        ii++;
+                        await SaveJsonLogAsync(result, downloadResults);
+                    }
+                    result.DownloadTotalMs = sw.ElapsedMilliseconds;
+                    return result;
                 }
 
-                byte[] imageBytes = await ImageSaving.DownloadImageAsync(result);
-                var downloadResults = await DoSaveAsync(promptGenerator, imageBytes, result, stats, _settings);
-
-                await SaveJsonLogAsync(result, downloadResults);
+                
             }
             catch (Exception ex)
             {
                 Logger.Log($"\tAn error occurred while processing a task: {ex.Message}");
+                result.ErrorMessage = ex.Message;
+                return result;
             }
         }
 

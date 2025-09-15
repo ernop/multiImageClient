@@ -47,12 +47,12 @@ namespace MultiImageClient.promptGenerators
             if (_IncludePrivate)
             {
                 sourceFPs.Add("D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrivatePrompts.txt");
-                sourceFPs.Add("D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts-private.txt");
+                //sourceFPs.Add("D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts-private.txt");
             }
             if (_IncludePublic)
             {
-                sourceFPs.Add("D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts.txt");
-                sourceFPs.Add("D:\\proj\\prompts3.txt");
+                //sourceFPs.Add("D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts.txt");
+                //sourceFPs.Add("D:\\proj\\prompts3.txt");
             }
                 
             if (!string.IsNullOrEmpty(FilePath))

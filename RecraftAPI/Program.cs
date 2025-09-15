@@ -14,8 +14,9 @@ namespace RecraftAPIClient
             var details = new RecraftDetails()
             {
                 size = RecraftImageSize._1707x1024,
-                style = RecraftStyle.vector_illustration.ToString(),
-                substyle = RecraftVectorIllustrationSubstyles.cosmics.ToString(),
+                style = RecraftStyle.digital_illustration.ToString()
+                //substyle = RecraftVectorIllustrationSubstyles.
+                //substyle = RecraftVectorIllustrationSubstyles.cosmics.ToString(),
             };
 
             var cli = new RecraftClient("ly990g6UShz0ODtjMoqUnpOqfQF935fG3dEjq5kHLMrF18EojUxw3FfOin3Xyrib");

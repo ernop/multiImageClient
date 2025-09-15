@@ -61,7 +61,6 @@ namespace MultiImageClient
                 useVariants = Variants.ToList();
             }
             var returnedCount = 0;
-
             foreach (var promptDetails in Prompts)
             {
                 var cleanPrompt = TextUtils.CleanPrompt(promptDetails.Prompt).Trim();
@@ -88,14 +87,36 @@ namespace MultiImageClient
 
                     if (usingPrompt != promptDetails.Prompt)
                     {
+                        Console.WriteLine(usingPrompt);
+                        Console.WriteLine(promptDetails.Prompt);
                         promptDetails.ReplacePrompt(usingPrompt, usingPrompt, TransformationType.Variants);
+                    }
+                    Console.WriteLine(promptDetails.Show());
+                    Console.WriteLine("Do you accept this prompt? y for yes.");
+                    var value = Console.ReadLine();
+                    if (value.Trim() == "y")
+                    {
+                        Console.WriteLine("accepted.");
+                        yield return promptDetails;
+                    }
+                    else if (value.TrimEnd() == "n")
+                    {
+                        continue;
+                    }
+                    else
+                    {
+                        var userPrompt = TextUtils.CleanPrompt(value.Trim()).Trim();
+                        var newPd = new PromptDetails();
+                        newPd.ReplacePrompt(userPrompt, userPrompt, TransformationType.InitialPrompt);
+                        yield return newPd;
+                        continue;
                     }
 
                     for (var ii = 0; ii < CopiesPer; ii++)
                     {
                         var copy = promptDetails.Clone();
-                        yield return copy;
                         returnedCount++;
+                        yield return copy;
                         if (returnedCount >= ImageCreationLimit) yield break;
                     }
                     if (returnedCount >= ImageCreationLimit) yield break;

@@ -25,9 +25,9 @@ namespace MultiImageClient.promptGenerators
 
         public override string Name => nameof(LoadFromFile);
 
-        public override int ImageCreationLimit => 400;
-        public override int CopiesPer => 2;
-        public override int FullyResolvedCopiesPer => 2;
+        public override int ImageCreationLimit => 109;
+        public override int CopiesPer => 1;
+        public override int FullyResolvedCopiesPer => 1;
         public override bool RandomizeOrder => true;
         public override string Prefix => "";
         public override IEnumerable<string> Variants => new List<string> { "" };
@@ -41,8 +41,8 @@ namespace MultiImageClient.promptGenerators
             var sourceFPs = new List<string>() {
                 "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrivatePrompts.txt",
                 "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts-private.txt",
-                //"D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts.txt",
-                //"D:\\proj\\prompts3.txt" 
+                "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts.txt",
+                "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\prompts3.txt"
             };
             
             if (!string.IsNullOrEmpty(FilePath)) {
@@ -56,23 +56,23 @@ namespace MultiImageClient.promptGenerators
                 var items = File.ReadAllLines(fp).ToList();
                 foreach (var usePrompt in items)
                 {
-                    if ((usePrompt.Contains("{{") || usePrompt.Contains("[[")) && !(usePrompt.Contains("[[[") || usePrompt.Contains("}}}")))
-                    {
-                        continue;
-                    }
+                    //if ((usePrompt.Contains("{{") || usePrompt.Contains("[[")) && !(usePrompt.Contains("[[[") || usePrompt.Contains("}}}")))
+                    //{
+                    //    continue;
+                    //}
                     if (string.IsNullOrEmpty(usePrompt))
                     {
                         continue;
                     }
-                    var good = false;
-                    if (usePrompt.ToLower().Contains("japan") || usePrompt.ToLower().Contains("girl")|| usePrompt.ToLower().Contains("woman") || usePrompt.ToLower().Contains("high school") || usePrompt.ToLower().Contains("chinese") || usePrompt.ToLower().Contains("x"))
-                    {
-                        good = true;
-                    }
-                    if (!good)
-                    {
-                        continue;
-                    }
+                    //var good = false;
+                    //if (usePrompt.ToLower().Contains("japan") || usePrompt.ToLower().Contains("girl") || usePrompt.ToLower().Contains("woman") || usePrompt.ToLower().Contains("high school") || usePrompt.ToLower().Contains("chinese") || usePrompt.ToLower().Contains("asian"))
+                    //{
+                    //    good = true;
+                    //}
+                    //if (!good)
+                    //{
+                    //    continue;
+                    //}
                     allPromptsRaw.Add(usePrompt);
                 }
             }
