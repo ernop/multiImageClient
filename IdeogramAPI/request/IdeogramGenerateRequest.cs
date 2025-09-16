@@ -7,7 +7,7 @@ namespace IdeogramAPIClient
 {
     public class IdeogramGenerateRequest
     {
-        public IdeogramGenerateRequest(string prompt, IdeogramDetails ideogramDetails)
+        public IdeogramGenerateRequest(string prompt, IdeogramOptions ideogramDetails)
         {
             Prompt = prompt;
             AspectRatio = ideogramDetails.AspectRatio;

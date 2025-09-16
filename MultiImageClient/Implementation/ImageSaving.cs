@@ -2,6 +2,12 @@
 
 using ImageMagick;
 
+using SixLabors.Fonts;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Drawing.Processing;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -100,7 +106,7 @@ namespace MultiImageClient
             var usingPromptTextPart = FilenameGenerator.TruncatePrompt(result.PromptDetails.Prompt, 90);
             var generatorFilename = generator.GetFilenamePart(result.PromptDetails);
 
-            var safeFilename = FilenameGenerator.GenerateUniqueFilename($"{usingPromptTextPart}_{generatorFilename}", result, baseFolder, saveType);
+            var safeFilename = FilenameGenerator.GenerateUniqueFilename($"{generatorFilename}_{usingPromptTextPart}", result, baseFolder, saveType);
             var fullPath = Path.Combine(baseFolder, safeFilename);
 
             try
@@ -130,6 +136,34 @@ namespace MultiImageClient
                             saveType
                         );
                     }
+                    else if (saveType == SaveType.Label)
+                    {
+                        var rightParts = generator.GetRightParts();
+                        using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
+                        var label = MakeLabelGeneral(originalImage.Width, result.PromptDetails.Prompt, rightParts);
+                        
+                        using var labelImage = SixLabors.ImageSharp.Image.Load<Rgba32>(label);
+                        int newHeight = originalImage.Height + labelImage.Height;
+                        using var combinedImage = new Image<Rgba32>(originalImage.Width, newHeight);
+                        combinedImage.Mutate(ctx =>
+                        {
+                            // Set antialiasing
+                            ctx.SetGraphicsOptions(new GraphicsOptions
+                            {
+                                Antialias = true,
+                                AntialiasSubpixelDepth = 16
+                            });
+
+                            // Draw original image at top
+                            ctx.DrawImage(originalImage, new Point(0, 0), 1f);
+
+                            // Draw label at bottom
+                            ctx.DrawImage(labelImage, new Point(0, originalImage.Height), 1f);
+                        });
+
+                        // Save the combined image
+                        await combinedImage.SaveAsPngAsync(fullPath);
+                    }
                     else
                     {
                         await TextFormatting.SaveImageAndAnnotate(
@@ -151,12 +185,128 @@ namespace MultiImageClient
             return fullPath;
         }
 
+        public static byte[] MakeLabelGeneral(int width, string prompt, List<string> rightParts)
+        {
+            var rightSideWidth = 300;
+            var leftSideWidth = width - rightSideWidth;
+            var padding = 5;
+            var fontSize = 24;
+            SixLabors.Fonts.FontFamily fontFamily;
+            if (!SystemFonts.TryGet("Segoe UI", out fontFamily))
+            {
+                if (!SystemFonts.TryGet("Arial", out fontFamily))
+                {
+                    fontFamily = SystemFonts.Families.First(); // Fallback
+                }
+            }
+            var font = fontFamily.CreateFont(fontSize, FontStyle.Regular);
+
+            // Measure left side text to determine height
+            var leftTextOptions = new RichTextOptions(font)
+            {
+                WrappingLength = leftSideWidth - (padding * 2),
+                LineSpacing = 1.15f,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Dpi = 72,
+                FallbackFontFamilies = new[] { SystemFonts.Families.First() }
+            };
+
+            var leftTextBounds = TextMeasurer.MeasureBounds(prompt, leftTextOptions);
+            int leftTextHeight = (int)Math.Ceiling(leftTextBounds.Height);
+
+            // Calculate right side font size (scale down if needed to fit width)
+            var rightFont = font;
+            var rightFontSize = fontSize;
+
+            // Find the maximum width needed for right side text
+            foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
+            {
+                var testOptions = new RichTextOptions(rightFont)
+                {
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Dpi = 72
+                };
+                var textBounds = TextMeasurer.MeasureBounds(text, testOptions);
+
+                // If text is too wide, scale down font
+                while (textBounds.Width > rightSideWidth - (padding * 2) && rightFontSize > 8)
+                {
+                    rightFontSize--;
+                    rightFont = fontFamily.CreateFont(rightFontSize, FontStyle.Regular);
+                    testOptions = new RichTextOptions(rightFont)
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        Dpi = 72
+                    };
+                    textBounds = TextMeasurer.MeasureBounds(text, testOptions);
+                }
+            }
+
+            // Calculate right side height (number of lines * line height)
+            var rightLineHeight = rightFontSize * 1.5f; // Line spacing
+            var rightTextHeight = (int)(rightParts.Where(s => !string.IsNullOrEmpty(s)).Count() * rightLineHeight);
+
+            // Overall height is the maximum of left and right sides plus padding
+            int contentHeight = Math.Max(leftTextHeight, rightTextHeight);
+            int totalHeight = contentHeight + (padding * 2);
+
+            // Create the image
+            using var image = new Image<Rgba32>(width, totalHeight);
+
+            image.Mutate(ctx =>
+            {
+                // Set antialiasing
+                ctx.SetGraphicsOptions(new GraphicsOptions
+                {
+                    Antialias = true,
+                    AntialiasSubpixelDepth = 16
+                });
+
+                // Fill background with black
+                ctx.Fill(Color.Black);
+
+                // Draw left side box border (optional - you can remove if not wanted)
+                ctx.Draw(Color.White, 1f, new RectangleF(0, 0, leftSideWidth, totalHeight));
+
+                // Draw left side text
+                leftTextOptions.Origin = new PointF(padding, padding);
+                ctx.DrawText(leftTextOptions, prompt, Color.White);
+
+                // Draw right side box border (optional - you can remove if not wanted)
+                ctx.Draw(Color.White, 1f, new RectangleF(leftSideWidth, 0, rightSideWidth, totalHeight));
+
+                // Draw right side text (gold color, right-aligned)
+                var goldColor = Color.FromRgb(255, 215, 0); // Gold color
+                var yOffset = padding;
+
+                foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
+                {
+                    var rightTextOptions = new RichTextOptions(rightFont)
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Dpi = 72,
+                        Origin = new PointF(width - padding, yOffset)
+                    };
+
+                    ctx.DrawText(rightTextOptions, text, goldColor);
+                    yOffset += (int)rightLineHeight;
+                }
+            });
+
+            // Convert to byte array
+            using var ms = new MemoryStream();
+            image.SaveAsPng(ms);
+            return ms.ToArray();
+        }
+
         private static IEnumerable<PromptHistoryStep> GetUsingSteps(SaveType saveType, PromptDetails promptDetails)
         {
             return saveType switch
             {
                 SaveType.FullAnnotation => promptDetails.TransformationSteps,
-                SaveType.InitialIdea or SaveType.FinalPrompt or SaveType.Raw or SaveType.JustOverride => new List<PromptHistoryStep>() { promptDetails.TransformationSteps.First() },
+                SaveType.InitialIdea or SaveType.FinalPrompt or SaveType.Raw or SaveType.JustOverride or SaveType.Label => new List<PromptHistoryStep>() { promptDetails.TransformationSteps.First() },
                 _ => throw new Exception("Invalid SaveType")
             };
         }
@@ -199,68 +349,6 @@ namespace MultiImageClient
             imageInfo = imageInfo.Where(kvp => !string.IsNullOrWhiteSpace(kvp.Value))
                                  .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             return imageInfo;
-        }
-
-        private static void AddFullAnnotationInfo(Dictionary<string, string> imageInfo, ImageGeneratorApiType generator, PromptDetails promptDetails, string promptGeneratorName, TaskProcessResult result)
-        {
-            // fix this by making the appropriate direct GetLabelBitmap calls within each service.
-            //switch (generator)
-            //{
-            //    case ImageGeneratorApiType.Ideogram:
-            //        imageInfo.Add("Generator", "Ideogram V2");
-            //        var ideogramDetails = promptDetails.IdeogramDetails;
-            //        if (ideogramDetails.Model != default)
-            //            imageInfo.Add("Model", ideogramDetails.Model.ToString());
-            //        if (ideogramDetails.AspectRatio.HasValue)
-            //            imageInfo.Add("AspectRatio", IdeogramUtils.StringifyAspectRatio(ideogramDetails.AspectRatio.Value));
-            //        if (ideogramDetails.StyleType.HasValue)
-            //            imageInfo.Add("StyleType", ideogramDetails.StyleType.Value.ToString());
-            //        if (!string.IsNullOrWhiteSpace(ideogramDetails.NegativePrompt))
-            //            imageInfo.Add("NegativePrompt", ideogramDetails.NegativePrompt);
-            //        break;
-            //    case ImageGeneratorApiType.BFLv11:
-            //        var bflDetails = promptDetails.BFL11Details;
-            //        imageInfo.Add("Generator", "BFL Flux 1.1");
-            //        if (bflDetails.Seed.HasValue)
-            //            imageInfo.Add("Seed", bflDetails.Seed.Value.ToString());
-            //        if (bflDetails.Width != default && bflDetails.Height != default)
-            //            imageInfo.Add("Size", $"{bflDetails.Width}x{bflDetails.Height}");
-            //        if (bflDetails.SafetyTolerance != default)
-            //            imageInfo.Add("SafetyTolerance", bflDetails.SafetyTolerance.ToString());
-            //        break;
-            //    case ImageGeneratorApiType.BFLv11Ultra:
-            //        var bflDetails2 = promptDetails.BFL11UltraDetails;
-            //        imageInfo.Add("Generator", "BFL Flux 1.1 Ultra");
-            //        if (bflDetails2.Seed.HasValue)
-            //            imageInfo.Add("Seed", bflDetails2.Seed.Value.ToString());
-            //        if (bflDetails2.AspectRatio != default)
-            //            imageInfo.Add("AR", $"{bflDetails2.AspectRatio}");
-            //        if (bflDetails2.SafetyTolerance != default)
-            //            imageInfo.Add("SafetyTolerance", bflDetails2.SafetyTolerance.ToString());
-            //        break;
-            //    case ImageGeneratorApiType.Dalle3:
-            //        imageInfo.Add("Generator", "Dall-e 3");
-            //        var dalle3Details = promptDetails.Dalle3Details;
-            //        imageInfo.Add("Size", $"{dalle3Details.Size}");
-            //        imageInfo.Add("Quality", dalle3Details.Quality.ToString());
-            //        break;
-            //    case ImageGeneratorApiType.GptImage1:
-            //        imageInfo.Add("Generator", "gpt-Image-1");
-            //        var gptImageOneDetails = promptDetails.GptImageOneDetails;
-            //        imageInfo.Add("Size", $"{gptImageOneDetails.size}");
-            //        imageInfo.Add("Moderation", $"{gptImageOneDetails.moderation}");
-            //        imageInfo.Add("Quality", $"{gptImageOneDetails.quality}");
-            //        break;
-            //    case ImageGeneratorApiType.Recraft:
-            //        imageInfo.Add("Generator", "Recraft");
-            //        imageInfo.Add("Mimetype", result.ContentType);
-            //        var recraftDetails = promptDetails.RecraftDetails;
-            //        imageInfo.Add("Size", $"{recraftDetails.size}");
-            //        imageInfo.Add("Style", recraftDetails.GetFullStyleName());
-            //        break;
-            //}
-            imageInfo.Add("Kind", promptGeneratorName);
-            imageInfo.Add("Generated", DateTime.Now.ToString());
         }
     }
 }

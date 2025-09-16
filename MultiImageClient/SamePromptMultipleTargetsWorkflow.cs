@@ -36,8 +36,7 @@ namespace MultiImageClient
                 {
                     var nam = kvp.Key;
                     var generator = kvp.Value;
-                    //var theCopy = promptDetails.Clone();
-                    TaskProcessResult result = await kvp.Value.ProcessPromptAsync(promptDetails);
+                    TaskProcessResult result = await generator.ProcessPromptAsync(promptDetails);
                     await _imageManager.ProcessAndSaveAsync(result, generator);
                     tasks.Add(Task.FromResult(result));
                 }

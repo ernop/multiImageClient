@@ -1,6 +1,7 @@
 ﻿using IdeogramAPIClient;
 
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Net.Http;
@@ -14,31 +15,72 @@ namespace MultiImageClient
         private SemaphoreSlim _ideogramSemaphore;
         private IdeogramClient _ideogramClient;
         private HttpClient _httpClient = new HttpClient();
-        private MultiClientRunStats _stats;
         private IdeogramMagicPromptOption _magicPrompt;
         private IdeogramAspectRatio _aspectRatio;
-        private IdeogramStyleType _ideoGramStyleType;
+        private IdeogramStyleType? _ideoGramStyleType;
+        private string _negativePrompt;
+        private MultiClientRunStats _stats;
+        private string _name;
 
-        public IdeogramGenerator(string apiKey, int maxConcurrency, MultiClientRunStats stats, IdeogramMagicPromptOption magicPrompt, IdeogramAspectRatio aspectRatio, IdeogramStyleType styleType)
+
+        public IdeogramGenerator(string apiKey, int maxConcurrency, IdeogramMagicPromptOption magicPrompt, IdeogramAspectRatio aspectRatio, IdeogramStyleType? styleType, string negativePrompt, MultiClientRunStats stats, string name)
         {
             _ideogramClient = new IdeogramClient(apiKey);
             _ideogramSemaphore = new SemaphoreSlim(maxConcurrency);
             _magicPrompt = magicPrompt;
             _aspectRatio = aspectRatio;
             _ideoGramStyleType = styleType;
+            _negativePrompt = negativePrompt;
             _stats = stats;
+            _name = string.IsNullOrEmpty(name) ? "" : name;
         }
 
         public string GetFilenamePart(PromptDetails pd)
         {
-            var res = $"magic_{_magicPrompt.ToString()} ar_{_aspectRatio.ToString()} style_{_ideoGramStyleType.ToString()}";
+            var neg = "";
+            var stylepart = "";
+            if (_ideoGramStyleType == null)
+            {
+                //auto
+                stylepart = "";
+            }
+            else
+            {
+                stylepart = $"_{_ideoGramStyleType.ToString().ToLowerInvariant()}";
+            }
+            var clneg = TextUtils.CleanPrompt(_negativePrompt);
+            if (!string.IsNullOrEmpty(clneg))
+            {
+                neg = $" neg_{clneg}";
+            }
+            var res = $"ideogramv2{_name}_magic_{_magicPrompt.ToString().ToLowerInvariant()} {_aspectRatio.ToString().ToLowerInvariant().Replace("aspect_","ar").Replace("_","x")} {stylepart}{neg}";
 
             return res;
         }
 
-        public Bitmap GetLabelBitmap(int width)
+        public List<string> GetRightParts()
         {
-            throw new NotImplementedException();
+            var neg = "";
+            var stylepart = "";
+            if (_ideoGramStyleType == null)
+            {
+                //auto
+                stylepart = "";
+            }
+            else
+            {
+                stylepart = $"_{_ideoGramStyleType.ToString().ToLowerInvariant()}";
+            }
+            var clneg = TextUtils.CleanPrompt(_negativePrompt);
+            if (!string.IsNullOrEmpty(clneg))
+            {
+                neg = $" neg_{clneg}";
+            }
+            var res = $"ideogramv2{_name}_magic_{_magicPrompt.ToString().ToLowerInvariant()} {_aspectRatio.ToString().ToLowerInvariant().Replace("aspect_", "ar").Replace("_", "x")} {stylepart}{neg}";
+
+            var rightsideContents = new List<string>() { "ideogram_v2", _name, stylepart, clneg, $"magicprompt_{_magicPrompt.ToString()}", _aspectRatio.ToString().ToLowerInvariant().Replace("aspect_", "ar").Replace("_", "x") };
+
+            return rightsideContents;
         }
 
         public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails)
@@ -46,7 +88,7 @@ namespace MultiImageClient
             await _ideogramSemaphore.WaitAsync();
             try
             {
-                var ideogramDetails = new IdeogramDetails
+                var ideogramOptions = new IdeogramOptions
                 {
                     AspectRatio = _aspectRatio,
                     Model = IdeogramModel.V_2,
@@ -54,7 +96,7 @@ namespace MultiImageClient
                     StyleType = _ideoGramStyleType
                 };
 
-                var request = new IdeogramGenerateRequest(promptDetails.Prompt, ideogramDetails);
+                var request = new IdeogramGenerateRequest(promptDetails.Prompt, ideogramOptions);
 
                 _stats.IdeogramRequestCount++;
                 GenerateResponse response = await _ideogramClient.GenerateImageAsync(request);
@@ -87,6 +129,7 @@ namespace MultiImageClient
 
             catch (Exception ex)
             {
+                Console.WriteLine(ex);
                 return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, GenericImageErrorType = GenericImageGenerationErrorType.Unknown };
             }
             finally

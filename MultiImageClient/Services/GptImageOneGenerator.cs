@@ -2,19 +2,15 @@
 using OpenAI.Images;
 
 using System;
-using System.ClientModel;
 using System.Collections.Generic;
-
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Reflection;
-
-using System.Threading;
-using System.Threading.Tasks;
-using System.Text;
-using System.Text.Json;
 using System.Diagnostics;
 using System.Drawing;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
@@ -23,26 +19,60 @@ namespace MultiImageClient
         private SemaphoreSlim _gptImageOneSemaphore;
         static readonly HttpClient http = new HttpClient();
         private MultiClientRunStats _stats;
+        private string _size;
+        private string _moderation;
+        private string _quality;
+        private string _name;
 
-        public GptImageOneGenerator(string apiKey, int maxConcurrency, MultiClientRunStats stats)
+        public GptImageOneGenerator(string apiKey, int maxConcurrency, string size, string moderation, string quality, MultiClientRunStats stats, string name)
         {
             _gptImageOneSemaphore = new SemaphoreSlim(maxConcurrency);
-            _stats = stats;
+
             http.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Bearer", apiKey);
+
+            _size = size;
+            _moderation = moderation;
+            _quality = quality;
+            _name = string.IsNullOrEmpty(name) ? "" : name;
+            _stats = stats;
+
         }
-
-
 
         public string GetFilenamePart(PromptDetails pd)
         {
-            var res = $"";
+            var modpt = "";
+            if (_moderation != "low")
+            {
+                modpt = $" mod{_moderation}";
+            }
+
+            var qualitypt = "";
+            if (_quality != "high")
+            {
+                qualitypt = $" qual{_quality}";
+            }
+            var res = $"gpt-1_{_name}{modpt}{qualitypt}";
             return res;
         }
 
-        public Bitmap GetLabelBitmap(int width)
+        public List<string> GetRightParts()
         {
-            throw new NotImplementedException();
+            var modpt = "";
+            if (_moderation != "low")
+            {
+                modpt = $" mod{_moderation}";
+            }
+
+            var qualitypt = "";
+            if (_quality != "high")
+            {
+                qualitypt = $" qual{_quality}";
+            }
+
+            var rightsideContents = new List<string>() { "gpt-image-1", _name , modpt, qualitypt};
+
+            return rightsideContents;
         }
 
         public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails)
@@ -52,17 +82,14 @@ namespace MultiImageClient
             try
             {
                 _stats.GptImageOneRequestCount++;
-                var genOptions = new ImageGenerationOptions();
-                genOptions.Quality = "high";
-
                 var body = new
                 {
                     model = "gpt-image-1",
                     prompt = promptDetails.Prompt,
-                    moderation = "low",
-                    quality = "high",
+                    moderation = _moderation,
+                    quality = _quality,
                     n = 1,
-                    size = "auto",
+                    size = _size,
                 };
 
                 using var content = new StringContent(

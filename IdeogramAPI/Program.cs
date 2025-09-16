@@ -56,10 +56,10 @@ namespace IdeogramAPIClient
             }
         }
 
-        private static async Task<GenerateResponse> RunAsync(CommandLineOptions opts)
+        private static async Task<GenerateResponse?> RunAsync(CommandLineOptions opts)
         {
             var client = new IdeogramClient(opts.ApiKey);
-            var ideogramDetails = new IdeogramDetails
+            var ideogramDetails = new IdeogramOptions
             {
                 AspectRatio = opts.AspectRatio,
                 Model = opts.Model,

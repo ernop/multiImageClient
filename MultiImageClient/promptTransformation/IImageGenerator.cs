@@ -22,7 +22,7 @@ namespace MultiImageClient
         /// when this jobspec is run, how should it be mapped to the filename?
         public abstract string GetFilenamePart(PromptDetails pd);
 
-        /// return png bytes that wide and freely as tall as you want, with all the label stuff for yourself.
-        public abstract Bitmap GetLabelBitmap(int width);
+        /// return just the parts on the right, we know everything else.
+        public abstract List<string> GetRightParts();
     }
 }

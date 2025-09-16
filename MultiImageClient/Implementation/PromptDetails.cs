@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using IdeogramAPIClient;
 using BFLAPIClient;
 using RecraftAPIClient;
+using System.Linq;
 
 namespace MultiImageClient
 {
@@ -12,6 +13,18 @@ namespace MultiImageClient
     /// </summary>
     public class PromptDetails
     {
+        // ugh this is back now.
+        public PromptDetails Copy()
+        {
+            var res = new PromptDetails();
+            res.ReplacePrompt(Prompt, Prompt, TransformationType.InitialPrompt);
+            foreach (var step in TransformationSteps)
+            {
+                res.AddStep(step.Explanation, step.TransformationType);
+            }
+            return res;
+        }
+
         public string Prompt { get; set; }
 
         /// <summary>
@@ -20,17 +33,6 @@ namespace MultiImageClient
         /// For us things to do are cool ones like: choose an aspect ratio.
         /// </summary>
         public IList<PromptHistoryStep> TransformationSteps { get; set; } = new List<PromptHistoryStep>();
-
-        /// Send these along and maybe one of the image consumers can use them to make a better image path etc.?
-        /// these are effectively specs and should also contain the methods to generate subtitles, filenames etc for this type of job.
-
-        /// whatever the user input stuff is from the PromptDetails, we later blow that out into actual work orders to the various services.
-        //public BFL11Details BFL11Details { get; set; }
-        //public BFL11UltraDetails BFL11UltraDetails { get; set; }
-        //public RecraftDetails RecraftDetails { get; set; }
-        //public IdeogramDetails IdeogramDetails { get; set; }
-        //public XDalle3Details Dalle3Details { get; set; }
-        //public GptImageOneDetails GptImageOneDetails { get; set; }
 
         public PromptDetails() { }
 

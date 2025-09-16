@@ -1,11 +1,12 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection.Emit;
 using System.Threading.Tasks;
 using System.Xml.Linq;
-
-using Newtonsoft.Json;
 
 namespace MultiImageClient
 {
@@ -33,7 +34,8 @@ namespace MultiImageClient
             savedImagePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.FullAnnotation, generator);
             savedImagePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.FinalPrompt, generator);
             savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.InitialIdea, generator);
-            savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.JustOverride, generator);
+            savedImagePaths[SaveType.JustOverride] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.JustOverride, generator);
+            savedImagePaths[SaveType.Label] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.Label, generator);
 
             return savedImagePaths;
         }
@@ -44,6 +46,7 @@ namespace MultiImageClient
             {
                 if (!result.IsSuccess)
                 {
+                    Console.WriteLine("failur.");
                     return result;
                 }
                 var sw = Stopwatch.StartNew();
