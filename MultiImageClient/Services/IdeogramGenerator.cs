@@ -66,10 +66,16 @@ namespace MultiImageClient
                     verpart = "v2";
                     break;
                 case IdeogramModel.V_1_TURBO:
-                    verpart = "v1turbo";
+                    verpart = "v1_turbo";
                     break;
                 case IdeogramModel.V_2_TURBO:
-                    verpart = "v2tirbp";
+                    verpart = "v2_turbo";
+                    break;
+                case IdeogramModel.V_2A:
+                    verpart = "v2a";
+                    break;
+                case IdeogramModel.V_2A_TURBO:
+                    verpart = "v2a_turbo";
                     break;
                 default:
                     throw new Exception("Q");
@@ -94,6 +100,10 @@ namespace MultiImageClient
                     return 0.08m;
                 case IdeogramModel.V_2_TURBO:
                     return 0.05m;
+                case IdeogramModel.V_2A:
+                    return 0.04m;
+                case IdeogramModel.V_2A_TURBO:
+                    return 0.025m;
                 default:
                     throw new Exception("Q");
             }

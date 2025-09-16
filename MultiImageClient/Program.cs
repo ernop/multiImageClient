@@ -30,22 +30,25 @@ namespace MultiImageClient
             /// ------------------- MAKING SERVICES ----------------------------
 
             var dalle3 = new Dalle3Generator(settings.OpenAIApiKey, concurrency, GeneratedImageQuality.High, GeneratedImageSize.W1024xH1024, stats, "");
-            var recraft1 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.digital_engraving,  null, stats, "");
-            var recraft2 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.bold_fantasy, null, stats, "");
+            var recraft1 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.hard_comics,  null, stats, "");
+            //var recraft2 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.bold_fantasy, null, stats, "");
             var recraft3 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.freehand_details, null, stats, "");
             var recraft4 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.studio_portrait, stats, "");
             var recraft5 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.vector_illustration, RecraftVectorIllustrationSubstyle.infographical, null, null, stats, "");
             var recraft6 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.natural_light, stats, "");
-            var ideogram1 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_16_10, IdeogramStyleType.DESIGN, "", IdeogramModel.V_2, stats, "");
-            var ideogram2 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_2_3, null, "", IdeogramModel.V_2, stats, "");
+            //var recraft7 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.bold_fantasy, null, stats, "");
+            //var ideogram1 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_16_10, IdeogramStyleType.DESIGN, "", IdeogramModel.V_2, stats, "");
+            var ideogram2 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_1_1, null, "", IdeogramModel.V_2_TURBO, stats, "");
+            //var ideogram3 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A, stats, "");
+            var ideogram4 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A_TURBO, stats, "");
             var bfl1 = new BFLGenerator(ImageGeneratorApiType.BFLv11, settings.BFLApiKey, concurrency, false, "3:2", false, 1024, 1024, stats, "");
             var bfl2 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, settings.BFLApiKey, concurrency, false, "1:1", false, 2048, 1768, stats, "");
             
-            var gptimage1 = new GptImageOneGenerator(settings.OpenAIApiKey, concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.high, stats, "");   
+            var gptimage1 = new GptImageOneGenerator(settings.OpenAIApiKey, concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.high, stats, "");
 
-            //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram1, ideogram2, bfl1, bfl2, recraft3, recraft4,  recraft6, gptimage1 };
+            var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, recraft3, recraft5, recraft6, ideogram4, gptimage1 };
             //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
-            var myGenerators = new List<IImageGenerator>() { gptimage1};
+            //var myGenerators = new List<IImageGenerator>() { , ideogram2,  ideogram4}; 
             var imageManager = new ImageManager(settings, stats);
 
             /// -----------------------  APPLYING PROMPTS TO SERVICES ------------------------
