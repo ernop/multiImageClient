@@ -1,4 +1,6 @@
-﻿using RecraftAPIClient;
+﻿using IdeogramAPIClient;
+
+using RecraftAPIClient;
 
 using SixLabors.ImageSharp;
 
@@ -63,6 +65,22 @@ namespace MultiImageClient
             return res;
         }
 
+        // https://www.recraft.ai/docs/api-reference/pricing
+        public decimal GetCost()
+        {
+            switch (_style)
+            {
+                case RecraftStyle.digital_illustration:
+                    return 0.04m;
+                case RecraftStyle.realistic_image:
+                    return 0.04m; //unclear actually.
+                case RecraftStyle.vector_illustration:
+                    return 0.08m;
+                default:
+                    throw new Exception("whoah");
+            }
+        }
+
         public List<string> GetRightParts()
         {
             var usingSubstyle = "";
@@ -78,8 +96,8 @@ namespace MultiImageClient
             {
                 usingSubstyle = _substyleVector.ToString();
             }
-            
-            var rightsideContents = new List<string>() { "recraft_v3" ,_style.ToString(), usingSubstyle, _name, };
+
+            var rightsideContents = new List<string>() { "recraft_v3", _name, _style.ToString(), usingSubstyle};
             return rightsideContents;
         }
 

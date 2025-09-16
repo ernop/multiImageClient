@@ -20,10 +20,11 @@ namespace MultiImageClient
         private IdeogramStyleType? _ideoGramStyleType;
         private string _negativePrompt;
         private MultiClientRunStats _stats;
+        private IdeogramModel _model;
         private string _name;
 
 
-        public IdeogramGenerator(string apiKey, int maxConcurrency, IdeogramMagicPromptOption magicPrompt, IdeogramAspectRatio aspectRatio, IdeogramStyleType? styleType, string negativePrompt, MultiClientRunStats stats, string name)
+        public IdeogramGenerator(string apiKey, int maxConcurrency, IdeogramMagicPromptOption magicPrompt, IdeogramAspectRatio aspectRatio, IdeogramStyleType? styleType, string negativePrompt, IdeogramModel model, MultiClientRunStats stats, string name)
         {
             _ideogramClient = new IdeogramClient(apiKey);
             _ideogramSemaphore = new SemaphoreSlim(maxConcurrency);
@@ -31,6 +32,7 @@ namespace MultiImageClient
             _aspectRatio = aspectRatio;
             _ideoGramStyleType = styleType;
             _negativePrompt = negativePrompt;
+            _model = model;
             _stats = stats;
             _name = string.IsNullOrEmpty(name) ? "" : name;
         }
@@ -53,9 +55,48 @@ namespace MultiImageClient
             {
                 neg = $" neg_{clneg}";
             }
-            var res = $"ideogramv2{_name}_magic_{_magicPrompt.ToString().ToLowerInvariant()} {_aspectRatio.ToString().ToLowerInvariant().Replace("aspect_","ar").Replace("_","x")} {stylepart}{neg}";
+            
+            var verpart = "";
+            switch (_model)
+            {
+                case IdeogramModel.V_1:
+                    verpart = "v1";
+                    break;
+                case IdeogramModel.V_2:
+                    verpart = "v2";
+                    break;
+                case IdeogramModel.V_1_TURBO:
+                    verpart = "v1turbo";
+                    break;
+                case IdeogramModel.V_2_TURBO:
+                    verpart = "v2tirbp";
+                    break;
+                default:
+                    throw new Exception("Q");
+            }
+
+
+            var res = $"ideogram_{verpart}{_name}_magic_{_magicPrompt.ToString().ToLowerInvariant()} {_aspectRatio.ToString().ToLowerInvariant().Replace("aspect_","ar").Replace("_","x")} {stylepart}{neg}";
 
             return res;
+        }
+
+        // https://ideogram.ai/features/api-pricing
+        public decimal GetCost()
+        {
+            switch (_model)
+            {
+                case IdeogramModel.V_1:
+                    return 0.06m;
+                case IdeogramModel.V_1_TURBO:
+                    return 0.02m;
+                case IdeogramModel.V_2:
+                    return 0.08m;
+                case IdeogramModel.V_2_TURBO:
+                    return 0.05m;
+                default:
+                    throw new Exception("Q");
+            }
         }
 
         public List<string> GetRightParts()
@@ -65,20 +106,20 @@ namespace MultiImageClient
             if (_ideoGramStyleType == null)
             {
                 //auto
-                stylepart = "";
+                stylepart = "style auto";
             }
             else
             {
-                stylepart = $"_{_ideoGramStyleType.ToString().ToLowerInvariant()}";
+                stylepart = $"style {_ideoGramStyleType.ToString().ToLowerInvariant()}";
             }
             var clneg = TextUtils.CleanPrompt(_negativePrompt);
             if (!string.IsNullOrEmpty(clneg))
             {
-                neg = $" neg_{clneg}";
+                neg = $" neg {clneg}";
             }
-            var res = $"ideogramv2{_name}_magic_{_magicPrompt.ToString().ToLowerInvariant()} {_aspectRatio.ToString().ToLowerInvariant().Replace("aspect_", "ar").Replace("_", "x")} {stylepart}{neg}";
+            var verpart = _model.ToString().Replace("_", "").ToLowerInvariant();
 
-            var rightsideContents = new List<string>() { "ideogram_v2", _name, stylepart, clneg, $"magicprompt_{_magicPrompt.ToString()}", _aspectRatio.ToString().ToLowerInvariant().Replace("aspect_", "ar").Replace("_", "x") };
+            var rightsideContents = new List<string>() { $"ideogram {verpart}", _name, stylepart, neg, $"magicprompt_{_magicPrompt.ToString()}", _aspectRatio.ToString().ToLowerInvariant().Replace("aspect_", "ar").Replace("_", "x") };
 
             return rightsideContents;
         }
