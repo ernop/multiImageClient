@@ -5,6 +5,7 @@ using RecraftAPIClient;
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Drawing;
 
 using System.Threading;
@@ -47,6 +48,22 @@ namespace MultiImageClient
             return res;
         }
 
+        public decimal GetCost()
+        {
+            var ss = _size.ToString();
+            switch (ss)
+            {
+                case "1024x1024":
+                    return 0.08m;
+                case "1792x1024":
+                    return 0.12m;
+                case "1024x1792":
+                    return 0.12m;
+                default:
+                    throw new Exception("few");
+            }
+        }
+
         public List<string> GetRightParts()
         {
             var qualpt = "";
@@ -56,7 +73,7 @@ namespace MultiImageClient
             }
             var res = $"dalle3-{_name}{qualpt}";
 
-            var rightsideContents = new List<string>() { "dall-e-3", qualpt, _name};
+            var rightsideContents = new List<string>() { "dall-e-3", _name, qualpt};
 
             return rightsideContents;
         }

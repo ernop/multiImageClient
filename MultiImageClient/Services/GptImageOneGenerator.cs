@@ -3,6 +3,7 @@ using OpenAI.Images;
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Net.Http;
@@ -14,6 +15,7 @@ using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
+
     public class GptImageOneGenerator : IImageGenerator
     {
         private SemaphoreSlim _gptImageOneSemaphore;
@@ -21,10 +23,10 @@ namespace MultiImageClient
         private MultiClientRunStats _stats;
         private string _size;
         private string _moderation;
-        private string _quality;
+        private OpenAIGPTImageOneQuality _quality;
         private string _name;
 
-        public GptImageOneGenerator(string apiKey, int maxConcurrency, string size, string moderation, string quality, MultiClientRunStats stats, string name)
+        public GptImageOneGenerator(string apiKey, int maxConcurrency, string size, string moderation, OpenAIGPTImageOneQuality quality, MultiClientRunStats stats, string name)
         {
             _gptImageOneSemaphore = new SemaphoreSlim(maxConcurrency);
 
@@ -48,32 +50,80 @@ namespace MultiImageClient
             }
 
             var qualitypt = "";
-            if (_quality != "high")
+            if (_quality != OpenAIGPTImageOneQuality.auto)
             {
                 qualitypt = $" qual{_quality}";
             }
-            var res = $"gpt-1_{_name}{modpt}{qualitypt}";
+
+            var sizept = _size.ToString();
+
+            var res = $"gpt-1_{_name}{modpt}{sizept}{qualitypt}";
             return res;
+        }
+        public decimal GetCost()
+        {
+            if (_size == "1024x1024")
+            {
+                switch (_quality)
+                {
+                    case OpenAIGPTImageOneQuality.low:
+                        return 0.01088m;
+                    case OpenAIGPTImageOneQuality.medium:
+                        return 0.04224m;
+                    case OpenAIGPTImageOneQuality.high:
+                        return 0.1664m;
+                    default:
+                        throw new Exception("Swe");
+                }
+            }
+            else if (_size == "1024x1536")
+            {
+                switch (_quality)
+                {
+                    case OpenAIGPTImageOneQuality.low:
+                        return 0.01632m;
+                    case OpenAIGPTImageOneQuality.medium:
+                        return 0.06336m;
+                    case OpenAIGPTImageOneQuality.high:
+                        return 0.24960m;
+                    default:
+                        throw new Exception("S");
+                }
+            }
+            else if (_size == "1536x1024")
+            {
+                switch (_quality)
+                {
+                    case OpenAIGPTImageOneQuality.low:
+                        return 0.016m;
+                    case OpenAIGPTImageOneQuality.medium:
+                        return 0.06272m;
+                    case OpenAIGPTImageOneQuality.high:
+                        return 0.24832m;
+                    default:
+                        throw new Exception("S");
+                }
+            }
+            else
+            {
+                throw new Exception("bad size.");
+            }
         }
 
         public List<string> GetRightParts()
         {
             var modpt = "";
-            if (_moderation != "low")
-            {
-                modpt = $" mod{_moderation}";
-            }
+            modpt = $" moderation {_moderation}";
 
             var qualitypt = "";
-            if (_quality != "high")
-            {
-                qualitypt = $" qual{_quality}";
-            }
+            qualitypt = $"quality {_quality}";
 
-            var rightsideContents = new List<string>() { "gpt-image-1", _name , modpt, qualitypt};
+            var sizept = $"size {_size.ToString()}";
+            var rightsideContents = new List<string>() { "gpt-image-1", _name, sizept, qualitypt, modpt };
 
             return rightsideContents;
         }
+
 
         public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails)
         {
@@ -87,7 +137,7 @@ namespace MultiImageClient
                     model = "gpt-image-1",
                     prompt = promptDetails.Prompt,
                     moderation = _moderation,
-                    quality = _quality,
+                    quality = _quality.ToString(),
                     n = 1,
                     size = _size,
                 };

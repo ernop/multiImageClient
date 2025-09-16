@@ -139,6 +139,9 @@ namespace MultiImageClient
                     else if (saveType == SaveType.Label)
                     {
                         var rightParts = generator.GetRightParts();
+                        var costPart = $"{generator.GetCost()} $USD";
+                        rightParts.Add(costPart);
+                        rightParts.Add("MultiImageClient");
                         using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
                         var label = MakeLabelGeneral(originalImage.Width, result.PromptDetails.Prompt, rightParts);
                         
@@ -187,7 +190,7 @@ namespace MultiImageClient
 
         public static byte[] MakeLabelGeneral(int width, string prompt, List<string> rightParts)
         {
-            var rightSideWidth = 300;
+            var rightSideWidth = 200;
             var leftSideWidth = width - rightSideWidth;
             var padding = 5;
             var fontSize = 24;

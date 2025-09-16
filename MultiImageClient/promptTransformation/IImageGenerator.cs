@@ -24,5 +24,8 @@ namespace MultiImageClient
 
         /// return just the parts on the right, we know everything else.
         public abstract List<string> GetRightParts();
+        
+        /// I suppose we should tell/show users how much images cost.
+        public abstract decimal GetCost();
     }
 }

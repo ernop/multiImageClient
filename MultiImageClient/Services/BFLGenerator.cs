@@ -9,6 +9,7 @@ using SixLabors.ImageSharp.Processing;
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Data;
 using System.Drawing;
 using System.IO;
@@ -73,8 +74,26 @@ namespace MultiImageClient
             _stats = stats;
             _name = string.IsNullOrEmpty(name) ? "" : name;
         }
+        public List<string> GetRightParts()
+        {
+            var upsamplingPart = _promptUpsampling ? "prompt rewritten." : "";
+            var rightsideContents = new List<string>() { _apiType.ToString(), upsamplingPart};
+            return rightsideContents;
+        }
 
-
+        // https://bfl.ai/pricing
+        public decimal GetCost()
+        {
+            if (_apiType == ImageGeneratorApiType.BFLv11)
+            {
+                return 0.04m;
+            }
+            else if (_apiType == ImageGeneratorApiType.BFLv11Ultra)
+            {
+                return 0.06m;
+                    }
+            else { throw new Exception("Q"); }
+        }
         public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails)
         {
             await _bflSemaphore.WaitAsync();
@@ -170,11 +189,6 @@ namespace MultiImageClient
             }
         }
 
-        public List<string> GetRightParts()
-        {
-            var upsamplingPart = _promptUpsampling ? "prompt rewritten." : "";
-            var rightsideContents = new List<string>() { _apiType.ToString(), upsamplingPart };
-            return rightsideContents;
-        }        
+   
     }
 }
