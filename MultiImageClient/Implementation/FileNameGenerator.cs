@@ -17,33 +17,6 @@ namespace MultiImageClient
             return prompt.Length > maxLength ? prompt.Substring(0, maxLength) : prompt;
         }
 
-        private static string DescribeResolution(PromptDetails details)
-        {
-            //if (details.BFL11Details != null && details.BFL11Details.Width != default && details.BFL11Details.Height != default)
-            //    return $"{details.BFL11Details.Width}x{details.BFL11Details.Height}";
-            //else if (details.Dalle3Details != null)
-            //    return details.Dalle3Details.Size.ToString();
-            //else if (details.IdeogramDetails?.AspectRatio != null)
-            //    return IdeogramUtils.StringifyAspectRatio(details.IdeogramDetails.AspectRatio.Value);
-            //else if (details.RecraftDetails != null)
-            //    return details.RecraftDetails.size.ToString().TrimStart('_');
-            //else if (details.GptImageOneDetails != null)
-            //    return $"{details.GptImageOneDetails.size}";
-            //else if (details.BFL11UltraDetails != null)
-            //    return $"{details.BFL11UltraDetails.AspectRatio}";
-            //else
-            //    Console.WriteLine("failed to get any details for esolution description");
-
-            return "resolution_unknown";
-        }
-
-        private static string DescribeSafetyTolerance(PromptDetails details)
-        {
-            //if (details.BFL11Details != null && details.BFL11Details.SafetyTolerance != default)
-            //    return $"safety{details.BFL11Details.SafetyTolerance}";
-            return "";
-        }
-
         private static string SanitizeFilename(string filename)
         {
             string sanitized = Regex.Replace(filename, @"[^a-zA-Z0-9_\-]", "_");
@@ -59,9 +32,10 @@ namespace MultiImageClient
         {
             var components = new List<string>() { };
 
-            //components.Add(promptGeneratorName);
             components.Add(DateTime.Now.ToString("yyyyMMddHHmmss"));
-            components.Add(result.ImageGenerator.ToString());
+            components.Add(generatorFilenamePart);
+            
+            //components.Add(result.ImageGenerator.ToString());
             
             if (!string.IsNullOrEmpty(result.ContentType))
             {
@@ -75,8 +49,6 @@ namespace MultiImageClient
                 components.Add(ss);
             }
 
-            components.Add(DescribeResolution(result.PromptDetails));
-            
             components.Add(saveType.ToString());
 
             string combined = string.Join("_", components.Where(c => !string.IsNullOrEmpty(c)));

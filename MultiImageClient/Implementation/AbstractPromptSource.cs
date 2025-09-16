@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 namespace MultiImageClient
 {
     /// this a way of loading a bunch of user configs for prompts. like, what do you want the text of the prompt to say? (and optionally, should it be big, landscape, whatever?)
-    /// things like actually mapping that to whatever options are provided by the image generator is another job, for IDetails (future, IJobSpec or something like that)
+    /// things like actually mapping that to whatever options are provided by the image generator is another job, for future, IJobSpec or something like that)
     public abstract class AbstractPromptSource
     {
         public abstract IEnumerable<PromptDetails> Prompts { get; }

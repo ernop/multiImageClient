@@ -1,14 +1,27 @@
 ﻿using BFLAPIClient;
 
-using IdeogramAPIClient;
 
-using MultiImageClient;
+using SixLabors.Fonts;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Drawing.Processing;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 
 using System;
+using System.Collections.Generic;
+using System.Data;
 using System.Drawing;
+using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+
+using Color = SixLabors.ImageSharp.Color;
+using FontStyle = SixLabors.Fonts.FontStyle;
+using PointF = SixLabors.ImageSharp.PointF;
+using RectangleF = SixLabors.ImageSharp.RectangleF;
+using SystemFonts = SixLabors.Fonts.SystemFonts;
 
 namespace MultiImageClient
 {
@@ -23,19 +36,44 @@ namespace MultiImageClient
         private int _width { get; set; }
         private int _height { get; set; }
         private ImageGeneratorApiType _apiType { get; }
+        private string _name;
 
-        public BFLGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency, MultiClientRunStats stats, bool useUltra, string aspectRatio, bool promptUpscaling, int width, int height)
+        public string GetFilenamePart(PromptDetails pd)
+        {
+            var res = $"{_apiType}{_name}";
+            var upsamplingPart = _promptUpsampling ? "_up" : "";
+            if (_apiType == ImageGeneratorApiType.BFLv11)
+            {
+                res = $"{res}_{_height}x{_width}{upsamplingPart}";
+            }
+            else if (_apiType == ImageGeneratorApiType.BFLv11Ultra)
+            {
+                res = $"{res}_{_aspectRatio}{upsamplingPart}";
+            }
+            else
+            {
+                throw new Exception("X");
+            }
+
+            return res;
+        }
+
+        public BFLGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency, bool useUltra, string aspectRatio, bool promptUpscaling, int width, int height, MultiClientRunStats stats, string name)
         {
             _apiType = apiType;
             _bflClient = new BFLClient(apiKey);
             _bflSemaphore = new SemaphoreSlim(maxConcurrency);
             _httpClient = new HttpClient();
-            _stats = stats;
+
             _aspectRatio = aspectRatio;
             _promptUpsampling = promptUpscaling;
             _width = width;
             _height = height;
+
+            _stats = stats;
+            _name = string.IsNullOrEmpty(name) ? "" : name;
         }
+
 
         public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails)
         {
@@ -55,7 +93,7 @@ namespace MultiImageClient
                         SafetyTolerance = 6
                     };
 
-                    generationResponse = await _bflClient.GenerateFluxPro11Async(request); 
+                    generationResponse = await _bflClient.GenerateFluxPro11Async(request);
                 }
                 else if (_apiType == ImageGeneratorApiType.BFLv11Ultra)
                 {
@@ -132,30 +170,11 @@ namespace MultiImageClient
             }
         }
 
-        public string GetFilenamePart(PromptDetails pd)
+        public List<string> GetRightParts()
         {
-            var res = $"";
-            if (_apiType == ImageGeneratorApiType.BFLv11)
-            {
-                var ups = _promptUpsampling ? "_up" : "";
-                res = $"{res} {_height}x{_width}{ups}";
-            }
-            else if (_apiType == ImageGeneratorApiType.BFLv11Ultra)
-            {
-                var ups = _promptUpsampling ? "_up" : "";
-                res = $"{_aspectRatio}{ups}";
-            }
-            else
-            {
-                throw new Exception("X");
-            }
-                
-            return res;
-        }
-
-        public Bitmap GetLabelBitmap(int width)
-        {
-            throw new NotImplementedException();
-        }
+            var upsamplingPart = _promptUpsampling ? "prompt rewritten." : "";
+            var rightsideContents = new List<string>() { _apiType.ToString(), upsamplingPart };
+            return rightsideContents;
+        }        
     }
 }

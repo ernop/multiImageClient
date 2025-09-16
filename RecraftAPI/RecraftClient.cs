@@ -1,14 +1,5 @@
 ﻿using Newtonsoft.Json;
-
-using System.Collections.Generic;
-using System.Net.Http;
 using System.Text;
-using System.Threading.Tasks;
-
-
-using MultiImageClient;
-
-using System;
 
 namespace RecraftAPIClient
 {
@@ -23,26 +14,24 @@ namespace RecraftAPIClient
             _apiKey = apiKey;
             _httpClient = new HttpClient();
             _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-            //_httpClient.DefaultRequestHeaders.Add("x-api-key", $"{apiKey}");
         }
 
 
-        public async Task<GenerationResponse> GenerateImageAsync(string prompt, RecraftDetails recraftDetails)
+        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string substyle, string style, RecraftImageSize size)
         {
             var stringSubstyle = "";
 
-            stringSubstyle = recraftDetails.substyle;
 
             string serialized = "";
             
 
-            if (recraftDetails.style == "any") {
+            if (style == "any") {
                 serialized = JsonConvert.SerializeObject(new
                 {
                     prompt,
                     model = "recraftv3",
-                    style = recraftDetails.style,
-                    size = recraftDetails.size.ToString().TrimStart('_'),
+                    style = style,
+                    size = size.ToString().TrimStart('_'),
                     response_format = "url"
                 });
             }
@@ -52,9 +41,9 @@ namespace RecraftAPIClient
                 {
                     prompt,
                     model = "recraftv3",
-                    style = recraftDetails.style,
-                    substyle = recraftDetails.substyle,
-                    size = recraftDetails.size.ToString().TrimStart('_'),
+                    style = style,
+                    substyle = substyle,
+                    size = size.ToString().TrimStart('_'),
                     response_format = "url"
                 });
             }
