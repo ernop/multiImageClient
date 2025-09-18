@@ -66,11 +66,7 @@ namespace MultiImageClient
             }
         }
 
-        public static async Task<string> SaveImageAsync(
-            TaskProcessResult result,
-            Settings settings,
-            SaveType saveType,
-            IImageGenerator generator)
+        public static async Task<string> SaveImageAsync(TaskProcessResult result, Settings settings, SaveType saveType, IImageGenerator generator)
         {
             string todayFolder = DateTime.Now.ToString("yyyy-MM-dd-dddd");
             string baseFolder = Path.Combine(settings.ImageDownloadBaseFolder, todayFolder);
@@ -170,10 +166,10 @@ namespace MultiImageClient
                 HorizontalAlignment.Left, VerticalAlignment.Top, LabelTotalLineSpacing);
             leftTextOptions.WrappingLength = leftSideWidth - (UIConstants.Padding * 2);
 
-            int leftTextHeight = ImageUtils.MeasureTextHeight(prompt, font, UIConstants.LineSpacing, leftTextOptions.WrappingLength);
+            int leftTextHeight = ImageUtils.MeasureTextHeight(prompt, font, LabelTotalLineSpacing, leftTextOptions.WrappingLength);
 
             // Calculate right side font size (scale down if needed to fit width)
-            
+
 
             // Find the maximum width needed for right side text
             //foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
@@ -181,8 +177,8 @@ namespace MultiImageClient
             //    var testOptions = FontUtils.CreateTextOptions(rightFont, HorizontalAlignment.Right);
             //    var textBounds = TextMeasurer.MeasureBounds(text, testOptions);
 
-                // rightFont = ImageUtils.AutoSizeFont(text, LabelRightSideWidth, rightFontSize, UIConstants.MinFontSize, FontStyle.Regular);
-                // rightFontSize = (int)rightFont.Size;
+            // rightFont = ImageUtils.AutoSizeFont(text, LabelRightSideWidth, rightFontSize, UIConstants.MinFontSize, FontStyle.Regular);
+            // rightFontSize = (int)rightFont.Size;
             //}
 
             // Calculate right side height using proper text height measurement
@@ -197,14 +193,10 @@ namespace MultiImageClient
 
             image.Mutate(ctx =>
             {
-                // Draw left side box border and text
                 var leftRect = new RectangleF(0, 0, leftSideWidth + 5, totalHeight);
-                ctx.DrawTextWithBackground(leftRect, prompt, font, UIConstants.White, UIConstants.Black, HorizontalAlignment.Left);
+                ctx.DrawTextWithBackground(leftRect, prompt, font, UIConstants.White, UIConstants.Black, HorizontalAlignment.Left, LabelTotalLineSpacing);
 
-                // Draw right side box border
-                //ctx.Draw(UIConstants.SuccessGreen, 1f, new RectangleF(leftSideWidth, 0, LabelRightSideWidth, totalHeight));
-
-                // Draw right side text (gold color, right-aligned)
+                // Draw right side text
                 var yOffset = UIConstants.Padding;
                 foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
                 {
@@ -232,11 +224,7 @@ namespace MultiImageClient
             };
         }
 
-        private static Dictionary<string, string> GetAnnotationDefaultData(
-            TaskProcessResult result,
-            string fullPath,
-            SaveType saveType,
-            IImageGenerator generator)
+        private static Dictionary<string, string> GetAnnotationDefaultData(TaskProcessResult result, string fullPath, SaveType saveType, IImageGenerator generator)
         {
             var imageInfo = new Dictionary<string, string>();
             var promptDetails = result.PromptDetails;
@@ -273,15 +261,10 @@ namespace MultiImageClient
         }
 
         // Image combining functionality (previously in ImageCombiner.cs)
-        public static async Task<string> CombineImagesHorizontallyAsync(
-            IEnumerable<TaskProcessResult> results,
-            string prompt,
-            Settings settings)
+        public static async Task<string> CombineImagesHorizontallyAsync(IEnumerable<TaskProcessResult> results, string prompt, Settings settings)
         {
-
-
-            var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Regular);
-            var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Bold);
+            var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
+            var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
 
             var loadedImages = LoadResultImages(results, PlaceholderWidth);
             var dimensions = CalculateDimensions(loadedImages, prompt, generatorFont, promptFont);
@@ -290,17 +273,12 @@ namespace MultiImageClient
 
             combinedImage.Mutate(ctx =>
             {
-                // Draw images and subtitles
                 DrawImagesAndLabels(ctx, loadedImages, dimensions.MaxImageHeight, generatorFont);
-
-                // Draw prompt at bottom
                 DrawPrompt(ctx, prompt, promptFont, dimensions);
             });
 
-            // Save the combined image
             var outputPath = await SaveCombinedImage(combinedImage, prompt, settings);
 
-            // Dispose loaded images
             foreach (var loadedImage in loadedImages)
             {
                 loadedImage.Image?.Dispose();
@@ -337,14 +315,14 @@ namespace MultiImageClient
                         {
                             // Success but no bytes somehow
                             Logger.Log($"No image bytes for successful result from {result.ImageGenerator}");
-                            loadedImages.Add(CreatePlaceholder(result.ImageGenerator.ToString(), false, placeholderWidth));
+                            loadedImages.Add(CreateFailedGenerationPlaceholder(result.ImageGenerator.ToString(), false, result.ErrorMessage, placeholderWidth));
                         }
                     }
                     catch (Exception ex)
                     {
                         // GetImageBytes() might throw if bytes weren't set, or image loading failed
                         Logger.Log($"Failed to get/load image from {result.ImageGenerator}: {ex.Message}");
-                        loadedImages.Add(CreatePlaceholder(result.ImageGenerator.ToString(), false, placeholderWidth));
+                        loadedImages.Add(CreateFailedGenerationPlaceholder(result.ImageGenerator.ToString(), false, result.ErrorMessage, placeholderWidth));
                     }
                 }
                 else
@@ -354,7 +332,7 @@ namespace MultiImageClient
                         ? result.ErrorMessage
                         : result.GenericImageErrorType.ToString();
                     Logger.Log($"Result failed for {result.ImageGenerator}: {errorMsg}");
-                    loadedImages.Add(CreatePlaceholder(result.ImageGenerator.ToString(), false, placeholderWidth));
+                    loadedImages.Add(CreateFailedGenerationPlaceholder(result.ImageGenerator.ToString(), false, result.ErrorMessage, placeholderWidth));
                 }
             }
 
@@ -363,11 +341,12 @@ namespace MultiImageClient
 
         /// when an image fails to generate we add in a fixed-width holder in any combined image, to show what happened and be able to
         /// at least see the filtering rules etc.
-        private static LoadedImage CreatePlaceholder(string generatorName, bool success, int placeholderWidth)
+        private static LoadedImage CreateFailedGenerationPlaceholder(string generatorName, bool success, string reason, int placeholderWidth)
         {
             return new LoadedImage
             {
                 Success = success,
+                FailureReason = reason,
                 Image = null,
                 GeneratorName = generatorName,
                 Width = placeholderWidth,
@@ -375,16 +354,12 @@ namespace MultiImageClient
             };
         }
 
-        private static ImageDimensions CalculateDimensions(
-            IEnumerable<LoadedImage> loadedImages,
-            string prompt,
-            Font subtitleFont,
-            Font promptFont)
+        private static ImageDimensions CalculateDimensions(IEnumerable<LoadedImage> loadedImages, string prompt, Font subtitleFont, Font promptFont)
         {
             int totalWidth = loadedImages.Sum(img => img.Width);
             int maxImageHeight = loadedImages.Where(img => img.Success).Any()
                 ? loadedImages.Where(img => img.Success).Max(img => img.Height)
-                : 300; // Default placeholder size
+                : 300;
 
             // Calculate text heights
             var subtitleHeight = MeasureMaxHeight(loadedImages.Select(img => GetStatusText(img)), subtitleFont);
@@ -393,8 +368,8 @@ namespace MultiImageClient
             var wrappingWidth = totalWidth - (UIConstants.Padding * 4);
             var promptHeight = ImageUtils.MeasureTextHeight(prompt, promptFont, UIConstants.LineSpacing, wrappingWidth);
 
-            // Add extra padding for better spacing around the prompt
-            var extraPadding = UIConstants.Padding * 2;
+            // pad the prompt with extra height.
+            var extraPadding = UIConstants.Padding * 3;
 
             return new ImageDimensions
             {
@@ -402,7 +377,7 @@ namespace MultiImageClient
                 MaxImageHeight = maxImageHeight,
                 SubtitleHeight = subtitleHeight + UIConstants.Padding,
                 PromptHeight = promptHeight + extraPadding + UIConstants.Padding,
-                TotalHeight = maxImageHeight + subtitleHeight + promptHeight + extraPadding + (UIConstants.Padding * 3)
+                TotalHeight = maxImageHeight + subtitleHeight + promptHeight + extraPadding
             };
         }
 
@@ -422,11 +397,7 @@ namespace MultiImageClient
             return maxHeight;
         }
 
-        private static void DrawImagesAndLabels(
-            IImageProcessingContext ctx,
-            IEnumerable<LoadedImage> loadedImages,
-            int maxImageHeight,
-            Font subtitleFont)
+        private static void DrawImagesAndLabels(IImageProcessingContext ctx, IEnumerable<LoadedImage> loadedImages, int maxImageHeight, Font subtitleFont)
         {
             int currentX = 0;
 
@@ -441,7 +412,7 @@ namespace MultiImageClient
                 {
                     // Draw placeholder rectangle with error text
                     var placeholderRect = new RectangleF(currentX, 0, loadedImage.Width, maxImageHeight);
-                    ctx.DrawPlaceholder(placeholderRect, "Failed", subtitleFont);
+                    ctx.DrawPlaceholder(placeholderRect, loadedImage.FailureReason, subtitleFont);
                 }
 
                 // Draw subtitle
@@ -458,18 +429,14 @@ namespace MultiImageClient
             }
         }
 
-        private static void DrawPrompt(
-            IImageProcessingContext ctx,
-            string prompt,
-            Font promptFont,
-            ImageDimensions dimensions)
+        private static void DrawPrompt(IImageProcessingContext ctx, string prompt, Font promptFont, ImageDimensions dimensions)
         {
             var promptAreaTop = dimensions.MaxImageHeight + dimensions.SubtitleHeight + UIConstants.Padding;
             var promptAreaHeight = dimensions.PromptHeight;
 
             // Add extra padding above the prompt area for better spacing
-            var extraPadding = UIConstants.Padding * 2;
-            var promptY = promptAreaTop + extraPadding + (promptAreaHeight - extraPadding) / 2f;
+            var extraPadding = UIConstants.Padding * 3;
+            var promptY = promptAreaTop + extraPadding;
 
             var promptOptions = FontUtils.CreateTextOptions(promptFont, HorizontalAlignment.Left, VerticalAlignment.Center, LabelTotalLineSpacing);
             promptOptions.Origin = new PointF(UIConstants.Padding * 2, promptY);
@@ -478,10 +445,7 @@ namespace MultiImageClient
             ctx.DrawTextStandard(promptOptions, prompt, UIConstants.Black);
         }
 
-        private static async Task<string> SaveCombinedImage(
-            Image<Rgba32> image,
-            string prompt,
-            Settings settings)
+        private static async Task<string> SaveCombinedImage(Image<Rgba32> image, string prompt, Settings settings)
         {
             string todayFolder = DateTime.Now.ToString("yyyy-MM-dd-dddd");
             string baseFolder = Path.Combine(settings.ImageDownloadBaseFolder, todayFolder, "Combined");
@@ -511,10 +475,10 @@ namespace MultiImageClient
             return image.GeneratorName;
         }
 
-        // Helper classes for image combining
         private class LoadedImage
         {
             public bool Success { get; set; }
+            public string FailureReason { get; set; } = "";
             public Image<Rgba32> Image { get; set; }
             public string GeneratorName { get; set; }
             public int Width { get; set; }

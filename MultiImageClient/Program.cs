@@ -79,6 +79,12 @@ namespace MultiImageClient
                     //this is a bit silly since the original initial prompt will still be in history for no reason.
                     promptString.ReplacePrompt(usingVal, "explanation", TransformationType.InitialPrompt);
                 }
+
+                if (promptString.Prompt.Length == 0)
+                {
+                    continue;
+                }
+
                 foreach (var step in steps)
                 {
                     var res = await step.DoTransformation(promptString);
@@ -97,9 +103,11 @@ namespace MultiImageClient
                     var generatorTasks = myGenerators.Select(async generator =>
                     {
                         PromptDetails theCopy = null;
+                        
                         try
                         {
                             theCopy = promptString.Copy();
+                            
                             var result = await generator.ProcessPromptAsync(theCopy);
                             await imageManager.ProcessAndSaveAsync(result, generator);
                             Logger.Log($"Finished {generator.GetType().Name} in {result.CreateTotalMs + result.DownloadTotalMs} ms, {result.PromptDetails.Show()}");
