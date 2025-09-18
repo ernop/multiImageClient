@@ -302,6 +302,18 @@ namespace MultiImageClient
                         if (imageBytes != null && imageBytes.Length > 0)
                         {
                             var image = Image.Load<Rgba32>(imageBytes);
+                            
+                            // Resize if height > 1300px, keeping proportions and max height of 1024px
+                            if (image.Height > 1300)
+                            {
+                                var aspectRatio = (float)image.Width / image.Height;
+                                var newHeight = 1024;
+                                var newWidth = (int)(newHeight * aspectRatio);
+                                
+                                Logger.Log($"Resizing image from {image.Width}x{image.Height} to {newWidth}x{newHeight} for combining");
+                                image.Mutate(x => x.Resize(newWidth, newHeight));
+                            }
+                            
                             loadedImages.Add(new LoadedImage
                             {
                                 Success = true,
