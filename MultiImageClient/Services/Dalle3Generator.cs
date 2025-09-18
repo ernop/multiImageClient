@@ -1,12 +1,8 @@
 ﻿using OpenAI;
 using OpenAI.Images;
 
-using RecraftAPIClient;
-
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Drawing;
 
 using System.Threading;
 using System.Threading.Tasks;

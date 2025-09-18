@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
-    public class SamePromptMultipleTargetsWorkflow : IWorkflow
+    public class SamePromptMultipleTargetsWorkflow 
     {
         private readonly Dictionary<ImageGeneratorApiType, IImageGenerator> _generators;
         private readonly AbstractPromptSource _abstractPromptSource;
