@@ -12,7 +12,7 @@ namespace MultiImageClient
         private readonly Dictionary<ImageGeneratorApiType, IImageGenerator> _generators;
         private readonly AbstractPromptSource _abstractPromptSource;
         private readonly Settings _settings;
-        private readonly ImageManager _imageManager;
+        //private readonly ImageManager _imageManager;
         private readonly MultiClientRunStats _stats;
 
         public SamePromptMultipleTargetsWorkflow(
@@ -37,7 +37,7 @@ namespace MultiImageClient
                     var nam = kvp.Key;
                     var generator = kvp.Value;
                     TaskProcessResult result = await generator.ProcessPromptAsync(promptDetails);
-                    await _imageManager.ProcessAndSaveAsync(result, generator);
+                    //await _imageManager.ProcessAndSaveAsync(result, generator);
                     tasks.Add(Task.FromResult(result));
                 }
 

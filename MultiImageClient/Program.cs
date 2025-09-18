@@ -125,11 +125,11 @@ namespace MultiImageClient
                     ii++;
 
                     stats.PrintStats();
-                    var imageSaveResults = await Task.WhenAll(generatorTasks);
+                    var results = await Task.WhenAll(generatorTasks);
 
                     try
                     {
-                        var res = ImageCombiner.CombineImagesHorizontallyAsync(imageSaveResults, promptString.Prompt, settings);
+                        var res = ImageCombiner.CombineImagesHorizontallyAsync(results, promptString.Prompt, settings);
                     }
                     catch (Exception ex)
                     {
