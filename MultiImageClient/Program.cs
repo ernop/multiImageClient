@@ -129,7 +129,7 @@ namespace MultiImageClient
 
                     try
                     {
-                        var res = ImageCombiner.CombineImagesHorizontallyAsync(results, promptString.Prompt, settings);
+                        var res = ImageSaving.CombineImagesHorizontallyAsync(results, promptString.Prompt, settings);
                     }
                     catch (Exception ex)
                     {

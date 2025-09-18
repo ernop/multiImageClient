@@ -15,13 +15,16 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 
-using static System.Net.Mime.MediaTypeNames;
 
 namespace MultiImageClient
 {
     public static class ImageSaving
     {
         private static readonly HttpClient httpClient = new HttpClient();
+        
+        private const int LabelRightSideWidth = 200;
+        private const int LabelFontSize = 24;
+        private const float LabelLineHeightMultiplier = 1.5f;
 
         public static void ConvertWebpTopng(string inputFp)
         {
@@ -159,10 +162,10 @@ namespace MultiImageClient
 
         public static byte[] MakeLabelGeneral(int width, string prompt, List<string> rightParts)
         {
-            var rightSideWidth = 200;
+            var rightSideWidth = LabelRightSideWidth;
             var leftSideWidth = width - rightSideWidth;
-            var padding = 5;
-            var fontSize = 24;
+            var padding = UIConstants.Padding;
+            var fontSize = LabelFontSize;
             var font = FontUtils.CreateFont(fontSize, FontStyle.Regular);
 
             // Measure left side text to determine height
@@ -170,8 +173,7 @@ namespace MultiImageClient
                 HorizontalAlignment.Left, VerticalAlignment.Top);
             leftTextOptions.WrappingLength = leftSideWidth - (padding * 2);
 
-            var leftTextBounds = TextMeasurer.MeasureBounds(prompt, leftTextOptions);
-            int leftTextHeight = (int)Math.Ceiling(leftTextBounds.Height);
+            int leftTextHeight = ImageUtils.MeasureTextHeight(prompt, font, UIConstants.LineSpacing, leftTextOptions.WrappingLength);
 
             // Calculate right side font size (scale down if needed to fit width)
             var rightFont = font;
@@ -183,18 +185,13 @@ namespace MultiImageClient
                 var testOptions = FontUtils.CreateTextOptions(rightFont, HorizontalAlignment.Right);
                 var textBounds = TextMeasurer.MeasureBounds(text, testOptions);
 
-                // If text is too wide, scale down font
-                while (textBounds.Width > rightSideWidth - (padding * 2) && rightFontSize > 8)
-                {
-                    rightFontSize--;
-                    rightFont = FontUtils.CreateFont(rightFontSize, FontStyle.Regular);
-                    testOptions = FontUtils.CreateTextOptions(rightFont, HorizontalAlignment.Right);
-                    textBounds = TextMeasurer.MeasureBounds(text, testOptions);
-                }
+                // Auto-size font to fit width
+                rightFont = ImageUtils.AutoSizeFont(text, rightSideWidth, rightFontSize, UIConstants.MinFontSize, FontStyle.Regular);
+                rightFontSize = (int)rightFont.Size;
             }
 
             // Calculate right side height (number of lines * line height)
-            var rightLineHeight = rightFontSize * 1.5f; // Line spacing
+            var rightLineHeight = rightFontSize * LabelLineHeightMultiplier;
             var rightTextHeight = (int)(rightParts.Where(s => !string.IsNullOrEmpty(s)).Count() * rightLineHeight);
 
             // Overall height is the maximum of left and right sides plus padding
@@ -202,32 +199,27 @@ namespace MultiImageClient
             int totalHeight = contentHeight + (padding * 2);
 
             // Create the image with standard settings
-            using var image = ImageUtils.CreateStandardImage(width, totalHeight, Color.Black);
+            using var image = ImageUtils.CreateStandardImage(width, totalHeight, UIConstants.Black);
 
             image.Mutate(ctx =>
             {
 
-                // Draw left side box border (optional - you can remove if not wanted)
-                ctx.Draw(Color.White, 1f, new RectangleF(0, 0, leftSideWidth, totalHeight));
+                // Draw left side box border and text
+                var leftRect = new RectangleF(0, 0, leftSideWidth, totalHeight);
+                ctx.DrawTextWithBackground(leftRect, prompt, font, UIConstants.White, UIConstants.Black, HorizontalAlignment.Left);
 
-                // Draw left side text
-                leftTextOptions.Origin = new PointF(padding, padding);
-                ctx.DrawTextStandard(leftTextOptions, prompt, Color.White);
-
-                // Draw right side box border (optional - you can remove if not wanted)
-                ctx.Draw(Color.White, 1f, new RectangleF(leftSideWidth, 0, rightSideWidth, totalHeight));
+                // Draw right side box border
+                ctx.Draw(UIConstants.White, 1f, new RectangleF(leftSideWidth, 0, rightSideWidth, totalHeight));
 
                 // Draw right side text (gold color, right-aligned)
-                var goldColor = Color.FromRgb(255, 215, 0); // Gold color
                 var yOffset = padding;
-
                 foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
                 {
                     var rightTextOptions = FontUtils.CreateTextOptions(rightFont, 
                         HorizontalAlignment.Right, VerticalAlignment.Top);
                     rightTextOptions.Origin = new PointF(width - padding, yOffset);
 
-                    ctx.DrawTextStandard(rightTextOptions, text, goldColor);
+                    ctx.DrawTextStandard(rightTextOptions, text, UIConstants.Gold);
                     yOffset += (int)rightLineHeight;
                 }
             });
@@ -286,6 +278,257 @@ namespace MultiImageClient
             imageInfo = imageInfo.Where(kvp => !string.IsNullOrWhiteSpace(kvp.Value))
                                  .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             return imageInfo;
+        }
+
+        // Image combining functionality (previously in ImageCombiner.cs)
+        public static async Task<string> CombineImagesHorizontallyAsync(
+            IEnumerable<TaskProcessResult> results,
+            string prompt,
+            Settings settings)
+        {
+            const int placeholderWidth = 300;
+            const int generatorFontSize = 40;
+            const int promptFontSize = 80;
+
+            // Prepare fonts
+            var generatorFont = FontUtils.CreateFont(generatorFontSize, FontStyle.Bold);
+            var promptFont = FontUtils.CreateFont(promptFontSize, FontStyle.Regular);
+
+            // Load all images and calculate dimensions
+            var loadedImages = LoadResultImages(results, placeholderWidth);
+            var dimensions = CalculateDimensions(loadedImages, prompt, generatorFont, promptFont);
+
+            // Create combined image with standard settings
+            using var combinedImage = ImageUtils.CreateStandardImage(dimensions.TotalWidth, dimensions.TotalHeight, UIConstants.White);
+
+            combinedImage.Mutate(ctx =>
+            {
+                // Draw images and subtitles
+                DrawImagesAndLabels(ctx, loadedImages, dimensions.MaxImageHeight, generatorFont);
+
+                // Draw prompt at bottom
+                DrawPrompt(ctx, prompt, promptFont, dimensions);
+            });
+
+            // Save the combined image
+            var outputPath = await SaveCombinedImage(combinedImage, prompt, settings);
+
+            // Dispose loaded images
+            foreach (var loadedImage in loadedImages)
+            {
+                loadedImage.Image?.Dispose();
+            }
+
+            return outputPath;
+        }
+
+        private static IEnumerable<LoadedImage> LoadResultImages(IEnumerable<TaskProcessResult> results, int placeholderWidth)
+        {
+            var loadedImages = new List<LoadedImage>();
+
+            foreach (var result in results)
+            {
+                if (result.IsSuccess)
+                {
+                    try
+                    {
+                        // Use GetImageBytes() to get the stored bytes
+                        var imageBytes = result.GetImageBytes();
+                        if (imageBytes != null && imageBytes.Length > 0)
+                        {
+                            var image = Image.Load<Rgba32>(imageBytes);
+                            loadedImages.Add(new LoadedImage
+                            {
+                                Success = true,
+                                Image = image,
+                                GeneratorName = result.ImageGenerator.ToString(),
+                                Width = image.Width,
+                                Height = image.Height
+                            });
+                        }
+                        else
+                        {
+                            // Success but no bytes somehow
+                            Logger.Log($"No image bytes for successful result from {result.ImageGenerator}");
+                            loadedImages.Add(CreatePlaceholder(result.ImageGenerator.ToString(), false, placeholderWidth));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // GetImageBytes() might throw if bytes weren't set, or image loading failed
+                        Logger.Log($"Failed to get/load image from {result.ImageGenerator}: {ex.Message}");
+                        loadedImages.Add(CreatePlaceholder(result.ImageGenerator.ToString(), false, placeholderWidth));
+                    }
+                }
+                else
+                {
+                    // Failed result - show placeholder with error
+                    var errorMsg = !string.IsNullOrEmpty(result.ErrorMessage)
+                        ? result.ErrorMessage
+                        : result.GenericImageErrorType.ToString();
+                    Logger.Log($"Result failed for {result.ImageGenerator}: {errorMsg}");
+                    loadedImages.Add(CreatePlaceholder(result.ImageGenerator.ToString(), false, placeholderWidth));
+                }
+            }
+
+            return loadedImages.OrderBy(el=>el.GeneratorName);
+        }
+
+        private static LoadedImage CreatePlaceholder(string generatorName, bool success, int placeholderWidth)
+        {
+            return new LoadedImage
+            {
+                Success = success,
+                Image = null,
+                GeneratorName = generatorName,
+                Width = placeholderWidth,
+                Height = placeholderWidth
+            };
+        }
+
+        private static ImageDimensions CalculateDimensions(
+            IEnumerable<LoadedImage> loadedImages,
+            string prompt,
+            Font subtitleFont,
+            Font promptFont)
+        {
+            int totalWidth = loadedImages.Sum(img => img.Width);
+            int maxImageHeight = loadedImages.Where(img => img.Success).Any()
+                ? loadedImages.Where(img => img.Success).Max(img => img.Height)
+                : 300; // Default placeholder size
+
+            // Calculate text heights
+            var subtitleHeight = MeasureMaxHeight(loadedImages.Select(img => GetStatusText(img)), subtitleFont);
+            var promptHeight = MeasureMaxHeight(new[] { prompt }, promptFont);
+
+            return new ImageDimensions
+            {
+                TotalWidth = totalWidth,
+                MaxImageHeight = maxImageHeight,
+                SubtitleHeight = subtitleHeight + UIConstants.Padding,
+                PromptHeight = promptHeight + UIConstants.Padding,
+                TotalHeight = maxImageHeight + subtitleHeight + promptHeight + (UIConstants.Padding * 3)
+            };
+        }
+
+        private static int MeasureMaxHeight(IEnumerable<string> texts, Font font)
+        {
+            int maxHeight = 0;
+
+            foreach (var text in texts)
+            {
+                if (!string.IsNullOrEmpty(text))
+                {
+                    var height = ImageUtils.MeasureTextHeight(text, font, UIConstants.LineSpacing);
+                    maxHeight = Math.Max(maxHeight, height);
+                }
+            }
+
+            return maxHeight;
+        }
+
+        private static void DrawImagesAndLabels(
+            IImageProcessingContext ctx,
+            IEnumerable<LoadedImage> loadedImages,
+            int maxImageHeight,
+            Font subtitleFont)
+        {
+            int currentX = 0;
+
+            foreach (var loadedImage in loadedImages)
+            {
+                // Draw image or placeholder
+                if (loadedImage.Success && loadedImage.Image != null)
+                {
+                    ctx.DrawImage(loadedImage.Image, new Point(currentX, 0), 1f);
+                }
+                else
+                {
+                    // Draw placeholder rectangle with error text
+                    var placeholderRect = new RectangleF(currentX, 0, loadedImage.Width, maxImageHeight);
+                    ctx.DrawPlaceholder(placeholderRect, "Failed", subtitleFont);
+                }
+
+                // Draw subtitle
+                var statusText = GetStatusText(loadedImage);
+                var statusColor = loadedImage.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
+
+                var subtitleOptions = FontUtils.CreateTextOptions(subtitleFont, 
+                    HorizontalAlignment.Center, VerticalAlignment.Top);
+                subtitleOptions.Origin = new PointF(currentX + loadedImage.Width / 2f, maxImageHeight + UIConstants.Padding);
+
+                ctx.DrawTextStandard(subtitleOptions, statusText, statusColor);
+
+                currentX += loadedImage.Width;
+            }
+        }
+
+        private static void DrawPrompt(
+            IImageProcessingContext ctx,
+            string prompt,
+            Font promptFont,
+            ImageDimensions dimensions)
+        {
+            var promptY = dimensions.MaxImageHeight + dimensions.SubtitleHeight + UIConstants.Padding;
+
+            var promptOptions = FontUtils.CreateTextOptions(promptFont, 
+                HorizontalAlignment.Center, VerticalAlignment.Top);
+            promptOptions.Origin = new PointF(dimensions.TotalWidth / 2f, promptY);
+            promptOptions.WrappingLength = dimensions.TotalWidth - (UIConstants.Padding * 4);
+
+            ctx.DrawTextStandard(promptOptions, prompt, UIConstants.Black);
+        }
+
+        private static async Task<string> SaveCombinedImage(
+            Image<Rgba32> image,
+            string prompt,
+            Settings settings)
+        {
+            string todayFolder = DateTime.Now.ToString("yyyy-MM-dd-dddd");
+            string baseFolder = Path.Combine(settings.ImageDownloadBaseFolder, todayFolder, "Combined");
+            Directory.CreateDirectory(baseFolder);
+
+            var truncatedPrompt = FilenameGenerator.TruncatePrompt(prompt, 50);
+            var baseFilename = $"combined_{truncatedPrompt}_{DateTime.Now:HHmmss}";
+            var safeFilename = baseFilename;
+            var outputPath = Path.Combine(baseFolder, $"{safeFilename}.png");
+
+            // Ensure unique filename
+            int counter = 1;
+            while (File.Exists(outputPath))
+            {
+                outputPath = Path.Combine(baseFolder, $"{safeFilename}_{counter}.png");
+                counter++;
+            }
+
+            await image.SaveAsPngAsync(outputPath);
+            Logger.Log($"Combined image saved: {outputPath}");
+
+            return outputPath;
+        }
+
+        private static string GetStatusText(LoadedImage image)
+        {
+            return image.GeneratorName;
+        }
+
+        // Helper classes for image combining
+        private class LoadedImage
+        {
+            public bool Success { get; set; }
+            public Image<Rgba32> Image { get; set; }
+            public string GeneratorName { get; set; }
+            public int Width { get; set; }
+            public int Height { get; set; }
+        }
+
+        private class ImageDimensions
+        {
+            public int TotalWidth { get; set; }
+            public int MaxImageHeight { get; set; }
+            public int SubtitleHeight { get; set; }
+            public int PromptHeight { get; set; }
+            public int TotalHeight { get; set; }
         }
     }
 }
