@@ -143,7 +143,7 @@ namespace MultiImageClient
                 };
 
                 using var content = new StringContent(
-                    System.Text.Json.JsonSerializer.Serialize(body),
+                    JsonSerializer.Serialize(body),
                     Encoding.UTF8,
                     "application/json");
 

@@ -35,7 +35,7 @@ namespace MultiImageClient
             // just trunc. ugh.
             value = value.Length > 2500 ? value[..2500] + "..." : value;
 
-            var font = SixLabors.Fonts.SystemFonts.CreateFont("Arial", fontSize, SixLabors.Fonts.FontStyle.Regular);
+            var font = SystemFonts.CreateFont("Arial", fontSize, FontStyle.Regular);
             const float PADDING = 4;
 
             // Measure text height with wrapping
@@ -77,7 +77,7 @@ namespace MultiImageClient
         public static async Task JustAddSimpleTextToBottomAsync(byte[] imageBytes, IEnumerable<PromptHistoryStep> historySteps, Dictionary<string, string> imageInfo, string outputPath, SaveType saveType)
         {
             Console.WriteLine(outputPath);
-            using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
+            using var originalImage = Image.Load<Rgba32>(imageBytes);
             var imageWidth = originalImage.Width;
             var intendedFontSize = 24;
             
@@ -173,7 +173,7 @@ namespace MultiImageClient
                     Logger.Log($"{ex2} failed normal load");
                     try
                     {
-                        originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
+                        originalImage = Image.Load<Rgba32>(imageBytes);
                     }
                     catch (Exception ex3)
                     {

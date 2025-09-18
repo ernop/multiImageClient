@@ -167,7 +167,7 @@ namespace MultiImageClient
             var leftSideWidth = width - rightSideWidth;
             var padding = 5;
             var fontSize = 24;
-            SixLabors.Fonts.FontFamily fontFamily;
+            FontFamily fontFamily;
             if (!SystemFonts.TryGet("Segoe UI", out fontFamily))
             {
                 if (!SystemFonts.TryGet("Arial", out fontFamily))
