@@ -14,7 +14,7 @@ namespace MultiImageClient
         public static readonly GraphicsOptions StandardGraphicsOptions = new GraphicsOptions
         {
             Antialias = true,
-            AntialiasSubpixelDepth = 16
+            AntialiasSubpixelDepth = 32
         };
 
         public static void ApplyStandardGraphicsOptions(this IImageProcessingContext ctx)
@@ -113,13 +113,18 @@ namespace MultiImageClient
             ctx.Fill(backgroundColor, backgroundBounds);
             ctx.Draw(UIConstants.White, 1f, backgroundBounds);
 
-            // Draw text
-            var textOptions = FontUtils.CreateTextOptions(font, alignment, VerticalAlignment.Center);
+            // Draw text with proper wrapping and top alignment
+            var textOptions = FontUtils.CreateTextOptions(font, alignment, VerticalAlignment.Top);
+            
+            // Set wrapping length to prevent text overflow
+            var availableWidth = backgroundBounds.Width - (UIConstants.Padding * 2);
+            textOptions.WrappingLength = availableWidth;
+            
             textOptions.Origin = alignment switch
             {
-                HorizontalAlignment.Left => new PointF(backgroundBounds.X + UIConstants.Padding, backgroundBounds.Y + backgroundBounds.Height / 2f),
-                HorizontalAlignment.Right => new PointF(backgroundBounds.X + backgroundBounds.Width - UIConstants.Padding, backgroundBounds.Y + backgroundBounds.Height / 2f),
-                _ => new PointF(backgroundBounds.X + backgroundBounds.Width / 2f, backgroundBounds.Y + backgroundBounds.Height / 2f)
+                HorizontalAlignment.Left => new PointF(backgroundBounds.X + UIConstants.Padding, backgroundBounds.Y + UIConstants.Padding),
+                HorizontalAlignment.Right => new PointF(backgroundBounds.X + backgroundBounds.Width - UIConstants.Padding, backgroundBounds.Y + UIConstants.Padding),
+                _ => new PointF(backgroundBounds.X + backgroundBounds.Width / 2f, backgroundBounds.Y + UIConstants.Padding)
             };
 
             ctx.DrawTextStandard(textOptions, text, textColor);

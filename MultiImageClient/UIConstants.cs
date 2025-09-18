@@ -8,6 +8,7 @@ namespace MultiImageClient
         public const int Padding = 10;
         public const float LineSpacing = 1.15f;
         public const int MinFontSize = 8;
+        public const int TextDpi = 300;
 
         // Colors
         public static readonly Color White = Color.White;

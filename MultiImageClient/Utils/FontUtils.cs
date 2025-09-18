@@ -47,7 +47,7 @@ namespace MultiImageClient
                 HorizontalAlignment = horizontalAlignment,
                 VerticalAlignment = verticalAlignment,
                 LineSpacing = lineSpacing,
-                Dpi = 72,
+                Dpi = UIConstants.TextDpi,
                 FallbackFontFamilies = new[] { GetSystemFont() }
             };
         }
