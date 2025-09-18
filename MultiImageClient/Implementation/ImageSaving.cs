@@ -27,8 +27,8 @@ namespace MultiImageClient
         private const int PlaceholderWidth = 300;
         private const int LabelFontSize = 12;
         private const int LabelRightFontSize = 10;
-        private const int CombinedImageGeneratorFontSize = 40;
-        private const int CombinedImagePromptFontSize = 56;
+        private const int CombinedImageGeneratorFontSize = 24;
+        private const int CombinedImagePromptFontSize = 32;
         private const float LabelLineHeightMultiplier = 1.5f;
 
         public static void ConvertWebpTopng(string inputFp)
