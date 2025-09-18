@@ -85,7 +85,7 @@ namespace MultiImageClient
                 MessageResponse firstResult = await _anthropicClient.Messages.GetClaudeMessageAsync(parameters);
                 var claudeResponse = firstResult.Message.ToString();
 
-                var isClaudeUnhappy = ClaudeService.DidClaudeRefuse(claudeResponse);
+                var isClaudeUnhappy = DidClaudeRefuse(claudeResponse);
                 if (isClaudeUnhappy)
                 {
                     stats.ClaudeRefusedCount++;

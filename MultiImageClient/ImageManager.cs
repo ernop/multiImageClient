@@ -139,7 +139,7 @@ namespace MultiImageClient
                 result.ErrorMessage,
             };
 
-            string jsonString = JsonConvert.SerializeObject(jsonLog, Newtonsoft.Json.Formatting.Indented);
+            string jsonString = JsonConvert.SerializeObject(jsonLog, Formatting.Indented);
 
             if (savedImagePaths.TryGetValue(SaveType.Raw, out string rawImagePath))
             {
