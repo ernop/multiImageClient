@@ -119,7 +119,7 @@ namespace MultiImageClient
 
                             return res;
                         }
-                    });
+                    }).ToArray();
 
                     allTasks.AddRange(generatorTasks);
                     ii++;
@@ -135,9 +135,6 @@ namespace MultiImageClient
                     {
                         Logger.Log($"Failed to combine images: {ex.Message}");
                     }
-
-                    // how to wait for all of the items in theseResults to be done downloading (i.e. all the things inside generator.ProcessPromptAsync and imageManager.ProcessAndSaveAsync are done?")
-                    // at that point, we want to call:  ImageCombiner.CombineImagesHorizontallyAsync(theseResults, promptDetails.Prompt);
                 }
             }
 
