@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFramework>net6.0</TargetFramework>
-    <LangVersion>10.0</LangVersion>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
     <ProjectGuid>{3E7F378B-7AC6-4904-B775-E4B4CC69AB5B}</ProjectGuid>
     <Platforms>AnyCPU;ARM64</Platforms>
   </PropertyGroup>
