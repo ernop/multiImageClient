@@ -178,7 +178,7 @@ namespace MultiImageClient
                     catch (Exception ex3)
                     {
                         Logger.Log($"{ex2} failed rgba32 load");
-                        throw ex3;
+                        return;
                     }
                 }
 
