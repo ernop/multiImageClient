@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
-    <LangVersion>12.0</LangVersion>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>13.0</LangVersion>
     <ProjectGuid>{F68A7365-F772-4BD7-867B-A3E4A5D6DC5E}</ProjectGuid>
     <Platforms>AnyCPU;ARM64</Platforms>
     <StartupObject>BFLAPIClient.BFLClient</StartupObject>
