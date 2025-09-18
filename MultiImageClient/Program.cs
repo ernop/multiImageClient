@@ -50,7 +50,7 @@ namespace MultiImageClient
 
             //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, bfl3, recraft6, ideogram4, };
             //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
-            var myGenerators = new List<IImageGenerator>() { ideogram1,  ideogram4, dalle3, recraft3, bfl1, bfl2, bfl3}; 
+            var myGenerators = new List<IImageGenerator>() { ideogram1,  ideogram4, dalle3, recraft6, bfl1, bfl2, bfl3}; 
             var imageManager = new ImageManager(settings, stats);
 
             /// -----------------------  APPLYING PROMPTS TO SERVICES ------------------------
@@ -137,7 +137,8 @@ namespace MultiImageClient
 
                     try
                     {
-                        var res = ImageSaving.CombineImagesHorizontallyAsync(results, promptString.Prompt, settings);
+                        var res = await ImageSaving.CombineImagesHorizontallyAsync(results, promptString.Prompt, settings);
+                        Logger.Log($"Combined images saved to: {res}");
                     }
                     catch (Exception ex)
                     {
@@ -147,13 +148,13 @@ namespace MultiImageClient
             }
 
             // Wait for all tasks
-            while (allTasks.Any(t => !t.IsCompleted))
-            {
-                var completed = allTasks.Count(t => t.IsCompleted);
-                var remaining = allTasks.Count - completed;
-                Logger.Log($"Status: {completed}/{allTasks.Count} completed, {remaining} remaining...");
-                await Task.WhenAny(Task.Delay(5000), Task.WhenAll(allTasks));
-            }
+            // while (allTasks.Any(t => !t.IsCompleted))
+            // {
+            //     var completed = allTasks.Count(t => t.IsCompleted);
+            //     var remaining = allTasks.Count - completed;
+            //     Logger.Log($"Status: {completed}/{allTasks.Count} completed, {remaining} remaining...");
+            //     await Task.WhenAny(Task.Delay(5000), Task.WhenAll(allTasks));
+            // }
         }
     }
 }
