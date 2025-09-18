@@ -23,7 +23,7 @@ namespace MultiImageClient
         private static readonly HttpClient httpClient = new HttpClient();
         
         private const int LabelRightSideWidth = 200;
-        private const int LabelFontSize = 24;
+        private const int LabelFontSize = 12;
         private const float LabelLineHeightMultiplier = 1.5f;
 
         public static void ConvertWebpTopng(string inputFp)
@@ -190,9 +190,9 @@ namespace MultiImageClient
                 rightFontSize = (int)rightFont.Size;
             }
 
-            // Calculate right side height (number of lines * line height)
-            var rightLineHeight = rightFontSize * LabelLineHeightMultiplier;
-            var rightTextHeight = (int)(rightParts.Where(s => !string.IsNullOrEmpty(s)).Count() * rightLineHeight);
+            // Calculate right side height using proper text height measurement
+            var rightLineHeight = ImageUtils.MeasureTextHeight("Sample", rightFont, UIConstants.LineSpacing);
+            var rightTextHeight = rightParts.Where(s => !string.IsNullOrEmpty(s)).Count() * rightLineHeight;
 
             // Overall height is the maximum of left and right sides plus padding
             int contentHeight = Math.Max(leftTextHeight, rightTextHeight);
@@ -220,7 +220,7 @@ namespace MultiImageClient
                     rightTextOptions.Origin = new PointF(width - padding, yOffset);
 
                     ctx.DrawTextStandard(rightTextOptions, text, UIConstants.Gold);
-                    yOffset += (int)rightLineHeight;
+                    yOffset += rightLineHeight;
                 }
             });
 
@@ -288,7 +288,7 @@ namespace MultiImageClient
         {
             const int placeholderWidth = 300;
             const int generatorFontSize = 40;
-            const int promptFontSize = 80;
+            const int promptFontSize = 32;
 
             // Prepare fonts
             var generatorFont = FontUtils.CreateFont(generatorFontSize, FontStyle.Bold);
@@ -399,15 +399,21 @@ namespace MultiImageClient
 
             // Calculate text heights
             var subtitleHeight = MeasureMaxHeight(loadedImages.Select(img => GetStatusText(img)), subtitleFont);
-            var promptHeight = MeasureMaxHeight(new[] { prompt }, promptFont);
+            
+            // Calculate prompt height with wrapping support
+            var wrappingWidth = totalWidth - (UIConstants.Padding * 4);
+            var promptHeight = ImageUtils.MeasureTextHeight(prompt, promptFont, UIConstants.LineSpacing, wrappingWidth);
+            
+            // Add extra padding for better spacing around the prompt
+            var extraPadding = UIConstants.Padding * 2;
 
             return new ImageDimensions
             {
                 TotalWidth = totalWidth,
                 MaxImageHeight = maxImageHeight,
                 SubtitleHeight = subtitleHeight + UIConstants.Padding,
-                PromptHeight = promptHeight + UIConstants.Padding,
-                TotalHeight = maxImageHeight + subtitleHeight + promptHeight + (UIConstants.Padding * 3)
+                PromptHeight = promptHeight + extraPadding + UIConstants.Padding,
+                TotalHeight = maxImageHeight + subtitleHeight + promptHeight + extraPadding + (UIConstants.Padding * 3)
             };
         }
 
@@ -469,11 +475,16 @@ namespace MultiImageClient
             Font promptFont,
             ImageDimensions dimensions)
         {
-            var promptY = dimensions.MaxImageHeight + dimensions.SubtitleHeight + UIConstants.Padding;
+            var promptAreaTop = dimensions.MaxImageHeight + dimensions.SubtitleHeight + UIConstants.Padding;
+            var promptAreaHeight = dimensions.PromptHeight;
+            
+            // Add extra padding above the prompt area for better spacing
+            var extraPadding = UIConstants.Padding * 2;
+            var promptY = promptAreaTop + extraPadding + (promptAreaHeight - extraPadding) / 2f;
 
             var promptOptions = FontUtils.CreateTextOptions(promptFont, 
-                HorizontalAlignment.Center, VerticalAlignment.Top);
-            promptOptions.Origin = new PointF(dimensions.TotalWidth / 2f, promptY);
+                HorizontalAlignment.Left, VerticalAlignment.Center);
+            promptOptions.Origin = new PointF(UIConstants.Padding * 2, promptY);
             promptOptions.WrappingLength = dimensions.TotalWidth - (UIConstants.Padding * 4);
 
             ctx.DrawTextStandard(promptOptions, prompt, UIConstants.Black);

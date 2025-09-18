@@ -103,7 +103,7 @@ namespace MultiImageClient
                 LineSpacing = 1.15f,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Dpi= 72,
+                Dpi = UIConstants.TextDpi,
                 FallbackFontFamilies = new[] { SystemFonts.Families.First() }
             };
 
@@ -144,7 +144,7 @@ namespace MultiImageClient
                 {
                     HorizontalAlignment = HorizontalAlignment.Right,
                     VerticalAlignment = VerticalAlignment.Bottom,
-                    Dpi = 72,
+                    Dpi = UIConstants.TextDpi,
                     Origin = new PointF(imageWidth - horizontalPadding, newHeight - verticalPadding)
                 };
 
