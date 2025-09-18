@@ -21,9 +21,14 @@ namespace MultiImageClient
     public static class ImageSaving
     {
         private static readonly HttpClient httpClient = new HttpClient();
-        
+
         private const int LabelRightSideWidth = 200;
+        private const float LabelTotalLineSpacing = 1.3f;
+        private const int PlaceholderWidth = 300;
         private const int LabelFontSize = 12;
+        private const int LabelRightFontSize = 10;
+        private const int CombinedImageGeneratorFontSize = 40;
+        private const int CombinedImagePromptFontSize = 56;
         private const float LabelLineHeightMultiplier = 1.5f;
 
         public static void ConvertWebpTopng(string inputFp)
@@ -77,8 +82,6 @@ namespace MultiImageClient
 
             Directory.CreateDirectory(baseFolder);
 
-            
-
             var usingPromptTextPart = FilenameGenerator.TruncatePrompt(result.PromptDetails.Prompt, 90);
             var generatorFilename = generator.GetFilenamePart(result.PromptDetails);
 
@@ -120,19 +123,14 @@ namespace MultiImageClient
                         rightParts.Add("MultiImageClient");
                         using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(result.GetImageBytes());
                         var label = MakeLabelGeneral(originalImage.Width, result.PromptDetails.Prompt, rightParts);
-                        
+
                         using var labelImage = SixLabors.ImageSharp.Image.Load<Rgba32>(label);
                         int newHeight = originalImage.Height + labelImage.Height;
                         using var combinedImage = new Image<Rgba32>(originalImage.Width, newHeight);
                         combinedImage.Mutate(ctx =>
                         {
-                            // Apply standard graphics options
                             ctx.ApplyStandardGraphicsOptions();
-
-                            // Draw original image at top
                             ctx.DrawImage(originalImage, new Point(0, 0), 1f);
-
-                            // Draw label at bottom
                             ctx.DrawImage(labelImage, new Point(0, originalImage.Height), 1f);
                         });
 
@@ -162,62 +160,56 @@ namespace MultiImageClient
 
         public static byte[] MakeLabelGeneral(int width, string prompt, List<string> rightParts)
         {
-            var rightSideWidth = LabelRightSideWidth;
-            var leftSideWidth = width - rightSideWidth;
-            var padding = UIConstants.Padding;
+            var leftSideWidth = width - LabelRightSideWidth;
             var fontSize = LabelFontSize;
             var font = FontUtils.CreateFont(fontSize, FontStyle.Regular);
+            var labelRightFont = FontUtils.CreateFont(LabelRightFontSize, FontStyle.Regular);
 
             // Measure left side text to determine height
-            var leftTextOptions = FontUtils.CreateTextOptions(font, 
-                HorizontalAlignment.Left, VerticalAlignment.Top);
-            leftTextOptions.WrappingLength = leftSideWidth - (padding * 2);
+            var leftTextOptions = FontUtils.CreateTextOptions(font,
+                HorizontalAlignment.Left, VerticalAlignment.Top, LabelTotalLineSpacing);
+            leftTextOptions.WrappingLength = leftSideWidth - (UIConstants.Padding * 2);
 
             int leftTextHeight = ImageUtils.MeasureTextHeight(prompt, font, UIConstants.LineSpacing, leftTextOptions.WrappingLength);
 
             // Calculate right side font size (scale down if needed to fit width)
-            var rightFont = font;
-            var rightFontSize = fontSize;
+            
 
             // Find the maximum width needed for right side text
-            foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
-            {
-                var testOptions = FontUtils.CreateTextOptions(rightFont, HorizontalAlignment.Right);
-                var textBounds = TextMeasurer.MeasureBounds(text, testOptions);
+            //foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
+            //{
+            //    var testOptions = FontUtils.CreateTextOptions(rightFont, HorizontalAlignment.Right);
+            //    var textBounds = TextMeasurer.MeasureBounds(text, testOptions);
 
-                // Auto-size font to fit width
-                rightFont = ImageUtils.AutoSizeFont(text, rightSideWidth, rightFontSize, UIConstants.MinFontSize, FontStyle.Regular);
-                rightFontSize = (int)rightFont.Size;
-            }
+                // rightFont = ImageUtils.AutoSizeFont(text, LabelRightSideWidth, rightFontSize, UIConstants.MinFontSize, FontStyle.Regular);
+                // rightFontSize = (int)rightFont.Size;
+            //}
 
             // Calculate right side height using proper text height measurement
-            var rightLineHeight = ImageUtils.MeasureTextHeight("Sample", rightFont, UIConstants.LineSpacing);
+            var rightLineHeight = ImageUtils.MeasureTextHeight("Sample", labelRightFont, UIConstants.LineSpacing);
             var rightTextHeight = rightParts.Where(s => !string.IsNullOrEmpty(s)).Count() * rightLineHeight;
 
             // Overall height is the maximum of left and right sides plus padding
             int contentHeight = Math.Max(leftTextHeight, rightTextHeight);
-            int totalHeight = contentHeight + (padding * 2);
+            int totalHeight = contentHeight + (UIConstants.Padding * 2);
 
-            // Create the image with standard settings
             using var image = ImageUtils.CreateStandardImage(width, totalHeight, UIConstants.Black);
 
             image.Mutate(ctx =>
             {
-
                 // Draw left side box border and text
-                var leftRect = new RectangleF(0, 0, leftSideWidth, totalHeight);
+                var leftRect = new RectangleF(0, 0, leftSideWidth + 5, totalHeight);
                 ctx.DrawTextWithBackground(leftRect, prompt, font, UIConstants.White, UIConstants.Black, HorizontalAlignment.Left);
 
                 // Draw right side box border
-                ctx.Draw(UIConstants.White, 1f, new RectangleF(leftSideWidth, 0, rightSideWidth, totalHeight));
+                //ctx.Draw(UIConstants.SuccessGreen, 1f, new RectangleF(leftSideWidth, 0, LabelRightSideWidth, totalHeight));
 
                 // Draw right side text (gold color, right-aligned)
-                var yOffset = padding;
+                var yOffset = UIConstants.Padding;
                 foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
                 {
-                    var rightTextOptions = FontUtils.CreateTextOptions(rightFont, 
-                        HorizontalAlignment.Right, VerticalAlignment.Top);
-                    rightTextOptions.Origin = new PointF(width - padding, yOffset);
+                    var rightTextOptions = FontUtils.CreateTextOptions(labelRightFont, HorizontalAlignment.Right, VerticalAlignment.Top, LabelTotalLineSpacing);
+                    rightTextOptions.Origin = new PointF(width - UIConstants.Padding, yOffset);
 
                     ctx.DrawTextStandard(rightTextOptions, text, UIConstants.Gold);
                     yOffset += rightLineHeight;
@@ -286,19 +278,14 @@ namespace MultiImageClient
             string prompt,
             Settings settings)
         {
-            const int placeholderWidth = 300;
-            const int generatorFontSize = 40;
-            const int promptFontSize = 32;
 
-            // Prepare fonts
-            var generatorFont = FontUtils.CreateFont(generatorFontSize, FontStyle.Bold);
-            var promptFont = FontUtils.CreateFont(promptFontSize, FontStyle.Regular);
 
-            // Load all images and calculate dimensions
-            var loadedImages = LoadResultImages(results, placeholderWidth);
+            var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Regular);
+            var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Bold);
+
+            var loadedImages = LoadResultImages(results, PlaceholderWidth);
             var dimensions = CalculateDimensions(loadedImages, prompt, generatorFont, promptFont);
 
-            // Create combined image with standard settings
             using var combinedImage = ImageUtils.CreateStandardImage(dimensions.TotalWidth, dimensions.TotalHeight, UIConstants.White);
 
             combinedImage.Mutate(ctx =>
@@ -371,9 +358,11 @@ namespace MultiImageClient
                 }
             }
 
-            return loadedImages.OrderBy(el=>el.GeneratorName);
+            return loadedImages.OrderBy(el => el.GeneratorName);
         }
 
+        /// when an image fails to generate we add in a fixed-width holder in any combined image, to show what happened and be able to
+        /// at least see the filtering rules etc.
         private static LoadedImage CreatePlaceholder(string generatorName, bool success, int placeholderWidth)
         {
             return new LoadedImage
@@ -399,11 +388,11 @@ namespace MultiImageClient
 
             // Calculate text heights
             var subtitleHeight = MeasureMaxHeight(loadedImages.Select(img => GetStatusText(img)), subtitleFont);
-            
+
             // Calculate prompt height with wrapping support
             var wrappingWidth = totalWidth - (UIConstants.Padding * 4);
             var promptHeight = ImageUtils.MeasureTextHeight(prompt, promptFont, UIConstants.LineSpacing, wrappingWidth);
-            
+
             // Add extra padding for better spacing around the prompt
             var extraPadding = UIConstants.Padding * 2;
 
@@ -459,8 +448,8 @@ namespace MultiImageClient
                 var statusText = GetStatusText(loadedImage);
                 var statusColor = loadedImage.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
 
-                var subtitleOptions = FontUtils.CreateTextOptions(subtitleFont, 
-                    HorizontalAlignment.Center, VerticalAlignment.Top);
+                var subtitleOptions = FontUtils.CreateTextOptions(subtitleFont,
+                    HorizontalAlignment.Center, VerticalAlignment.Top, LabelTotalLineSpacing);
                 subtitleOptions.Origin = new PointF(currentX + loadedImage.Width / 2f, maxImageHeight + UIConstants.Padding);
 
                 ctx.DrawTextStandard(subtitleOptions, statusText, statusColor);
@@ -477,13 +466,12 @@ namespace MultiImageClient
         {
             var promptAreaTop = dimensions.MaxImageHeight + dimensions.SubtitleHeight + UIConstants.Padding;
             var promptAreaHeight = dimensions.PromptHeight;
-            
+
             // Add extra padding above the prompt area for better spacing
             var extraPadding = UIConstants.Padding * 2;
             var promptY = promptAreaTop + extraPadding + (promptAreaHeight - extraPadding) / 2f;
 
-            var promptOptions = FontUtils.CreateTextOptions(promptFont, 
-                HorizontalAlignment.Left, VerticalAlignment.Center);
+            var promptOptions = FontUtils.CreateTextOptions(promptFont, HorizontalAlignment.Left, VerticalAlignment.Center, LabelTotalLineSpacing);
             promptOptions.Origin = new PointF(UIConstants.Padding * 2, promptY);
             promptOptions.WrappingLength = dimensions.TotalWidth - (UIConstants.Padding * 4);
 
