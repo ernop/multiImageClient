@@ -113,8 +113,6 @@ namespace MultiImageClient
             {
                 _dalle3Semaphore.Release();
             }
-
         }
-
     }
 }
