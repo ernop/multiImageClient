@@ -79,10 +79,20 @@ namespace MultiImageClient
             ctx.Fill(UIConstants.PlaceholderFill, bounds);
             ctx.Draw(UIConstants.PlaceholderBorder, 2f, bounds);
 
-            // Draw error text in center
-            var errorTextOptions = FontUtils.CreateTextOptions(font, 
-                HorizontalAlignment.Center, VerticalAlignment.Center);
-            errorTextOptions.Origin = new PointF(bounds.X + bounds.Width / 2f, bounds.Y + bounds.Height / 2f);
+            // Auto-size font to fit the available space (start with smaller size for error text)
+            var maxFontSize = Math.Min((int)font.Size, 14); // Cap at 14pt for error text
+            var availableWidth = bounds.Width - (UIConstants.Padding * 2);
+            var autoSizedFont = AutoSizeFont(errorText, (int)availableWidth, maxFontSize, UIConstants.MinFontSize);
+
+            // Draw error text with proper wrapping and top alignment
+            var errorTextOptions = FontUtils.CreateTextOptions(autoSizedFont, 
+                HorizontalAlignment.Center, VerticalAlignment.Top);
+            
+            // Set wrapping length to prevent text overflow
+            errorTextOptions.WrappingLength = availableWidth;
+            
+            // Position text at top with padding
+            errorTextOptions.Origin = new PointF(bounds.X + bounds.Width / 2f, bounds.Y + UIConstants.Padding);
             
             ctx.DrawTextStandard(errorTextOptions, errorText, UIConstants.ErrorRed);
         }
@@ -107,13 +117,13 @@ namespace MultiImageClient
 
         public static void DrawTextWithBackground(this IImageProcessingContext ctx, RectangleF backgroundBounds, 
             string text, Font font, Color textColor, Color backgroundColor, 
-            HorizontalAlignment alignment = HorizontalAlignment.Center)
+            HorizontalAlignment alignment = HorizontalAlignment.Center, float lineSpacing = 1.15f)
         {
             // Draw background
             ctx.Fill(backgroundColor, backgroundBounds);
 
             // Draw text with proper wrapping and top alignment
-            var textOptions = FontUtils.CreateTextOptions(font, alignment, VerticalAlignment.Top);
+            var textOptions = FontUtils.CreateTextOptions(font, alignment, VerticalAlignment.Top, lineSpacing);
             
             // Set wrapping length to prevent text overflow
             var availableWidth = backgroundBounds.Width - (UIConstants.Padding * 2);

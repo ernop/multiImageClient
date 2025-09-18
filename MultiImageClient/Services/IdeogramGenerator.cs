@@ -1,10 +1,12 @@
 ﻿using IdeogramAPIClient;
+using System.Text.RegularExpressions;
 
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -181,7 +183,19 @@ namespace MultiImageClient
             catch (Exception ex)
             {
                 Console.WriteLine(ex);
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, GenericImageErrorType = GenericImageGenerationErrorType.Unknown };
+
+                Match m = Regex.Match(ex.Message, "\"error\"\\s*:\\s*\"([^\"]+)\"");
+                string errorMessage;
+                if (m.Success)
+                {
+                    errorMessage = m.Groups[1].Value;
+                    Console.WriteLine(errorMessage);
+                }
+                else
+                {
+                    errorMessage = ex.Message;
+                }
+                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = errorMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, GenericImageErrorType = GenericImageGenerationErrorType.Unknown };
             }
             finally
             {

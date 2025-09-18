@@ -3,7 +3,7 @@ using OpenAI.Images;
 
 using System;
 using System.Collections.Generic;
-
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -100,7 +100,14 @@ namespace MultiImageClient
             }
             catch (Exception ex)
             {
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Dalle3 };
+                var ms = ex.Message.Split("\r\n\r\n");
+                var errorMessage = "Error.";
+                if (ms.Length > 1)
+                {
+                    errorMessage = ms.Last();
+                }
+                    
+                return new TaskProcessResult { IsSuccess = false, ErrorMessage = errorMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Dalle3 };
             }
             finally
             {
