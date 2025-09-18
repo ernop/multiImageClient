@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 
 namespace MultiImageClient
@@ -23,6 +24,24 @@ namespace MultiImageClient
         public TextGeneratorApiType TextGenerator { get; set; }
         public long CreateTotalMs { get; set; } = 0;
         public long DownloadTotalMs { get; set; } = 0;
+        private byte[] _ImageBytes { get; set; }
+        public void SetImageBytes(byte[] imageBytes)
+        {
+            if (imageBytes == null || imageBytes.Length == 0)
+            {
+                IsSuccess = false;
+                GenericImageErrorType = GenericImageGenerationErrorType.NoImagesGenerated;
+                ErrorMessage = "No image data.";
+                return;
+            }
+            if (_ImageBytes != null && _ImageBytes.Length > 0)
+            {
+                Console.WriteLine("Already seat.");
+                throw new Exception("Already set image bytes.");
+            }
+            _ImageBytes = imageBytes;
+        }   
+
 
         public override string ToString()
         {
@@ -32,6 +51,15 @@ namespace MultiImageClient
                 return $"Error: {GenericTextErrorType} {ErrorMessage}";
 
             return $"Success. {PromptDetails}";
+        }
+
+        internal byte[] GetImageBytes()
+        {
+            if (_ImageBytes == null)
+            {
+                throw new Exception("No image bytes set.");
+            }
+            return _ImageBytes;
         }
     }
 }

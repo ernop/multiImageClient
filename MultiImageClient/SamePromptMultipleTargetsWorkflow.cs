@@ -46,18 +46,10 @@ namespace MultiImageClient
                     await t.ContinueWith(OnFinished, TaskScheduler.Default);
                 }
 
-                //// Process all generators asynchronously
-                //var tasks = _generators.Select(async generator =>
-                //{
-                //    var theCopy = promptDetails.Clone();
-                //    var result = await generator.ProcessPromptAsync(theCopy, stats);
-                //    await _workflowContext.ImageManager.ProcessAndSaveAsync(result, _abstractPromptSource, stats);
-                //}).ToList();
                 
                 await Task.WhenAll(tasks);
 
-                var combiner = new ImageCombiner();
-                //combiner.Save(tasks, _settings, promptDetails.Prompt);
+                
             }
         }
 

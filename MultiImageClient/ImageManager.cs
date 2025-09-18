@@ -1,10 +1,13 @@
-﻿using Newtonsoft.Json;
+﻿using ImageMagick;
+
+using Newtonsoft.Json;
 
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection.Emit;
+using System.Security.AccessControl;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 
@@ -23,19 +26,58 @@ namespace MultiImageClient
 
         public async Task<Dictionary<SaveType, string>> DoSaveAsync(IImageGenerator generator, byte[] imageBytes, TaskProcessResult result, Settings settings)
         {
+
+
+
             if (imageBytes == null || imageBytes.Length == 0)
             {
                 Logger.Log($"Empty or null image bytes received");
                 throw new Exception("Bad image.");
             }
+
+
+            // just one time, convert the bytes to png if needed.
+            if (result.ContentType == "image/webp")
+            {
+                var fakeImage = new MagickImage(imageBytes, MagickFormat.WebP);
+                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
+            }
+            else if (result.ContentType == "image/svg+xml")
+            {
+                var fakeImage = new MagickImage(imageBytes, MagickFormat.Svg);
+                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
+            }
+            else if (result.ContentType == "image/jpeg")
+            {
+                var fakeImage = new MagickImage(imageBytes, MagickFormat.Jpg);
+                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
+            }
+            else if (result.ContentType == "image/png")
+            {
+                //Console.WriteLine("png do nothing, all good");
+            }
+            else if (result.ContentType == null)
+            {
+                //Console.WriteLine("contentType null, so fall into .png");
+            }
+            else
+            {
+                Console.WriteLine("some other weird contenttype. {result.ContentType}");
+            }
+
+
+            //okay now we have the real bytes and they've been converted to png format if needed.
+            result.SetImageBytes(imageBytes);
+
+
             var savedImagePaths = new Dictionary<SaveType, string>();
 
-            savedImagePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.Raw, generator);
-            savedImagePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.FullAnnotation, generator);
-            savedImagePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.FinalPrompt, generator);
-            savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.InitialIdea, generator);
-            savedImagePaths[SaveType.JustOverride] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.JustOverride, generator);
-            savedImagePaths[SaveType.Label] = await ImageSaving.SaveImageAsync(imageBytes, result, settings, SaveType.Label, generator);
+            savedImagePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(result, settings, SaveType.Raw, generator);
+            savedImagePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(result, settings, SaveType.FullAnnotation, generator);
+            savedImagePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(result, settings, SaveType.FinalPrompt, generator);
+            savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(result, settings, SaveType.InitialIdea, generator);
+            savedImagePaths[SaveType.JustOverride] = await ImageSaving.SaveImageAsync(result, settings, SaveType.JustOverride, generator);
+            savedImagePaths[SaveType.Label] = await ImageSaving.SaveImageAsync(result, settings, SaveType.Label, generator);
 
             return savedImagePaths;
         }
@@ -64,7 +106,6 @@ namespace MultiImageClient
                     var ii = 0;
                     foreach (var qq in result.Base64ImageDatas)
                     {
-                        //Console.WriteLine($"Saving one things: {ii}");
                         imageBytes = Convert.FromBase64String(qq);
                         var downloadResults = await DoSaveAsync(generator, imageBytes, result, _settings);
                         ii++;

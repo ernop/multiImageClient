@@ -59,7 +59,6 @@ namespace MultiImageClient
         }
 
         public static async Task<string> SaveImageAsync(
-            byte[] imageBytes,
             TaskProcessResult result,
             Settings settings,
             SaveType saveType,
@@ -75,33 +74,7 @@ namespace MultiImageClient
 
             Directory.CreateDirectory(baseFolder);
 
-            if (result.ContentType == "image/webp")
-            {
-                var fakeImage = new MagickImage(imageBytes, MagickFormat.WebP);
-                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
-            }
-            else if (result.ContentType == "image/svg+xml")
-            {
-                var fakeImage = new MagickImage(imageBytes, MagickFormat.Svg);
-                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);             
-            }
-            else if (result.ContentType == "image/jpeg")
-            {
-                var fakeImage = new MagickImage(imageBytes, MagickFormat.Jpg);
-                imageBytes = fakeImage.ToByteArray(MagickFormat.Png); 
-            }
-            else if (result.ContentType == "image/png")
-            {
-                //Console.WriteLine("png do nothing, all good");
-            }
-            else if (result.ContentType == null)
-            {
-                //Console.WriteLine("contentType null, so fall into .png");
-            }
-            else
-            {
-                Console.WriteLine("some other weird contenttype. {result.ContentType}");
-            }
+            
 
             var usingPromptTextPart = FilenameGenerator.TruncatePrompt(result.PromptDetails.Prompt, 90);
             var generatorFilename = generator.GetFilenamePart(result.PromptDetails);
@@ -115,12 +88,12 @@ namespace MultiImageClient
                 {
                     throw new Exception("no overwriting!");
                 }
-                await File.WriteAllBytesAsync(fullPath, imageBytes);
+                await File.WriteAllBytesAsync(fullPath, result.GetImageBytes());
 
                 if (saveType == SaveType.Raw)
                 {
                     //Logger.Log($"Saved {saveType} image. Fp: {fullPath}");
-                    //stats.SavedRawImageCount++;
+                    //_stats.SavedRawImageCount++;
                 }
                 else
                 {
@@ -129,7 +102,7 @@ namespace MultiImageClient
                     if (saveType == SaveType.JustOverride)
                     {
                         await TextFormatting.JustAddSimpleTextToBottomAsync(
-                            imageBytes,
+                            result.GetImageBytes(),
                             usingSteps,
                             imageInfo,
                             fullPath,
@@ -142,7 +115,7 @@ namespace MultiImageClient
                         var costPart = $"{generator.GetCost()} $USD";
                         rightParts.Add(costPart);
                         rightParts.Add("MultiImageClient");
-                        using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
+                        using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(result.GetImageBytes());
                         var label = MakeLabelGeneral(originalImage.Width, result.PromptDetails.Prompt, rightParts);
                         
                         using var labelImage = SixLabors.ImageSharp.Image.Load<Rgba32>(label);
@@ -170,7 +143,7 @@ namespace MultiImageClient
                     else
                     {
                         await TextFormatting.SaveImageAndAnnotate(
-                            imageBytes,
+                            result.GetImageBytes(),
                             usingSteps,
                             imageInfo,
                             fullPath,
