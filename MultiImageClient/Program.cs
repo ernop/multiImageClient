@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing.Printing;
 using System.Linq;
+using System.Runtime;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 
@@ -35,20 +36,21 @@ namespace MultiImageClient
             var recraft3 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.freehand_details, null, stats, "");
             var recraft4 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.studio_portrait, stats, "");
             var recraft5 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.vector_illustration, RecraftVectorIllustrationSubstyle.infographical, null, null, stats, "");
-            var recraft6 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.natural_light, stats, "");
+            var recraft6 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.real_life_glow, stats, "");
             //var recraft7 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.bold_fantasy, null, stats, "");
             //var ideogram1 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_16_10, IdeogramStyleType.DESIGN, "", IdeogramModel.V_2, stats, "");
             var ideogram2 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_1_1, null, "", IdeogramModel.V_2_TURBO, stats, "");
-            //var ideogram3 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A, stats, "");
+            var ideogram3 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A, stats, "");
             var ideogram4 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A_TURBO, stats, "");
-            var bfl1 = new BFLGenerator(ImageGeneratorApiType.BFLv11, settings.BFLApiKey, concurrency, false, "3:2", false, 1024, 1024, stats, "");
-            var bfl2 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, settings.BFLApiKey, concurrency, false, "1:1", false, 2048, 1768, stats, "");
-            
+            var bfl1 = new BFLGenerator(ImageGeneratorApiType.BFLv11, settings.BFLApiKey, concurrency, "3:2", false, 1024, 1024, stats, "");
+            var bfl2 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, settings.BFLApiKey, concurrency, "1:1", false, 1024, 1024, stats, "");
+            var bfl3 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, settings.BFLApiKey, concurrency, "3:2", false, 1024, 1024, stats, "");
+
             var gptimage1 = new GptImageOneGenerator(settings.OpenAIApiKey, concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.high, stats, "");
 
-            var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, recraft3, recraft5, recraft6, ideogram4, gptimage1 };
+            //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, bfl3, recraft6, ideogram4, };
             //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
-            //var myGenerators = new List<IImageGenerator>() { , ideogram2,  ideogram4}; 
+            var myGenerators = new List<IImageGenerator>() { ideogram3,  ideogram4, dalle3, recraft1}; 
             var imageManager = new ImageManager(settings, stats);
 
             /// -----------------------  APPLYING PROMPTS TO SERVICES ------------------------
@@ -91,30 +93,51 @@ namespace MultiImageClient
                 var ii = 0;
                 while (ii < 1)
                 {
-
                     // Create tasks for all generators for this prompt
                     var generatorTasks = myGenerators.Select(async generator =>
                     {
+                        PromptDetails theCopy = null;
                         try
                         {
-                            var theCopy = promptString.Copy();
+                            theCopy = promptString.Copy();
                             var result = await generator.ProcessPromptAsync(theCopy);
                             await imageManager.ProcessAndSaveAsync(result, generator);
                             Logger.Log($"Finished {generator.GetType().Name} in {result.CreateTotalMs + result.DownloadTotalMs} ms, {result.PromptDetails.Show()}");
+                            
                             return result;
                         }
                         catch (Exception ex)
                         {
                             Logger.Log($"Task faulted for {generator.GetType().Name}: {ex.Message}");
-                            throw;
+
+                            var res = new TaskProcessResult
+                            {
+                                IsSuccess = false,
+                                ErrorMessage = ex.Message,
+                                PromptDetails = theCopy
+                            };
+
+                            return res;
                         }
-                    }).ToList();
+                    });
 
                     allTasks.AddRange(generatorTasks);
                     ii++;
 
                     stats.PrintStats();
-                    Console.WriteLine($"Kicked off {generatorTasks.Count} tasks for prompt.");
+                    var imageSaveResults = await Task.WhenAll(generatorTasks);
+
+                    try
+                    {
+                        var res = ImageCombiner.CombineImagesHorizontallyAsync(imageSaveResults, promptString.Prompt, settings);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Failed to combine images: {ex.Message}");
+                    }
+
+                    // how to wait for all of the items in theseResults to be done downloading (i.e. all the things inside generator.ProcessPromptAsync and imageManager.ProcessAndSaveAsync are done?")
+                    // at that point, we want to call:  ImageCombiner.CombineImagesHorizontallyAsync(theseResults, promptDetails.Prompt);
                 }
             }
 
@@ -127,22 +150,5 @@ namespace MultiImageClient
                 await Task.WhenAny(Task.Delay(5000), Task.WhenAll(allTasks));
             }
         }
-
-        //private static void OnFinished(Task<TaskProcessResult> task, object arg2)
-        //{
-        //    if (task.IsFaulted)
-        //    {
-        //        Logger.Log($"Task faulted: {task.Exception?.Flatten().InnerException}");
-        //        return;
-        //    }
-        //    if (task.IsCanceled)
-        //    {
-        //        Logger.Log("Task was canceled.");
-        //        return;
-        //    }
-
-        //    var res = task.Result;
-        //    Logger.Log($"Finished in {res.CreateTotalMs + res.DownloadTotalMs} ms, {res.PromptDetails.Show()}");
-        //}
     }
 }

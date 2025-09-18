@@ -59,7 +59,7 @@ namespace MultiImageClient
             return res;
         }
 
-        public BFLGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency, bool useUltra, string aspectRatio, bool promptUpscaling, int width, int height, MultiClientRunStats stats, string name)
+        public BFLGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency, string aspectRatio, bool promptUpscaling, int width, int height, MultiClientRunStats stats, string name)
         {
             _apiType = apiType;
             _bflClient = new BFLClient(apiKey);
@@ -121,6 +121,8 @@ namespace MultiImageClient
                         Prompt = promptDetails.Prompt,
                         AspectRatio = _aspectRatio,
                         PromptUpsampling = _promptUpsampling,
+                        Width = _width,
+                        Height = _height,
                         SafetyTolerance = 6
                     };
                     generationResponse = await _bflClient.GenerateFluxPro11UltraAsync(request2);
