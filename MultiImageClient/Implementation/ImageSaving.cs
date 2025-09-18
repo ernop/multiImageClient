@@ -260,29 +260,83 @@ namespace MultiImageClient
             return imageInfo;
         }
 
-        // Image combining functionality (previously in ImageCombiner.cs)
+
         public static async Task<string> CombineImagesHorizontallyAsync(IEnumerable<TaskProcessResult> results, string prompt, Settings settings)
         {
+
+            // --- fonts ------------------------------------------------------
             var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
             var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
 
-            var loadedImages = LoadResultImages(results, PlaceholderWidth);
-            var dimensions = CalculateDimensions(loadedImages, prompt, generatorFont, promptFont);
+            // --- load images (incl. placeholders for failures) -------------
+            var loadedImages = LoadResultImages(results, PlaceholderWidth).ToList();
 
-            using var combinedImage = ImageUtils.CreateStandardImage(dimensions.TotalWidth, dimensions.TotalHeight, UIConstants.White);
+            // --- measure ----------------------------------------------------
+            int totalWidth = loadedImages.Sum(img => img.Width);
+            int maxImageHeight = loadedImages.Where(i => i.Success)
+                                             .Select(i => i.Height)
+                                             .DefaultIfEmpty(PlaceholderWidth)
+                                             .Max();
+
+            // height of status (generator) labels
+            int subtitleHeight = loadedImages
+                .Select(li => ImageUtils.MeasureTextHeight(
+                                  GetStatusText(li),
+                                  generatorFont,
+                                  UIConstants.LineSpacing))
+                .DefaultIfEmpty(0)
+                .Max();
+
+            // height of the prompt block (with wrapping)
+            int wrappingWidth = totalWidth - (UIConstants.Padding * 4);
+            int promptHeight = ImageUtils.MeasureTextHeight(prompt, promptFont, UIConstants.LineSpacing, wrappingWidth) + (UIConstants.Padding * 3);
+            int trailingHangdownHeight = UIConstants.Padding * 2;
+
+            int totalHeight = maxImageHeight + subtitleHeight + promptHeight + trailingHangdownHeight;
+
+            // --- render -----------------------------------------------------
+            using var combinedImage = ImageUtils.CreateStandardImage(totalWidth, totalHeight, UIConstants.White);
 
             combinedImage.Mutate(ctx =>
             {
-                DrawImagesAndLabels(ctx, loadedImages, dimensions.MaxImageHeight, generatorFont);
-                DrawPrompt(ctx, prompt, promptFont, dimensions);
+                int currentX = 0;
+                var labelOpts = FontUtils.CreateTextOptions(generatorFont, HorizontalAlignment.Center, VerticalAlignment.Top, UIConstants.LineSpacing);
+
+                foreach (var li in loadedImages)
+                {
+                    if (li.Success && li.Image != null)
+                    {
+                        ctx.DrawImage(li.Image, new Point(currentX, 0), 1f);
+                    }
+                    else
+                    {
+                        var rect = new RectangleF(currentX, 0, li.Width, maxImageHeight);
+                        ctx.DrawErrorPlaceholder(rect, li.FailureReason, generatorFont);
+                    }
+
+                    // draw generator label
+
+                    labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding);
+
+                    var labelColor = li.Success ? UIConstants.SuccessGreen
+                                                : UIConstants.ErrorRed;
+                    ctx.DrawTextStandard(labelOpts, GetStatusText(li), labelColor);
+
+                    currentX += li.Width;
+                }
+
+                // draw prompt
+                var promptOpts = FontUtils.CreateTextOptions(promptFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
+                promptOpts.Origin = new PointF(UIConstants.Padding * 2, maxImageHeight + subtitleHeight + (UIConstants.Padding * 3));
+                promptOpts.WrappingLength = wrappingWidth;
+
+                ctx.DrawTextStandard(promptOpts, prompt, UIConstants.Black);
             });
 
+            // --- save & clean up -------------------------------------------
             var outputPath = await SaveCombinedImage(combinedImage, prompt, settings);
 
-            foreach (var loadedImage in loadedImages)
-            {
-                loadedImage.Image?.Dispose();
-            }
+            foreach (var li in loadedImages) { li.Image?.Dispose(); }
 
             return outputPath;
         }
@@ -302,18 +356,18 @@ namespace MultiImageClient
                         if (imageBytes != null && imageBytes.Length > 0)
                         {
                             var image = Image.Load<Rgba32>(imageBytes);
-                            
+
                             // Resize if height > 1300px, keeping proportions and max height of 1024px
                             if (image.Height > 1300)
                             {
                                 var aspectRatio = (float)image.Width / image.Height;
                                 var newHeight = 1024;
                                 var newWidth = (int)(newHeight * aspectRatio);
-                                
+
                                 Logger.Log($"Resizing image from {image.Width}x{image.Height} to {newWidth}x{newHeight} for combining");
                                 image.Mutate(x => x.Resize(newWidth, newHeight));
                             }
-                            
+
                             loadedImages.Add(new LoadedImage
                             {
                                 Success = true,
@@ -424,7 +478,7 @@ namespace MultiImageClient
                 {
                     // Draw placeholder rectangle with error text
                     var placeholderRect = new RectangleF(currentX, 0, loadedImage.Width, maxImageHeight);
-                    ctx.DrawPlaceholder(placeholderRect, loadedImage.FailureReason, subtitleFont);
+                    ctx.DrawErrorPlaceholder(placeholderRect, loadedImage.FailureReason, subtitleFont);
                 }
 
                 // Draw subtitle

@@ -73,7 +73,7 @@ namespace MultiImageClient
             return maxHeight;
         }
 
-        public static void DrawPlaceholder(this IImageProcessingContext ctx, RectangleF bounds, string errorText, Font font)
+        public static void DrawErrorPlaceholder(this IImageProcessingContext ctx, RectangleF bounds, string errorText, Font font)
         {
             // Draw placeholder background and border
             ctx.Fill(UIConstants.PlaceholderFill, bounds);
