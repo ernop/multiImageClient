@@ -10,11 +10,9 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
+
 namespace MultiImageClient
 {
-    /// <summary>
-    /// Combines multiple images from different generators into a single horizontal comparison image.
-    /// </summary>
     public static class ImageCombiner
     {
         private const int PLACEHOLDER_WIDTH = 300;
@@ -28,30 +26,19 @@ namespace MultiImageClient
             string prompt,
             Settings settings)
         {
-            // Prepare font
-            var fontFamily = GetSystemFont();
-            var generatorFont = fontFamily.CreateFont(GENERATOR_NAME_FONT_SIZE, FontStyle.Bold);
-            var promptFont = fontFamily.CreateFont(PROMPT_FONT_SIZE, FontStyle.Regular);
+            // Prepare fonts using shared utilities
+            var generatorFont = FontUtils.CreateFont(GENERATOR_NAME_FONT_SIZE, FontStyle.Bold);
+            var promptFont = FontUtils.CreateFont(PROMPT_FONT_SIZE, FontStyle.Regular);
 
             // Load all images and calculate dimensions
             var loadedImages = LoadImages(results);
             var dimensions = CalculateCombinedDimensions(loadedImages, prompt, generatorFont, promptFont);
 
-            // Create combined image
-            using var combinedImage = new Image<Rgba32>(dimensions.TotalWidth, dimensions.TotalHeight);
+            // Create combined image with standard settings
+            using var combinedImage = ImageUtils.CreateStandardImage(dimensions.TotalWidth, dimensions.TotalHeight, Color.White);
 
             combinedImage.Mutate(ctx =>
             {
-                // Set antialiasing
-                ctx.SetGraphicsOptions(new GraphicsOptions
-                {
-                    Antialias = true,
-                    AntialiasSubpixelDepth = 16
-                });
-
-                // Fill background
-                ctx.Fill(Color.White);
-
                 // Draw images and subtitles
                 DrawImagesWithSubtitles(ctx, loadedImages, dimensions.MaxImageHeight, generatorFont);
 
@@ -163,18 +150,13 @@ namespace MultiImageClient
         private static int MeasureTextHeight(IEnumerable<string> texts, Font font)
         {
             int maxHeight = 0;
-            var textOptions = new RichTextOptions(font)
-            {
-                Dpi = 72,
-                LineSpacing = LINE_SPACING
-            };
 
             foreach (var text in texts)
             {
                 if (!string.IsNullOrEmpty(text))
                 {
-                    var bounds = TextMeasurer.MeasureBounds(text, textOptions);
-                    maxHeight = Math.Max(maxHeight, (int)Math.Ceiling(bounds.Height));
+                    var height = ImageUtils.MeasureTextHeight(text, font, LINE_SPACING);
+                    maxHeight = Math.Max(maxHeight, height);
                 }
             }
 
@@ -203,30 +185,22 @@ namespace MultiImageClient
                     ctx.Fill(Color.FromRgb(240, 240, 240), placeholderRect);
                     ctx.Draw(Color.FromRgb(200, 200, 200), 2f, placeholderRect);
 
-                    // Draw error icon or text in center
-                    var errorTextOptions = new RichTextOptions(subtitleFont)
-                    {
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Origin = new PointF(currentX + loadedImage.Width / 2f, maxImageHeight / 2f),
-                        Dpi = 72
-                    };
-                    ctx.DrawText(errorTextOptions, "Failed", Color.FromRgb(180, 0, 0));
+                    // Draw error text in center
+                    var errorTextOptions = FontUtils.CreateTextOptions(subtitleFont, 
+                        HorizontalAlignment.Center, VerticalAlignment.Center);
+                    errorTextOptions.Origin = new PointF(currentX + loadedImage.Width / 2f, maxImageHeight / 2f);
+                    ctx.DrawTextStandard(errorTextOptions, "Failed", Color.FromRgb(180, 0, 0));
                 }
 
                 // Draw subtitle
                 var statusText = GetStatusText(loadedImage);
                 var statusColor = loadedImage.Success ? Color.FromRgb(0, 120, 0) : Color.FromRgb(180, 0, 0);
 
-                var subtitleOptions = new RichTextOptions(subtitleFont)
-                {
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    Origin = new PointF(currentX + loadedImage.Width / 2f, maxImageHeight + PADDING),
-                    Dpi = 72
-                };
+                var subtitleOptions = FontUtils.CreateTextOptions(subtitleFont, 
+                    HorizontalAlignment.Center, VerticalAlignment.Top);
+                subtitleOptions.Origin = new PointF(currentX + loadedImage.Width / 2f, maxImageHeight + PADDING);
 
-                ctx.DrawText(subtitleOptions, statusText, statusColor);
+                ctx.DrawTextStandard(subtitleOptions, statusText, statusColor);
 
                 currentX += loadedImage.Width;
             }
@@ -240,16 +214,12 @@ namespace MultiImageClient
         {
             var promptY = dimensions.MaxImageHeight + dimensions.SubtitleHeight + PADDING;
 
-            var promptOptions = new RichTextOptions(promptFont)
-            {
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Top,
-                Origin = new PointF(dimensions.TotalWidth / 2f, promptY),
-                WrappingLength = dimensions.TotalWidth - (PADDING * 4),
-                Dpi = 72
-            };
+            var promptOptions = FontUtils.CreateTextOptions(promptFont, 
+                HorizontalAlignment.Center, VerticalAlignment.Top);
+            promptOptions.Origin = new PointF(dimensions.TotalWidth / 2f, promptY);
+            promptOptions.WrappingLength = dimensions.TotalWidth - (PADDING * 4);
 
-            ctx.DrawText(promptOptions, prompt, Color.Black);
+            ctx.DrawTextStandard(promptOptions, prompt, Color.Black);
         }
 
         private static async Task<string> SaveCombinedImageAsync(
@@ -285,21 +255,6 @@ namespace MultiImageClient
             return image.Success
                 ? $"{image.GeneratorName}"
                 : $"{image.GeneratorName}";
-        }
-
-        private static FontFamily GetSystemFont()
-        {
-            FontFamily fontFamily;
-
-            if (!SystemFonts.TryGet("Segoe UI", out fontFamily))
-            {
-                if (!SystemFonts.TryGet("Arial", out fontFamily))
-                {
-                    fontFamily = SystemFonts.Families.First();
-                }
-            }
-
-            return fontFamily;
         }
 
         // Helper classes

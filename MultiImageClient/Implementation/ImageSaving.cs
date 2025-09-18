@@ -123,12 +123,8 @@ namespace MultiImageClient
                         using var combinedImage = new Image<Rgba32>(originalImage.Width, newHeight);
                         combinedImage.Mutate(ctx =>
                         {
-                            // Set antialiasing
-                            ctx.SetGraphicsOptions(new GraphicsOptions
-                            {
-                                Antialias = true,
-                                AntialiasSubpixelDepth = 16
-                            });
+                            // Apply standard graphics options
+                            ctx.ApplyStandardGraphicsOptions();
 
                             // Draw original image at top
                             ctx.DrawImage(originalImage, new Point(0, 0), 1f);
@@ -167,26 +163,12 @@ namespace MultiImageClient
             var leftSideWidth = width - rightSideWidth;
             var padding = 5;
             var fontSize = 24;
-            FontFamily fontFamily;
-            if (!SystemFonts.TryGet("Segoe UI", out fontFamily))
-            {
-                if (!SystemFonts.TryGet("Arial", out fontFamily))
-                {
-                    fontFamily = SystemFonts.Families.First(); // Fallback
-                }
-            }
-            var font = fontFamily.CreateFont(fontSize, FontStyle.Regular);
+            var font = FontUtils.CreateFont(fontSize, FontStyle.Regular);
 
             // Measure left side text to determine height
-            var leftTextOptions = new RichTextOptions(font)
-            {
-                WrappingLength = leftSideWidth - (padding * 2),
-                LineSpacing = 1.15f,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Dpi = 72,
-                FallbackFontFamilies = new[] { SystemFonts.Families.First() }
-            };
+            var leftTextOptions = FontUtils.CreateTextOptions(font, 
+                HorizontalAlignment.Left, VerticalAlignment.Top);
+            leftTextOptions.WrappingLength = leftSideWidth - (padding * 2);
 
             var leftTextBounds = TextMeasurer.MeasureBounds(prompt, leftTextOptions);
             int leftTextHeight = (int)Math.Ceiling(leftTextBounds.Height);
@@ -198,23 +180,15 @@ namespace MultiImageClient
             // Find the maximum width needed for right side text
             foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
             {
-                var testOptions = new RichTextOptions(rightFont)
-                {
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    Dpi = 72
-                };
+                var testOptions = FontUtils.CreateTextOptions(rightFont, HorizontalAlignment.Right);
                 var textBounds = TextMeasurer.MeasureBounds(text, testOptions);
 
                 // If text is too wide, scale down font
                 while (textBounds.Width > rightSideWidth - (padding * 2) && rightFontSize > 8)
                 {
                     rightFontSize--;
-                    rightFont = fontFamily.CreateFont(rightFontSize, FontStyle.Regular);
-                    testOptions = new RichTextOptions(rightFont)
-                    {
-                        HorizontalAlignment = HorizontalAlignment.Right,
-                        Dpi = 72
-                    };
+                    rightFont = FontUtils.CreateFont(rightFontSize, FontStyle.Regular);
+                    testOptions = FontUtils.CreateTextOptions(rightFont, HorizontalAlignment.Right);
                     textBounds = TextMeasurer.MeasureBounds(text, testOptions);
                 }
             }
@@ -227,27 +201,18 @@ namespace MultiImageClient
             int contentHeight = Math.Max(leftTextHeight, rightTextHeight);
             int totalHeight = contentHeight + (padding * 2);
 
-            // Create the image
-            using var image = new Image<Rgba32>(width, totalHeight);
+            // Create the image with standard settings
+            using var image = ImageUtils.CreateStandardImage(width, totalHeight, Color.Black);
 
             image.Mutate(ctx =>
             {
-                // Set antialiasing
-                ctx.SetGraphicsOptions(new GraphicsOptions
-                {
-                    Antialias = true,
-                    AntialiasSubpixelDepth = 16
-                });
-
-                // Fill background with black
-                ctx.Fill(Color.Black);
 
                 // Draw left side box border (optional - you can remove if not wanted)
                 ctx.Draw(Color.White, 1f, new RectangleF(0, 0, leftSideWidth, totalHeight));
 
                 // Draw left side text
                 leftTextOptions.Origin = new PointF(padding, padding);
-                ctx.DrawText(leftTextOptions, prompt, Color.White);
+                ctx.DrawTextStandard(leftTextOptions, prompt, Color.White);
 
                 // Draw right side box border (optional - you can remove if not wanted)
                 ctx.Draw(Color.White, 1f, new RectangleF(leftSideWidth, 0, rightSideWidth, totalHeight));
@@ -258,15 +223,11 @@ namespace MultiImageClient
 
                 foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
                 {
-                    var rightTextOptions = new RichTextOptions(rightFont)
-                    {
-                        HorizontalAlignment = HorizontalAlignment.Right,
-                        VerticalAlignment = VerticalAlignment.Top,
-                        Dpi = 72,
-                        Origin = new PointF(width - padding, yOffset)
-                    };
+                    var rightTextOptions = FontUtils.CreateTextOptions(rightFont, 
+                        HorizontalAlignment.Right, VerticalAlignment.Top);
+                    rightTextOptions.Origin = new PointF(width - padding, yOffset);
 
-                    ctx.DrawText(rightTextOptions, text, goldColor);
+                    ctx.DrawTextStandard(rightTextOptions, text, goldColor);
                     yOffset += (int)rightLineHeight;
                 }
             });
