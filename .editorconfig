@@ -8,3 +8,16 @@ dotnet_diagnostic.IDE0090.severity = none
 
 # CA1416: Validate platform compatibility
 dotnet_diagnostic.CA1416.severity = none
+
+# Empty line formatting rules
+# Remove leading empty lines after opening braces
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+
+# Limit consecutive empty lines
+dotnet_style_allow_multiple_blank_lines_experimental = false
+dotnet_style_allow_statement_immediately_after_block_experimental = false

@@ -38,9 +38,9 @@ namespace MultiImageClient
             var recraft5 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.vector_illustration, RecraftVectorIllustrationSubstyle.infographical, null, null, stats, "");
             var recraft6 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.real_life_glow, stats, "");
             //var recraft7 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.bold_fantasy, null, stats, "");
-            //var ideogram1 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_16_10, IdeogramStyleType.DESIGN, "", IdeogramModel.V_2, stats, "");
+            var ideogram1 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_16_10, IdeogramStyleType.DESIGN, "", IdeogramModel.V_2, stats, "");
             var ideogram2 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_1_1, null, "", IdeogramModel.V_2_TURBO, stats, "");
-            var ideogram3 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A, stats, "");
+            var ideogram3 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A, stats, "");
             var ideogram4 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A_TURBO, stats, "");
             var bfl1 = new BFLGenerator(ImageGeneratorApiType.BFLv11, settings.BFLApiKey, concurrency, "3:2", false, 1024, 1024, stats, "");
             var bfl2 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, settings.BFLApiKey, concurrency, "1:1", false, 1024, 1024, stats, "");
@@ -50,7 +50,7 @@ namespace MultiImageClient
 
             //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, bfl3, recraft6, ideogram4, };
             //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
-            var myGenerators = new List<IImageGenerator>() { ideogram3,  ideogram4, dalle3, recraft1}; 
+            var myGenerators = new List<IImageGenerator>() { ideogram1,  ideogram4, dalle3, recraft3, bfl1, bfl2, bfl3}; 
             var imageManager = new ImageManager(settings, stats);
 
             /// -----------------------  APPLYING PROMPTS TO SERVICES ------------------------
