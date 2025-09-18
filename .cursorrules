@@ -1,0 +1,30 @@
+# Code Style and Organization Preferences
+
+## Communication Style
+- NEVER use congratulatory or praising language like "you were absolutely right", "great call", etc.
+- Keep responses direct and focused on the technical work
+- Avoid unnecessary enthusiasm or validation language
+
+## XML Documentation
+- NEVER add XML summary blocks (`/// <summary>`) to any code unless you have a useful, meaningful, non-obvious comment to add.  Never add the dumb one-liner versions of them which just restate the obvious
+- But, you may add them to explain what an entire class does, and useful high-level general design information. This kind of summary is great and useful.
+- Use regular comments (`//`) for explanations when needed
+
+## Namespace Organization  
+- Use only ONE level of namespace (e.g., `MultiImageClient`)
+- NEVER use nested namespaces (e.g., `MultiImageClient.Utils`)
+- Managing naming conflicts is the responsibility of the code, not namespace hierarchy
+
+## Constants and Configuration
+- Constants used in only ONE file should stay in that file (as private const)
+- Only move constants to a shared constants file if they're used in MULTIPLE files
+- Before centralizing constants, first consider if the files should be combined instead
+- Use normal naming conventions for constants (e.g., `Padding`, `FontSize`) 
+- AVOID ALL_CAPS naming style for constants
+
+## Code Organization Philosophy
+- Prefer keeping related functionality together rather than over-abstracting
+- Constants that appear in multiple places might indicate files should be merged
+- Only create shared utilities when there's genuine reuse across different functional areas
+- Branding text and similar elements that appear throughout the app are good candidates for centralization
+
