@@ -111,7 +111,6 @@ namespace MultiImageClient
         {
             // Draw background
             ctx.Fill(backgroundColor, backgroundBounds);
-            ctx.Draw(UIConstants.White, 1f, backgroundBounds);
 
             // Draw text with proper wrapping and top alignment
             var textOptions = FontUtils.CreateTextOptions(font, alignment, VerticalAlignment.Top);
