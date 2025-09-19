@@ -26,9 +26,6 @@ namespace MultiImageClient
 
         public async Task<Dictionary<SaveType, string>> DoSaveAsync(IImageGenerator generator, byte[] imageBytes, TaskProcessResult result, Settings settings)
         {
-
-
-
             if (imageBytes == null || imageBytes.Length == 0)
             {
                 Logger.Log($"Empty or null image bytes received");

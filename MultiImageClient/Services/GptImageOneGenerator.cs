@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -154,10 +155,17 @@ namespace MultiImageClient
                 if (!resp.IsSuccessStatusCode)
                 {
                     Console.WriteLine($"\t\tXXXXXXXXXXXXX == Fail: {promptDetails.Prompt}");
+
+                    var json2 = await resp.Content.ReadAsStringAsync();
+                    using JsonDocument doc2 = JsonDocument.Parse(json2);
+                    string errorMessage = doc2.RootElement.GetProperty("error").GetProperty("message").GetString();
+                    Console.WriteLine("errorMessage");
+                    var cleanedMessage = errorMessage.Split("If you believe").First().Trim();
+                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = cleanedMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.GptImage1, CreateTotalMs = sw.ElapsedMilliseconds };
                 }
                 resp.EnsureSuccessStatusCode();
-
                 var json = await resp.Content.ReadAsStringAsync();
+
                 //await File.WriteAllTextAsync("response.json", json);
                 using var doc = JsonDocument.Parse(json);
                 var qq = doc.RootElement.GetProperty("data");
@@ -170,7 +178,7 @@ namespace MultiImageClient
                 }
 
 
-                Console.WriteLine($"Generated:{promptDetails.Prompt}");
+                //Console.WriteLine($"Generated:{promptDetails.Prompt}");
                 return new TaskProcessResult { IsSuccess = true, Base64ImageDatas = b64s, Url = "", ErrorMessage = "", PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.GptImage1, CreateTotalMs = sw.ElapsedMilliseconds };
             }
             catch (Exception ex)
