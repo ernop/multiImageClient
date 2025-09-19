@@ -17,7 +17,7 @@ namespace MultiImageClient
             return prompt.Length > maxLength ? prompt.Substring(0, maxLength) : prompt;
         }
 
-        private static string SanitizeFilename(string filename)
+        public static string SanitizeFilename(string filename)
         {
             string sanitized = Regex.Replace(filename, @"[^a-zA-Z0-9_\-]", "_");
             while (sanitized.Contains("__"))

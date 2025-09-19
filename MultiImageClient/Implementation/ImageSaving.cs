@@ -519,7 +519,7 @@ namespace MultiImageClient
 
             var truncatedPrompt = FilenameGenerator.TruncatePrompt(prompt, 50);
             var baseFilename = $"combined_{truncatedPrompt}_{DateTime.Now:HHmmss}";
-            var safeFilename = baseFilename;
+            var safeFilename = FilenameGenerator.SanitizeFilename(baseFilename);
             var outputPath = Path.Combine(baseFolder, $"{safeFilename}.png");
 
             // Ensure unique filename
