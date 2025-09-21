@@ -17,6 +17,7 @@ namespace MultiImageClient
 
         public string Name => nameof(ClaudeRewriteStep);
 
+        /// you need to put the instructions to claude into the prefix and/or suffix.  generally things like "based on this idea, expand it quite a bit"
         public ClaudeRewriteStep(string prefix, string suffix, ClaudeService svc, decimal temperature, MultiClientRunStats stats)
         {
             _claudeService = svc;
@@ -28,7 +29,7 @@ namespace MultiImageClient
 
         public async Task<bool> DoTransformation(PromptDetails pd)
         {
-            var preparedClaudePrompt = $"{_prefix}\nHere is the topic:\n'{pd.Prompt}'\n{_suffix}".Trim();
+            var preparedClaudePrompt = $"{_prefix}\nHere is the topic:\n'{pd.Prompt}'\nPlease reply in a paragraph with no line breaks at all, just a single unified paragraph text.{_suffix}".Trim();
             var preparedClaudePromptWithTemp = $"temp={_temperature} {preparedClaudePrompt}";
             pd.ReplacePrompt(preparedClaudePrompt, preparedClaudePromptWithTemp, TransformationType.ClaudeRewriteRequest);
 

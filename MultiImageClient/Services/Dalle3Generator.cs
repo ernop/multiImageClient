@@ -75,7 +75,7 @@ namespace MultiImageClient
         }
 
         /// it's rather annoying that we still have to send in the original pd. we do that because here is where we notice things like "de3 modified or banned the text, etc."
-        public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails)
+        public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {
             await _dalle3Semaphore.WaitAsync();
             try
@@ -96,7 +96,7 @@ namespace MultiImageClient
                 {
                     promptDetails.ReplacePrompt(revisedPrompt, revisedPrompt, TransformationType.Dalle3Rewrite);
                 }
-                return new TaskProcessResult { IsSuccess = true, Url = uri.ToString(), ErrorMessage = "", PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Dalle3 };
+                return new TaskProcessResult { IsSuccess = true, Url = uri.ToString(), ErrorMessage = "", PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Dalle3, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
             }
             catch (Exception ex)
             {
@@ -107,11 +107,23 @@ namespace MultiImageClient
                     errorMessage = ms.Last();
                 }
                     
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = errorMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Dalle3 };
+                return new TaskProcessResult { IsSuccess = false, ErrorMessage = errorMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Dalle3, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
             }
             finally
             {
                 _dalle3Semaphore.Release();
+            }
+        }
+
+        public string GetGeneratorSpecPart()
+        {
+            if (string.IsNullOrEmpty(_name))
+            {
+                return $"dall-e-3";
+            }
+            else
+            {
+                return $"{_name}";
             }
         }
     }

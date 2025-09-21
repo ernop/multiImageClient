@@ -281,7 +281,7 @@ namespace MultiImageClient
             // height of status (generator) labels
             int subtitleHeight = loadedImages
                 .Select(li => ImageUtils.MeasureTextHeight(
-                                  GetStatusText(li),
+                                  li.OriginalTaskProcessResult.ImageGeneratorDescription,
                                   generatorFont,
                                   UIConstants.LineSpacing))
                 .DefaultIfEmpty(0)
@@ -311,16 +311,15 @@ namespace MultiImageClient
                     else
                     {
                         var rect = new RectangleF(currentX, 0, li.Width, maxImageHeight);
-                        ctx.DrawErrorPlaceholder(rect, li.FailureReason, generatorFont);
+                        ctx.DrawErrorPlaceholder(rect, li.OriginalTaskProcessResult.ErrorMessage, generatorFont);
                     }
-
-                    // draw generator label
 
                     labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding);
 
                     var labelColor = li.Success ? UIConstants.SuccessGreen
                                                 : UIConstants.ErrorRed;
-                    ctx.DrawTextStandard(labelOpts, GetStatusText(li), labelColor);
+                    var labelText = li.OriginalTaskProcessResult.ImageGeneratorDescription;
+                    ctx.DrawTextStandard(labelOpts, labelText, labelColor);
 
                     currentX += li.Width;
                 }
@@ -370,9 +369,9 @@ namespace MultiImageClient
 
                             loadedImages.Add(new LoadedImage
                             {
+                                OriginalTaskProcessResult = result,
                                 Success = true,
                                 Image = image,
-                                GeneratorName = result.ImageGenerator.ToString(),
                                 Width = image.Width,
                                 Height = image.Height
                             });
@@ -381,14 +380,14 @@ namespace MultiImageClient
                         {
                             // Success but no bytes somehow
                             Logger.Log($"No image bytes for successful result from {result.ImageGenerator}");
-                            loadedImages.Add(CreateFailedGenerationPlaceholder(result.ImageGenerator.ToString(), false, result.ErrorMessage, placeholderWidth));
+                            loadedImages.Add(CreateFailedGenerationPlaceholder(result, false, placeholderWidth));
                         }
                     }
                     catch (Exception ex)
                     {
                         // GetImageBytes() might throw if bytes weren't set, or image loading failed
                         Logger.Log($"Failed to get/load image from {result.ImageGenerator}: {ex.Message}");
-                        loadedImages.Add(CreateFailedGenerationPlaceholder(result.ImageGenerator.ToString(), false, result.ErrorMessage, placeholderWidth));
+                        loadedImages.Add(CreateFailedGenerationPlaceholder(result, false, placeholderWidth));
                     }
                 }
                 else
@@ -398,117 +397,25 @@ namespace MultiImageClient
                         ? result.ErrorMessage
                         : result.GenericImageErrorType.ToString();
                     Logger.Log($"Result failed for {result.ImageGenerator}: {errorMsg}");
-                    loadedImages.Add(CreateFailedGenerationPlaceholder(result.ImageGenerator.ToString(), false, result.ErrorMessage, placeholderWidth));
+                    loadedImages.Add(CreateFailedGenerationPlaceholder(result, false,  placeholderWidth));
                 }
             }
 
-            return loadedImages.OrderBy(el => el.GeneratorName);
+            return loadedImages.OrderBy(el => el.OriginalTaskProcessResult.ImageGeneratorDescription);
         }
 
         /// when an image fails to generate we add in a fixed-width holder in any combined image, to show what happened and be able to
         /// at least see the filtering rules etc.
-        private static LoadedImage CreateFailedGenerationPlaceholder(string generatorName, bool success, string reason, int placeholderWidth)
+        private static LoadedImage CreateFailedGenerationPlaceholder(TaskProcessResult result, bool successFindingImage, int placeholderWidth)
         {
             return new LoadedImage
             {
-                Success = success,
-                FailureReason = reason,
+                OriginalTaskProcessResult = result,
                 Image = null,
-                GeneratorName = generatorName,
+                Success = successFindingImage,
                 Width = placeholderWidth,
                 Height = placeholderWidth
             };
-        }
-
-        private static ImageDimensions CalculateDimensions(IEnumerable<LoadedImage> loadedImages, string prompt, Font subtitleFont, Font promptFont)
-        {
-            int totalWidth = loadedImages.Sum(img => img.Width);
-            int maxImageHeight = loadedImages.Where(img => img.Success).Any()
-                ? loadedImages.Where(img => img.Success).Max(img => img.Height)
-                : 300;
-
-            // Calculate text heights
-            var subtitleHeight = MeasureMaxHeight(loadedImages.Select(img => GetStatusText(img)), subtitleFont);
-
-            // Calculate prompt height with wrapping support
-            var wrappingWidth = totalWidth - (UIConstants.Padding * 4);
-            var promptHeight = ImageUtils.MeasureTextHeight(prompt, promptFont, UIConstants.LineSpacing, wrappingWidth);
-
-            // pad the prompt with extra height.
-            var extraPadding = UIConstants.Padding * 3;
-
-            return new ImageDimensions
-            {
-                TotalWidth = totalWidth,
-                MaxImageHeight = maxImageHeight,
-                SubtitleHeight = subtitleHeight + UIConstants.Padding,
-                PromptHeight = promptHeight + extraPadding + UIConstants.Padding,
-                TotalHeight = maxImageHeight + subtitleHeight + promptHeight + extraPadding
-            };
-        }
-
-        private static int MeasureMaxHeight(IEnumerable<string> texts, Font font)
-        {
-            int maxHeight = 0;
-
-            foreach (var text in texts)
-            {
-                if (!string.IsNullOrEmpty(text))
-                {
-                    var height = ImageUtils.MeasureTextHeight(text, font, UIConstants.LineSpacing);
-                    maxHeight = Math.Max(maxHeight, height);
-                }
-            }
-
-            return maxHeight;
-        }
-
-        private static void DrawImagesAndLabels(IImageProcessingContext ctx, IEnumerable<LoadedImage> loadedImages, int maxImageHeight, Font subtitleFont)
-        {
-            int currentX = 0;
-
-            foreach (var loadedImage in loadedImages)
-            {
-                // Draw image or placeholder
-                if (loadedImage.Success && loadedImage.Image != null)
-                {
-                    ctx.DrawImage(loadedImage.Image, new Point(currentX, 0), 1f);
-                }
-                else
-                {
-                    // Draw placeholder rectangle with error text
-                    var placeholderRect = new RectangleF(currentX, 0, loadedImage.Width, maxImageHeight);
-                    ctx.DrawErrorPlaceholder(placeholderRect, loadedImage.FailureReason, subtitleFont);
-                }
-
-                // Draw subtitle
-                var statusText = GetStatusText(loadedImage);
-                var statusColor = loadedImage.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
-
-                var subtitleOptions = FontUtils.CreateTextOptions(subtitleFont,
-                    HorizontalAlignment.Center, VerticalAlignment.Top, LabelTotalLineSpacing);
-                subtitleOptions.Origin = new PointF(currentX + loadedImage.Width / 2f, maxImageHeight + UIConstants.Padding);
-
-                ctx.DrawTextStandard(subtitleOptions, statusText, statusColor);
-
-                currentX += loadedImage.Width;
-            }
-        }
-
-        private static void DrawPrompt(IImageProcessingContext ctx, string prompt, Font promptFont, ImageDimensions dimensions)
-        {
-            var promptAreaTop = dimensions.MaxImageHeight + dimensions.SubtitleHeight + UIConstants.Padding;
-            var promptAreaHeight = dimensions.PromptHeight;
-
-            // Add extra padding above the prompt area for better spacing
-            var extraPadding = UIConstants.Padding * 3;
-            var promptY = promptAreaTop + extraPadding;
-
-            var promptOptions = FontUtils.CreateTextOptions(promptFont, HorizontalAlignment.Left, VerticalAlignment.Center, LabelTotalLineSpacing);
-            promptOptions.Origin = new PointF(UIConstants.Padding * 2, promptY);
-            promptOptions.WrappingLength = dimensions.TotalWidth - (UIConstants.Padding * 4);
-
-            ctx.DrawTextStandard(promptOptions, prompt, UIConstants.Black);
         }
 
         private static async Task<string> SaveCombinedImage(Image<Rgba32> image, string prompt, Settings settings)
@@ -536,17 +443,11 @@ namespace MultiImageClient
             return outputPath;
         }
 
-        private static string GetStatusText(LoadedImage image)
-        {
-            return image.GeneratorName;
-        }
-
         private class LoadedImage
         {
+            public TaskProcessResult OriginalTaskProcessResult { get; set; }
             public bool Success { get; set; }
-            public string FailureReason { get; set; } = "";
             public Image<Rgba32> Image { get; set; }
-            public string GeneratorName { get; set; }
             public int Width { get; set; }
             public int Height { get; set; }
         }

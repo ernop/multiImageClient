@@ -25,6 +25,17 @@ namespace MultiImageClient
         private IdeogramModel _model;
         private string _name;
 
+        public string GetGeneratorSpecPart()
+        {
+            if (string.IsNullOrEmpty(_name))
+            {
+                return $"ideogram_{_model}";
+            }
+            else
+            {
+                return $"{_name}";
+            }
+        }
 
         public IdeogramGenerator(string apiKey, int maxConcurrency, IdeogramMagicPromptOption magicPrompt, IdeogramAspectRatio aspectRatio, IdeogramStyleType? styleType, string negativePrompt, IdeogramModel model, MultiClientRunStats stats, string name)
         {
@@ -136,7 +147,7 @@ namespace MultiImageClient
             return rightsideContents;
         }
 
-        public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails)
+        public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {
             await _ideogramSemaphore.WaitAsync();
             try
@@ -166,7 +177,7 @@ namespace MultiImageClient
                         }
                         var headResponse = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, imageObject.Url));
                         var contentType = headResponse.Content.Headers.ContentType?.MediaType;
-                        return new TaskProcessResult { IsSuccess = true, Url = imageObject.Url, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram };
+                        return new TaskProcessResult { IsSuccess = true, Url = imageObject.Url, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
                     }
                     throw new Exception("No images returned");
                 }
@@ -176,7 +187,7 @@ namespace MultiImageClient
                 }
                 else
                 {
-                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = "No images generated", PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, GenericImageErrorType = GenericImageGenerationErrorType.NoImagesGenerated };
+                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = "No images generated", PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, GenericImageErrorType = GenericImageGenerationErrorType.NoImagesGenerated, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
                 }
             }
 
@@ -195,7 +206,7 @@ namespace MultiImageClient
                 {
                     errorMessage = ex.Message;
                 }
-                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = errorMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, GenericImageErrorType = GenericImageGenerationErrorType.Unknown };
+                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = errorMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, GenericImageErrorType = GenericImageGenerationErrorType.Unknown, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
             }
             finally
             {

@@ -1,8 +1,12 @@
-﻿namespace RecraftAPIClient
+﻿using System.Runtime.Serialization;
+
+namespace RecraftAPIClient
 {
     public enum RecraftDigitalIllustrationSubstyle
     {
+        [EnumMember(Value = "2d_art_poster")]
         _2d_art_poster = 1,
+        [EnumMember(Value = "2d_art_poster_2")]
         _2d_art_poster_2 = 2,
         engraving_color = 3,
         grain = 4,

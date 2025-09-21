@@ -7,13 +7,40 @@ using RecraftAPIClient;
 using System;
 using System.Collections.Generic;
 using System.Drawing.Printing;
+using System.IO;
 using System.Linq;
 using System.Runtime;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
+    public class PromptLogger
+    {
+        private const string LogFileName = "prompt_log.json";
+
+        public static void LogPrompt(string prompt)
+        {
+            var logEntry = new
+            {
+                time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                prompt = prompt
+            };
+
+            var jsonLine = JsonSerializer.Serialize(logEntry);
+            
+            try
+            {
+                File.AppendAllText(LogFileName, jsonLine + Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Failed to write to prompt log: {ex.Message}");
+            }
+        }
+    }
+
     public class Program
     {
         private static ClaudeService _ClaudeService { get; set; }
@@ -23,37 +50,25 @@ namespace MultiImageClient
             var settings = Settings.LoadFromFile(settingsFilePath);
             var concurrency = 1;
             var stats = new MultiClientRunStats();
+            var getter = new GeneratorGroups(settings, concurrency, stats);
 
             var promptSource = new ReadAllPromptsFromFile(settings, "");
-            var steps = new List<ITransformationStep>();
+            
+            var claudeService = new ClaudeService(settings.AnthropicApiKey, concurrency, stats);
+            var claudeStep = new ClaudeRewriteStep("Please take the following topic and make it specific; cast the die, take a chance, and expand it to a longer, detailed, specific description of a scene with all the elements of it described. Describe how the thing looks, feels, appears, etc in high detail. Put the most important aspects first such as the overall description, then continue by expanding that and adding more detail, structure, theme. Be specific in whatevr you do. If it seems appropriate, if a man appears don't just say 'the man', but instead actually give him a name, traits, personality, etc. The goal is to deeply expand the world envisioned by the original topic creator. Overall, follow the implied theem and goals of the creator, but just expand it into much more specifics and concreate actualization. Never use phrases or words like 'diverse', 'vibrant' etc. Be very concrete and precise in your descriptions, similar to how ansel adams describing a new treasured species of bird would - detailed, caring, dense, clear, sharp, speculative and never wordy or fluffy. every single word you say must be relevant to the goal of increasing the info you share about this image or sitaution or scene. Be direct and clear.", "", claudeService, 0.4m, stats);
+
+            //var steps = new List<ITransformationStep>() { claudeStep};
+            var steps = new List<ITransformationStep>() {  };
 
 
             /// ------------------- MAKING SERVICES ----------------------------
 
-            var dalle3 = new Dalle3Generator(settings.OpenAIApiKey, concurrency, GeneratedImageQuality.High, GeneratedImageSize.W1024xH1024, stats, "");
-            var recraft1 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.hard_comics,  null, stats, "");
-            //var recraft2 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.bold_fantasy, null, stats, "");
-            var recraft3 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.freehand_details, null, stats, "");
-            var recraft4 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.studio_portrait, stats, "");
-            var recraft5 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._1365x1024, RecraftStyle.vector_illustration, RecraftVectorIllustrationSubstyle.line_art, null, null, stats, "");
-            var recraft6 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.real_life_glow, stats, "");
-            //var recraft7 = new RecraftGenerator(settings.RecraftApiKey, concurrency, RecraftImageSize._2048x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.bold_fantasy, null, stats, "");
-            var ideogram1 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_16_10, IdeogramStyleType.DESIGN, "", IdeogramModel.V_2, stats, "");
-            var ideogram2 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_1_1, null, "", IdeogramModel.V_2_TURBO, stats, "");
-            var ideogram3 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A, stats, "");
-            var ideogram4 = new IdeogramGenerator(settings.IdeogramApiKey, concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A_TURBO, stats, "");
-            var bfl1 = new BFLGenerator(ImageGeneratorApiType.BFLv11, settings.BFLApiKey, concurrency, "3:2", false, 1024, 1024, stats, "");
-            var bfl2 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, settings.BFLApiKey, concurrency, "1:1", false, 1024, 1024, stats, "");
-            var bfl3 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, settings.BFLApiKey, concurrency, "3:2", false, 1024, 1024, stats, "");
 
-            var gptimage1 = new GptImageOneGenerator(settings.OpenAIApiKey, concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.high, stats, "");
-
-            //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, bfl3, recraft6, ideogram4, };
-            //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
-            var myGenerators = new List<IImageGenerator>() { gptimage1,  ideogram4, dalle3, recraft6, recraft5, bfl1, bfl2, bfl3}; 
             var imageManager = new ImageManager(settings, stats);
 
             /// -----------------------  APPLYING PROMPTS TO SERVICES ------------------------
+            //var generators = getter.GetAll();
+            var generators = getter.GetAllStylesOfRecraft();
 
 
             var allTasks = new List<Task>();
@@ -75,8 +90,8 @@ namespace MultiImageClient
                 else
                 {
                     var usingVal = val.Trim();
+                    PromptLogger.LogPrompt(usingVal);
                     promptString.UndoLastStep();
-                    //this is a bit silly since the original initial prompt will still be in history for no reason.
                     promptString.ReplacePrompt(usingVal, "explanation", TransformationType.InitialPrompt);
                 }
 
@@ -100,7 +115,7 @@ namespace MultiImageClient
                 while (ii < 1)
                 {
                     // Create tasks for all generators for this prompt
-                    var generatorTasks = myGenerators.Select(async generator =>
+                    var generatorTasks = generators.Select(async generator =>
                     {
                         PromptDetails theCopy = null;
                         
@@ -108,7 +123,7 @@ namespace MultiImageClient
                         {
                             theCopy = promptString.Copy();
                             
-                            var result = await generator.ProcessPromptAsync(theCopy);
+                            var result = await generator.ProcessPromptAsync(generator, theCopy);
                             await imageManager.ProcessAndSaveAsync(result, generator);
                             Logger.Log($"Finished {generator.GetType().Name} in {result.CreateTotalMs + result.DownloadTotalMs} ms, {result.PromptDetails.Show()}");
                             

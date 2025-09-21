@@ -63,7 +63,7 @@ namespace MultiImageClient
                 promptDetails.AddStep("Claude wouldn't have touched this prompt", TransformationType.ClaudeWouldRefuseRewrite);
                 Logger.Log($"\t\tClaude would have refused to rewrite: {promptDetails.Show()}");
                 stats.ClaudeWouldRefuseCount++;
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = "Claude wouldn't have touched this prompt", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude, GenericImageErrorType = GenericImageGenerationErrorType.RequestModerated};
+                return new TaskProcessResult { ImageGeneratorDescription="Claude?", IsSuccess = false, ErrorMessage = "Claude wouldn't have touched this prompt", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude, GenericImageErrorType = GenericImageGenerationErrorType.RequestModerated};
             }
             await _claudeSemaphore.WaitAsync();
             try
