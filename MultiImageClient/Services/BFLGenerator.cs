@@ -39,6 +39,19 @@ namespace MultiImageClient
         private ImageGeneratorApiType _apiType { get; }
         private string _name;
 
+        
+        public string GetGeneratorSpecPart()
+        {
+            if (string.IsNullOrEmpty(_name))
+            {
+                return $"{_apiType}";
+            }
+            else
+            {
+                return $"{_name}";
+            }
+        }
+
         public string GetFilenamePart(PromptDetails pd)
         {
             var res = $"{_apiType}{_name}";
@@ -94,7 +107,7 @@ namespace MultiImageClient
                     }
             else { throw new Exception("Q"); }
         }
-        public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails)
+        public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {
             await _bflSemaphore.WaitAsync();
 
@@ -140,7 +153,7 @@ namespace MultiImageClient
                 // this is where we handle generator-specific error types.
                 if (generationResponse.Status != "Ready")
                 {
-                    var baseResponse = new TaskProcessResult { IsSuccess = false, PromptDetails = promptDetails, ImageGenerator = _apiType, ErrorMessage = generationResponse.Status };
+                    var baseResponse = new TaskProcessResult { IsSuccess = false, PromptDetails = promptDetails, ImageGeneratorDescription = generator.GetGeneratorSpecPart(), ImageGenerator = _apiType, ErrorMessage = generationResponse.Status };
                     if (generationResponse.Status == "Content Moderated")
                     {
                         _stats.BFLImageGenerationErrorCount++;

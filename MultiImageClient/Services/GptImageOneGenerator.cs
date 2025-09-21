@@ -27,6 +27,18 @@ namespace MultiImageClient
         private OpenAIGPTImageOneQuality _quality;
         private string _name;
 
+        public string GetGeneratorSpecPart()
+        {
+            if (string.IsNullOrEmpty(_name))
+            {
+                return $"gpt-image-1";
+            }
+            else
+            {
+                return $"{_name}";
+            }
+        }
+
         public GptImageOneGenerator(string apiKey, int maxConcurrency, string size, string moderation, OpenAIGPTImageOneQuality quality, MultiClientRunStats stats, string name)
         {
             _gptImageOneSemaphore = new SemaphoreSlim(maxConcurrency);
@@ -126,7 +138,7 @@ namespace MultiImageClient
         }
 
 
-        public async Task<TaskProcessResult> ProcessPromptAsync(PromptDetails promptDetails)
+        public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {
             await _gptImageOneSemaphore.WaitAsync();
             var sw = Stopwatch.StartNew();
@@ -161,7 +173,7 @@ namespace MultiImageClient
                     string errorMessage = doc2.RootElement.GetProperty("error").GetProperty("message").GetString();
                     Console.WriteLine("errorMessage");
                     var cleanedMessage = errorMessage.Split("If you believe").First().Trim();
-                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = cleanedMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.GptImage1, CreateTotalMs = sw.ElapsedMilliseconds };
+                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = cleanedMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.GptImage1, CreateTotalMs = sw.ElapsedMilliseconds, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
                 }
                 resp.EnsureSuccessStatusCode();
                 var json = await resp.Content.ReadAsStringAsync();
@@ -179,7 +191,7 @@ namespace MultiImageClient
 
 
                 //Console.WriteLine($"Generated:{promptDetails.Prompt}");
-                return new TaskProcessResult { IsSuccess = true, Base64ImageDatas = b64s, Url = "", ErrorMessage = "", PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.GptImage1, CreateTotalMs = sw.ElapsedMilliseconds };
+                return new TaskProcessResult { IsSuccess = true, Base64ImageDatas = b64s, Url = "", ErrorMessage = "", PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.GptImage1, CreateTotalMs = sw.ElapsedMilliseconds, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
             }
             catch (Exception ex)
             {

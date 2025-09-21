@@ -21,6 +21,7 @@ namespace MultiImageClient
         public string ContentType { get; set; }
         public PromptDetails PromptDetails { get; set; }
         public ImageGeneratorApiType ImageGenerator { get; set; }
+        public string ImageGeneratorDescription { get; set; }
         public TextGeneratorApiType TextGenerator { get; set; }
         public long CreateTotalMs { get; set; } = 0;
         public long DownloadTotalMs { get; set; } = 0;
