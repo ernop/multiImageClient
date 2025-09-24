@@ -29,6 +29,7 @@ namespace MultiImageClient
         private RecraftDigitalIllustrationSubstyle? _substyleDigital;
         private RecraftRealisticImageSubstyle? _substyleRealistic;
         private RecraftImageSize _imageSize;
+        private string _artistic_level;
         private string _name;
 
         public string GetGeneratorSpecPart()
@@ -52,18 +53,27 @@ namespace MultiImageClient
                 {
                     throw new Exception("x");
                 }
-                return $"recraftv3\n{_style}\n{usingSubstyle}";
+                var alpart = "";
+                if (_artistic_level != "0")
+                {
+                    alpart = $"\nartistic level {_artistic_level}";
+                }
+                return $"recraftv3\n{_style}\n{usingSubstyle}{alpart}";
             }
             else
             {
                 return $"{_name}";
             }
         }
-        public RecraftGenerator(string apiKey, int maxConcurrency, RecraftImageSize size, RecraftStyle style, RecraftVectorIllustrationSubstyle? substyleVector, RecraftDigitalIllustrationSubstyle? substyleDigital, RecraftRealisticImageSubstyle? substyleRealistic, MultiClientRunStats stats, string name)
+
+        public RecraftGenerator(string apiKey, int maxConcurrency, RecraftImageSize size, RecraftStyle style, RecraftVectorIllustrationSubstyle? substyleVector, RecraftDigitalIllustrationSubstyle? substyleDigital, RecraftRealisticImageSubstyle? substyleRealistic, MultiClientRunStats stats, string name, string artistic_level = "")
         {
             _recraftClient = new RecraftClient(apiKey);
             _recraftSemaphore = new SemaphoreSlim(maxConcurrency);
             _httpClient = new HttpClient();
+            _artistic_level = artistic_level.ToString() ?? "";
+            // so actually, ""
+
 
             // we probably could use some validation here.
             _style = style;
@@ -126,8 +136,13 @@ namespace MultiImageClient
             {
                 usingSubstyle = _substyleVector.ToString();
             }
+            var alpart = "";
+            if (!string.IsNullOrEmpty(_artistic_level))
+            {
+                alpart = $"artistic level {_artistic_level}";
+            }
 
-            var rightsideContents = new List<string>() { "recraft_v3", _name, _style.ToString(), usingSubstyle};
+            var rightsideContents = new List<string>() { "recraft_v3", _name, _style.ToString(), usingSubstyle, alpart };
             return rightsideContents;
         }
 
@@ -144,7 +159,7 @@ namespace MultiImageClient
                     Logger.Log("Truncating the prompt for Recraft.");
                 }
 
-                
+
                 var usingSubstyle = "";
                 if (_style == RecraftStyle.digital_illustration)
                 {
@@ -165,7 +180,7 @@ namespace MultiImageClient
                 }
 
                 usingSubstyle = Regex.Replace(usingSubstyle, @"^_([\d])", "$1");
-                var generationResult = await _recraftClient.GenerateImageAsync(usingPrompt, usingSubstyle, _style.ToString(), _imageSize);
+                var generationResult = await _recraftClient.GenerateImageAsync(usingPrompt, _artistic_level, usingSubstyle, _style.ToString(), _imageSize);
                 Logger.Log($"\tFrom Recraft: {promptDetails.Show()} '{generationResult.Created}'");
                 _stats.RecraftImageGenerationSuccessCount++;
                 var theUrl = generationResult.Data[0].Url;
@@ -187,7 +202,7 @@ namespace MultiImageClient
             {
                 Logger.Log($"Recraft error: {ex.Message}");
                 var jsonPart = ex.Message.Split(" - ").Last().Trim();
-                
+
                 using var doc = JsonDocument.Parse(jsonPart);
                 var detailedError = doc.RootElement.GetProperty("code").GetString();
                 return new TaskProcessResult { IsSuccess = false, ErrorMessage = detailedError, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Recraft, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };

@@ -13,6 +13,7 @@ namespace MultiImageClient
         public string BFLApiKey {get;set;}
         public string AnthropicApiKey{ get; set; }
         public string RecraftApiKey { get; set; }
+        public string GoogleGeminiApiKey { get; set; }
         public string LoadPromptsFrom { get; set; }
         public bool EnableLogging { get; set; }
         public string LogFilePath { get; set; }
