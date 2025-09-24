@@ -318,7 +318,7 @@ namespace MultiImageClient
 
                     var labelColor = li.Success ? UIConstants.SuccessGreen
                                                 : UIConstants.ErrorRed;
-                    var labelText = li.OriginalTaskProcessResult.ImageGeneratorDescription;
+                    var labelText = li.OriginalTaskProcessResult.ImageGeneratorDescription ?? "missing";
                     ctx.DrawTextStandard(labelOpts, labelText, labelColor);
 
                     currentX += li.Width;

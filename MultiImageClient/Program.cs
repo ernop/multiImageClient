@@ -67,8 +67,8 @@ namespace MultiImageClient
             var imageManager = new ImageManager(settings, stats);
 
             /// -----------------------  APPLYING PROMPTS TO SERVICES ------------------------
-            //var generators = getter.GetAll();
-            var generators = getter.GetAllStylesOfRecraft();
+            var generators = getter.GetAll();
+            //var generators = getter.GetAllStylesOfRecraft();
 
 
             var allTasks = new List<Task>();

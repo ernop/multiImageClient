@@ -17,11 +17,9 @@ namespace RecraftAPIClient
         }
 
 
-        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string substyle, string style, RecraftImageSize size)
+        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, RecraftImageSize size)
         {
             var stringSubstyle = "";
-
-
             string serialized = "";
             
 
@@ -41,6 +39,7 @@ namespace RecraftAPIClient
                 {
                     prompt,
                     model = "recraftv3",
+                    artistic_level = artistic_level,
                     style = style,
                     substyle = substyle,
                     size = size.ToString().TrimStart('_'),

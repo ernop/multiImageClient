@@ -189,14 +189,14 @@ namespace MultiImageClient
 
                     var headResponse = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, generationResponse.Result.Sample));
                     var contentType = headResponse.Content.Headers.ContentType?.MediaType;
-                    return new TaskProcessResult { IsSuccess = true, Url = generationResponse.Result.Sample, ContentType = contentType, PromptDetails = promptDetails, ImageGenerator = _apiType };
+                    return new TaskProcessResult { IsSuccess = true, Url = generationResponse.Result.Sample, ContentType = contentType, ImageGeneratorDescription = generator.GetGeneratorSpecPart(), PromptDetails = promptDetails, ImageGenerator = _apiType };
                 }
 
             }
             catch (Exception ex)
             {
                 Logger.Log($"{promptDetails} BFL error: {ex.Message}");
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.BFLv11 };
+                return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGeneratorDescription = generator.GetGeneratorSpecPart(), ImageGenerator = ImageGeneratorApiType.BFLv11 };
             }
             finally
             {

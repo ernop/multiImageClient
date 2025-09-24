@@ -85,6 +85,8 @@ namespace MultiImageClient
                         return 0.04224m;
                     case OpenAIGPTImageOneQuality.high:
                         return 0.1664m;
+                    case OpenAIGPTImageOneQuality.auto:
+                        return 99.9999m; //strange, not clear how payment works for auto.  This 99.99$ is not real
                     default:
                         throw new Exception("Swe");
                 }
