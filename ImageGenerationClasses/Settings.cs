@@ -8,12 +8,19 @@ namespace MultiImageClient
 {
     public class Settings
     {
+        public string GoogleCloudProjectId { get; set; } 
+        /// ffs google
+        public string GoogleServiceAccountKeyPath { get; set; }
+
+        /// aka vertex
+        public string GoogleCloudApiKey { get; set; }
         public string IdeogramApiKey { get; set; }
         public string OpenAIApiKey { get; set; }
         public string BFLApiKey {get;set;}
         public string AnthropicApiKey{ get; set; }
         public string RecraftApiKey { get; set; }
         public string GoogleGeminiApiKey { get; set; }
+        public string GoogleCloudLocation { get; set; }
         public string LoadPromptsFrom { get; set; }
         public bool EnableLogging { get; set; }
         public string LogFilePath { get; set; }
@@ -46,12 +53,7 @@ namespace MultiImageClient
 
         public void Validate()
         {
-            //if (string.IsNullOrWhiteSpace(IdeogramApiKey))
-            //{
-            //    throw new ArgumentException("IdeogramApiKey is required");
-            //}
-
-            if (string.IsNullOrWhiteSpace(LogFilePath))
+               if (string.IsNullOrWhiteSpace(LogFilePath))
             {
                 throw new ArgumentException("LogFilePath is required");
             }
@@ -65,6 +67,19 @@ namespace MultiImageClient
             if (!Directory.Exists(ImageDownloadBaseFolder))
             {
                 Directory.CreateDirectory(ImageDownloadBaseFolder);
+            }
+
+            if (string.IsNullOrWhiteSpace(GoogleCloudLocation))
+            {
+                throw new ArgumentException("GoogleCloudLocation is required for Imagen 4");
+            }
+            if (string.IsNullOrWhiteSpace(GoogleCloudProjectId))
+            {
+                throw new ArgumentException("GoogleCloudProjectId is required for Imagen 4");
+            }
+            if (string.IsNullOrWhiteSpace(GoogleServiceAccountKeyPath))
+            {
+                throw new ArgumentException("GoogleServiceAccountKeyPath is required for Imagen 4");
             }
         }
     }

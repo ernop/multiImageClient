@@ -16,39 +16,34 @@ namespace MultiImageClient
         private string _apiKey;
         private MultiClientRunStats _stats;
         private string _name;
-        private string _model;
+        private ImageGeneratorApiType _apiType;
 
-        public GoogleGenerator(string apiKey, int maxConcurrency,
-            MultiClientRunStats stats, string name = "", string model)
+        public GoogleGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency,
+            MultiClientRunStats stats, string name = "")
         {
             _apiKey = apiKey;
             _googleSemaphore = new SemaphoreSlim(maxConcurrency);
             _httpClient = new HttpClient();
             _name = string.IsNullOrEmpty(name) ? "" : name;
             _stats = stats;
-            _model = model;
+            _apiType = apiType;
 
-            // Debug: Check if API key is properly set
-            if (string.IsNullOrWhiteSpace(_apiKey))
-            {
-                Console.WriteLine("WARNING: Google Gemini API key is null or empty!");
-            }
         }
 
         public string GetFilenamePart(PromptDetails pd)
         {
-            return $"google-{_model}";
+            return $"google-{_apiType}";
         }
 
         public decimal GetCost()
         {
             // Gemini 2.5 Flash Image uses token-based pricing
             // $30 per 1 million tokens for image output (1290 tokens per image up to 1024x1024px)
-            if (_model == "gemini-2.5-flash-image-preview" || _model == "gemini-2.5-flash-image")
+            if (_apiType == ImageGeneratorApiType.GoogleNanoBanana)
             {
-                return (30m / 1000000m) * 1290m; // $0.0387 per image
+                return (30m / 1000000m) * 1290m;
             }
-            else if (_model == "imagen-4.0-generate-001")
+            else if (_apiType == ImageGeneratorApiType.GoogleImagen4)
             {
                 return 0.04m;
             }
@@ -60,14 +55,14 @@ namespace MultiImageClient
 
         public List<string> GetRightParts()
         {
-            return new List<string> { _model };
+            return new List<string> { _apiType.ToString() };
         }
 
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))
             {
-                return $"google-{_model.Replace("imagen-", "").Replace("gemini-", "").Replace("-", "")}";
+                return $"google-{_apiType.ToString()}";
             }
             else
             {
@@ -83,7 +78,7 @@ namespace MultiImageClient
                 _stats.GoogleRequestCount++;
 
                 // Google Gemini API endpoint for native image generation (Nano Banana)
-                var apiUrl = $"https://generativelanguage.googleapis.com/v1beta/models/{_model}:generateContent";
+                var apiUrl = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent";
 
                 var requestBody = new
                 {
@@ -201,12 +196,7 @@ namespace MultiImageClient
 
         private ImageGeneratorApiType GetImageGeneratorType()
         {
-            if (_model.Contains("gemini-2.5-flash-image"))
-                return ImageGeneratorApiType.GoogleNanoBanana; // Gemini native image generation
-            else if (_model.Contains("imagen-4"))
-                return ImageGeneratorApiType.GoogleImagen4;
-            else
-                throw new Exception("E");
+            return _apiType;            
         }
 
         public void Dispose()
