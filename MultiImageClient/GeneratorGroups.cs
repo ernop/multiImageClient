@@ -41,7 +41,7 @@ namespace MultiImageClient
             var recraft7 = new RecraftGenerator(_settings.RecraftApiKey, _concurrency, RecraftImageSize._2048x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.bold_fantasy, null, _stats, "");
             var recraft8 = new RecraftGenerator(_settings.RecraftApiKey, _concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.organic_calm, _stats, "");
             var recraft9 = new RecraftGenerator(_settings.RecraftApiKey, _concurrency, RecraftImageSize._2048x1024, RecraftStyle.realistic_image, null, null, RecraftRealisticImageSubstyle.organic_calm, _stats, "", "5");
-
+            var recraft_any = new RecraftGenerator(_settings.RecraftApiKey, _concurrency, RecraftImageSize._1365x1024, RecraftStyle.any, null, null, null, _stats, "");
             var ideogram1 = new IdeogramGenerator(_settings.IdeogramApiKey, _concurrency, IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_16_10, IdeogramStyleType.DESIGN, "", IdeogramModel.V_2, _stats, "");
             var ideogram2 = new IdeogramGenerator(_settings.IdeogramApiKey, _concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_1_1, null, "", IdeogramModel.V_2_TURBO, _stats, "");
             var ideogram3 = new IdeogramGenerator(_settings.IdeogramApiKey, _concurrency, IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_1_1, null, "", IdeogramModel.V_2A, _stats, "");
@@ -51,7 +51,7 @@ namespace MultiImageClient
             var bfl3 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, _settings.BFLApiKey, _concurrency, "3:2", true, 1024, 1024, _stats, "");
 
             var gptimage1_1 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.high, _stats, "");
-            var gptimage1_2 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.auto, _stats, "");
+            var gptimage1_2 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "high", OpenAIGPTImageOneQuality.auto, _stats, "");
 
             //var google_nano = new GoogleGenerator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "nano-banana", "gemini-2.5-flash-image");
             //var google_flash = new GoogleGenerator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "flash", "gemini-1.5-flash");
@@ -64,7 +64,8 @@ namespace MultiImageClient
                                                     location: _settings.GoogleCloudLocation,
                                                     projectId: _settings.GoogleCloudProjectId,
                                                     googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath);
-            var myGenerators = new List<IImageGenerator>() { gptimage1_1, gptimage1_2, ideogram4, ideogram3, dalle3, bfl2, bfl3, recraft8, recraft9, google_banana, googleimagen };
+            var myGenerators = new List<IImageGenerator>() { gptimage1_1, gptimage1_2, ideogram4, recraft_any, ideogram3, dalle3, bfl2, bfl3, recraft8, recraft9, google_banana, googleimagen};
+            //myGenerators = new List<IImageGenerator>() { recraft_any };
 
             return myGenerators;
         }

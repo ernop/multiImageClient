@@ -154,7 +154,7 @@ namespace MultiImageClient
                                 else if (!string.IsNullOrEmpty(part.text))
                                 {
                                     Console.WriteLine($"Gemini text response: {part.text}");
-                                    throw new Exception("qq");
+                                    //throw new Exception("qq");
                                 }
                             }
                         }
