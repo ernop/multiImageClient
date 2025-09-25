@@ -19,7 +19,7 @@ namespace MultiImageClient
         private string _model;
 
         public GoogleGenerator(string apiKey, int maxConcurrency,
-            MultiClientRunStats stats, string name = "", string model = "gemini-2.5-flash-image")
+            MultiClientRunStats stats, string name = "", string model)
         {
             _apiKey = apiKey;
             _googleSemaphore = new SemaphoreSlim(maxConcurrency);
@@ -27,33 +27,47 @@ namespace MultiImageClient
             _name = string.IsNullOrEmpty(name) ? "" : name;
             _stats = stats;
             _model = model;
+
+            // Debug: Check if API key is properly set
+            if (string.IsNullOrWhiteSpace(_apiKey))
+            {
+                Console.WriteLine("WARNING: Google Gemini API key is null or empty!");
+            }
         }
 
         public string GetFilenamePart(PromptDetails pd)
         {
-            var modelPart = _model.Replace("gemini-", "").Replace("-", "");
-            var namePart = string.IsNullOrEmpty(_name) ? "" : $"-{_name}";
-            return $"google-{modelPart}{namePart}";
+            return $"google-{_model}";
         }
 
         public decimal GetCost()
         {
-            // Based on Google's pricing: approximately $0.039 per image for Gemini 2.5 Flash Image
-            return 0.039m;
+            // Gemini 2.5 Flash Image uses token-based pricing
+            // $30 per 1 million tokens for image output (1290 tokens per image up to 1024x1024px)
+            if (_model == "gemini-2.5-flash-image-preview" || _model == "gemini-2.5-flash-image")
+            {
+                return (30m / 1000000m) * 1290m; // $0.0387 per image
+            }
+            else if (_model == "imagen-4.0-generate-001")
+            {
+                return 0.04m;
+            }
+            else
+            {
+                throw new Exception("E");
+            }
         }
 
         public List<string> GetRightParts()
         {
-            var modelPart = _model.Replace("gemini-", "").Replace("-", "");
-            var namePart = string.IsNullOrEmpty(_name) ? "" : _name;
-            return new List<string> { "google", modelPart, namePart };
+            return new List<string> { _model };
         }
 
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))
             {
-                return $"google-{_model.Replace("gemini-", "").Replace("-", "")}";
+                return $"google-{_model.Replace("imagen-", "").Replace("gemini-", "").Replace("-", "")}";
             }
             else
             {
@@ -68,8 +82,8 @@ namespace MultiImageClient
             {
                 _stats.GoogleRequestCount++;
 
-                // Google Gemini API endpoint for image generation
-                var apiUrl = $"https://generativelanguage.googleapis.com/v1/models/{_model}:generateContent?key={_apiKey}";
+                // Google Gemini API endpoint for native image generation (Nano Banana)
+                var apiUrl = $"https://generativelanguage.googleapis.com/v1beta/models/{_model}:generateContent";
 
                 var requestBody = new
                 {
@@ -79,71 +93,80 @@ namespace MultiImageClient
                         {
                             parts = new[]
                             {
-                                new
-                                {
-                                    text = promptDetails.Prompt
-                                }
+                                new { text = promptDetails.Prompt }
                             }
                         }
                     },
                     generationConfig = new
                     {
-                        temperature = 0.7,
-                        maxOutputTokens = 8192
+                        responseModalities = new[] { "TEXT", "IMAGE" }
                     }
                 };
 
                 var json = JsonSerializer.Serialize(requestBody);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                var response = await _httpClient.PostAsync(apiUrl, content);
+                // Set API key in header as required by Gemini API
+                var request = new HttpRequestMessage(HttpMethod.Post, apiUrl)
+                {
+                    Content = content
+                };
+                request.Headers.Add("x-goog-api-key", _apiKey);
+
+              
+                var response = await _httpClient.SendAsync(request);
                 var responseContent = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    var errorMessage = $"Google API error: {response.StatusCode} - {responseContent}";
+                    var errorMessage = $"Google Gemini API error: {response.StatusCode} - {responseContent}";
                     return new TaskProcessResult 
                     { 
                         IsSuccess = false, 
                         ErrorMessage = errorMessage, 
                         PromptDetails = promptDetails, 
-                        ImageGenerator = ImageGeneratorApiType.GoogleGemini, 
+                        ImageGenerator = GetImageGeneratorType(), 
                         ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
                     };
                 }
 
-                var responseData = JsonSerializer.Deserialize<GoogleGeminiResponse>(responseContent);
+                // Parse Gemini native image generation response
+                var responseData = JsonSerializer.Deserialize<GeminiGenerateContentResponse>(responseContent);
                 
-                if (responseData?.candidates?.Length > 0 && 
-                    responseData.candidates[0]?.content?.parts?.Length > 0)
+                if (responseData?.candidates?.Length > 0)
                 {
-                    var part = responseData.candidates[0].content.parts[0];
+                    var base64Images = new List<string>();
                     
-                    if (!string.IsNullOrEmpty(part.inline_data?.data))
+                    foreach (var candidate in responseData.candidates)
                     {
-                        // Image returned as base64 data
-                        var base64Images = new List<string> { part.inline_data.data };
+                        if (candidate?.content?.parts != null)
+                        {
+                            foreach (var part in candidate.content.parts)
+                            {
+                                // Check for image data in inline_data
+                                if (part.inlineData != null && !string.IsNullOrEmpty(part.inlineData.data))
+                                {
+                                    base64Images.Add(part.inlineData.data);
+                                }
+                                // Log any text responses for debugging
+                                else if (!string.IsNullOrEmpty(part.text))
+                                {
+                                    Console.WriteLine($"Gemini text response: {part.text}");
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (base64Images.Count > 0)
+                    {
                         return new TaskProcessResult 
                         { 
                             IsSuccess = true, 
                             Base64ImageDatas = base64Images,
-                            ContentType = part.inline_data.mime_type ?? "image/png",
+                            ContentType = "image/png",
                             ErrorMessage = "", 
                             PromptDetails = promptDetails, 
-                            ImageGenerator = ImageGeneratorApiType.GoogleGemini, 
-                            ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
-                        };
-                    }
-                    else if (!string.IsNullOrEmpty(part.text))
-                    {
-                        // Sometimes the API returns a URL or other text response
-                        var errorMessage = $"Google Gemini returned text instead of image: {part.text}";
-                        return new TaskProcessResult 
-                        { 
-                            IsSuccess = false, 
-                            ErrorMessage = errorMessage, 
-                            PromptDetails = promptDetails, 
-                            ImageGenerator = ImageGeneratorApiType.GoogleGemini, 
+                            ImageGenerator = GetImageGeneratorType(), 
                             ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
                         };
                     }
@@ -154,19 +177,19 @@ namespace MultiImageClient
                     IsSuccess = false, 
                     ErrorMessage = "No image data returned from Google Gemini API", 
                     PromptDetails = promptDetails, 
-                    ImageGenerator = ImageGeneratorApiType.GoogleGemini, 
+                    ImageGenerator = GetImageGeneratorType(), 
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
                 };
             }
             catch (Exception ex)
             {
-                var errorMessage = $"Google Generator error: {ex.Message}";
+                var errorMessage = $"Google Imagen Generator error: {ex.Message}";
                 return new TaskProcessResult 
                 { 
                     IsSuccess = false, 
                     ErrorMessage = errorMessage, 
                     PromptDetails = promptDetails, 
-                    ImageGenerator = ImageGeneratorApiType.GoogleGemini, 
+                    ImageGenerator = GetImageGeneratorType(), 
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
                 };
             }
@@ -176,6 +199,16 @@ namespace MultiImageClient
             }
         }
 
+        private ImageGeneratorApiType GetImageGeneratorType()
+        {
+            if (_model.Contains("gemini-2.5-flash-image"))
+                return ImageGeneratorApiType.GoogleNanoBanana; // Gemini native image generation
+            else if (_model.Contains("imagen-4"))
+                return ImageGeneratorApiType.GoogleImagen4;
+            else
+                throw new Exception("E");
+        }
+
         public void Dispose()
         {
             _httpClient?.Dispose();
@@ -183,31 +216,4 @@ namespace MultiImageClient
         }
     }
 
-    // Response models for Google Gemini API
-    public class GoogleGeminiResponse
-    {
-        public GoogleGeminiCandidate[] candidates { get; set; }
-    }
-
-    public class GoogleGeminiCandidate
-    {
-        public GoogleGeminiContent content { get; set; }
-    }
-
-    public class GoogleGeminiContent
-    {
-        public GoogleGeminiPart[] parts { get; set; }
-    }
-
-    public class GoogleGeminiPart
-    {
-        public string text { get; set; }
-        public GoogleGeminiInlineData inline_data { get; set; }
-    }
-
-    public class GoogleGeminiInlineData
-    {
-        public string mime_type { get; set; }
-        public string data { get; set; }
-    }
 }

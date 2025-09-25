@@ -4,6 +4,7 @@
   "OpenAIApiKey": "Optional: Fill in the OpenAI key here: from https://platform.openai.com/api-keys which you have to pay for",
   "BFLApiKey": "Optional: Fill in the BFL key here: from https://beta.bigfriendly.com/ which you have to pay for",
   "AnthropicApiKey": "Optionally: fill in the anthropic key here.  from https://console.anthropic.com/settings/keys which you have to pay for",
+  "GoogleGeminiApiKey": "FILL IN YOUR GOOGLE GEMINI API KEY HERE from https://ai.google.dev/gemini-api/docs/api-key which you have to pay for",
   "ImageDownloadBaseFolder": "D:\\proj\\IdeogramAPI\\ideogramSaves",
   "LogFilePath": "D:\\proj\\IdeogramAPI\\ideogram.log",
   "SaveJsonLog": true,
