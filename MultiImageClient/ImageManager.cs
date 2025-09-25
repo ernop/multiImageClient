@@ -24,36 +24,36 @@ namespace MultiImageClient
             _stats = stats;
         }
 
-        public async Task<Dictionary<SaveType, string>> DoSaveAsync(IImageGenerator generator, byte[] imageBytes, TaskProcessResult result, Settings settings)
+        public async Task<Dictionary<SaveType, string>> DoSaveAsync(int n, PromptDetails pd, string contentType, byte[] imageBytes, IImageGenerator generator, Settings settings)
         {
+            var thesePaths = new Dictionary<SaveType, string>();
             if (imageBytes == null || imageBytes.Length == 0)
             {
                 Logger.Log($"Empty or null image bytes received");
-                throw new Exception("Bad image.");
+                throw new Exception("no bytes?)");
             }
 
-
             // just one time, convert the bytes to png if needed.
-            if (result.ContentType == "image/webp")
+            if (contentType == "image/webp")
             {
                 var fakeImage = new MagickImage(imageBytes, MagickFormat.WebP);
                 imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
             }
-            else if (result.ContentType == "image/svg+xml")
+            else if (contentType == "image/svg+xml")
             {
                 var fakeImage = new MagickImage(imageBytes, MagickFormat.Svg);
                 imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
             }
-            else if (result.ContentType == "image/jpeg")
+            else if (contentType == "image/jpeg")
             {
                 var fakeImage = new MagickImage(imageBytes, MagickFormat.Jpg);
                 imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
             }
-            else if (result.ContentType == "image/png")
+            else if (contentType == "image/png")
             {
                 //Console.WriteLine("png do nothing, all good");
             }
-            else if (result.ContentType == null)
+            else if (contentType == null)
             {
                 //Console.WriteLine("contentType null, so fall into .png");
             }
@@ -62,21 +62,15 @@ namespace MultiImageClient
                 Console.WriteLine("some other weird contenttype. {result.ContentType}");
             }
 
+            thesePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.Raw, generator);
+            thesePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.FullAnnotation, generator);
+            thesePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.FinalPrompt, generator);
+            thesePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.InitialIdea, generator);
+            thesePaths[SaveType.JustOverride] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.JustOverride, generator);
+            thesePaths[SaveType.Label] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.Label, generator);
 
-            //okay now we have the real bytes and they've been converted to png format if needed.
-            result.SetImageBytes(imageBytes);
 
-
-            var savedImagePaths = new Dictionary<SaveType, string>();
-
-            savedImagePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(result, settings, SaveType.Raw, generator);
-            savedImagePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(result, settings, SaveType.FullAnnotation, generator);
-            savedImagePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(result, settings, SaveType.FinalPrompt, generator);
-            savedImagePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(result, settings, SaveType.InitialIdea, generator);
-            savedImagePaths[SaveType.JustOverride] = await ImageSaving.SaveImageAsync(result, settings, SaveType.JustOverride, generator);
-            savedImagePaths[SaveType.Label] = await ImageSaving.SaveImageAsync(result, settings, SaveType.Label, generator);
-
-            return savedImagePaths;
+            return thesePaths;
         }
 
         public async Task<TaskProcessResult> ProcessAndSaveAsync(TaskProcessResult result, IImageGenerator generator)
@@ -90,11 +84,14 @@ namespace MultiImageClient
                 }
                 var sw = Stopwatch.StartNew();
                 byte[] imageBytes;
+
                 if (!string.IsNullOrEmpty(result.Url))
                 {
                     imageBytes = await ImageSaving.DownloadImageAsync(result);
                     result.DownloadTotalMs = sw.ElapsedMilliseconds;
-                    var downloadResults = await DoSaveAsync(generator, imageBytes, result, _settings);
+                    result.SetImageBytes(0, imageBytes);
+                    var pd = result.PromptDetails.Copy();
+                    var downloadResults = await DoSaveAsync(0, pd, result.ContentType, imageBytes, generator, _settings);
                     await SaveJsonLogAsync(result, downloadResults);
                     return result;
                 }
@@ -103,8 +100,23 @@ namespace MultiImageClient
                     var ii = 0;
                     foreach (var qq in result.Base64ImageDatas)
                     {
-                        imageBytes = Convert.FromBase64String(qq);
-                        var downloadResults = await DoSaveAsync(generator, imageBytes, result, _settings);
+                        imageBytes = Convert.FromBase64String(qq.bytesBase64);
+                        result.SetImageBytes(ii, imageBytes);
+                        var pd = result.PromptDetails.Copy();
+                        
+                        if (pd.Prompt != qq.newPrompt && !string.IsNullOrEmpty(qq.newPrompt))
+                        {
+
+                            if (generator.ApiType == ImageGeneratorApiType.GoogleImagen4)
+                            {
+                                pd.AddStep(qq.newPrompt, TransformationType.Imagen4Rewrite);
+                            }
+                            else
+                            {
+                                Console.WriteLine("s");
+                            }
+                        }
+                            var downloadResults = await DoSaveAsync(ii, pd, result.ContentType, imageBytes, generator, _settings);
                         ii++;
                         await SaveJsonLogAsync(result, downloadResults);
                     }

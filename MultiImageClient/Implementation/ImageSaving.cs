@@ -66,7 +66,7 @@ namespace MultiImageClient
             }
         }
 
-        public static async Task<string> SaveImageAsync(TaskProcessResult result, Settings settings, SaveType saveType, IImageGenerator generator)
+        public static async Task<string> SaveImageAsync(PromptDetails promptDetails, byte[] imageBytes, int imageCountN, string contentType, Settings settings, SaveType saveType, IImageGenerator generator)
         {
             string todayFolder = DateTime.Now.ToString("yyyy-MM-dd-dddd");
             string baseFolder = Path.Combine(settings.ImageDownloadBaseFolder, todayFolder);
@@ -78,10 +78,10 @@ namespace MultiImageClient
 
             Directory.CreateDirectory(baseFolder);
 
-            var usingPromptTextPart = FilenameGenerator.TruncatePrompt(result.PromptDetails.Prompt, 90);
-            var generatorFilename = generator.GetFilenamePart(result.PromptDetails);
+            var usingPromptTextPart = FilenameGenerator.TruncatePrompt(promptDetails.Prompt, 90);
+            var generatorFilename = generator.GetFilenamePart(promptDetails);
 
-            var safeFilename = FilenameGenerator.GenerateUniqueFilename($"{generatorFilename}_{usingPromptTextPart}", result, baseFolder, saveType);
+            var safeFilename = FilenameGenerator.GenerateUniqueFilename($"{generatorFilename}_{usingPromptTextPart}", imageCountN, contentType, baseFolder, saveType);
             var fullPath = Path.Combine(baseFolder, safeFilename);
 
             try
@@ -90,7 +90,7 @@ namespace MultiImageClient
                 {
                     throw new Exception("no overwriting!");
                 }
-                await File.WriteAllBytesAsync(fullPath, result.GetImageBytes());
+                await File.WriteAllBytesAsync(fullPath, imageBytes);
 
                 if (saveType == SaveType.Raw)
                 {
@@ -99,12 +99,13 @@ namespace MultiImageClient
                 }
                 else
                 {
-                    var imageInfo = GetAnnotationDefaultData(result, fullPath, saveType, generator);
-                    var usingSteps = GetUsingSteps(saveType, result.PromptDetails);
+                    var specPart = generator.GetGeneratorSpecPart();
+                    var imageInfo = GetAnnotationDefaultData(specPart, promptDetails, fullPath, saveType, generator);
+                    var usingSteps = GetUsingSteps(saveType, promptDetails);
                     if (saveType == SaveType.JustOverride)
                     {
                         await TextFormatting.JustAddSimpleTextToBottomAsync(
-                            result.GetImageBytes(),
+                            imageBytes,
                             usingSteps,
                             imageInfo,
                             fullPath,
@@ -117,8 +118,8 @@ namespace MultiImageClient
                         var costPart = $"{generator.GetCost()} $USD";
                         rightParts.Add(costPart);
                         rightParts.Add("MultiImageClient");
-                        using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(result.GetImageBytes());
-                        var label = MakeLabelGeneral(originalImage.Width, result.PromptDetails.Prompt, rightParts);
+                        using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
+                        var label = MakeLabelGeneral(originalImage.Width, promptDetails.Prompt, rightParts);
 
                         using var labelImage = SixLabors.ImageSharp.Image.Load<Rgba32>(label);
                         int newHeight = originalImage.Height + labelImage.Height;
@@ -136,7 +137,7 @@ namespace MultiImageClient
                     else
                     {
                         await TextFormatting.SaveImageAndAnnotate(
-                            result.GetImageBytes(),
+                            imageBytes,
                             usingSteps,
                             imageInfo,
                             fullPath,
@@ -224,25 +225,23 @@ namespace MultiImageClient
             };
         }
 
-        private static Dictionary<string, string> GetAnnotationDefaultData(TaskProcessResult result, string fullPath, SaveType saveType, IImageGenerator generator)
+        private static Dictionary<string, string> GetAnnotationDefaultData(string generatorIdentifier, PromptDetails promptDetails, string fullPath, SaveType saveType, IImageGenerator generator)
         {
             var imageInfo = new Dictionary<string, string>();
-            var promptDetails = result.PromptDetails;
 
             switch (saveType)
             {
                 case SaveType.FullAnnotation:
-                    //AddFullAnnotationInfo(imageInfo, result.ImageGenerator, promptDetails, promptGeneratorName, result);
                     imageInfo.Add("Filename", Path.GetFileName(fullPath));
                     break;
                 case SaveType.InitialIdea:
                     var initialPrompt = promptDetails.TransformationSteps.First().Explanation;
-                    imageInfo.Add("Producer", result.ImageGenerator.ToString());
+                    imageInfo.Add("Producer", generatorIdentifier);
                     imageInfo.Add("Initial Prompt", initialPrompt);
                     break;
                 case SaveType.FinalPrompt:
                     var finalPrompt = promptDetails.Prompt;
-                    imageInfo.Add("Producer", result.ImageGenerator.ToString());
+                    imageInfo.Add("Producer", generatorIdentifier);
                     imageInfo.Add("Final Prompt", finalPrompt);
                     break;
                 case SaveType.Raw:
@@ -250,7 +249,7 @@ namespace MultiImageClient
                     break;
                 case SaveType.JustOverride:
                     var initialPrompt2 = promptDetails.TransformationSteps.First().Explanation;
-                    imageInfo.Add("Producer", result.ImageGenerator.ToString());
+                    imageInfo.Add("Producer", generatorIdentifier);
                     imageInfo.Add("Initial Prompt", initialPrompt2);
                     break;
             }
@@ -350,37 +349,38 @@ namespace MultiImageClient
                 {
                     try
                     {
-                        // Use GetImageBytes() to get the stored bytes
-                        var imageBytes = result.GetImageBytes();
-                        if (imageBytes != null && imageBytes.Length > 0)
+                        foreach (var imageBytes in result.GetAllImages)
                         {
-                            var image = Image.Load<Rgba32>(imageBytes);
-
-                            // Resize if height > 1300px, keeping proportions and max height of 1024px
-                            if (image.Height > 1300)
+                            if (imageBytes != null && imageBytes.Length > 0)
                             {
-                                var aspectRatio = (float)image.Width / image.Height;
-                                var newHeight = 1024;
-                                var newWidth = (int)(newHeight * aspectRatio);
+                                var image = Image.Load<Rgba32>(imageBytes);
 
-                                Logger.Log($"Resizing image from {image.Width}x{image.Height} to {newWidth}x{newHeight} for combining");
-                                image.Mutate(x => x.Resize(newWidth, newHeight));
+                                // Resize if height > 1300px, keeping proportions and max height of 1024px
+                                if (image.Height > 1300)
+                                {
+                                    var aspectRatio = (float)image.Width / image.Height;
+                                    var newHeight = 1024;
+                                    var newWidth = (int)(newHeight * aspectRatio);
+
+                                    Logger.Log($"Resizing image from {image.Width}x{image.Height} to {newWidth}x{newHeight} for combining");
+                                    image.Mutate(x => x.Resize(newWidth, newHeight));
+                                }
+
+                                loadedImages.Add(new LoadedImage
+                                {
+                                    OriginalTaskProcessResult = result,
+                                    Success = true,
+                                    Image = image,
+                                    Width = image.Width,
+                                    Height = image.Height
+                                });
                             }
-
-                            loadedImages.Add(new LoadedImage
+                            else
                             {
-                                OriginalTaskProcessResult = result,
-                                Success = true,
-                                Image = image,
-                                Width = image.Width,
-                                Height = image.Height
-                            });
-                        }
-                        else
-                        {
-                            // Success but no bytes somehow
-                            Logger.Log($"No image bytes for successful result from {result.ImageGenerator}");
-                            loadedImages.Add(CreateFailedGenerationPlaceholder(result, false, placeholderWidth));
+                                // Success but no bytes somehow
+                                Logger.Log($"No image bytes for successful result from {result.ImageGenerator}");
+                                loadedImages.Add(CreateFailedGenerationPlaceholder(result, false, placeholderWidth));
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -397,7 +397,7 @@ namespace MultiImageClient
                         ? result.ErrorMessage
                         : result.GenericImageErrorType.ToString();
                     Logger.Log($"Result failed for {result.ImageGenerator}: {errorMsg}");
-                    loadedImages.Add(CreateFailedGenerationPlaceholder(result, false,  placeholderWidth));
+                    loadedImages.Add(CreateFailedGenerationPlaceholder(result, false, placeholderWidth));
                 }
             }
 

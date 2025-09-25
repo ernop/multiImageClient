@@ -1,9 +1,13 @@
-﻿using System;
+﻿using Google.Protobuf;
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 
 namespace MultiImageClient
 {
+
     public class TaskProcessResult
     {
         public bool IsSuccess { get; set; }
@@ -11,13 +15,13 @@ namespace MultiImageClient
         public GenericTextGenerationErrorType GenericTextErrorType { get; set; } = 0;
 
         public string ErrorMessage { get; set; }
+        
+        // to make multi
+        public string Url { get; set; }
 
-        /// <summary>
         /// gpt-image-1 returns the data as base64 encoded string, so we have already decoded it and just have it here.
         /// so, sometimes guy won't have Url but will have the image data.
-        /// </summary>
-        public string Url { get; set; }
-        public IEnumerable<string> Base64ImageDatas { get; set; } = new List<string>();
+        public IEnumerable<CreatedBase64Image> Base64ImageDatas { get; set; } = new List<CreatedBase64Image>();
         public string ContentType { get; set; }
         public PromptDetails PromptDetails { get; set; }
         public ImageGeneratorApiType ImageGenerator { get; set; }
@@ -25,8 +29,13 @@ namespace MultiImageClient
         public TextGeneratorApiType TextGenerator { get; set; }
         public long CreateTotalMs { get; set; } = 0;
         public long DownloadTotalMs { get; set; } = 0;
-        private byte[] _ImageBytes { get; set; }
-        public void SetImageBytes(byte[] imageBytes)
+        private Dictionary<int, byte[]> _ImageBytes { get; set; } = new Dictionary<int, byte[]>();
+        public IEnumerable<byte[]> GetAllImages
+        {
+            get { return _ImageBytes.Values; }
+        }
+        
+        public void SetImageBytes(int n, byte[] imageBytes)
         {
             if (imageBytes == null || imageBytes.Length == 0)
             {
@@ -35,12 +44,12 @@ namespace MultiImageClient
                 ErrorMessage = "No image data.";
                 return;
             }
-            if (_ImageBytes != null && _ImageBytes.Length > 0)
+            if (_ImageBytes.ContainsKey(n))
             {
-                Console.WriteLine("Already seat.");
-                throw new Exception("Already set image bytes.");
+                throw new Exception("double");
             }
-            _ImageBytes = imageBytes;
+
+            _ImageBytes[n] = imageBytes;
         }   
 
 
@@ -54,13 +63,13 @@ namespace MultiImageClient
             return $"Success. {PromptDetails}";
         }
 
-        internal byte[] GetImageBytes()
+        internal byte[] GetImageBytes(int n)
         {
             if (_ImageBytes == null)
             {
                 throw new Exception("No image bytes set.");
             }
-            return _ImageBytes;
+            return _ImageBytes[n];
         }
     }
 }

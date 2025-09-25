@@ -18,6 +18,8 @@ namespace MultiImageClient
         private MultiClientRunStats _stats;
         private string _name;
 
+        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.Dalle3;
+
         public Dalle3Generator(string apiKey, int maxConcurrency,
             GeneratedImageQuality quality,
                 GeneratedImageSize size,

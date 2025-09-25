@@ -25,6 +25,8 @@ namespace MultiImageClient
         private IdeogramModel _model;
         private string _name;
 
+        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.Ideogram;
+
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))

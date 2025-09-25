@@ -32,6 +32,8 @@ namespace MultiImageClient
         private string _artistic_level;
         private string _name;
 
+        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.Recraft;
+
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))

@@ -28,6 +28,8 @@ namespace MultiImageClient
         private string _googleServiceAccountKeyPath;
         private GoogleCredential _credential;
 
+        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GoogleImagen4;
+
         public GoogleImagen4Generator(string apiKey, int maxConcurrency,
             MultiClientRunStats stats, string name = "", string aspectRatio = "SQUARE", 
             string safetyFilterLevel = "BLOCK_NONE", bool addWatermark = false,
@@ -129,11 +131,43 @@ namespace MultiImageClient
                 var endpoint = EndpointName.FromProjectLocationPublisherModel(_projectId, _location, "google", "imagen-4.0-generate-001");
                 
                 var response = await _predictionServiceClient.PredictAsync(endpoint, instances, parameters);
-                //var ff = response.Predictions.First().StructValue;
-                var generatedImageStruct = response.Predictions.First().StructValue.Fields["generatedImage"].StructValue;
-                var responseJson = generatedImageStruct.Fields["bytesBase64Encoded"].StringValue;
+                
+                var base64Images = new List<CreatedBase64Image>();
+                string commonMimeType = "image/png"; // Default or first detected mime type
 
-                if (string.IsNullOrEmpty(responseJson))
+                if (response?.Predictions != null && response.Predictions.Any())
+                {
+                    foreach (var prediction in response.Predictions)
+                    {
+                        if (prediction?.StructValue?.Fields != null)
+                        {
+                            var predictionFields = prediction.StructValue.Fields;
+                            if (predictionFields.ContainsKey("bytesBase64Encoded") && predictionFields.ContainsKey("mimeType"))
+                            {
+                                var imageData = predictionFields["bytesBase64Encoded"].StringValue;
+                                var newPrompt = predictionFields["prompt"].StringValue;
+                                var currentMimeType = predictionFields["mimeType"].StringValue;
+
+                                if (!string.IsNullOrEmpty(imageData))
+                                {
+                                    var bd = new CreatedBase64Image
+                                    {
+                                        bytesBase64= imageData,
+                                        newPrompt = newPrompt,
+                                    };
+
+                                    base64Images.Add(bd);
+                                    if (!string.IsNullOrEmpty(currentMimeType) && (commonMimeType == "image/png")) 
+                                    {
+                                        commonMimeType = currentMimeType; // Use the first valid mime type found if default
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (base64Images.Count == 0)
                 {
                     return new TaskProcessResult 
                     {
@@ -145,13 +179,11 @@ namespace MultiImageClient
                     };
                 }
 
-                var base64Images = new List<string> { responseJson };
-
                 return new TaskProcessResult 
                 { 
                     IsSuccess = true, 
                     Base64ImageDatas = base64Images,
-                    ContentType = "image/png",
+                    ContentType = commonMimeType,
                     ErrorMessage = "", 
                     PromptDetails = promptDetails, 
                     ImageGenerator = ImageGeneratorApiType.GoogleImagen4, 

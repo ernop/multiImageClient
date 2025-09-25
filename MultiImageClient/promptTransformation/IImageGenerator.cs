@@ -17,7 +17,7 @@ namespace MultiImageClient
     /// </summary>
     public interface IImageGenerator
     {
-        
+        public abstract ImageGeneratorApiType ApiType { get; }
         public abstract string GetFilenamePart(PromptDetails pd);
 
         /// return just the parts on the right, we know everything else.

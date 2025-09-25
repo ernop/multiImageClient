@@ -5,7 +5,6 @@
         InitialPrompt = 1,
         Variants = 2,
         InitialExpand = 3,
-         
 
         ClaudeRewrite = 20,
         ClaudeRewriteRequest = 21,
@@ -26,6 +25,8 @@
         ManualSuffixation = 110,
         
         AddingArtistStyle = 120,
+        Imagen4Rewrite = 125,
+        GptImageOneRewrite = 130,
     }
 }
 

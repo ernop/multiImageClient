@@ -37,6 +37,9 @@ namespace MultiImageClient
         private int _width { get; set; }
         private int _height { get; set; }
         private ImageGeneratorApiType _apiType { get; }
+
+        public ImageGeneratorApiType ApiType => _apiType;
+
         private string _name;
 
         
