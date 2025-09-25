@@ -51,6 +51,10 @@ namespace MultiImageClient
                 {
                     usingSubstyle = _substyleVector.ToString();
                 }
+                else if (_style == RecraftStyle.any)
+                {
+                    usingSubstyle = "";
+                }
                 else
                 {
                     throw new Exception("x");
@@ -118,6 +122,8 @@ namespace MultiImageClient
                     return 0.04m; //unclear actually.
                 case RecraftStyle.vector_illustration:
                     return 0.08m;
+                case RecraftStyle.any:
+                    return 99.99m;
                 default:
                     throw new Exception("whoah");
             }
@@ -174,6 +180,10 @@ namespace MultiImageClient
                 else if (_style == RecraftStyle.vector_illustration)
                 {
                     usingSubstyle = _substyleVector.ToString();
+                }
+                else if (_style == RecraftStyle.any)
+                {
+                    usingSubstyle = "";
                 }
                 else
                 {
