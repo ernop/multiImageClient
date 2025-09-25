@@ -11,6 +11,7 @@ namespace MultiImageClient
         Recraft = 5,
         GptImage1 = 6, 
         BFLv11Ultra = 7,
-        GoogleGemini = 8,
+        GoogleNanoBanana = 8,
+        GoogleImagen4 = 9,
     }
 }
