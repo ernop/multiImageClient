@@ -31,6 +31,9 @@ namespace MultiImageClient
         public int RecraftImageGenerationSuccessCount { get; set; }
         public int RecraftImageGenerationErrorCount { get; set; }
 
+        public int GoogleRequestCount { get; set; }
+        public int GoogleRefusedCount { get; set; }
+
         public void PrintStats()
         {
             var nonZeroStats = new List<string>();
@@ -57,17 +60,22 @@ namespace MultiImageClient
             if (Dalle3RequestCount > 0)
                 nonZeroStats.Add($"Dalle3 Requests:{Dalle3RequestCount}");
             if (Dalle3RefusedCount > 0)
-                nonZeroStats.Add($"Dalle3 Requests:{Dalle3RefusedCount}");
+                nonZeroStats.Add($"Dalle3 Refused:{Dalle3RefusedCount}");
 
             if (GptImageOneRequestCount > 0)
-                nonZeroStats.Add($"Dalle3 Requests:{GptImageOneRequestCount}");
+                nonZeroStats.Add($"GPT Image One Requests:{GptImageOneRequestCount}");
             if (GptImageOneRefusedCount > 0)
-                nonZeroStats.Add($"Dalle3 Requests:{GptImageOneRefusedCount}");
+                nonZeroStats.Add($"GPT Image One Refused:{GptImageOneRefusedCount}");
 
-            if (BFLImageGenerationRequestCount > 0 | BFLImageGenerationErrorCount>0 | BFLImageGenerationRequestCount > 0)
+            if (GoogleRequestCount > 0)
+                nonZeroStats.Add($"Google Requests:{GoogleRequestCount}");
+            if (GoogleRefusedCount > 0)
+                nonZeroStats.Add($"Google Refused:{GoogleRefusedCount}");
+
+            if (BFLImageGenerationRequestCount > 0 | BFLImageGenerationErrorCount > 0 | BFLImageGenerationSuccessCount > 0)
                 nonZeroStats.Add($"BFL: total:{BFLImageGenerationRequestCount}, ok:{BFLImageGenerationSuccessCount}, bad:{BFLImageGenerationErrorCount} ");
 
-            if (RecraftImageGenerationRequestCount > 0 | RecraftImageGenerationErrorCount > 0 | RecraftImageGenerationRequestCount > 0)
+            if (RecraftImageGenerationRequestCount > 0 | RecraftImageGenerationErrorCount > 0 | RecraftImageGenerationSuccessCount > 0)
                 nonZeroStats.Add($"Recraft: total:{RecraftImageGenerationRequestCount}, ok:{RecraftImageGenerationSuccessCount}, bad:{RecraftImageGenerationErrorCount} ");
 
             var res = $"Stats: {string.Join(", ", nonZeroStats)}";

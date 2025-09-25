@@ -18,6 +18,7 @@ namespace MultiImageClient
                 ImageGeneratorApiType.Dalle3 => ".png",
                 ImageGeneratorApiType.Recraft => ".png", //actually, I should use the value read from head since it sometimes shows up as .svg.
                 ImageGeneratorApiType.GptImage1 => ".png",
+                ImageGeneratorApiType.GoogleGemini => ".png",
                 _ => throw new ArgumentException("Unknown image generator type while picking file extension:", nameof(generator))
             };
         }

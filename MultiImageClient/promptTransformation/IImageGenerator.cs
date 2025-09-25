@@ -17,9 +17,7 @@ namespace MultiImageClient
     /// </summary>
     public interface IImageGenerator
     {
-        public abstract Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails);
-
-        /// when this jobspec is run, how should it be mapped to the filename?
+        
         public abstract string GetFilenamePart(PromptDetails pd);
 
         /// return just the parts on the right, we know everything else.
@@ -30,5 +28,10 @@ namespace MultiImageClient
         
         /// I suppose we should tell/show users how much images cost.
         public abstract decimal GetCost();
+
+        public abstract Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails);
+
+        /// when this jobspec is run, how should it be mapped to the filename?
     }
 }
+
