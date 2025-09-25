@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
-
     public class Dalle3Generator : IImageGenerator
     {
         private SemaphoreSlim _dalle3Semaphore;

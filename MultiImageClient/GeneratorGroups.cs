@@ -53,8 +53,13 @@ namespace MultiImageClient
             var gptimage1_1 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.high, _stats, "");
             var gptimage1_2 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.auto, _stats, "");
 
+            //var google_nano = new GoogleGenerator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "nano-banana", "gemini-2.5-flash-image");
+            //var google_flash = new GoogleGenerator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "flash", "gemini-1.5-flash");
+
             //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, bfl3, recraft6, ideogram4, };
             //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
+
+            // Using other working generators instead
             var myGenerators = new List<IImageGenerator>() { gptimage1_1, gptimage1_2, ideogram4, ideogram3, dalle3, bfl2, bfl3, recraft8, recraft9 };
             return myGenerators;
         }
