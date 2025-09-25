@@ -59,14 +59,13 @@ namespace MultiImageClient
             //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, bfl3, recraft6, ideogram4, };
             //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
 
-            // Using other working generators instead
-            //var myGenerators = new List<IImageGenerator>() { gptimage1_1, gptimage1_2, ideogram4, ideogram3, dalle3, bfl2, bfl3, recraft8, recraft9 };
-            var goog1 = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats);
-            var goog3 = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats, 
-                                                    location: _settings.GoogleCloudLocation, 
+            var google_banana = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats);
+            var googleimagen = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats,
+                                                    location: _settings.GoogleCloudLocation,
                                                     projectId: _settings.GoogleCloudProjectId,
                                                     googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath);
-            var myGenerators = new List<IImageGenerator>() { goog3 };
+            var myGenerators = new List<IImageGenerator>() { gptimage1_1, gptimage1_2, ideogram4, ideogram3, dalle3, bfl2, bfl3, recraft8, recraft9, google_banana, googleimagen };
+
             return myGenerators;
         }
 

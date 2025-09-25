@@ -27,6 +27,8 @@ namespace MultiImageClient
         private OpenAIGPTImageOneQuality _quality;
         private string _name;
 
+        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GptImage1;
+
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))
@@ -184,11 +186,12 @@ namespace MultiImageClient
                 using var doc = JsonDocument.Parse(json);
                 var qq = doc.RootElement.GetProperty("data");
                 var ll = qq.GetArrayLength();
-                var b64s = new List<string>();
+                var b64s = new List<CreatedBase64Image>();
                 foreach (var el in qq.EnumerateArray())
                 {
                     var b64 = el.GetProperty("b64_json").GetString();
-                    b64s.Add(b64);
+                    var theGuy = new CreatedBase64Image { bytesBase64 = b64, newPrompt = "" };
+                    b64s.Add(theGuy);
                 }
 
 

@@ -18,6 +18,8 @@ namespace MultiImageClient
         private string _name;
         private ImageGeneratorApiType _apiType;
 
+        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GoogleNanoBanana;
+
         public GoogleGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency,
             MultiClientRunStats stats, string name = "")
         {
@@ -108,30 +110,30 @@ namespace MultiImageClient
                 };
                 request.Headers.Add("x-goog-api-key", _apiKey);
 
-              
+
                 var response = await _httpClient.SendAsync(request);
                 var responseContent = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorMessage = $"Google Gemini API error: {response.StatusCode} - {responseContent}";
-                    return new TaskProcessResult 
-                    { 
-                        IsSuccess = false, 
-                        ErrorMessage = errorMessage, 
-                        PromptDetails = promptDetails, 
-                        ImageGenerator = GetImageGeneratorType(), 
-                        ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
+                    return new TaskProcessResult
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = errorMessage,
+                        PromptDetails = promptDetails,
+                        ImageGenerator = GetImageGeneratorType(),
+                        ImageGeneratorDescription = generator.GetGeneratorSpecPart()
                     };
                 }
 
                 // Parse Gemini native image generation response
                 var responseData = JsonSerializer.Deserialize<GeminiGenerateContentResponse>(responseContent);
-                
+
                 if (responseData?.candidates?.Length > 0)
                 {
-                    var base64Images = new List<string>();
-                    
+                    var base64Images = new List<CreatedBase64Image>();
+
                     foreach (var candidate in responseData.candidates)
                     {
                         if (candidate?.content?.parts != null)
@@ -141,51 +143,57 @@ namespace MultiImageClient
                                 // Check for image data in inline_data
                                 if (part.inlineData != null && !string.IsNullOrEmpty(part.inlineData.data))
                                 {
-                                    base64Images.Add(part.inlineData.data);
+                                    var bd = new CreatedBase64Image
+                                    {
+                                        bytesBase64 = part.inlineData.data,
+                                        newPrompt = promptDetails.Prompt
+                                    };
+                                    base64Images.Add(bd);
                                 }
                                 // Log any text responses for debugging
                                 else if (!string.IsNullOrEmpty(part.text))
                                 {
                                     Console.WriteLine($"Gemini text response: {part.text}");
+                                    throw new Exception("qq");
                                 }
                             }
                         }
                     }
-                    
+
                     if (base64Images.Count > 0)
                     {
-                        return new TaskProcessResult 
-                        { 
-                            IsSuccess = true, 
+                        return new TaskProcessResult
+                        {
+                            IsSuccess = true,
                             Base64ImageDatas = base64Images,
                             ContentType = "image/png",
-                            ErrorMessage = "", 
-                            PromptDetails = promptDetails, 
-                            ImageGenerator = GetImageGeneratorType(), 
-                            ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
+                            ErrorMessage = "",
+                            PromptDetails = promptDetails,
+                            ImageGenerator = GetImageGeneratorType(),
+                            ImageGeneratorDescription = generator.GetGeneratorSpecPart()
                         };
                     }
                 }
 
-                return new TaskProcessResult 
-                { 
-                    IsSuccess = false, 
-                    ErrorMessage = "No image data returned from Google Gemini API", 
-                    PromptDetails = promptDetails, 
-                    ImageGenerator = GetImageGeneratorType(), 
-                    ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
+                return new TaskProcessResult
+                {
+                    IsSuccess = false,
+                    ErrorMessage = "No image data returned from Google Gemini API",
+                    PromptDetails = promptDetails,
+                    ImageGenerator = GetImageGeneratorType(),
+                    ImageGeneratorDescription = generator.GetGeneratorSpecPart()
                 };
             }
             catch (Exception ex)
             {
                 var errorMessage = $"Google Imagen Generator error: {ex.Message}";
-                return new TaskProcessResult 
-                { 
-                    IsSuccess = false, 
-                    ErrorMessage = errorMessage, 
-                    PromptDetails = promptDetails, 
-                    ImageGenerator = GetImageGeneratorType(), 
-                    ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
+                return new TaskProcessResult
+                {
+                    IsSuccess = false,
+                    ErrorMessage = errorMessage,
+                    PromptDetails = promptDetails,
+                    ImageGenerator = GetImageGeneratorType(),
+                    ImageGeneratorDescription = generator.GetGeneratorSpecPart()
                 };
             }
             finally
@@ -196,7 +204,7 @@ namespace MultiImageClient
 
         private ImageGeneratorApiType GetImageGeneratorType()
         {
-            return _apiType;            
+            return _apiType;
         }
 
         public void Dispose()

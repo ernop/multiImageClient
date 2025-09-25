@@ -28,18 +28,17 @@ namespace MultiImageClient
         }
 
 
-        public static string GenerateUniqueFilename(string generatorFilenamePart, TaskProcessResult result, string baseFolder, SaveType saveType)
+        public static string GenerateUniqueFilename(string generatorFilenamePart, int n, string contentType, string baseFolder, SaveType saveType)
         {
             var components = new List<string>() { };
 
             components.Add(DateTime.Now.ToString("yyyyMMddHHmmss"));
             components.Add(generatorFilenamePart);
+            components.Add($"img{n.ToString()}");
             
-            //components.Add(result.ImageGenerator.ToString());
-            
-            if (!string.IsNullOrEmpty(result.ContentType))
+            if (!string.IsNullOrEmpty(contentType))
             {
-                var ss = result.ContentType.ToString();
+                var ss = contentType.ToString();
                 if (ss.IndexOf('/') != -1)
                 {
                     var parts = ss.Split('/');
