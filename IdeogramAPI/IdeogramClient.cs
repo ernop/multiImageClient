@@ -42,5 +42,31 @@ namespace IdeogramAPIClient
             var generateResponse = JsonConvert.DeserializeObject<GenerateResponse>(content);
             return generateResponse;
         }        
+
+        public async Task<IdeogramDescribeResponse> DescribeImageAsync(IdeogramDescribeRequest request)
+        {
+            using (var formData = new MultipartFormDataContent())
+            {
+                var imageContent = new ByteArrayContent(request.ImageFile);
+                formData.Add(imageContent, "image_file", "image.png"); // Assuming image.png as a default filename
+
+                if (!string.IsNullOrEmpty(request.DescribeModelVersion))
+                {
+                    formData.Add(new StringContent(request.DescribeModelVersion), "describe_model_version");
+                }
+
+                var response = await _httpClient.PostAsync("/describe", formData);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {errorContent}");
+                }
+
+                var content = await response.Content.ReadAsStringAsync();
+                var describeResponse = JsonConvert.DeserializeObject<IdeogramDescribeResponse>(content);
+                return describeResponse;
+            }
+        }
     }
 }
