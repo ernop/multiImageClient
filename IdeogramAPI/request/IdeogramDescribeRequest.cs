@@ -7,6 +7,6 @@ namespace IdeogramAPIClient
     public class IdeogramDescribeRequest
     {
         public byte[] ImageFile { get; set; }
-        public string DescribeModelVersion { get; set; };
+        public string DescribeModelVersion { get; set; }
     }
 }

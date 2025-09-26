@@ -31,10 +31,13 @@ namespace MultiImageClient
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GoogleImagen4;
 
         public GoogleImagen4Generator(string apiKey, int maxConcurrency,
-            MultiClientRunStats stats, string name = "", string aspectRatio = "SQUARE", 
-            string safetyFilterLevel = "BLOCK_NONE", bool addWatermark = false,
-            string location = "us-central1", string projectId = "google-cloud-project-id",
-            string googleServiceAccountKeyPath = null)
+            MultiClientRunStats stats, string name, 
+            string aspectRatio, 
+            string safetyFilterLevel, 
+            string location, 
+            string projectId,
+            string googleServiceAccountKeyPath)
+
         {
             _apiKey = apiKey;
             _googleSemaphore = new SemaphoreSlim(maxConcurrency);
@@ -47,7 +50,6 @@ namespace MultiImageClient
                 _credential = GoogleCredential.FromFile(_googleServiceAccountKeyPath)
                     .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
             } else {
-                // Fallback to Application Default Credentials if path is not provided
                 _credential = GoogleCredential.GetApplicationDefault()
                     .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
             }
@@ -62,7 +64,6 @@ namespace MultiImageClient
             _stats = stats;
             _aspectRatio = aspectRatio;
             _safetyFilterLevel = safetyFilterLevel;
-            _addWatermark = addWatermark;
         }
 
         public string GetFilenamePart(PromptDetails pd)
@@ -115,8 +116,11 @@ namespace MultiImageClient
                             { "prompt", Google.Protobuf.WellKnownTypes.Value.ForString(promptDetails.Prompt) },
                             { "numberOfImages", Google.Protobuf.WellKnownTypes.Value.ForNumber(1) },
                             { "aspectRatio", Google.Protobuf.WellKnownTypes.Value.ForString(_aspectRatio) },
+                            { "enhancePrompt", Google.Protobuf.WellKnownTypes.Value.ForBool(true) },
+                            { "includeRaiReason", Google.Protobuf.WellKnownTypes.Value.ForBool(true) },
                             { "safetyFilterLevel", Google.Protobuf.WellKnownTypes.Value.ForString(_safetyFilterLevel) },
-                            { "personGeneration", Google.Protobuf.WellKnownTypes.Value.ForString("ALLOW_ADULT") },
+                            { "safetySetting", Google.Protobuf.WellKnownTypes.Value.ForString("block_only_high") },
+                            { "personGeneration", Google.Protobuf.WellKnownTypes.Value.ForString("ALLOW_ALL") },
                             { "addWatermark", Google.Protobuf.WellKnownTypes.Value.ForBool(_addWatermark) }
                         }
                     }
@@ -138,33 +142,33 @@ namespace MultiImageClient
                 if (response?.Predictions != null && response.Predictions.Any())
                 {
                     foreach (var prediction in response.Predictions)
-                    {
-                        if (prediction?.StructValue?.Fields != null)
                         {
-                            var predictionFields = prediction.StructValue.Fields;
-                            if (predictionFields.ContainsKey("bytesBase64Encoded") && predictionFields.ContainsKey("mimeType"))
+                            if (prediction?.StructValue?.Fields != null)
                             {
-                                var imageData = predictionFields["bytesBase64Encoded"].StringValue;
-                                var newPrompt = predictionFields["prompt"].StringValue;
-                                var currentMimeType = predictionFields["mimeType"].StringValue;
-
-                                if (!string.IsNullOrEmpty(imageData))
+                                var predictionFields = prediction.StructValue.Fields;
+                                if (predictionFields.ContainsKey("bytesBase64Encoded") && predictionFields.ContainsKey("mimeType"))
                                 {
-                                    var bd = new CreatedBase64Image
-                                    {
-                                        bytesBase64= imageData,
-                                        newPrompt = newPrompt,
-                                    };
+                                    var imageData = predictionFields["bytesBase64Encoded"].StringValue;
+                                    var newPrompt = predictionFields["prompt"].StringValue;
+                                    var currentMimeType = predictionFields["mimeType"].StringValue;
 
-                                    base64Images.Add(bd);
-                                    if (!string.IsNullOrEmpty(currentMimeType) && (commonMimeType == "image/png")) 
+                                    if (!string.IsNullOrEmpty(imageData))
                                     {
-                                        commonMimeType = currentMimeType; // Use the first valid mime type found if default
+                                        var bd = new CreatedBase64Image
+                                        {
+                                            bytesBase64 = imageData,
+                                            newPrompt = newPrompt,
+                                        };
+
+                                        base64Images.Add(bd);
+                                        if (!string.IsNullOrEmpty(currentMimeType) && (commonMimeType == "image/png"))
+                                        {
+                                            commonMimeType = currentMimeType; // Use the first valid mime type found if default
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
                 }
 
                 if (base64Images.Count == 0)
