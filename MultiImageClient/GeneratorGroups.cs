@@ -51,7 +51,7 @@ namespace MultiImageClient
             var bfl3 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, _settings.BFLApiKey, _concurrency, "3:2", true, 1024, 1024, _stats, "");
 
             var gptimage1_1 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.high, _stats, "");
-            var gptimage1_2 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "high", OpenAIGPTImageOneQuality.auto, _stats, "");
+            var gptimage1_2 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.auto, _stats, "");
 
             //var google_nano = new GoogleGenerator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "nano-banana", "gemini-2.5-flash-image");
             //var google_flash = new GoogleGenerator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "flash", "gemini-1.5-flash");

@@ -41,15 +41,15 @@ namespace MultiImageClient
                 var usingSubstyle = "";
                 if (_style == RecraftStyle.digital_illustration)
                 {
-                    usingSubstyle = _substyleDigital.ToString();
+                    usingSubstyle = "\n" + _substyleDigital.ToString();
                 }
                 else if (_style == RecraftStyle.realistic_image)
                 {
-                    usingSubstyle = _substyleRealistic.ToString();
+                    usingSubstyle = "\n" + _substyleRealistic.ToString();
                 }
                 else if (_style == RecraftStyle.vector_illustration)
                 {
-                    usingSubstyle = _substyleVector.ToString();
+                    usingSubstyle = "\n"+_substyleVector.ToString();
                 }
                 else if (_style == RecraftStyle.any)
                 {
@@ -60,7 +60,7 @@ namespace MultiImageClient
                     throw new Exception("x");
                 }
                 var alpart = "";
-                if (_artistic_level != "0")
+                if (!string.IsNullOrEmpty(_artistic_level) && _artistic_level != "0" )
                 {
                     alpart = $"\nartistic level {_artistic_level}";
                 }
@@ -236,7 +236,7 @@ namespace MultiImageClient
                 case "vector_illustration":
                     return $"{nameof(RecraftStyle.vector_illustration)} - {substyle}";
                 case "any":
-                    return "Any Style";
+                    return "Any";
                 default:
                     return "Unknown";
             }

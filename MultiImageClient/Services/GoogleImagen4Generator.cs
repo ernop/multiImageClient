@@ -80,7 +80,7 @@ namespace MultiImageClient
         public List<string> GetRightParts()
         {
             var namePart = string.IsNullOrEmpty(_name) ? "" : _name;
-            return new List<string> { "google", "imagen4", namePart };
+            return new List<string> { "imagen4", namePart };
         }
 
         public string GetGeneratorSpecPart()

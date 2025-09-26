@@ -55,10 +55,13 @@ namespace MultiImageClient
             var promptSource = new ReadAllPromptsFromFile(settings, "");
             
             var claudeService = new ClaudeService(settings.AnthropicApiKey, concurrency, stats);
-            var claudeStep = new ClaudeRewriteStep("Please take the following topic and make it specific; cast the die, take a chance, and expand it to a longer, detailed, specific description of a scene with all the elements of it described. Describe how the thing looks, feels, appears, etc in high detail. Put the most important aspects first such as the overall description, then continue by expanding that and adding more detail, structure, theme. Be specific in whatevr you do. If it seems appropriate, if a man appears don't just say 'the man', but instead actually give him a name, traits, personality, etc. The goal is to deeply expand the world envisioned by the original topic creator. Overall, follow the implied theem and goals of the creator, but just expand it into much more specifics and concreate actualization. Never use phrases or words like 'diverse', 'vibrant' etc. Be very concrete and precise in your descriptions, similar to how ansel adams describing a new treasured species of bird would - detailed, caring, dense, clear, sharp, speculative and never wordy or fluffy. every single word you say must be relevant to the goal of increasing the info you share about this image or sitaution or scene. Be direct and clear.", "", claudeService, 0.4m, stats);
+            //var claudeStep = new ClaudeRewriteStep("Please take the following topic and make it specific; cast the die, take a chance, and expand it to a longer, detailed, specific description of a scene with all the elements of it described. Describe how the thing looks, feels, appears, etc in high detail. Put the most important aspects first such as the overall description, then continue by expanding that and adding more detail, structure, theme. Be specific in whatevr you do. If it seems appropriate, if a man appears don't just say 'the man', but instead actually give him a name, traits, personality, etc. The goal is to deeply expand the world envisioned by the original topic creator. Overall, follow the implied theem and goals of the creator, but just expand it into much more specifics and concreate actualization. Never use phrases or words like 'diverse', 'vibrant' etc. Be very concrete and precise in your descriptions, similar to how ansel adams describing a new treasured species of bird would - detailed, caring, dense, clear, sharp, speculative and never wordy or fluffy. every single word you say must be relevant to the goal of increasing the info you share about this image or sitaution or scene. Be direct and clear.", "", claudeService, 0.4m, stats);
 
-            //var steps = new List<ITransformationStep>() { claudeStep};
-            var steps = new List<ITransformationStep>() {  };
+            var claudeStep = new ClaudeRewriteStep("Please take the following idea and expand it into a list of 10 specific items describing material, color, mood, tone, position in the image, and symbolic purpose", "", claudeService, 0.4m, stats);
+
+
+            var steps = new List<ITransformationStep>() { claudeStep};
+            //var steps = new List<ITransformationStep>() {  };
 
 
             /// ------------------- MAKING SERVICES ----------------------------
@@ -97,6 +100,7 @@ namespace MultiImageClient
 
                 if (promptString.Prompt.Length == 0)
                 {
+                    Console.WriteLine("no leng?");
                     continue;
                 }
 
