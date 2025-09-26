@@ -172,7 +172,7 @@ namespace MultiImageClient
                     {
                         //there is only actually one ever.
                         var returnedPrompt = imageObject.Prompt;
-                        if (returnedPrompt != promptDetails.Prompt)
+                        if (returnedPrompt != promptDetails.Prompt && returnedPrompt.Replace("  ", " ") != promptDetails.Prompt.Replace("  ", " "))
                         {
                             //Ideogram replaced the prompt.
                             promptDetails.ReplacePrompt(returnedPrompt, returnedPrompt, TransformationType.IdeogramRewrite);
