@@ -6,9 +6,16 @@ using Newtonsoft.Json.Linq;
 
 namespace MultiImageClient
 {
+    
+    /// <summary>
+    ///  Note: this file is for general confiruation for any use of the system.  Don't put things like "preferredImageOutputType" gif/png/etc here
+    /// because those are things that might vary over time.  This is only for global true stuff that'll be set one time and kinda done from that point.
+    /// If you have specific stuff like layout type horizontal/vertical etc, that should just be inlined in the way we create the generator at runtime
+    /// with edits in the program.cs file which is used by the person making the images.
+    /// </summary>
     public class Settings
     {
-        public string GoogleCloudProjectId { get; set; } 
+        public string GoogleCloudProjectId { get; set; }
         /// ffs google
         public string GoogleServiceAccountKeyPath { get; set; }
 
@@ -16,8 +23,8 @@ namespace MultiImageClient
         public string GoogleCloudApiKey { get; set; }
         public string IdeogramApiKey { get; set; }
         public string OpenAIApiKey { get; set; }
-        public string BFLApiKey {get;set;}
-        public string AnthropicApiKey{ get; set; }
+        public string BFLApiKey { get; set; }
+        public string AnthropicApiKey { get; set; }
         public string RecraftApiKey { get; set; }
         public string GoogleGeminiApiKey { get; set; }
         public string GoogleCloudLocation { get; set; }
@@ -26,9 +33,8 @@ namespace MultiImageClient
         public string LogFilePath { get; set; }
         public bool SaveJsonLog { get; set; }
         /// save just image.jpg or image.png etc.
-        
+
         public string ImageDownloadBaseFolder { get; set; }
-        
         /// unused yet we always do RIGHT
         public string AnnotationSide { get; set; } = "bottom";
 
@@ -53,7 +59,7 @@ namespace MultiImageClient
 
         public void Validate()
         {
-               if (string.IsNullOrWhiteSpace(LogFilePath))
+            if (string.IsNullOrWhiteSpace(LogFilePath))
             {
                 throw new ArgumentException("LogFilePath is required");
             }

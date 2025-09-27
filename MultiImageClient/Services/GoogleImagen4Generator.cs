@@ -22,7 +22,6 @@ namespace MultiImageClient
         private string _name;
         private string _aspectRatio;
         private string _safetyFilterLevel;
-        private bool _addWatermark;
         private string _location;
         private string _projectId;
         private string _googleServiceAccountKeyPath;
@@ -121,7 +120,7 @@ namespace MultiImageClient
                             { "safetyFilterLevel", Google.Protobuf.WellKnownTypes.Value.ForString(_safetyFilterLevel) },
                             { "safetySetting", Google.Protobuf.WellKnownTypes.Value.ForString("block_only_high") },
                             { "personGeneration", Google.Protobuf.WellKnownTypes.Value.ForString("ALLOW_ALL") },
-                            { "addWatermark", Google.Protobuf.WellKnownTypes.Value.ForBool(_addWatermark) }
+                            { "addWatermark", Google.Protobuf.WellKnownTypes.Value.ForBool(false) }
                         }
                     }
                 };
