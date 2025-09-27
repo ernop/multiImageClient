@@ -13,5 +13,6 @@ namespace MultiImageClient
         BFLv11Ultra = 7,
         GoogleNanoBanana = 8,
         GoogleImagen4 = 9,
+        IdeogramV3 = 10,
     }
 }
