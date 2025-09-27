@@ -46,6 +46,7 @@ namespace MultiImageClient
             var ideogram2 = new IdeogramGenerator(_settings.IdeogramApiKey, _concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_1_1, null, "", IdeogramModel.V_2_TURBO, _stats, "");
             var ideogram3 = new IdeogramGenerator(_settings.IdeogramApiKey, _concurrency, IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_1_1, null, "", IdeogramModel.V_2A, _stats, "");
             var ideogram4 = new IdeogramGenerator(_settings.IdeogramApiKey, _concurrency, IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_4_3, null, "", IdeogramModel.V_2A_TURBO, _stats, "");
+            var ideogramV3 = new IdeogramV3Generator(_settings.IdeogramApiKey, _concurrency, IdeogramV3StyleType.AUTO, IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_16_10, IdeogramRenderingSpeed.QUALITY, "", _stats, "" );
             var bfl1 = new BFLGenerator(ImageGeneratorApiType.BFLv11, _settings.BFLApiKey, _concurrency, "3:2", false, 1024, 1024, _stats, "");
             var bfl2 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, _settings.BFLApiKey, _concurrency, "1:1", false, 1024, 1024, _stats, "");
             var bfl3 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, _settings.BFLApiKey, _concurrency, "3:2", true, 1024, 1024, _stats, "");
@@ -59,13 +60,17 @@ namespace MultiImageClient
             var google_banana = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats);
             var googleimagen = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "", "2:5", "BLOCK_NONE", location: _settings.GoogleCloudLocation, projectId: _settings.GoogleCloudProjectId, googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath);
             //recraft8, recraft9, 
-            var myGenerators = new List<IImageGenerator>() { gptimage1_1, ideogram3, ideogram4, recraft_any,dalle3,bfl1, bfl2, bfl3, google_banana, googleimagen, recraft_any };
-            //var myGenerators = new List<IImageGenerator>() { googleimagen};
+
+            var myGenerators = new List<IImageGenerator>() { };
+            myGenerators = new List<IImageGenerator>() { dalle3, ideogram1, ideogram2, ideogram3, ideogram4, ideogramV3, recraft1, recraft2, recraft3, recraft4, recraft5, bfl1, bfl2, bfl3, gptimage1_1, gptimage1_2, google_banana, googleimagen };
+            myGenerators = new List<IImageGenerator>() { gptimage1_1, ideogram3, ideogram4, ideogramV3, recraft_any, dalle3, bfl1, bfl2, bfl3, google_banana, googleimagen, recraft_any };
+
+            //myGenerators = new List<IImageGenerator>() { ideogramV3 };
 
             return myGenerators;
         }
 
-        public IEnumerable<IImageGenerator> GetAllStylesOfRecraft()
+            public IEnumerable<IImageGenerator> GetAllStylesOfRecraft()
         {
             var res = new List<IImageGenerator>();
             var styles = Enum.GetValues(typeof(RecraftStyle)).Cast<RecraftStyle>().ToList();

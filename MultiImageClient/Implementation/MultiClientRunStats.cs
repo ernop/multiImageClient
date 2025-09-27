@@ -10,7 +10,9 @@ namespace MultiImageClient
         public int SavedJsonLogCount { get; set; }
         
         public int IdeogramRequestCount { get; set; }
+        public int IdeogramV3RequestCount { get; set; }
         public int IdeogramRefusedCount { get; set; }
+        public int IdeogramV3RefusedCount { get; set; }
         
         public int ClaudeRequestCount { get; set; }
         public int ClaudeWouldRefuseCount { get; set; }
@@ -54,8 +56,12 @@ namespace MultiImageClient
 
             if (IdeogramRequestCount > 0)
                 nonZeroStats.Add($"Ideogram Requests:{IdeogramRequestCount}");
+            if (IdeogramV3RequestCount > 0)
+                nonZeroStats.Add($"Ideogram v3 Requests:{IdeogramV3RequestCount}");
             if (IdeogramRefusedCount > 0)
                 nonZeroStats.Add($"Ideogram Refused:{IdeogramRefusedCount}");
+            if (IdeogramV3RefusedCount > 0)
+                nonZeroStats.Add($"Ideogram v3 Refused:{IdeogramV3RefusedCount}");
 
             if (Dalle3RequestCount > 0)
                 nonZeroStats.Add($"Dalle3 Requests:{Dalle3RequestCount}");

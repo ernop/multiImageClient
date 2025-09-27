@@ -20,6 +20,7 @@ namespace MultiImageClient
                 ImageGeneratorApiType.GptImage1 => ".png",
                 ImageGeneratorApiType.GoogleNanoBanana => ".png",
                 ImageGeneratorApiType.GoogleImagen4 => ".png",
+                ImageGeneratorApiType.IdeogramV3 => ".png",
                 _ => throw new ArgumentException("Unknown image generator type while picking file extension:", nameof(generator))
             };
         }
