@@ -1,16 +1,20 @@
-﻿using IdeogramAPIClient;
+﻿//using GenerativeAI.Types.RagEngine;
 
-using OpenAI.Images;
+using IdeogramAPIClient;
 
-using RecraftAPIClient;
+//using OpenAI.Images;
+
+//using RecraftAPIClient;
 
 using System;
-using System.Collections.Generic;
-using System.Drawing.Printing;
+//using System.Collections.Generic;
+//using System.Diagnostics.Metrics;
+//using System.Drawing.Printing;
 using System.IO;
-using System.Linq;
-using System.Runtime;
-using System.Security.Cryptography.X509Certificates;
+//using System.Linq;
+//using System.Reflection.Metadata.Ecma335;
+//using System.Runtime;
+//using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -50,131 +54,49 @@ namespace MultiImageClient
             var settings = Settings.LoadFromFile(settingsFilePath);
             var concurrency = 1;
             var stats = new MultiClientRunStats();
-            var getter = new GeneratorGroups(settings, concurrency, stats);
+
 
             var ideogramClient = new IdeogramClient(settings.IdeogramApiKey);
             var promptSource = new ReadAllPromptsFromFile(settings, "");
 
-            var claudeService = new ClaudeService(settings.AnthropicApiKey, concurrency, stats);
+
             //var claudeStep = new ClaudeRewriteStep("Please take the following topic and make it specific; cast the die, take a chance, and expand it to a longer, detailed, specific description of a scene with all the elements of it described. Describe how the thing looks, feels, appears, etc in high detail. Put the most important aspects first such as the overall description, then continue by expanding that and adding more detail, structure, theme. Be specific in whatevr you do. If it seems appropriate, if a man appears don't just say 'the man', but instead actually give him a name, traits, personality, etc. The goal is to deeply expand the world envisioned by the original topic creator. Overall, follow the implied theem and goals of the creator, but just expand it into much more specifics and concreate actualization. Never use phrases or words like 'diverse', 'vibrant' etc. Be very concrete and precise in your descriptions, similar to how ansel adams describing a new treasured species of bird would - detailed, caring, dense, clear, sharp, speculative and never wordy or fluffy. every single word you say must be relevant to the goal of increasing the info you share about this image or sitaution or scene. Be direct and clear.", "", claudeService, 0.4m, stats);
 
-            var claudeStep = new ClaudeRewriteStep("Please take the following idea and expand it into a list of 10 specific items describing material, color, mood, tone, position in the image, and symbolic purpose of whatever the following prompt is about. the point is, intensify and make things very specific including LAYOUT and style and color andappearance and everything an artist would need. create and emit lots of dense, unusual, specific, random, dense acronym-filled sentences", "", claudeService, 0.4m, stats);
 
 
-            //var steps = new List<ITransformationStep>() { claudeStep };
-            var steps = new List<ITransformationStep>() {  };
+            var descSteps = "generate a helpful set of instructions for the describer telling them what I need: I need what the image is like, its format (photo, digital art, painting etc), the colors, lighting, textures of everything. Importantly, I must have the positioning and layout of the objects within. I must have all details about text, font, style, if any is present. I need full details for a complete reproduction of the image. AND I need emotions if any. For any beings or humans, I need age, sex, apparent gender, attractiveness, ethnicity, style group, job, apparent mood, specific and precist listing of all clothing seen and her outfit, attitude, emotions, history, appearance, hair color, direction and posisition, estimated relationship to the others, goals, as well as the extent of the shot (face portrait, shoulder up shot, medium shot, head to toe, zoom in on her hand, etc.) etc. Do NOT skimp on this part.  When you reply, directly start the description and output no newlines, just the information. You do not need to use full sentences unless you feel it would be helpful; include everything starting generally and with the overall image info and layout, then proceeding to deeper and deeper fine details. also include the overall emotional effect and feeling of the image";
+
 
 
             /// ------------------- MAKING SERVICES ----------------------------
 
 
-            var imageManager = new ImageManager(settings, stats);
+
+
 
             /// -----------------------  APPLYING PROMPTS TO SERVICES ------------------------
-            var generators = getter.GetAll();
-            //var generators = getter.GetAllStylesOfRecraft();
 
-
-            var allTasks = new List<Task>();
-
-            foreach (var promptString in promptSource.Prompts)
+            while (true)
             {
-                Logger.Log($"\n--- Processing prompt: {promptString.Prompt}");
-
-                Console.WriteLine($"Do you accept this? y for yes, n for no go to next, or type the prompt you want directly and hit enter.");
-                var val = Console.ReadLine();
-                if (val == "y")
+                Console.WriteLine($"What do you want to do: \n\n1. Batch Workflow (make a bunch images for each prompt you choose or write yourself)\r\n2. Image2desc2image take an image, then describe it, then batch that out into a bunch of images again.");
+                var val = Console.ReadLine().Trim();
+                if (val == "1")
                 {
-
+                    var bw = new BatchWorkflow();
+                    await bw.RunAsync(promptSource, settings, concurrency, stats);
+                    break;
                 }
-                else if (val == "n")
+                else if (val == "2")
                 {
-                    continue;
+                    var rw = new RoundTripWorkflow();
+                    await rw.RunAsync(settings, concurrency, stats);
+                    break;
                 }
                 else
                 {
-                    var usingVal = val.Trim();
-                    PromptLogger.LogPrompt(usingVal);
-                    promptString.UndoLastStep();
-                    promptString.ReplacePrompt(usingVal, "explanation", TransformationType.InitialPrompt);
-                }
-
-                if (promptString.Prompt.Length == 0)
-                {
-                    Console.WriteLine("no leng?");
-                    continue;
-                }
-
-                foreach (var step in steps)
-                {
-                    var res = await step.DoTransformation(promptString);
-                    if (!res)
-                    {
-                        Logger.Log($"\tStep {step.Name} failed: {promptString.Show()}");
-                        continue;
-                    }
-                    Logger.Log($"\tStep:{step.Name} => {promptString.Show()}");
-                }
-
-                var ii = 0;
-                while (ii < 1)
-                {
-                    // Create tasks for all generators for this prompt
-                    var generatorTasks = generators.Select(async generator =>
-                    {
-                        PromptDetails theCopy = null;
-
-                        try
-                        {
-                            theCopy = promptString.Copy();
-
-                            var result = await generator.ProcessPromptAsync(generator, theCopy);
-                            await imageManager.ProcessAndSaveAsync(result, generator);
-                            Logger.Log($"Finished {generator.GetType().Name} in {result.CreateTotalMs + result.DownloadTotalMs} ms, {result.PromptDetails.Show()}");
-
-                            return result;
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Log($"Task faulted for {generator.GetType().Name}: {ex.Message}");
-
-                            var res = new TaskProcessResult
-                            {
-                                IsSuccess = false,
-                                ErrorMessage = ex.Message,
-                                PromptDetails = theCopy
-                            };
-
-                            return res;
-                        }
-                    }).ToArray();
-
-                    allTasks.AddRange(generatorTasks);
-                    ii++;
-
-                    stats.PrintStats();
-                    var results = await Task.WhenAll(generatorTasks);
-
-                    try
-                    {
-                        var res = await ImageSaving.CombineImagesAsync(results, promptString.Prompt, settings, CombinedImageLayout.Square);
-                        Logger.Log($"Combined images saved to: {res}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Log($"Failed to combine images: {ex.Message}");
-                    }
+                    Console.WriteLine("not recognized.)");
                 }
             }
-
-            // Wait for all tasks
-            // while (allTasks.Any(t => !t.IsCompleted))
-            // {
-            //     var completed = allTasks.Count(t => t.IsCompleted);
-            //     var remaining = allTasks.Count - completed;
-            //     Logger.Log($"Status: {completed}/{allTasks.Count} completed, {remaining} remaining...");
-            //     await Task.WhenAny(Task.Delay(5000), Task.WhenAll(allTasks));
-            // }
         }
-    }   
+    }
 }
