@@ -14,6 +14,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
+using System.Diagnostics;
 
 
 namespace MultiImageClient
@@ -258,45 +259,117 @@ namespace MultiImageClient
                                  .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             return imageInfo;
         }
-
-
-        public static async Task<string> CombineImagesHorizontallyAsync(IEnumerable<TaskProcessResult> results, string prompt, Settings settings)
+        public static async Task<string> CombineImagesAsync(IEnumerable<TaskProcessResult> results, string prompt, Settings settings, CombinedImageLayout layout)
         {
-
-            // --- fonts ------------------------------------------------------
             var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
             var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
 
-            // --- load images (incl. placeholders for failures) -------------
             var loadedImages = LoadResultImages(results, PlaceholderWidth).ToList();
 
-            // --- measure ----------------------------------------------------
+            var outputPath = await SaveCombinedImage(loadedImages, prompt, settings, generatorFont, promptFont, layout);
+
+            foreach (var li in loadedImages)
+            {
+                li.Image?.Dispose();
+            }
+
+            ImageSaving.OpenImageWithDefaultApplication(outputPath);
+
+            return outputPath;
+        }
+
+        public static Task<string> CombineImagesHorizontallyAsync(IEnumerable<TaskProcessResult> results, string prompt, Settings settings)
+        {
+            return CombineImagesAsync(results, prompt, settings, CombinedImageLayout.Horizontal);
+        }
+
+        private static async Task<string> SaveCombinedImage(List<LoadedImage> loadedImages, string prompt, Settings settings, Font generatorFont, Font promptFont, CombinedImageLayout layout)
+        {
+            using var layoutImage = RenderImageLayout(loadedImages, generatorFont, layout);
+            using var promptPanel = RenderPromptPanel(layoutImage.Width, prompt, promptFont);
+            using var combinedImage = ComposeCombinedImage(layoutImage, promptPanel);
+
+            return await SaveCombinedImageToDisk(combinedImage, prompt, settings);
+        }
+
+        private static Image<Rgba32> RenderImageLayout(List<LoadedImage> loadedImages, Font generatorFont, CombinedImageLayout layout)
+        {
+            if (loadedImages.Count == 0)
+            {
+                return RenderEmptyLayout();
+            }
+
+            return layout switch
+            {
+                CombinedImageLayout.Horizontal => RenderHorizontalLayout(loadedImages, generatorFont),
+                CombinedImageLayout.Square => RenderSquareLayout(loadedImages, generatorFont),
+                _ => throw new ArgumentOutOfRangeException(nameof(layout), layout, "Unsupported combined image layout")
+            };
+        }
+
+        private static Image<Rgba32> RenderPromptPanel(int width, string prompt, Font promptFont)
+        {
+            width = Math.Max(width, PlaceholderWidth);
+
+            int wrappingWidth = Math.Max(1, width - (UIConstants.Padding * 4));
+            int promptHeight = ImageUtils.MeasureTextHeight(prompt, promptFont, UIConstants.LineSpacing, wrappingWidth);
+            int topPadding = UIConstants.Padding * 3;
+            int bottomPadding = UIConstants.Padding * 2;
+            int totalHeight = topPadding + promptHeight + bottomPadding;
+
+            var promptPanel = ImageUtils.CreateStandardImage(width, totalHeight, UIConstants.White);
+
+            promptPanel.Mutate(ctx =>
+            {
+                var promptOpts = FontUtils.CreateTextOptions(promptFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
+                promptOpts.Origin = new PointF(UIConstants.Padding * 2, topPadding);
+                promptOpts.WrappingLength = wrappingWidth;
+
+                ctx.DrawTextStandard(promptOpts, prompt, UIConstants.Black);
+            });
+
+            return promptPanel;
+        }
+
+        private static Image<Rgba32> ComposeCombinedImage(Image<Rgba32> layoutImage, Image<Rgba32> promptPanel)
+        {
+            int totalHeight = layoutImage.Height + promptPanel.Height;
+            var combinedImage = ImageUtils.CreateStandardImage(layoutImage.Width, totalHeight, UIConstants.White);
+
+            combinedImage.Mutate(ctx =>
+            {
+                ctx.DrawImage(layoutImage, new Point(0, 0), 1f);
+                ctx.DrawImage(promptPanel, new Point(0, layoutImage.Height), 1f);
+            });
+
+            return combinedImage;
+        }
+
+        private static int MeasureSubtitleHeight(IEnumerable<LoadedImage> loadedImages, Font generatorFont)
+        {
+            return loadedImages
+                .Select(li => li.OriginalTaskProcessResult?.ImageGeneratorDescription ?? "missing")
+                .Select(label => ImageUtils.MeasureTextHeight(label, generatorFont, UIConstants.LineSpacing))
+                .DefaultIfEmpty(0)
+                .Max();
+        }
+
+        private static Image<Rgba32> RenderHorizontalLayout(List<LoadedImage> loadedImages, Font generatorFont)
+        {
             int totalWidth = loadedImages.Sum(img => img.Width);
-            int maxImageHeight = loadedImages.Where(i => i.Success)
-                                             .Select(i => i.Height)
+            totalWidth = Math.Max(totalWidth, PlaceholderWidth);
+
+            int maxImageHeight = loadedImages.Select(i => i.Height)
                                              .DefaultIfEmpty(PlaceholderWidth)
                                              .Max();
 
-            // height of status (generator) labels
-            int subtitleHeight = loadedImages
-                .Select(li => ImageUtils.MeasureTextHeight(
-                                  li.OriginalTaskProcessResult.ImageGeneratorDescription,
-                                  generatorFont,
-                                  UIConstants.LineSpacing))
-                .DefaultIfEmpty(0)
-                .Max();
+            int subtitleHeight = MeasureSubtitleHeight(loadedImages, generatorFont);
+            int subtitleBlockHeight = Math.Max(UIConstants.Padding * 2, subtitleHeight + (UIConstants.Padding * 2));
+            int totalHeight = maxImageHeight + subtitleBlockHeight;
 
-            // height of the prompt block (with wrapping)
-            int wrappingWidth = totalWidth - (UIConstants.Padding * 4);
-            int promptHeight = ImageUtils.MeasureTextHeight(prompt, promptFont, UIConstants.LineSpacing, wrappingWidth) + (UIConstants.Padding * 3);
-            int trailingHangdownHeight = UIConstants.Padding * 2;
+            var layoutImage = ImageUtils.CreateStandardImage(totalWidth, totalHeight, UIConstants.White);
 
-            int totalHeight = maxImageHeight + subtitleHeight + promptHeight + trailingHangdownHeight;
-
-            // --- render -----------------------------------------------------
-            using var combinedImage = ImageUtils.CreateStandardImage(totalWidth, totalHeight, UIConstants.White);
-
-            combinedImage.Mutate(ctx =>
+            layoutImage.Mutate(ctx =>
             {
                 int currentX = 0;
                 var labelOpts = FontUtils.CreateTextOptions(generatorFont, HorizontalAlignment.Center, VerticalAlignment.Top, UIConstants.LineSpacing);
@@ -310,33 +383,129 @@ namespace MultiImageClient
                     else
                     {
                         var rect = new RectangleF(currentX, 0, li.Width, maxImageHeight);
-                        ctx.DrawErrorPlaceholder(rect, li.OriginalTaskProcessResult.ErrorMessage, generatorFont);
+                        var errorText = li.OriginalTaskProcessResult?.ErrorMessage ?? "failed";
+                        ctx.DrawErrorPlaceholder(rect, errorText, generatorFont);
                     }
 
                     labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding);
 
-                    var labelColor = li.Success ? UIConstants.SuccessGreen
-                                                : UIConstants.ErrorRed;
-                    var labelText = li.OriginalTaskProcessResult.ImageGeneratorDescription ?? "missing";
+                    var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
+                    var labelText = li.OriginalTaskProcessResult?.ImageGeneratorDescription ?? "missing";
                     ctx.DrawTextStandard(labelOpts, labelText, labelColor);
 
                     currentX += li.Width;
                 }
-
-                // draw prompt
-                var promptOpts = FontUtils.CreateTextOptions(promptFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
-                promptOpts.Origin = new PointF(UIConstants.Padding * 2, maxImageHeight + subtitleHeight + (UIConstants.Padding * 3));
-                promptOpts.WrappingLength = wrappingWidth;
-
-                ctx.DrawTextStandard(promptOpts, prompt, UIConstants.Black);
             });
 
-            // --- save & clean up -------------------------------------------
-            var outputPath = await SaveCombinedImage(combinedImage, prompt, settings);
+            return layoutImage;
+        }
 
-            foreach (var li in loadedImages) { li.Image?.Dispose(); }
+        private static Image<Rgba32> RenderSquareLayout(List<LoadedImage> loadedImages, Font generatorFont)
+        {
+            int totalImages = loadedImages.Count;
 
-            return outputPath;
+            if (totalImages == 0)
+            {
+                return RenderEmptyLayout();
+            }
+
+            int columns = Math.Max(1, (int)Math.Ceiling(Math.Sqrt(totalImages)));
+            int rows = (int)Math.Ceiling(totalImages / (double)columns);
+
+            var columnWidths = new int[columns];
+            var rowHeights = new int[rows];
+
+            for (int index = 0; index < totalImages; index++)
+            {
+                var li = loadedImages[index];
+                int column = index % columns;
+                int row = index / columns;
+
+                columnWidths[column] = Math.Max(columnWidths[column], li.Width);
+                rowHeights[row] = Math.Max(rowHeights[row], li.Height);
+            }
+
+            int layoutWidth = Math.Max(columnWidths.Sum(), PlaceholderWidth);
+
+            var columnOffsets = new int[columns];
+            int xAccumulator = 0;
+            for (int col = 0; col < columns; col++)
+            {
+                columnOffsets[col] = xAccumulator;
+                xAccumulator += columnWidths[col];
+            }
+
+            int subtitleHeight = MeasureSubtitleHeight(loadedImages, generatorFont);
+            int subtitleBlockHeight = Math.Max(UIConstants.Padding * 2, subtitleHeight + (UIConstants.Padding * 2));
+            int layoutHeight = rowHeights.Sum() + (subtitleBlockHeight * rows);
+
+            var layoutImage = ImageUtils.CreateStandardImage(layoutWidth, layoutHeight, UIConstants.White);
+
+            layoutImage.Mutate(ctx =>
+            {
+                int currentY = 0;
+                var labelOpts = FontUtils.CreateTextOptions(generatorFont, HorizontalAlignment.Center, VerticalAlignment.Top, UIConstants.LineSpacing);
+                int imageIndex = 0;
+
+                for (int row = 0; row < rows; row++)
+                {
+                    int rowHeight = rowHeights[row];
+                    int labelY = currentY + rowHeight + UIConstants.Padding;
+
+                    for (int col = 0; col < columns; col++)
+                    {
+                        if (imageIndex >= totalImages)
+                        {
+                            break;
+                        }
+
+                        var li = loadedImages[imageIndex];
+                        int columnWidth = columnWidths[col];
+                        int columnX = columnOffsets[col];
+
+                        int imageX = columnX + Math.Max(0, (columnWidth - li.Width) / 2);
+                        int imageY = currentY;
+
+                        if (li.Success && li.Image != null)
+                        {
+                            ctx.DrawImage(li.Image, new Point(imageX, imageY), 1f);
+                        }
+                        else
+                        {
+                            var rect = new RectangleF(columnX, imageY, Math.Max(columnWidth, 1), Math.Max(rowHeight, 1));
+                            var errorText = li.OriginalTaskProcessResult?.ErrorMessage ?? "failed";
+                            ctx.DrawErrorPlaceholder(rect, errorText, generatorFont);
+                        }
+
+                        labelOpts.Origin = new PointF(columnX + Math.Max(columnWidth, 1) / 2f, labelY);
+
+                        var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
+                        var labelText = li.OriginalTaskProcessResult?.ImageGeneratorDescription ?? "missing";
+                        ctx.DrawTextStandard(labelOpts, labelText, labelColor);
+
+                        imageIndex++;
+                    }
+
+                    currentY += rowHeight + subtitleBlockHeight;
+                }
+            });
+
+            return layoutImage;
+        }
+
+        private static Image<Rgba32> RenderEmptyLayout()
+        {
+            var empty = ImageUtils.CreateStandardImage(PlaceholderWidth, PlaceholderWidth + (UIConstants.Padding * 2), UIConstants.White);
+
+            empty.Mutate(ctx =>
+            {
+                var font = FontUtils.CreateFont(LabelFontSize, FontStyle.Regular);
+                var opts = FontUtils.CreateTextOptions(font, HorizontalAlignment.Center, VerticalAlignment.Center, UIConstants.LineSpacing);
+                opts.Origin = new PointF(empty.Width / 2f, empty.Height / 2f);
+                ctx.DrawTextStandard(opts, "No images", UIConstants.ErrorRed);
+            });
+
+            return empty;
         }
 
         private static IEnumerable<LoadedImage> LoadResultImages(IEnumerable<TaskProcessResult> results, int placeholderWidth)
@@ -418,7 +587,7 @@ namespace MultiImageClient
             };
         }
 
-        private static async Task<string> SaveCombinedImage(Image<Rgba32> image, string prompt, Settings settings)
+        private static async Task<string> SaveCombinedImageToDisk(Image<Rgba32> image, string prompt, Settings settings)
         {
             string todayFolder = DateTime.Now.ToString("yyyy-MM-dd-dddd");
             string baseFolder = Path.Combine(settings.ImageDownloadBaseFolder, todayFolder, "Combined");
@@ -429,7 +598,6 @@ namespace MultiImageClient
             var safeFilename = FilenameGenerator.SanitizeFilename(baseFilename);
             var outputPath = Path.Combine(baseFolder, $"{safeFilename}.png");
 
-            // Ensure unique filename
             int counter = 1;
             while (File.Exists(outputPath))
             {
@@ -441,6 +609,29 @@ namespace MultiImageClient
             Logger.Log($"Combined image saved: {outputPath}");
 
             return outputPath;
+        }
+
+        /// <summary>
+        /// Opens an image file with the default application associated with its file type on the system.
+        /// </summary>
+        /// <param name="imagePath">The full path to the image file.</param>
+        public static void OpenImageWithDefaultApplication(string imagePath)
+        {
+            if (File.Exists(imagePath))
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(imagePath) { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error opening image {imagePath}: {ex.Message}");
+                }
+            }
+            else
+            {
+                Console.WriteLine($"Image file not found at {imagePath}");
+            }
         }
 
         private class LoadedImage

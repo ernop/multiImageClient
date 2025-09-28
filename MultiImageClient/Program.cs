@@ -61,8 +61,8 @@ namespace MultiImageClient
             var claudeStep = new ClaudeRewriteStep("Please take the following idea and expand it into a list of 10 specific items describing material, color, mood, tone, position in the image, and symbolic purpose of whatever the following prompt is about. the point is, intensify and make things very specific including LAYOUT and style and color andappearance and everything an artist would need. create and emit lots of dense, unusual, specific, random, dense acronym-filled sentences", "", claudeService, 0.4m, stats);
 
 
-            var steps = new List<ITransformationStep>() { claudeStep };
-            //var steps = new List<ITransformationStep>() {  };
+            //var steps = new List<ITransformationStep>() { claudeStep };
+            var steps = new List<ITransformationStep>() {  };
 
 
             /// ------------------- MAKING SERVICES ----------------------------
@@ -176,5 +176,5 @@ namespace MultiImageClient
             //     await Task.WhenAny(Task.Delay(5000), Task.WhenAll(allTasks));
             // }
         }
-    }  
+    }   
 }
