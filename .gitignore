@@ -10,3 +10,4 @@
 /MultiImageClient/claude-bad.txt
 /djangoManager/imageMaker/logs/django.log
 gen-lang*.json
+magic*.png
