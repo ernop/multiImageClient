@@ -90,10 +90,16 @@ namespace MultiImageClient
                     Size = GeneratedImageSize.W1024xH1024
                 };
 
-                var res = await _openAIImageClient.GenerateImageAsync(promptDetails.Prompt, det);
+                var cappedSizePrompt = promptDetails.Prompt;
+                if (cappedSizePrompt.Length > 4000)
+                {
+                    cappedSizePrompt = cappedSizePrompt.Substring(0, 4000);
+                }
+
+                var res = await _openAIImageClient.GenerateImageAsync(cappedSizePrompt, det);
                 var uri = res.Value.ImageUri;
                 var revisedPrompt = res.Value.RevisedPrompt;
-                if (revisedPrompt != promptDetails.Prompt)
+                if (revisedPrompt != cappedSizePrompt)
                 {
                     promptDetails.ReplacePrompt(revisedPrompt, revisedPrompt, TransformationType.Dalle3Rewrite);
                 }

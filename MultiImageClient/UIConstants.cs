@@ -9,6 +9,7 @@ namespace MultiImageClient
         public const float LineSpacing = 1.15f;
         public const int MinFontSize = 8;
         public const int TextDpi = 150;
+        public const int LabelHeight = 20; // Default height for labels under images
 
         // Colors
         public static readonly Color White = Color.White;

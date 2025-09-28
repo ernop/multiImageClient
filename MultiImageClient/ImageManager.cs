@@ -30,7 +30,7 @@ namespace MultiImageClient
             if (imageBytes == null || imageBytes.Length == 0)
             {
                 Logger.Log($"Empty or null image bytes received");
-                throw new Exception("no bytes?)");
+                throw new Exception("no bytes in the image data received; probably caller's problem.)");
             }
 
             // just one time, convert the bytes to png if needed.
@@ -89,6 +89,7 @@ namespace MultiImageClient
                 {
                     imageBytes = await ImageSaving.DownloadImageAsync(result);
                     result.DownloadTotalMs = sw.ElapsedMilliseconds;
+                    // downloading it can just fail sometimes.
                     result.SetImageBytes(0, imageBytes);
                     var pd = result.PromptDetails.Copy();
                     var downloadResults = await DoSaveAsync(0, pd, result.ContentType, imageBytes, generator, _settings);

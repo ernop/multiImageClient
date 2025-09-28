@@ -3,6 +3,7 @@
     public enum CombinedImageLayout
     {
         Horizontal,
-        Square
+        Square,
+        ImageDescribeRendersHorizontally,
     }
 }
