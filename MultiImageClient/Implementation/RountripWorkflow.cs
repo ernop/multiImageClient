@@ -41,12 +41,12 @@ namespace MultiImageClient
             {
                 try
                 {
-                    if (!Clipboard.ContainsImage())
+                    if (!System.Windows.Forms.Clipboard.ContainsImage())
                     {
                         return;
                     }
 
-                    using var image = Clipboard.GetImage();
+                    using var image = System.Windows.Forms.Clipboard.GetImage();
                     if (image == null)
                     {
 
