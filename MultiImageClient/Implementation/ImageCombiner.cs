@@ -337,7 +337,7 @@ namespace MultiImageClient
             }
 
             var maxImageHeight = originalImage.Height;
-            var descriptionWidth = 600; // Fixed width for description
+            var descriptionWidth = 1024; // Fixed width for description
             var descriptionHeight = maxImageHeight; // Description takes up the same height as the original image.
             var loadedImages = LoadResultImages(results).ToList();
 
@@ -368,32 +368,64 @@ namespace MultiImageClient
                 currentX += originalImage.Width;
 
                 // 2. Draw Description Text
-                // Use binary search to find the optimal font size that fills the available space
-                var minFontSize = 8;
-                var maxFontSize = 150; // Start with a large maximum
-                var optimalFontSize = minFontSize;
+                // Calculate optimal font size to use 85% of available space (leaving some breathing room)
+                var targetUtilization = 0.85; 
                 var availableHeight = descriptionHeight - 2 * UIConstants.Padding;
                 var wrappingWidth = descriptionWidth - 2 * UIConstants.Padding;
+                var targetHeight = availableHeight * targetUtilization;
                 
-                // Binary search for the optimal font size
+                Logger.Log($"Description panel: {descriptionWidth}x{descriptionHeight}");
+                Logger.Log($"Target to fill: {wrappingWidth}x{targetHeight} (85% of available)");
+                Logger.Log($"Text: {descriptionText.Length} chars");
+                
+                // Reasonable font size bounds for long text
+                var minFontSize = 12;
+                var maxFontSize = 60; // Much more reasonable maximum for long text
+                var optimalFontSize = minFontSize;
+                
+                // Start with a reasonable estimate based on text length
+                // For very long text (>500 chars), start searching from a smaller size
+                if (descriptionText.Length > 500)
+                {
+                    maxFontSize = 40; // Long text needs smaller font
+                }
+                else if (descriptionText.Length > 200)
+                {
+                    maxFontSize = 50; // Medium text
+                }
+                
+                Logger.Log($"Adjusted max font size to {maxFontSize} based on text length");
+                
+                // Binary search for the optimal size
                 while (minFontSize <= maxFontSize)
                 {
                     var midFontSize = (minFontSize + maxFontSize) / 2;
                     var testFont = FontUtils.CreateFont(midFontSize, FontStyle.Regular);
                     var testHeight = ImageUtils.MeasureTextHeight(descriptionText, testFont, UIConstants.LineSpacing, wrappingWidth);
                     
-                    if (testHeight <= availableHeight)
+                    Logger.Log($"Font {midFontSize}pt: height={testHeight}, target={targetHeight}");
+                    
+                    if (testHeight <= targetHeight)
                     {
-                        // Text fits, try a larger size
+                        // Text fits, try larger
                         optimalFontSize = midFontSize;
                         minFontSize = midFontSize + 1;
                     }
                     else
                     {
-                        // Text doesn't fit, try a smaller size
+                        // Text doesn't fit, try smaller
                         maxFontSize = midFontSize - 1;
                     }
                 }
+                
+                // Make sure we found something reasonable
+                if (optimalFontSize < 14)
+                {
+                    optimalFontSize = 14; // Minimum readable size
+                    Logger.Log($"Font size was too small, forcing minimum of 14pt");
+                }
+                
+                Logger.Log($"FINAL FONT SIZE: {optimalFontSize}pt for {descriptionText.Length} chars in {wrappingWidth}x{targetHeight}px");
                 
                 // Create the final font and text options with the optimal size
                 var descriptionFont = FontUtils.CreateFont(optimalFontSize, FontStyle.Regular);
