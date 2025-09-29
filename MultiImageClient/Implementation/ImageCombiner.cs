@@ -316,7 +316,7 @@ namespace MultiImageClient
         // the output format should be a long horizontal strip. Leftmost should be the image, labelled like "original iamge".
         // then to the right of that,  how it was described, in descriptionText taking up a big square column (sine this text might be long).
         // then further to the right, in order, just like we did in RenderHorizontalLayout, should be all the output images ortheir error placeholders.
-        public async static Task<string> CreateRoundtripLayoutImageAsync(byte[] originalImageBytes, IEnumerable<TaskProcessResult> results, string descriptionText, Settings settings)
+        public async static Task<string> CreateRoundtripLayoutImageAsync(byte[] originalImageBytes, IEnumerable<TaskProcessResult> results, string descriptionText, string qwenInstructions, Settings settings)
         {
             var labelFont = FontUtils.CreateFont(36, FontStyle.Bold); // Large font for labels
             var originalImage = Image.Load<Rgba32>(originalImageBytes);
@@ -376,7 +376,8 @@ namespace MultiImageClient
             Logger.Log($"Max label height needed: {maxLabelHeight}px (original: {originalLabelHeight}, description: {descriptionLabelHeight}, generated images: {string.Join(",", labelHeights)})");
             
             // Calculate total width and height
-            var totalWidth = originalImage.Width + descriptionWidth + loadedImages.Sum(li => li.Width);
+            var qwenInstructionsWidth = 1024; // Same width as description
+            var totalWidth = originalImage.Width + qwenInstructionsWidth + descriptionWidth + loadedImages.Sum(li => li.Width);
             var totalHeight = maxImageHeight + maxLabelHeight + UIConstants.Padding * 2;
 
             var layoutImage = new Image<Rgba32>(totalWidth, totalHeight);
@@ -399,8 +400,110 @@ namespace MultiImageClient
                 ctx.DrawTextStandard(labelOptsOriginal, "Original Image", Color.Black);
                 currentX += originalImage.Width;
 
-                // 2. Draw Description Text
-                // Calculate optimal font size to use 85% of available space (leaving some breathing room)
+                // 2a. Draw QWen instructions
+                var qwenInstructionsWidth = 1024; // Same width as description
+                var qwenInstructionsHeight = maxImageHeight; // Same height as description
+                
+                if (!string.IsNullOrEmpty(qwenInstructions))
+                {
+                    // Calculate optimal font size for QWen instructions text
+                    var qwenTargetUtilization = 0.85;
+                    var qwenAvailableHeight = qwenInstructionsHeight - 2 * UIConstants.Padding; 
+                    var qwenWrappingWidth = qwenInstructionsWidth - 2 * UIConstants.Padding;
+                    var qwenTargetHeight = qwenAvailableHeight * qwenTargetUtilization;
+                    
+                    var qwenNewlineCount = qwenInstructions.Count(c => c == '\n');
+                    
+                    Logger.Log($"QWen instructions panel: {qwenInstructionsWidth}x{qwenInstructionsHeight}");
+                    Logger.Log($"Target to fill: {qwenWrappingWidth}x{qwenTargetHeight} (85% of available)");
+                    Logger.Log($"QWen instructions text: {qwenInstructions.Length} chars with {qwenNewlineCount} newlines");
+                    
+                    var qwenMinFontSize = 12;
+                    var qwenMaxFontSize = 60;
+                    var qwenOptimalFontSize = qwenMinFontSize;
+                    
+                    Logger.Log($"Adjusted max font size to {qwenMaxFontSize} for QWen instructions");
+                    
+                    // Binary search for optimal font size
+                    while (qwenMinFontSize <= qwenMaxFontSize)
+                    {
+                        var qwenMidFontSize = (qwenMinFontSize + qwenMaxFontSize) / 2;
+                        var qwenTestFont = FontUtils.CreateFont(qwenMidFontSize, FontStyle.Regular);
+                        var qwenTestHeight = ImageUtils.MeasureTextHeight(qwenInstructions, qwenTestFont, UIConstants.LineSpacing, qwenWrappingWidth);
+                        
+                        Logger.Log($"QWen instructions font {qwenMidFontSize}pt: height={qwenTestHeight}, target={qwenTargetHeight}");
+                        
+                        if (qwenTestHeight <= qwenTargetHeight)
+                        {
+                            qwenOptimalFontSize = qwenMidFontSize;
+                            qwenMinFontSize = qwenMidFontSize + 1;
+                        }
+                        else
+                        {
+                            qwenMaxFontSize = qwenMidFontSize - 1;
+                        }
+                    }
+                    
+                    if (qwenOptimalFontSize < 14)
+                    {
+                        qwenOptimalFontSize = 14; // Minimum readable size
+                        Logger.Log($"QWen instructions font size was too small, forcing minimum of 14pt");
+                    }
+                    
+                    Logger.Log($"FINAL QWEN INSTRUCTIONS FONT SIZE: {qwenOptimalFontSize}pt for {qwenInstructions.Length} chars in {qwenWrappingWidth}x{qwenTargetHeight}px");
+                    
+                    // Create font and text options for QWen instructions
+                    var qwenInstructionsFont = FontUtils.CreateFont(qwenOptimalFontSize, FontStyle.Regular);
+                    var qwenInstructionsTextOptions = new RichTextOptions(qwenInstructionsFont)
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        WrappingLength = qwenWrappingWidth,
+                        Origin = new PointF(currentX + UIConstants.Padding, UIConstants.Padding),
+                        Dpi = UIConstants.TextDpi
+                    };
+                    
+                    // Draw background and text for QWen instructions
+                    ctx.Fill(Color.LightBlue, new RectangleF(currentX, 0, qwenInstructionsWidth, qwenInstructionsHeight));
+                    ctx.DrawTextStandard(qwenInstructionsTextOptions, qwenInstructions, Color.Black);
+                    
+                    // Draw label for QWen instructions
+                    var qwenLabelOpts = new RichTextOptions(labelFont)
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Top
+                    };
+                    qwenLabelOpts.Dpi = UIConstants.TextDpi;
+                    qwenLabelOpts.Origin = new PointF(currentX + qwenInstructionsWidth / 2f, maxImageHeight + UIConstants.Padding);
+                    ctx.DrawTextStandard(qwenLabelOpts, "QWen Instructions", Color.Black);
+                }
+                else
+                {
+                    // Draw placeholder if no QWen instructions
+                    ctx.Fill(Color.LightGray, new RectangleF(currentX, 0, qwenInstructionsWidth, qwenInstructionsHeight));
+                    var noInstructionsFont = FontUtils.CreateFont(18, FontStyle.Regular);
+                    var noInstructionsTextOptions = new RichTextOptions(noInstructionsFont)
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Dpi = UIConstants.TextDpi
+                    };
+                    noInstructionsTextOptions.Origin = new PointF(currentX + qwenInstructionsWidth / 2f, qwenInstructionsHeight / 2f);
+                    ctx.DrawTextStandard(noInstructionsTextOptions, "No QWen Instructions", Color.Gray);
+                    
+                    // Draw label even when no instructions
+                    var qwenLabelOpts = new RichTextOptions(labelFont)
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Top
+                    };
+                    qwenLabelOpts.Dpi = UIConstants.TextDpi;
+                    qwenLabelOpts.Origin = new PointF(currentX + qwenInstructionsWidth / 2f, qwenInstructionsHeight + UIConstants.Padding);
+                    ctx.DrawTextStandard(qwenLabelOpts, "QWen Instructions", Color.Black);
+                }
+                currentX += qwenInstructionsWidth;
+
+                // 2b. Draw Description Text
                 var targetUtilization = 0.85; 
                 var availableHeight = descriptionHeight - 2 * UIConstants.Padding;
                 var wrappingWidth = descriptionWidth - 2 * UIConstants.Padding;
@@ -412,24 +515,18 @@ namespace MultiImageClient
                 Logger.Log($"Description panel: {descriptionWidth}x{descriptionHeight}");
                 Logger.Log($"Target to fill: {wrappingWidth}x{targetHeight} (85% of available)");
                 Logger.Log($"Text: {descriptionText.Length} chars with {newlineCount} newlines");
-                
+
+                // This is all so stupid. Why can't you just call MeasureText on the text, including newlines, plus the rectangle size? I really don't get it.
+                // This whole guessing/semi-hardcoding guidance is wrong.
+
                 // Reasonable font size bounds for long text
                 var minFontSize = 12;
                 var maxFontSize = 60; // Much more reasonable maximum for long text
                 var optimalFontSize = minFontSize;
                 
-                // Start with a reasonable estimate based on text length
-                // For very long text (>500 chars), start searching from a smaller size
-                if (descriptionText.Length > 500)
-                {
-                    maxFontSize = 40; // Long text needs smaller font
-                }
-                else if (descriptionText.Length > 200)
-                {
-                    maxFontSize = 50; // Medium text
-                }
-                
                 Logger.Log($"Adjusted max font size to {maxFontSize} based on text length");
+
+                
                 
                 // Binary search for the optimal size
                 while (minFontSize <= maxFontSize)
@@ -484,8 +581,10 @@ namespace MultiImageClient
                 };
                 labelOptsDescription.Dpi = UIConstants.TextDpi; // Ensure same DPI as measurement!
                 labelOptsDescription.Origin = new PointF(currentX + descriptionWidth / 2f, maxImageHeight + UIConstants.Padding);
-                ctx.DrawTextStandard(labelOptsDescription, "Description", Color.Black);
+                ctx.DrawTextStandard(labelOptsDescription, "Qwen Description", Color.Black);
                 currentX += descriptionWidth;
+
+
 
                 // 3. Draw Loaded Images with their labels
                 foreach (var li in loadedImages)
