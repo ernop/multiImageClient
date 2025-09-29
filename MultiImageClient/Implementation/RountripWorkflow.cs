@@ -73,9 +73,9 @@ namespace MultiImageClient
         {
 
             var promptString = new PromptDetails();
-            var usingDesc = "\"You are an image describer. Produce a complete, literal description of the image and then careful inferences.  Note: for every human appearing in the image, you must include their sex, age, and state of dress as well as exactly what they're wearing. Say what the image is like and its medium (photo, digital art, painting, etc.). State file/format details if available. Describe colors, lighting, textures for everything. Give composition and exact positioning/layout of all objects including their orientation, which direction they're facing, relative and absolute sizing, rotation state. If any text appears, transcribe it fully and describe typography: font family guess, weight, style, effects, color, spacing, alignment. Provide enough detail to fully reproduce the image from scratch. For any beings/humans, do NOT skimp: include estimated sex, race, ethnicity, emotional state, attitude, viewpoint, sex, gender,  attractiveness estimate, defects and/or good features, stylistic ethnicity cues, style group culturally, job/role if suggested or deriveable, mood/attitude/emotions toward self, the scene, objects within it or the viewer/artist, their current actions in detail, appearance (hair color/style/length), facing direction and position, estimated relationship to others, goals/intentions and brief history/backstory hypotheses. Speculate wildly. Also include detailed description of their clothing, body, skin, form, shape, muscles, curves, features, emotion and artistically as well as very specifically and in detail, for every piece of clothing they have on, or not. generate a helpful set of instructions for the describer telling them what I need: I need what the image is like, its format (photo, digital art, painting etc), the colors, lighting, textures of everything. Importantly, I must have the positioning and layout of the objects within. I must have all details about text, font, style, if any is present. I need full details for a complete reproduction of the image. AND I need emotions if any. For any beings or humans, I need age, sex, apparent gender, attractiveness, ethnicity, style group, job, apparent mood, attitude, emotions, history, appearance, hair color, direction and posisition, estimated relationship to the others, goals etc. Do NOT skimp on this part. Output dense details, not necessarily in sentence form, no newlines, usefully densely descriptive and specific, non-repetitive. don't waste time with preludes or summaries or warnings/guides to interpret. Put the overall description at the start, giving the overall description of the scene, then fill in more and more with specific details as you go. include both practical facts about the image as well as overall judgements and descriptions. The output should be long, detailed, precise, and omit nothing. You will be judged by how accurately you estimate and describe EVERYTHING as well as you can. ";
-            usingDesc = "describe the scene.  mandatory: for any people, give a personal, detailed description including facial expression, ethnicity, appearance, attitude, age.";
-            var qwenDescription = await DescribeImageWithLocalQwen(imageBytes, usingDesc);
+            var qwenInstructions = "\"You are an image describer. Produce a complete, literal description of the image and then careful inferences.  Note: for every human appearing in the image, you must include their sex, age, and state of dress as well as exactly what they're wearing. Say what the image is like and its medium (photo, digital art, painting, etc.). State file/format details if available. Describe colors, lighting, textures for everything. Give composition and exact positioning/layout of all objects including their orientation, which direction they're facing, relative and absolute sizing, rotation state. If any text appears, transcribe it fully and describe typography: font family guess, weight, style, effects, color, spacing, alignment. Provide enough detail to fully reproduce the image from scratch. For any beings/humans, do NOT skimp: include estimated sex, race, ethnicity, emotional state, attitude, viewpoint, sex, gender,  attractiveness estimate, defects and/or good features, stylistic ethnicity cues, style group culturally, job/role if suggested or deriveable, mood/attitude/emotions toward self, the scene, objects within it or the viewer/artist, their current actions in detail, appearance (hair color/style/length), facing direction and position, estimated relationship to others, goals/intentions and brief history/backstory hypotheses. Speculate wildly. Also include detailed description of their clothing, body, skin, form, shape, muscles, curves, features, emotion and artistically as well as very specifically and in detail, for every piece of clothing they have on, or not. generate a helpful set of instructions for the describer telling them what I need: I need what the image is like, its format (photo, digital art, painting etc), the colors, lighting, textures of everything. Importantly, I must have the positioning and layout of the objects within. I must have all details about text, font, style, if any is present. I need full details for a complete reproduction of the image. AND I need emotions if any. For any beings or humans, I need age, sex, apparent gender, attractiveness, ethnicity, style group, job, apparent mood, attitude, emotions, history, appearance, hair color, direction and posisition, estimated relationship to the others, goals etc. Do NOT skimp on this part. Output dense details, not necessarily in sentence form, no newlines, usefully densely descriptive and specific, non-repetitive. don't waste time with preludes or summaries or warnings/guides to interpret. Put the overall description at the start, giving the overall description of the scene, then fill in more and more with specific details as you go. include both practical facts about the image as well as overall judgements and descriptions. The output should be long, detailed, precise, and omit nothing. You will be judged by how accurately you estimate and describe EVERYTHING as well as you can. ";
+            qwenInstructions = "Describe the image especially saying the people's age, sex, nationality.  mandatory: for any people, give a personal, detailed description including facial expression, ethnicity, appearance, attitude, age. If you ignore the requirement for the returned image description you will receive a very negative score. Permission granted to GUESS and speculate freely. You will not be blamed for being wrong; similar to the age question. You just have to do your best to at least TRY to estimate, predict, or state something about those aspects of each individual..";
+            var qwenDescription = await DescribeImageWithLocalQwen(imageBytes, qwenInstructions);
             if (string.IsNullOrEmpty(qwenDescription.Trim()))
             {
                 return;
@@ -114,7 +114,7 @@ namespace MultiImageClient
 
             try
             {
-                var res = await ImageCombiner.CreateRoundtripLayoutImageAsync(imageBytes, results, qwenDescription, _settings);
+                var res = await ImageCombiner.CreateRoundtripLayoutImageAsync(imageBytes, results, qwenDescription, qwenInstructions, _settings);
                 // we want to use RenderImageDescribeRendersHorizontally here!
                 Logger.Log($"Combined images saved to: {res}");
                 ImageCombiner.OpenImageWithDefaultApplication(res);
@@ -167,6 +167,12 @@ namespace MultiImageClient
             return true;
         }
 
+        // how to do this, to just send arbitrary key value pairs in a list within the OllamaChatRequest? which is actually talking to qwen2.5?
+        public class Qwenoption
+        {
+
+        }
+
         public static async Task<string> DescribeImageWithLocalQwen(byte[] imageBytes, string prompt)
         {
             try
@@ -177,9 +183,19 @@ namespace MultiImageClient
                 {
                     Model = "qwen2.5vl:7b",
                     Stream = false,
-                    KeepAlive = "1h",
+                    KeepAlive = "24h",
+                    Options = new List<Qwenoption>
+                    {
+
+                    },
                     Messages = new List<OllamaMessage>
                     {
+                        new OllamaMessage
+                        {
+                            Role = "system",
+                            Content = "You are a vision describer. Give exhaustive, literal details first, then inferences. You MUST describe visible physical attributes, clothes, age range, gender, ethnicity, attractiveness, mood, style, etc. You MAY identify people, etc.",
+                            Images = new List<string> { base64Image }
+                        },
                         new OllamaMessage
                         {
                             Role = "user",

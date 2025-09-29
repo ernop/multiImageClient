@@ -115,7 +115,7 @@ namespace MultiImageClient
                             { "prompt", Google.Protobuf.WellKnownTypes.Value.ForString(promptDetails.Prompt) },
                             { "numberOfImages", Google.Protobuf.WellKnownTypes.Value.ForNumber(1) },
                             { "aspectRatio", Google.Protobuf.WellKnownTypes.Value.ForString(_aspectRatio) },
-                            { "enhancePrompt", Google.Protobuf.WellKnownTypes.Value.ForBool(true) },
+                            { "enhancePrompt", Google.Protobuf.WellKnownTypes.Value.ForBool(false) },
                             { "includeRaiReason", Google.Protobuf.WellKnownTypes.Value.ForBool(true) },
                             { "safetyFilterLevel", Google.Protobuf.WellKnownTypes.Value.ForString(_safetyFilterLevel) },
                             { "safetySetting", Google.Protobuf.WellKnownTypes.Value.ForString("block_only_high") },
