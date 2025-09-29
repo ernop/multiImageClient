@@ -317,12 +317,24 @@ namespace MultiImageClient
         // then further to the right, in order, just like we did in RenderHorizontalLayout, should be all the output images ortheir error placeholders.
         public async static Task<string> CreateRoundtripLayoutImageAsync(byte[] originalImageBytes, IEnumerable<TaskProcessResult> results, string descriptionText, Settings settings)
         {
-            var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
+            var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Regular);
             var originalImage = Image.Load<Rgba32>(originalImageBytes);
             if (originalImage == null)
             {
                 throw new Exception("no original image.");
             }
+
+            // Resize original image if height > 1024px, keeping proportions
+            if (originalImage.Height > 1024)
+            {
+                var aspectRatio = (float)originalImage.Width / originalImage.Height;
+                var newHeight = 1024;
+                var newWidth = (int)(newHeight * aspectRatio);
+
+                Logger.Log($"Resizing original image from {originalImage.Width}x{originalImage.Height} to {newWidth}x{newHeight} for combining");
+                originalImage.Mutate(x => x.Resize(newWidth, newHeight));
+            }
+
             var maxImageHeight = originalImage.Height;
             var descriptionWidth = 600; // Fixed width for description
             var descriptionHeight = maxImageHeight; // Description takes up the same height as the original image.
@@ -336,20 +348,18 @@ namespace MultiImageClient
 
             layoutImage.Mutate(ctx =>
             {
-                ctx.Fill(Color.White);
-                var currentX = 0;
+                ctx.ApplyStandardGraphicsOptions();
+                ctx.Fill(UIConstants.White);
+                float currentX = 0;
 
                 // 1. Draw Original Image
-                if (originalImage!= null)
-                {
-                    ctx.DrawImage(originalImage, new Point(currentX, 0), 1);
-                }
+                ctx.DrawImage(originalImage!, new Point((int)currentX, 0), 1f);
                 var labelOptsOriginal = new RichTextOptions(generatorFont)
                 {
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Top
                 };
-                labelOptsOriginal.Origin = new PointF(currentX + originalImage.Width / 2f, maxImageHeight + UIConstants.Padding);
+                labelOptsOriginal.Origin = new PointF(currentX + originalImage!.Width / 2f, maxImageHeight + UIConstants.Padding);
                 ctx.DrawTextStandard(labelOptsOriginal, "Original Image", Color.Black);
                 currentX += originalImage.Width;
 
@@ -361,6 +371,20 @@ namespace MultiImageClient
                     WrappingLength = descriptionWidth - 2 * UIConstants.Padding, // Allow for padding inside the description box
                     Origin = new PointF(currentX + UIConstants.Padding, UIConstants.Padding)
                 };
+                // Dynamically adjust font size for description text
+                var descriptionFontSize = CombinedImageGeneratorFontSize;
+                var descriptionFont = FontUtils.CreateFont(descriptionFontSize, FontStyle.Regular);
+                var descriptionTextSize = ImageUtils.MeasureTextHeight(descriptionText, descriptionFont, descriptionTextOptions.WrappingLength, descriptionTextOptions.LineSpacing);
+
+                while (descriptionTextSize > descriptionHeight && descriptionFontSize > 5) // Minimum font size 5
+                {
+                    descriptionFontSize -= 1;
+                    descriptionFont = FontUtils.CreateFont(descriptionFontSize, FontStyle.Regular);
+                    descriptionTextSize = ImageUtils.MeasureTextHeight(descriptionText, descriptionFont, descriptionTextOptions.WrappingLength, descriptionTextOptions.LineSpacing);
+                    descriptionTextOptions.Font = descriptionFont;
+                }
+
+
                 ctx.Fill(Color.LightGray, new RectangleF(currentX, 0, descriptionWidth, descriptionHeight)); // Background for text
                 ctx.DrawTextStandard(descriptionTextOptions, descriptionText, Color.Black);
 
@@ -378,12 +402,12 @@ namespace MultiImageClient
                 {
                     if (li.Image != null)
                     {
-                        ctx.DrawImage(li.Image, new Point(currentX, 0), 1);
+                        ctx.DrawImage(li.Image, new Point((int)currentX, 0), 1);
                     }
                     else
                     {
                         // Draw placeholder for error images
-                        ctx.Fill(Color.LightGray, new Rectangle(currentX, 0, li.Width, li.Height));
+                        ctx.Fill(Color.LightGray, new Rectangle((int)currentX, 0, li.Width, li.Height));
                         var errorTextOptions = new RichTextOptions(generatorFont)
                         {
                             HorizontalAlignment = HorizontalAlignment.Center,
@@ -532,7 +556,7 @@ namespace MultiImageClient
         public class LoadedImage
         {
             public bool Success { get; set; }
-            public string Result { get; set; }
+            public string? Result { get; set; }
             public Image<Rgba32>? Image { get; set; }
             public int Width { get; set; }
             public int Height { get; set; }
