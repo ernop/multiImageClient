@@ -1,4 +1,5 @@
-﻿using System;
+﻿#nullable enable
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -12,6 +13,7 @@ using System.Drawing.Imaging;
 using System.Threading;
 using System.Windows.Forms;
 using System.Security.Cryptography;
+
 
 namespace MultiImageClient
 {
@@ -52,7 +54,7 @@ namespace MultiImageClient
                     }
 
                     using var ms = new MemoryStream();
-                    image.Save(ms, ImageFormat.Png);
+                    image.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
                     clipboardBytes = ms.ToArray();
                 }
                 catch (Exception ex)
@@ -114,10 +116,10 @@ namespace MultiImageClient
 
             try
             {
-                var res = await ImageCombiner.CreateRoundtripLayoutImageAsync(imageBytes, results, qwenDescription, qwenInstructions, _settings);
+                var res = await MultiImageClient.ImageCombiner.CreateRoundtripLayoutImageAsync(imageBytes, results, qwenDescription, qwenInstructions, _settings);
                 // we want to use RenderImageDescribeRendersHorizontally here!
                 Logger.Log($"Combined images saved to: {res}");
-                ImageCombiner.OpenImageWithDefaultApplication(res);
+                MultiImageClient.ImageCombiner.OpenImageWithDefaultApplication(res);
             }
             catch (Exception ex)
             {
@@ -168,11 +170,6 @@ namespace MultiImageClient
         }
 
         // how to do this, to just send arbitrary key value pairs in a list within the OllamaChatRequest? which is actually talking to qwen2.5?
-        public class Qwenoption
-        {
-
-        }
-
         public static async Task<string> DescribeImageWithLocalQwen(byte[] imageBytes, string prompt)
         {
             try
@@ -184,9 +181,9 @@ namespace MultiImageClient
                     Model = "qwen2.5vl:7b",
                     Stream = false,
                     KeepAlive = "24h",
-                    Options = new List<Qwenoption>
+                    Options = new OllamaOptions
                     {
-
+                        NumPredict = 2400
                     },
                     Messages = new List<OllamaMessage>
                     {
@@ -240,6 +237,9 @@ namespace MultiImageClient
             [JsonPropertyName("keep_alive")]
             public required string KeepAlive { get; set; }
 
+            [JsonPropertyName("options")]
+            public OllamaOptions? Options { get; set; }
+
             [JsonPropertyName("messages")]
             public required List<OllamaMessage> Messages { get; set; } = new();
         }
@@ -280,6 +280,128 @@ namespace MultiImageClient
             public required string Content { get; set; } = string.Empty;
         }
 
+        // New class for Ollama options
+        private class OllamaOptions
+        {
+            [JsonPropertyName("temperature")]
+            public float? Temperature { get; set; }
 
+            [JsonPropertyName("top_p")]
+            public float? TopP { get; set; }
+
+            [JsonPropertyName("top_k")]
+            public int? TopK { get; set; }
+
+            [JsonPropertyName("num_gpu")]
+            public int? NumGpu { get; set; }
+
+            [JsonPropertyName("mirostat_tau")]
+            public float? MirostatTau { get; set; }
+
+            [JsonPropertyName("mirostat_eta")]
+            public float? MirostatEta { get; set; }
+
+            [JsonPropertyName("mirostat")]
+            public int? Mirostat { get; set; }
+
+            [JsonPropertyName("num_predict")]
+            public int? NumPredict { get; set; }
+
+            [JsonPropertyName("num_ctx")]
+            public int? NumCtx { get; set; }
+
+            [JsonPropertyName("num_keep")]
+            public int? NumKeep { get; set; }
+
+            [JsonPropertyName("seed")]
+            public int? Seed { get; set; }
+
+            [JsonPropertyName("stop")]
+            public List<string>? Stop { get; set; }
+
+            [JsonPropertyName("tfs_z")]
+            public float? TfsZ { get; set; }
+
+            [JsonPropertyName("repeat_last_n")]
+            public int? RepeatLastN { get; set; }
+
+            [JsonPropertyName("repeat_penalty")]
+            public float? RepeatPenalty { get; set; }
+
+            [JsonPropertyName("presence_penalty")]
+            public float? PresencePenalty { get; set; }
+
+            [JsonPropertyName("frequency_penalty")]
+            public float? FrequencyPenalty { get; set; }
+
+            [JsonPropertyName("num_thread")]
+            public int? NumThread { get; set; }
+
+            [JsonPropertyName("num_batch")]
+            public int? NumBatch { get; set; }
+
+            [JsonPropertyName("f16_kv")]
+            public bool? F16Kv { get; set; }
+
+            [JsonPropertyName("logits_all")]
+            public bool? LogitsAll { get; set; }
+
+            [JsonPropertyName("low_vram")]
+            public bool? LowVram { get; set; }
+
+            [JsonPropertyName("main_gpu")]
+            public int? MainGpu { get; set; }
+
+            [JsonPropertyName("num_align")]
+            public int? NumAlign { get; set; }
+
+            [JsonPropertyName("rope_frequency_base")]
+            public float? RopeFrequencyBase { get; set; }
+
+            [JsonPropertyName("rope_frequency_scale")]
+            public float? RopeFrequencyScale { get; set; }
+
+            [JsonPropertyName("num_gqa")]
+            public int? NumGqa { get; set; }
+
+            [JsonPropertyName("num_rms_norm")]
+            public int? NumRmsNorm { get; set; }
+
+            [JsonPropertyName("num_tokens")]
+            public int? NumTokens { get; set; }
+
+            [JsonPropertyName("num_layer")]
+            public int? NumLayer { get; set; }
+
+            [JsonPropertyName("num_attention_heads")]
+            public int? NumAttentionHeads { get; set; }
+
+            [JsonPropertyName("embedding_length")]
+            public int? EmbeddingLength { get; set; }
+
+            [JsonPropertyName("num_vae_decode")]
+            public int? NumVaeDecode { get; set; }
+
+            [JsonPropertyName("penalize_newline")]
+            public bool? PenalizeNewline { get; set; }
+
+            [JsonPropertyName("presence_alpha")]
+            public float? PresenceAlpha { get; set; }
+
+            [JsonPropertyName("frequency_alpha")]
+            public float? FrequencyAlpha { get; set; }
+
+            [JsonPropertyName("vocab_only")]
+            public bool? VocabOnly { get; set; }
+
+            [JsonPropertyName("format")]
+            public string? Format { get; set; }
+
+            [JsonPropertyName("med_freq")]
+            public float? MedFreq { get; set; }
+
+            [JsonPropertyName("n_probs")]
+            public int? NProbs { get; set; }
+        }
     }
 }
