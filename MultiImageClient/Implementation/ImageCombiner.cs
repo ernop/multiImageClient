@@ -341,12 +341,43 @@ namespace MultiImageClient
             var descriptionHeight = maxImageHeight; // Description takes up the same height as the original image.
             var loadedImages = LoadResultImages(results).ToList();
 
-            // Measure label heights to account for them in total height
-            var labelHeight = 50; // Approximate height for 36pt font labels
+            // Actually measure how much space each label needs
+            var tempLabelFont = FontUtils.CreateFont(36, FontStyle.Bold);
+            
+            // Measure each label text height, accounting for wrapping
+            var labelHeights = new List<int>();
+            foreach (var li in loadedImages)
+            {
+                var labelText = li.Result;
+                if (!string.IsNullOrEmpty(labelText))
+                {
+                    // Handle newlines properly - they increase height
+                    var wrappingWidth = li.Width - 10; // Account for padding
+                    var labelHeight = ImageUtils.MeasureTextHeight(labelText, tempLabelFont, UIConstants.LineSpacing, wrappingWidth);
+                    labelHeights.Add(labelHeight);
+                }
+                else
+                {
+                    labelHeights.Add(0);
+                }
+            }
+            
+            // Also measure the "Original Image" and "Description" labels
+            var originalLabelHeight = ImageUtils.MeasureTextHeight("Original Image", tempLabelFont, UIConstants.LineSpacing, originalImage.Width - 10);
+            var descriptionLabelHeight = ImageUtils.MeasureTextHeight("Description", tempLabelFont, UIConstants.LineSpacing, descriptionWidth - 10);
+            
+            // Find the maximum label height needed
+            var maxLabelHeight = Math.Max(originalLabelHeight, descriptionLabelHeight);
+            if (labelHeights.Any())
+            {
+                maxLabelHeight = Math.Max(maxLabelHeight, labelHeights.Max());
+            }
+            
+            Logger.Log($"Max label height needed: {maxLabelHeight}px (original: {originalLabelHeight}, description: {descriptionLabelHeight}, generated images: {string.Join(",", labelHeights)})");
             
             // Calculate total width and height
             var totalWidth = originalImage.Width + descriptionWidth + loadedImages.Sum(li => li.Width);
-            var totalHeight = maxImageHeight + labelHeight + UIConstants.Padding * 2;
+            var totalHeight = maxImageHeight + maxLabelHeight + UIConstants.Padding * 2;
 
             var layoutImage = new Image<Rgba32>(totalWidth, totalHeight);
 
@@ -363,6 +394,7 @@ namespace MultiImageClient
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Top
                 };
+                labelOptsOriginal.Dpi = UIConstants.TextDpi; // Ensure same DPI as measurement!
                 labelOptsOriginal.Origin = new PointF(currentX + originalImage!.Width / 2f, maxImageHeight + UIConstants.Padding);
                 ctx.DrawTextStandard(labelOptsOriginal, "Original Image", Color.Black);
                 currentX += originalImage.Width;
@@ -374,9 +406,12 @@ namespace MultiImageClient
                 var wrappingWidth = descriptionWidth - 2 * UIConstants.Padding;
                 var targetHeight = availableHeight * targetUtilization;
                 
+                // Count newlines in the text - they affect height calculations!
+                var newlineCount = descriptionText.Count(c => c == '\n');
+                
                 Logger.Log($"Description panel: {descriptionWidth}x{descriptionHeight}");
                 Logger.Log($"Target to fill: {wrappingWidth}x{targetHeight} (85% of available)");
-                Logger.Log($"Text: {descriptionText.Length} chars");
+                Logger.Log($"Text: {descriptionText.Length} chars with {newlineCount} newlines");
                 
                 // Reasonable font size bounds for long text
                 var minFontSize = 12;
@@ -434,7 +469,8 @@ namespace MultiImageClient
                     HorizontalAlignment = HorizontalAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Top,
                     WrappingLength = wrappingWidth,
-                    Origin = new PointF(currentX + UIConstants.Padding, UIConstants.Padding)
+                    Origin = new PointF(currentX + UIConstants.Padding, UIConstants.Padding),
+                    Dpi = UIConstants.TextDpi  // Ensure same DPI as measurement!
                 };
 
 
@@ -446,6 +482,7 @@ namespace MultiImageClient
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Top
                 };
+                labelOptsDescription.Dpi = UIConstants.TextDpi; // Ensure same DPI as measurement!
                 labelOptsDescription.Origin = new PointF(currentX + descriptionWidth / 2f, maxImageHeight + UIConstants.Padding);
                 ctx.DrawTextStandard(labelOptsDescription, "Description", Color.Black);
                 currentX += descriptionWidth;
@@ -467,20 +504,23 @@ namespace MultiImageClient
                         var errorTextOptions = new RichTextOptions(labelFont)
                         {
                             HorizontalAlignment = HorizontalAlignment.Center,
-                            VerticalAlignment = VerticalAlignment.Center
+                            VerticalAlignment = VerticalAlignment.Center,
+                            Dpi = UIConstants.TextDpi // Ensure same DPI as measurement!
                         };
                         errorTextOptions.Origin = new PointF(currentX + li.Width / 2f, imageYOffset + li.Height / 2f);
                         ctx.DrawTextStandard(errorTextOptions, "ERROR", Color.Red);
                     }
 
+                    var labelText = li.Result ?? "";
+                    
                     var labelOpts = new RichTextOptions(labelFont)
                     {
                         HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Top
+                        VerticalAlignment = VerticalAlignment.Top,
+                        WrappingLength = li.Width - 10, // Allow wrapping within image bounds
+                        Dpi = UIConstants.TextDpi  // Ensure same DPI as measurement!
                     };
-                    var labelText = li.Result;
-                    // Calculate the vertical position based on maxImageHeight, padding, and actual label text height.
-                    labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding); // Start UIConstants.Padding below the image
+                    labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding);
 
                     var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
                     ctx.DrawTextStandard(labelOpts, labelText, labelColor);

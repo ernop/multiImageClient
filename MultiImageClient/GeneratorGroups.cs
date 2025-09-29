@@ -66,6 +66,7 @@ namespace MultiImageClient
             myGenerators = new List<IImageGenerator>() { gptimage1_1, ideogram3, ideogram4, ideogramV3, recraft_any, dalle3, bfl1, bfl2, bfl3, google_banana, googleimagen, recraft_any };
 
             //myGenerators = new List<IImageGenerator>() { dalle3, bfl1, recraft_any };
+            myGenerators = new List<IImageGenerator>() { recraft_any, googleimagen, google_banana };
 
             return myGenerators;
         }
