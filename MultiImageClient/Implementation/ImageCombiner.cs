@@ -30,6 +30,7 @@ namespace MultiImageClient
     {
         private const int CombinedImageGeneratorFontSize = 24;
         private const int CombinedImagePromptFontSize = 32;
+        private const int GeneratedImageLabelFontSize = 18;
         private const float LabelLineHeightMultiplier = 1.5f;
         private const int PlaceholderWidth = 300;
         private const int LabelFontSize = 12;
@@ -317,7 +318,7 @@ namespace MultiImageClient
         // then further to the right, in order, just like we did in RenderHorizontalLayout, should be all the output images ortheir error placeholders.
         public async static Task<string> CreateRoundtripLayoutImageAsync(byte[] originalImageBytes, IEnumerable<TaskProcessResult> results, string descriptionText, Settings settings)
         {
-            var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Regular);
+            var labelFont = FontUtils.CreateFont(36, FontStyle.Bold); // Large font for labels
             var originalImage = Image.Load<Rgba32>(originalImageBytes);
             if (originalImage == null)
             {
@@ -340,9 +341,12 @@ namespace MultiImageClient
             var descriptionHeight = maxImageHeight; // Description takes up the same height as the original image.
             var loadedImages = LoadResultImages(results).ToList();
 
-            // Calculate total width
+            // Measure label heights to account for them in total height
+            var labelHeight = 50; // Approximate height for 36pt font labels
+            
+            // Calculate total width and height
             var totalWidth = originalImage.Width + descriptionWidth + loadedImages.Sum(li => li.Width);
-            var totalHeight = maxImageHeight + UIConstants.LabelHeight + UIConstants.Padding;
+            var totalHeight = maxImageHeight + labelHeight + UIConstants.Padding * 2;
 
             var layoutImage = new Image<Rgba32>(totalWidth, totalHeight);
 
@@ -354,7 +358,7 @@ namespace MultiImageClient
 
                 // 1. Draw Original Image
                 ctx.DrawImage(originalImage!, new Point((int)currentX, 0), 1f);
-                var labelOptsOriginal = new RichTextOptions(generatorFont)
+                var labelOptsOriginal = new RichTextOptions(labelFont)
                 {
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Top
@@ -364,31 +368,48 @@ namespace MultiImageClient
                 currentX += originalImage.Width;
 
                 // 2. Draw Description Text
-                var descriptionTextOptions = new RichTextOptions(generatorFont)
+                // Use binary search to find the optimal font size that fills the available space
+                var minFontSize = 8;
+                var maxFontSize = 150; // Start with a large maximum
+                var optimalFontSize = minFontSize;
+                var availableHeight = descriptionHeight - 2 * UIConstants.Padding;
+                var wrappingWidth = descriptionWidth - 2 * UIConstants.Padding;
+                
+                // Binary search for the optimal font size
+                while (minFontSize <= maxFontSize)
+                {
+                    var midFontSize = (minFontSize + maxFontSize) / 2;
+                    var testFont = FontUtils.CreateFont(midFontSize, FontStyle.Regular);
+                    var testHeight = ImageUtils.MeasureTextHeight(descriptionText, testFont, UIConstants.LineSpacing, wrappingWidth);
+                    
+                    if (testHeight <= availableHeight)
+                    {
+                        // Text fits, try a larger size
+                        optimalFontSize = midFontSize;
+                        minFontSize = midFontSize + 1;
+                    }
+                    else
+                    {
+                        // Text doesn't fit, try a smaller size
+                        maxFontSize = midFontSize - 1;
+                    }
+                }
+                
+                // Create the final font and text options with the optimal size
+                var descriptionFont = FontUtils.CreateFont(optimalFontSize, FontStyle.Regular);
+                var descriptionTextOptions = new RichTextOptions(descriptionFont)
                 {
                     HorizontalAlignment = HorizontalAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Top,
-                    WrappingLength = descriptionWidth - 2 * UIConstants.Padding, // Allow for padding inside the description box
+                    WrappingLength = wrappingWidth,
                     Origin = new PointF(currentX + UIConstants.Padding, UIConstants.Padding)
                 };
-                // Dynamically adjust font size for description text
-                var descriptionFontSize = CombinedImageGeneratorFontSize;
-                var descriptionFont = FontUtils.CreateFont(descriptionFontSize, FontStyle.Regular);
-                var descriptionTextSize = ImageUtils.MeasureTextHeight(descriptionText, descriptionFont, descriptionTextOptions.WrappingLength, descriptionTextOptions.LineSpacing);
-
-                while (descriptionTextSize > descriptionHeight && descriptionFontSize > 5) // Minimum font size 5
-                {
-                    descriptionFontSize -= 1;
-                    descriptionFont = FontUtils.CreateFont(descriptionFontSize, FontStyle.Regular);
-                    descriptionTextSize = ImageUtils.MeasureTextHeight(descriptionText, descriptionFont, descriptionTextOptions.WrappingLength, descriptionTextOptions.LineSpacing);
-                    descriptionTextOptions.Font = descriptionFont;
-                }
 
 
                 ctx.Fill(Color.LightGray, new RectangleF(currentX, 0, descriptionWidth, descriptionHeight)); // Background for text
                 ctx.DrawTextStandard(descriptionTextOptions, descriptionText, Color.Black);
 
-                var labelOptsDescription = new RichTextOptions(generatorFont)
+                var labelOptsDescription = new RichTextOptions(labelFont)
                 {
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Top
@@ -397,35 +418,39 @@ namespace MultiImageClient
                 ctx.DrawTextStandard(labelOptsDescription, "Description", Color.Black);
                 currentX += descriptionWidth;
 
-                // 3. Draw Loaded Images
+                // 3. Draw Loaded Images with their labels
                 foreach (var li in loadedImages)
                 {
+                    // Calculate vertical offset to align bottom of image with maxImageHeight
+                    var imageYOffset = maxImageHeight - li.Height;
+                    
                     if (li.Image != null)
                     {
-                        ctx.DrawImage(li.Image, new Point((int)currentX, 0), 1);
+                        ctx.DrawImage(li.Image, new Point((int)currentX, imageYOffset), 1);
                     }
                     else
                     {
                         // Draw placeholder for error images
-                        ctx.Fill(Color.LightGray, new Rectangle((int)currentX, 0, li.Width, li.Height));
-                        var errorTextOptions = new RichTextOptions(generatorFont)
+                        ctx.Fill(Color.LightGray, new Rectangle((int)currentX, imageYOffset, li.Width, li.Height));
+                        var errorTextOptions = new RichTextOptions(labelFont)
                         {
                             HorizontalAlignment = HorizontalAlignment.Center,
                             VerticalAlignment = VerticalAlignment.Center
                         };
-                        errorTextOptions.Origin = new PointF(currentX + li.Width / 2f, li.Height / 2f);
+                        errorTextOptions.Origin = new PointF(currentX + li.Width / 2f, imageYOffset + li.Height / 2f);
                         ctx.DrawTextStandard(errorTextOptions, "ERROR", Color.Red);
                     }
 
-                    var labelOpts = new RichTextOptions(generatorFont)
+                    var labelOpts = new RichTextOptions(labelFont)
                     {
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Top
                     };
-                    labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding);
+                    var labelText = li.Result;
+                    // Calculate the vertical position based on maxImageHeight, padding, and actual label text height.
+                    labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding); // Start UIConstants.Padding below the image
 
                     var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
-                    var labelText = li.Result;
                     ctx.DrawTextStandard(labelOpts, labelText, labelColor);
 
                     currentX += li.Width;
