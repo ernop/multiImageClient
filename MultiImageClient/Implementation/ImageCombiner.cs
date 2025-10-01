@@ -407,7 +407,7 @@ namespace MultiImageClient
                 if (!string.IsNullOrEmpty(qwenInstructions))
                 {
                     // Calculate optimal font size for QWen instructions text
-                    var qwenTargetUtilization = 0.85;
+                    var qwenTargetUtilization = 0.95;
                     var qwenAvailableHeight = qwenInstructionsHeight - 2 * UIConstants.Padding; 
                     var qwenWrappingWidth = qwenInstructionsWidth - 2 * UIConstants.Padding;
                     var qwenTargetHeight = qwenAvailableHeight * qwenTargetUtilization;
@@ -504,7 +504,7 @@ namespace MultiImageClient
                 currentX += qwenInstructionsWidth;
 
                 // 2b. Draw Description Text
-                var targetUtilization = 0.85; 
+                var targetUtilization = 0.95; 
                 var availableHeight = descriptionHeight - 2 * UIConstants.Padding;
                 var wrappingWidth = descriptionWidth - 2 * UIConstants.Padding;
                 var targetHeight = availableHeight * targetUtilization;
