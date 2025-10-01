@@ -1,4 +1,6 @@
-﻿using System;
+﻿using MultiImageClient;
+
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;

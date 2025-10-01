@@ -2,6 +2,8 @@
 
 using Microsoft.VisualBasic;
 
+using MultiImageClient;
+
 using Newtonsoft.Json.Linq;
 
 using RecraftAPIClient;
