@@ -10,40 +10,14 @@ using System;
 //using System.Collections.Generic;
 //using System.Diagnostics.Metrics;
 //using System.Drawing.Printing;
-using System.IO;
 //using System.Linq;
 //using System.Reflection.Metadata.Ecma335;
 //using System.Runtime;
 //using System.Security.Cryptography.X509Certificates;
-using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
-    public class PromptLogger
-    {
-        private const string LogFileName = "prompt_log.json";
-
-        public static void LogPrompt(string prompt)
-        {
-            var logEntry = new
-            {
-                time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                prompt = prompt
-            };
-
-            var jsonLine = JsonSerializer.Serialize(logEntry);
-
-            try
-            {
-                File.AppendAllText(LogFileName, jsonLine + Environment.NewLine);
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"Failed to write to prompt log: {ex.Message}");
-            }
-        }
-    }
 
     public class Program
     {
@@ -65,13 +39,6 @@ namespace MultiImageClient
 
 
             var descSteps = "generate a helpful set of instructions for the describer telling them what I need: I need what the image is like, its format (photo, digital art, painting etc), the colors, lighting, textures of everything. Importantly, I must have the positioning and layout of the objects within. I must have all details about text, font, style, if any is present. I need full details for a complete reproduction of the image. AND I need emotions if any. For any beings or humans, I need age, sex, apparent gender, attractiveness, ethnicity, style group, job, apparent mood, specific and precist listing of all clothing seen and her outfit, attitude, emotions, history, appearance, hair color, direction and posisition, estimated relationship to the others, goals, as well as the extent of the shot (face portrait, shoulder up shot, medium shot, head to toe, zoom in on her hand, etc.) etc. Do NOT skimp on this part.  When you reply, directly start the description and output no newlines, just the information. You do not need to use full sentences unless you feel it would be helpful; include everything starting generally and with the overall image info and layout, then proceeding to deeper and deeper fine details. also include the overall emotional effect and feeling of the image";
-
-
-
-            /// ------------------- MAKING SERVICES ----------------------------
-
-
-
 
 
             /// -----------------------  APPLYING PROMPTS TO SERVICES ------------------------
