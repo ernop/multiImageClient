@@ -1,4 +1,6 @@
-﻿using System.Threading.Tasks;
+﻿using MultiImageClient;
+
+using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
