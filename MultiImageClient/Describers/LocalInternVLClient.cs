@@ -76,6 +76,11 @@ namespace MultiImageClient
 
                 return visionResponse?.Response ?? string.Empty;
             }
+            catch (System.Net.Http.HttpRequestException hrex)
+            {
+                Logger.Log($": {hrex.Message}\r\n{hrex}");
+                return string.Empty;
+            }
             catch (Exception ex)
             {
                 Logger.Log($"Error describing image with InternVL: {ex.Message}\r\n{ex}");

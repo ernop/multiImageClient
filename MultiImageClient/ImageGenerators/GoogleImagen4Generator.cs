@@ -199,7 +199,7 @@ namespace MultiImageClient
                 return new TaskProcessResult 
                 { 
                     IsSuccess = false, 
-                    ErrorMessage = errorMessage, 
+                    ErrorMessage = errorMessage.Split("Support").FirstOrDefault(), 
                     PromptDetails = promptDetails, 
                     ImageGenerator = ImageGeneratorApiType.GoogleImagen4, 
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart() 
