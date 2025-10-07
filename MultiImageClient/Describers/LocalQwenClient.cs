@@ -17,7 +17,7 @@ namespace MultiImageClient
         private readonly float _temperature;
 
         public LocalQwenClient(
-            string baseUrl = "http://127.0.0.1:11434",
+            string baseUrl = "http://127.0.0.1:11435",
             string modelName = "qwen2-vl:latest",
             float temperature = 0.7f)
         {

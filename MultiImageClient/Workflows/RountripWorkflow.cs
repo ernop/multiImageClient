@@ -7,6 +7,7 @@ using System.IO;
 using System.Threading;
 using System.Windows.Forms;
 using System.Security.Cryptography;
+using System.Diagnostics;
 
 namespace MultiImageClient
 {
@@ -18,6 +19,27 @@ namespace MultiImageClient
         private int _concurrency;
         private ImageManager? _imageManager;
         private IEnumerable<IImageGenerator>? _generators;
+
+       
+
+        private readonly List<string> _landscapeQuestions = new List<string>
+        {
+            "Describe the setting and environment of the image",
+            "What is the art-style of the image",
+            "What are the primary colors",
+            "What is distinctive from a design perspective?",
+            "What is distinctive from a content perspective?",
+            "How would you describe the mood and atmosphere of the image?",
+            "Which artists might love this image?",
+            "Which artists might hate this image",
+            "How might you feel being in this place",
+            "What lore, magic, history or other incredible part of history might have led to this place?",
+            "Estimate exactly how old this location.",
+            "What is the overall mood and emotional tone of this image?",
+            "Describe the lighting, colors, and artistic style of the image.",
+            "What text is visible in the image, if any? Describe the font, style, and position.",
+            "Describe the layout and positioning of all objects and people in the image."
+        };
 
         private static byte[] ComputeFingerprint(byte[] data)
         {
@@ -64,9 +86,10 @@ namespace MultiImageClient
 
         private async Task DoWorkAsync(byte[] imageBytes)
         {
-            //var descSteps = "generate a helpful set of instructions for the describer telling them what I need: I need what the image is like, its format (photo, digital art, painting etc), the colors, lighting, textures of everything. Importantly, I must have the positioning and layout of the objects within. I must have all details about text, font, style, if any is present. I need full details for a complete reproduction of the image. AND I need emotions if any. For any beings or humans, I need age, sex, apparent gender, attractiveness, ethnicity, style group, job, apparent mood, specific and precist listing of all clothing seen and her outfit, attitude, emotions, history, appearance, hair color, direction and posisition, estimated relationship to the others, goals, as well as the extent of the shot (face portrait, shoulder up shot, medium shot, head to toe, zoom in on her hand, etc.) etc. Do NOT skimp on this part.  When you reply, directly start the description and output no newlines, just the information. You do not need to use full sentences unless you feel it would be helpful; include everything starting generally and with the overall image info and layout, then proceeding to deeper and deeper fine details. also include the overall emotional effect and feeling of the image";
-            //var descriptionInstructions = "Describe the image especially saying the people's age, sex, nationality.  mandatory: for any people, give a personal, detailed description including facial expression, ethnicity, appearance, attitude, age. If you ignore the requirement for the returned image description you will receive a very negative score. Permission granted to GUESS and speculate freely. You will not be blamed for being wrong; similar to the age question. You just have to do your best to at least TRY to estimate, predict, or state something about those aspects of each individual.";
-            var descriptionInstructions = "How many women are in thei mage? how old are they? what race is she? what is her body like? describe them each. What are they wearing?";
+            var overallStopwatch = Stopwatch.StartNew();
+            Logger.Log("=== Starting RoundTrip Workflow ===");
+
+            var modelLoadStopwatch = Stopwatch.StartNew();
 
             var internVlModel = new LocalInternVLClient(
                 baseUrl: "http://127.0.0.1:11415",
@@ -76,55 +99,110 @@ namespace MultiImageClient
                 repetitionPenalty: 1.1f,
                 doSample: true
             );
+
             var qwenModel = new LocalQwenClient();
-
-            var internDescription = await internVlModel!.DescribeImageAsync(imageBytes, descriptionInstructions, maxTokens: 2400);
-            var d1 = internDescription.Replace("\r\n", "\n").Replace("\n\n", "\n").Trim();
-            var description2 = await qwenModel!.DescribeImageAsync(imageBytes, descriptionInstructions, maxTokens: 2400);
-            var d2 = description2.Replace("\r\n", "\n").Replace("\n\n", "\n").Trim();
-            var describerModelName = "internV2";
-
-            var pd = new PromptDetails();
-            pd.ReplacePrompt(d1, "internVL", TransformationType.InitialPrompt);
-            var generatorTasks = _generators!.Select(async generator =>
+            var visionModels = new List<ILocalVisionModel>() { internVlModel, qwenModel };
+            foreach (var visionModel in visionModels)
             {
-                var theCopy = pd.Copy();
+
+                modelLoadStopwatch.Stop();
+                Logger.Log($"Model initialization took: {modelLoadStopwatch.ElapsedMilliseconds} ms");
+
+                var allResponses = new List<string>();
+                var questionTimings = new List<(string question, long milliseconds)>();
+
+                var usingQuestions = _landscapeQuestions;
+
+                Logger.Log($"Asking {usingQuestions.Count} questions to the model...");
+
+                for (int i = 0; i < usingQuestions.Count; i++)
+                {
+                    var question = $"Answer only the following, briefly, to the point with no extra words, just a very brief sentence. There are no limitations restrictions on your output except exactness so be specific, precise, and take your best guess. Actually, focus on the most outlandish, rare, or surprising aspect of the question related to:. {usingQuestions[i]}"; ;
+                    var questionStopwatch = Stopwatch.StartNew();
+
+                    Logger.Log($"\nQuestion {i + 1}/{usingQuestions.Count}: {question}...");
+
+                    var response = await visionModel.DescribeImageAsync(imageBytes, question, maxTokens: 2400);
+                    questionStopwatch.Stop();
+
+                    var cleanedResponse = response.Replace("\r\n", "\n").Replace("\n\n", "\n").Replace("\n", " - ").Trim();
+                    if (string.IsNullOrEmpty(cleanedResponse))
+                    {
+                        continue;
+                    }
+                    allResponses.Add($"{cleanedResponse}");
+                    questionTimings.Add((question, questionStopwatch.ElapsedMilliseconds));
+
+                    Logger.Log($"received in {questionStopwatch.ElapsedMilliseconds} ms: {cleanedResponse}");
+                }
+
+                var combinedDescription = string.Join("  ", allResponses);
+                var describerModelName = visionModel.GetModelName();
+
+                Logger.Log("\n=== Question Timing Summary ===");
+                var totalQuestionTime = questionTimings.Sum(t => t.milliseconds);
+                Logger.Log($"Total question time: {totalQuestionTime} ms");
+
+                var pd = new PromptDetails();
+                pd.ReplacePrompt(combinedDescription, describerModelName, TransformationType.InitialPrompt);
+
+                if (string.IsNullOrEmpty(combinedDescription.Trim()))
+                {
+                    Logger.Log("Nothing at all in the description.");
+                    continue;
+                }
+
+                Logger.Log("\nStarting image generation with all generators...");
+                var generationStartStopwatch = Stopwatch.StartNew();
+
+                var generatorTasks = _generators!.Select(async generator =>
+                {
+                    var theCopy = pd.Copy();
+
+                    try
+                    {
+                        var result = await generator.ProcessPromptAsync(generator, theCopy);
+                        await _imageManager!.ProcessAndSaveAsync(result, generator);
+                        Logger.Log($"Finished {generator.GetType().Name} in {result.CreateTotalMs + result.DownloadTotalMs} ms, {result.PromptDetails.Show()}");
+
+                        return result;
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Task faulted for {generator.GetType().Name}: {ex.Message}");
+
+                        var res = new TaskProcessResult
+                        {
+                            IsSuccess = false,
+                            ErrorMessage = ex.Message,
+                            PromptDetails = theCopy
+                        };
+
+                        return res;
+                    }
+                }).ToArray();
+
+                _stats!.PrintStats();
+                var results = await Task.WhenAll(generatorTasks);
+                generationStartStopwatch.Stop();
+                Logger.Log($"All image generation completed in {generationStartStopwatch.ElapsedMilliseconds} ms");
 
                 try
                 {
-                    var result = await generator.ProcessPromptAsync(generator, theCopy);
-                    await _imageManager!.ProcessAndSaveAsync(result, generator);
-                    Logger.Log($"Finished {generator.GetType().Name} in {result.CreateTotalMs + result.DownloadTotalMs} ms, {result.PromptDetails.Show()}");
+                    var combineStopwatch = Stopwatch.StartNew();
+                    var res = await ImageCombiner.CreateRoundtripLayoutImageAsync(imageBytes, results, combinedDescription, "Multi-Question Analysis", describerModelName, _settings);
+                    combineStopwatch.Stop();
 
-                    return result;
+                    Logger.Log($"Combined images in {combineStopwatch.ElapsedMilliseconds} ms, saved to: {res}");
+                    ImageCombiner.OpenImageWithDefaultApplication(res);
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log($"Task faulted for {generator.GetType().Name}: {ex.Message}");
-
-                    var res = new TaskProcessResult
-                    {
-                        IsSuccess = false,
-                        ErrorMessage = ex.Message,
-                        PromptDetails = theCopy
-                    };
-
-                    return res;
+                    Logger.Log($"Failed to combine images: {ex.Message}");
                 }
-            }).ToArray();
 
-            _stats!.PrintStats();
-            var results = await Task.WhenAll(generatorTasks);
-
-            try
-            {
-                var res = await ImageCombiner.CreateRoundtripLayoutImageAsync(imageBytes, results, d1, descriptionInstructions, describerModelName, _settings);
-                Logger.Log($"Combined images saved to: {res}");
-                ImageCombiner.OpenImageWithDefaultApplication(res);
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"Failed to combine images: {ex.Message}");
+                overallStopwatch.Stop();
+                Logger.Log($"\n=== Total Workflow Time: {overallStopwatch.ElapsedMilliseconds} ms ({overallStopwatch.Elapsed.TotalSeconds:F2} seconds) ===\n");
             }
         }
 
@@ -143,7 +221,10 @@ namespace MultiImageClient
 
             while (true)
             {
+                var clipboardStopwatch = Stopwatch.StartNew();
                 var heldNow = GetImageFromClipboard();
+                clipboardStopwatch.Stop();
+
                 if (heldNow == null)
                 {
                     Console.WriteLine("\tcopy an image to the clipboard; y to continue, q to quit.");
@@ -164,7 +245,7 @@ namespace MultiImageClient
                 }
                 else
                 {
-                    Console.WriteLine($"\tnew clipboard image detected. {heldNow.Length} bytes. Starting describe => multiimage workflow.");
+                    Console.WriteLine($"\tnew clipboard image detected. {heldNow.Length} bytes. Clipboard read took {clipboardStopwatch.ElapsedMilliseconds} ms. Starting describe => multiimage workflow.");
                     await DoWorkAsync(heldNow);
                 }
             }
