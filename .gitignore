@@ -11,3 +11,5 @@
 /djangoManager/imageMaker/logs/django.log
 gen-lang*.json
 magic*.png
+**/prompt_log.json
+**/Temp.txt

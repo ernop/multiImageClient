@@ -40,6 +40,10 @@ namespace MultiImageClient
             string text, 
             Color color)
         {
+            if (text == null)
+            {
+                text = "";
+            }
             ctx.DrawText(options, text, color);
         }
 

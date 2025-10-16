@@ -20,7 +20,11 @@ namespace MultiImageClient
         private ImageManager? _imageManager;
         private IEnumerable<IImageGenerator>? _generators;
 
-       
+        private readonly List<string> _questions = new List<string>
+        {
+            "Describe the setting and environment of the image",
+            "Describe the layout and positioning of all objects and people in the image."
+        };
 
         private readonly List<string> _landscapeQuestions = new List<string>
         {
@@ -174,6 +178,7 @@ namespace MultiImageClient
                         var res = new TaskProcessResult
                         {
                             IsSuccess = false,
+                            ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
                             ErrorMessage = ex.Message,
                             PromptDetails = theCopy
                         };
@@ -218,6 +223,22 @@ namespace MultiImageClient
             _generators = getter.GetAll();
 
             _imageManager = new ImageManager(settings, stats);
+
+            Logger.Log("=== Checking Vision Model Services ===");
+            
+            var internVLReady = await ModelServiceManager.EnsureInternVLServiceIsRunningAsync();
+            if (!internVLReady)
+            {
+                Logger.Log("WARNING: InternVL service could not be started. Image descriptions may fail.");
+            }
+
+            var ollamaReady = await ModelServiceManager.EnsureOllamaServiceIsRunningAsync();
+            if (!ollamaReady)
+            {
+                Logger.Log("WARNING: Ollama service could not be started. Image descriptions may fail.");
+            }
+
+            Logger.Log("=== Vision Model Services Check Complete ===\n");
 
             while (true)
             {

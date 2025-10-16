@@ -34,7 +34,7 @@ namespace MultiImageClient
 
         public string GetFilenamePart(PromptDetails pd)
         {
-            return $"google-{_apiType}";
+            return $"{_apiType}";
         }
 
         public decimal GetCost()

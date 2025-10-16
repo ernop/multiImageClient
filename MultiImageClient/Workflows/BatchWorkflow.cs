@@ -92,7 +92,8 @@ namespace MultiImageClient
                             {
                                 IsSuccess = false,
                                 ErrorMessage = ex.Message,
-                                PromptDetails = theCopy
+                                PromptDetails = theCopy,
+                                ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
                             };
 
                             return res;
@@ -107,13 +108,15 @@ namespace MultiImageClient
 
                     try
                     {
-                        var res = await ImageCombiner.CreateBatchLayoutImageHorizontalAsync(results, promptString.Prompt, settings);
+                        //var res = await ImageCombiner.CreateBatchLayoutImageHorizontalAsync(results, promptString.Prompt, settings);
+                        var res = await ImageCombiner.CreateBatchLayoutImageSquareAsync(results, promptString.Prompt, settings); 
                         Logger.Log($"Combined images saved to: {res}");
-                        ImageCombiner.OpenImageWithDefaultApplication(res);
                     }
                     catch (Exception ex)
                     {
                         Logger.Log($"Failed to combine images: {ex.Message}");
+                        var res2 = await ImageCombiner.CreateBatchLayoutImageSquareAsync(results, promptString.Prompt, settings);
+                        Logger.Log($"Combined images saved to: {res2}");
                         return false;
                     }
                 }

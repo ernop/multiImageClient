@@ -83,7 +83,8 @@ namespace MultiImageClient
                             loadedImages.Add(new LoadedImage
                             {
                                 Success = true,
-                                Result = result.IsSuccess ? result.ImageGeneratorDescription ?? "successX" : $"{result.ImageGeneratorDescription} - {result.ErrorMessage}" ?? "failedX",
+                                Result = result.IsSuccess ? "successX" : result.ErrorMessage ?? "missing error",
+                                Generator = result.ImageGeneratorDescription,
                                 Image = image,
                                 Width = image.Width,
                                 Height = image.Height
@@ -112,7 +113,7 @@ namespace MultiImageClient
                 loadedImages.Add(GetPlaceholder(result));
             }
 
-            return loadedImages.OrderBy(el => el.Result);
+            return loadedImages.OrderBy(el => el.Generator);
         }
 
         private static Image<Rgba32> RenderHorizontalLayout(IEnumerable<LoadedImage> loadedImages, Font generatorFont)
@@ -151,7 +152,7 @@ namespace MultiImageClient
                     labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding);
 
                     var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
-                    var labelText = li.Result;
+                    var labelText = li.Generator;
                     ctx.DrawTextStandard(labelOpts, labelText, labelColor);
 
                     currentX += li.Width;
@@ -246,7 +247,7 @@ namespace MultiImageClient
                         labelOpts.Origin = new PointF(columnX + Math.Max(columnWidth, 1) / 2f, labelY);
 
                         var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
-                        var labelText = li.Result;
+                        var labelText = li.Generator;
                         ctx.DrawTextStandard(labelOpts, labelText, labelColor);
 
                         imageIndex++;
@@ -300,7 +301,7 @@ namespace MultiImageClient
 
             var loadedImages = LoadResultImages(results);
 
-            using var layoutImage = RenderHorizontalLayout(loadedImages, generatorFont);
+            using var layoutImage = RenderSquareLayout(loadedImages, generatorFont);
             using var promptPanel = RenderPromptPanel(layoutImage.Width, prompt, promptFont);
 
             int totalHeight = layoutImage.Height + promptPanel.Height;
@@ -324,10 +325,6 @@ namespace MultiImageClient
 
             return outputPath;
         }
-
-
-
-
 
 
         // this is how werender the "roundtrip workflow". In this case, the user provided an image to us.
@@ -702,7 +699,7 @@ namespace MultiImageClient
         private static int MeasureImageSubdescriptionHeight(IEnumerable<LoadedImage> loadedImages, Font generatorFont)
         {
             return loadedImages
-                .Select(li => li.Result ?? "missing")
+                .Select(li => $"{li.Result} {li.Generator}" ?? "missing")
                 .Select(label => ImageUtils.MeasureTextHeight(label, generatorFont, UIConstants.LineSpacing))
                 .DefaultIfEmpty(0)
                 .Max();
@@ -718,6 +715,7 @@ namespace MultiImageClient
                 Image = null,
                 Success = false,
                 Result = result.ErrorMessage ?? "ErrorX",
+                Generator = result.ImageGeneratorDescription,
                 Width = PlaceholderWidth,
                 Height = PlaceholderWidth
             };
@@ -767,6 +765,7 @@ namespace MultiImageClient
         {
             public bool Success { get; set; }
             public string? Result { get; set; }
+            public required string Generator { get; set; }
             public Image<Rgba32>? Image { get; set; }
             public int Width { get; set; }
             public int Height { get; set; }
