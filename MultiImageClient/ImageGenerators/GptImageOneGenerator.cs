@@ -27,14 +27,26 @@ namespace MultiImageClient
         private string _moderation;
         private OpenAIGPTImageOneQuality _quality;
         private string _name;
+        private ImageGeneratorApiType _apiType;
 
-        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GptImage1;
+        public ImageGeneratorApiType ApiType => _apiType;
 
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))
             {
-                return $"gpt-image-1";
+                if (_apiType == ImageGeneratorApiType.GptImage1)
+                {
+                    return $"gpt-image-1";
+                }
+                else if (_apiType == ImageGeneratorApiType.GptImage1Mini)
+                {
+                    return $"gpt-image-1-mini";
+                }
+                else
+                {
+                    throw new Exception("E");
+                }
             }
             else
             {
@@ -42,8 +54,16 @@ namespace MultiImageClient
             }
         }
 
-        public GptImageOneGenerator(string apiKey, int maxConcurrency, string size, string moderation, OpenAIGPTImageOneQuality quality, MultiClientRunStats stats, string name)
+        public GptImageOneGenerator(string apiKey, int maxConcurrency, string size, string moderation, OpenAIGPTImageOneQuality quality, ImageGeneratorApiType apiType, MultiClientRunStats stats, string name)
         {
+            if (apiType == ImageGeneratorApiType.GptImage1 || apiType == ImageGeneratorApiType.GptImage1Mini)
+            {
+                _apiType = apiType;
+            }
+            else
+            {
+                throw new Exception("bad");
+            }
             _gptImageOneSemaphore = new SemaphoreSlim(maxConcurrency);
 
             http.DefaultRequestHeaders.Authorization =
@@ -78,54 +98,118 @@ namespace MultiImageClient
         }
         public decimal GetCost()
         {
-            if (_size == "1024x1024")
+            if (_apiType == ImageGeneratorApiType.GptImage1)
             {
-                switch (_quality)
+                if (_size == "1024x1024")
                 {
-                    case OpenAIGPTImageOneQuality.low:
-                        return 0.01088m;
-                    case OpenAIGPTImageOneQuality.medium:
-                        return 0.04224m;
-                    case OpenAIGPTImageOneQuality.high:
-                        return 0.1664m;
-                    case OpenAIGPTImageOneQuality.auto:
-                        return 99.9999m; //strange, not clear how payment works for auto.  This 99.99$ is not real
-                    default:
-                        throw new Exception("Swe");
+                    switch (_quality)
+                    {
+                        case OpenAIGPTImageOneQuality.low:
+                            return 0.01088m;
+                        case OpenAIGPTImageOneQuality.medium:
+                            return 0.04224m;
+                        case OpenAIGPTImageOneQuality.high:
+                            return 0.1664m;
+                        case OpenAIGPTImageOneQuality.auto:
+                            return 99.9999m; //strange, not clear how payment works for auto.  This 99.99$ is not real
+                        default:
+                            throw new Exception("Swe");
+                    }
+                }
+                else if (_size == "1024x1536")
+                {
+                    switch (_quality)
+                    {
+                        case OpenAIGPTImageOneQuality.low:
+                            return 0.01632m;
+                        case OpenAIGPTImageOneQuality.medium:
+                            return 0.06336m;
+                        case OpenAIGPTImageOneQuality.high:
+                            return 0.24960m;
+                        case OpenAIGPTImageOneQuality.auto:
+                            return 99.99m;
+                        default:
+                            throw new Exception("S");
+                    }
+                }
+                else if (_size == "1536x1024")
+                {
+                    switch (_quality)
+                    {
+                        case OpenAIGPTImageOneQuality.low:
+                            return 0.016m;
+                        case OpenAIGPTImageOneQuality.medium:
+                            return 0.06272m;
+                        case OpenAIGPTImageOneQuality.high:
+                            return 0.24832m;
+                        default:
+                            throw new Exception("S");
+                    }
+                }
+                else
+                {
+                    throw new Exception("bad size.");
                 }
             }
-            else if (_size == "1024x1536")
+            else if (_apiType == ImageGeneratorApiType.GptImage1Mini)
             {
-                switch (_quality)
+                if (_size == "1024x1024")
                 {
-                    case OpenAIGPTImageOneQuality.low:
-                        return 0.01632m;
-                    case OpenAIGPTImageOneQuality.medium:
-                        return 0.06336m;
-                    case OpenAIGPTImageOneQuality.high:
-                        return 0.24960m;
-                    default:
-                        throw new Exception("S");
+                    switch (_quality)
+                    {
+                        case OpenAIGPTImageOneQuality.low:
+                            return 0.005m;
+                        case OpenAIGPTImageOneQuality.medium:
+                            return 0.011m;
+                        case OpenAIGPTImageOneQuality.high:
+                            return 0.036m;
+                        case OpenAIGPTImageOneQuality.auto:
+                            return 99.9999m; //strange, not clear how payment works for auto.  This 99.99$ is not real
+                        default:
+                            throw new Exception("Swe");
+                    }
                 }
-            }
-            else if (_size == "1536x1024")
-            {
-                switch (_quality)
+                else if (_size == "1024x1536")
                 {
-                    case OpenAIGPTImageOneQuality.low:
-                        return 0.016m;
-                    case OpenAIGPTImageOneQuality.medium:
-                        return 0.06272m;
-                    case OpenAIGPTImageOneQuality.high:
-                        return 0.24832m;
-                    default:
-                        throw new Exception("S");
+                    switch (_quality)
+                    {
+                        case OpenAIGPTImageOneQuality.low:
+                            return 0.006m;
+                        case OpenAIGPTImageOneQuality.medium:
+                            return 0.015m;
+                        case OpenAIGPTImageOneQuality.high:
+                            return 0.052m;
+                        case OpenAIGPTImageOneQuality.auto:
+                            return 99.99m;
+                        default:
+                            throw new Exception("S");
+                    }
                 }
+                else if (_size == "1536x1024")
+                {
+                    switch (_quality)
+                    {
+                        case OpenAIGPTImageOneQuality.low:
+                            return 0.006m;
+                        case OpenAIGPTImageOneQuality.medium:
+                            return 0.015m;
+                        case OpenAIGPTImageOneQuality.high:
+                            return 0.052m;
+                        default:
+                            throw new Exception("S");
+                    }
+                }
+                else
+                {
+                    throw new Exception("bad size.");
+                }
+
             }
             else
             {
-                throw new Exception("bad size.");
+                throw new Exception("S");
             }
+
         }
 
         public List<string> GetRightParts()
@@ -197,12 +281,31 @@ namespace MultiImageClient
 
 
                 //Console.WriteLine($"Generated:{promptDetails.Prompt}");
-                return new TaskProcessResult { IsSuccess = true, Base64ImageDatas = b64s, Url = "", ErrorMessage = "", PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.GptImage1, CreateTotalMs = sw.ElapsedMilliseconds, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
+                return new TaskProcessResult
+                {
+                    IsSuccess = true,
+                    Base64ImageDatas = b64s,
+                    Url = "",
+                    ErrorMessage = "",
+                    PromptDetails = promptDetails,
+                    ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
+                    ImageGenerator = ImageGeneratorApiType.GptImage1,
+                    CreateTotalMs = sw.ElapsedMilliseconds
+                };
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"\t\t{promptDetails.Prompt} Error: {ex.Message}");
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.GptImage1, CreateTotalMs = sw.ElapsedMilliseconds };
+                return new TaskProcessResult
+                {
+                    IsSuccess = false,
+                    ErrorMessage = ex.Message,
+                    PromptDetails = promptDetails,
+                    ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
+
+                    ImageGenerator = ImageGeneratorApiType.GptImage1,
+                    CreateTotalMs = sw.ElapsedMilliseconds
+                };
             }
             finally
             {

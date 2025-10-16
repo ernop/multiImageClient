@@ -65,7 +65,8 @@ namespace MultiImageClient
                 {
                     alpart = $"\nartistic level {_artistic_level}";
                 }
-                return $"recraftv3\n{_style}\n{usingSubstyle}{alpart}";
+                var using2 = string.Join('\n', usingSubstyle.Split('\n').Where(el => !string.IsNullOrWhiteSpace(el)));
+                return $"recraftv3\n{_style}\n{using2}{alpart}";
             }
             else
             {

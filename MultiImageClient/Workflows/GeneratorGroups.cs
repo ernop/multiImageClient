@@ -51,8 +51,13 @@ namespace MultiImageClient
             var bfl2 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, _settings.BFLApiKey, _concurrency, "1:1", false, 1024, 1024, _stats, "");
             var bfl3 = new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, _settings.BFLApiKey, _concurrency, "3:2", true, 1024, 1024, _stats, "");
 
-            var gptimage1_1 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.high, _stats, "");
-            var gptimage1_2 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.auto, _stats, "");
+            // A new type of coding has just been invented!  It's jsut as revolutionary as this cool thing "Vibe Coding"! This new one is called "Brain Coding!" The difference is that you think first, using your brain, then type out the code and debut it yourself!  (((Illustrate this revolutionary new coding workflow! You have to include captions, the inventor, and the image should illustrate clearly what it is and how it works, like a New Yorker cartoon with a funny punchline which also hits you right in the feels!  People who are so well-educated that they can laugh at anything!)))
+
+            var gptimage1_1 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.high, ImageGeneratorApiType.GptImage1, _stats, "");
+            var gptimage1_2 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1536", "low", OpenAIGPTImageOneQuality.auto, ImageGeneratorApiType.GptImage1, _stats, "");
+            var gptimagemini1_1 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1536x1024", "low", OpenAIGPTImageOneQuality.high, ImageGeneratorApiType.GptImage1Mini,_stats, "");
+            var gptimagemini1_2 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1024", "low", OpenAIGPTImageOneQuality.auto, ImageGeneratorApiType.GptImage1Mini, _stats, "");
+            var gptimagemini1_3 = new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency, "1024x1536", "low", OpenAIGPTImageOneQuality.high, ImageGeneratorApiType.GptImage1Mini, _stats, "");
 
             //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, bfl3, recraft6, ideogram4, };
             //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
@@ -62,8 +67,19 @@ namespace MultiImageClient
             //recraft8, recraft9, 
 
             var myGenerators = new List<IImageGenerator>() { };
-            myGenerators = new List<IImageGenerator>() { dalle3, ideogram1, ideogram2, ideogram3, ideogram4, ideogramV3, recraft1, recraft2, recraft3, recraft4, recraft5, bfl1, bfl2, bfl3, gptimage1_1, gptimage1_2, google_banana, googleimagen };
-            myGenerators = new List<IImageGenerator>() { gptimage1_1, ideogram3, ideogram4, ideogramV3, recraft_any, dalle3, bfl1, bfl2, bfl3, google_banana, googleimagen, recraft_any };
+            myGenerators = new List<IImageGenerator>() { dalle3, ideogram1, ideogram2, ideogram3, ideogram4, ideogramV3, recraft1, recraft2, recraft3, recraft4, recraft5, bfl1, bfl2, bfl3, gptimage1_1, gptimage1_2, google_banana, gptimagemini1_1, googleimagen };
+            myGenerators = new List<IImageGenerator>() { gptimage1_1, gptimage1_2, gptimagemini1_1, gptimagemini1_2, 
+                //ideogram3, 
+                //ideogram4, 
+                ideogramV3, 
+                recraft_any, 
+                recraft3,
+                recraft6,
+                dalle3, 
+                //bfl1, 
+                //bfl2, 
+                //bfl3, 
+                google_banana, googleimagen,gptimagemini1_3, recraft_any };
 
             //myGenerators = new List<IImageGenerator>() { dalle3, bfl1, recraft_any };
             //myGenerators = new List<IImageGenerator>() { recraft_any, googleimagen, google_banana };

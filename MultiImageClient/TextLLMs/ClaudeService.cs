@@ -1,13 +1,14 @@
-﻿using System;
+﻿using Anthropic.SDK;
+using Anthropic.SDK.Constants;
+using Anthropic.SDK.Messaging;
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection.Emit;
 using System.Reflection.Metadata.Ecma335;
 using System.Threading;
 using System.Threading.Tasks;
-
-using Anthropic.SDK;
-using Anthropic.SDK.Constants;
-using Anthropic.SDK.Messaging;
 
 
 namespace MultiImageClient
@@ -90,7 +91,9 @@ namespace MultiImageClient
                 {
                     stats.ClaudeRefusedCount++;
                     Logger.Log($"\t\tClaude was unhappy about\n\t\t\t{promptDetails.Show()}\n\t\t\t{claudeResponse}");
-                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = $"Claude was unhappy about the prompt and refused to rewrite it. {claudeResponse}", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude, GenericTextErrorType = GenericTextGenerationErrorType.RequestModerated };
+                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = $"Claude was unhappy about the prompt and refused to rewrite it. {claudeResponse}", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude, GenericTextErrorType = GenericTextGenerationErrorType.RequestModerated,
+                        ImageGeneratorDescription = "ClaudeGeneratorDescription",
+                    };
                 }
                 else
                 {
@@ -98,7 +101,9 @@ namespace MultiImageClient
                     promptDetails.ReplacePrompt(claudeResponse, claudeResponse, TransformationType.ClaudeRewrite);
                     stats.ClaudeRewroteCount++;
 
-                    return new TaskProcessResult { IsSuccess = true, ErrorMessage = "", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude };
+                    return new TaskProcessResult { IsSuccess = true, ErrorMessage = "", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude,
+                        ImageGeneratorDescription = "ClaudeGeneratorDescription",
+                    };
                 }
             }
             finally

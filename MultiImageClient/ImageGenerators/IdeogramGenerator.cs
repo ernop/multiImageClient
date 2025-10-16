@@ -101,6 +101,7 @@ namespace MultiImageClient
         }
 
         // https://ideogram.ai/features/api-pricing
+        //https://ideogram.ai/manage-api
         public decimal GetCost()
         {
             switch (_model)

@@ -14,5 +14,6 @@ namespace MultiImageClient
         GoogleNanoBanana = 8,
         GoogleImagen4 = 9,
         IdeogramV3 = 10,
+        GptImage1Mini = 11,
     }
 }
