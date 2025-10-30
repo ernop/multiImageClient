@@ -32,6 +32,7 @@ namespace MultiImageClient
         public IEnumerable<IImageGenerator> GetAll()
         {
             var dalle3 = new Dalle3Generator(_settings.OpenAIApiKey, _concurrency, GeneratedImageQuality.High, GeneratedImageSize.W1024xH1024, _stats, "");
+            var dalle3wide = new Dalle3Generator(_settings.OpenAIApiKey, _concurrency, GeneratedImageQuality.High, GeneratedImageSize.W1792xH1024, _stats, "");
             var recraft1 = new RecraftGenerator(_settings.RecraftApiKey, _concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.hard_comics, null, _stats, "");
             var recraft2 = new RecraftGenerator(_settings.RecraftApiKey, _concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.bold_fantasy, null, _stats, "");
             var recraft3 = new RecraftGenerator(_settings.RecraftApiKey, _concurrency, RecraftImageSize._1365x1024, RecraftStyle.digital_illustration, null, RecraftDigitalIllustrationSubstyle.freehand_details, null, _stats, "");
@@ -68,18 +69,26 @@ namespace MultiImageClient
 
             var myGenerators = new List<IImageGenerator>() { };
             myGenerators = new List<IImageGenerator>() { dalle3, ideogram1, ideogram2, ideogram3, ideogram4, ideogramV3, recraft1, recraft2, recraft3, recraft4, recraft5, bfl1, bfl2, bfl3, gptimage1_1, gptimage1_2, google_banana, gptimagemini1_1, googleimagen };
-            myGenerators = new List<IImageGenerator>() { gptimage1_1, gptimage1_2, gptimagemini1_1, gptimagemini1_2, 
+            myGenerators = new List<IImageGenerator>() { 
+                gptimage1_1, 
+                gptimage1_2, 
+                gptimagemini1_1, 
+                gptimagemini1_2, 
                 //ideogram3, 
                 //ideogram4, 
-                ideogramV3, 
+                ideogramV3,
                 recraft_any, 
-                recraft3,
-                recraft6,
-                dalle3, 
+                recraft_any,
+                //recraft3,
+                //recraft6,
+                dalle3,
+                dalle3wide,
                 //bfl1, 
                 //bfl2, 
                 //bfl3, 
-                google_banana, googleimagen,gptimagemini1_3, recraft_any };
+                google_banana, googleimagen,gptimagemini1_3, 
+                
+            };
 
             //myGenerators = new List<IImageGenerator>() { dalle3, bfl1, recraft_any };
             //myGenerators = new List<IImageGenerator>() { recraft_any, googleimagen, google_banana };
