@@ -31,7 +31,7 @@ namespace MultiImageClient
             {
                 Logger.Log($"\n--- Processing prompt: {promptString.Prompt}");
 
-                Console.WriteLine($"Do you accept this? y for yes, n for no go to next, or type the prompt you want directly and hit enter.");
+                Console.WriteLine($"\nDo you accept this? y for yes, n for no go to next, or type the prompt you want directly and hit enter.");
                 var val = Console.ReadLine();
                 if (val == "y")
                 {
