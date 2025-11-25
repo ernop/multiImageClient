@@ -18,14 +18,18 @@ namespace MultiImageClient
         private string _name;
         private ImageGeneratorApiType _apiType;
         private GoogleImageSize _imageSize;
-        private string _aspectRatio;
+        private GoogleImageAspectRatio _aspectRatio;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GoogleNanoBanana;
 
-        public GoogleGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency,
-            MultiClientRunStats stats, string name = "", 
+        public GoogleGenerator(
+            ImageGeneratorApiType apiType, 
+            string apiKey, 
+            int maxConcurrency,
+            MultiClientRunStats stats, 
+            string name = "", 
             GoogleImageSize imageSize = GoogleImageSize.Size1K,
-            string aspectRatio = "1:1")
+            GoogleImageAspectRatio aspectRatio = GoogleImageAspectRatio.Ratio1x1)
         {
             _apiKey = apiKey;
             _googleSemaphore = new SemaphoreSlim(maxConcurrency);
@@ -40,7 +44,7 @@ namespace MultiImageClient
         public string GetFilenamePart(PromptDetails pd)
         {
             var namePart = string.IsNullOrEmpty(_name) ? "" : $"-{_name}";
-            return $"{_apiType}{namePart}_{_imageSize.ToApiString()}_{_aspectRatio.Replace(":", "x")}";
+            return $"{_apiType}{namePart}_{_imageSize.ToApiString()}_{_aspectRatio.ToApiString().Replace(":", "x")}";
         }
 
         public decimal GetCost()
@@ -73,18 +77,18 @@ namespace MultiImageClient
         public List<string> GetRightParts()
         {
             var namePart = string.IsNullOrEmpty(_name) ? "" : _name;
-            return new List<string> { _apiType.ToString(), namePart, _imageSize.ToApiString(), _aspectRatio };
+            return new List<string> { _apiType.ToString(), namePart, _imageSize.ToApiString(), _aspectRatio.ToApiString() };
         }
 
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))
             {
-                return $"google-{_apiType.ToString()}\n{_imageSize.ToApiString()} {_aspectRatio}";
+                return $"google-{_apiType.ToString()}\n{_imageSize.ToApiString()} {_aspectRatio.ToApiString()}";
             }
             else
             {
-                return $"{_name}\n{_imageSize.ToApiString()} {_aspectRatio}";
+                return $"{_name}\n{_imageSize.ToApiString()} {_aspectRatio.ToApiString()}";
             }
         }
 
@@ -116,7 +120,7 @@ namespace MultiImageClient
                         imageConfig = new
                         {
                             imageSize = _imageSize.ToApiString(),
-                            aspectRatio = _aspectRatio
+                            aspectRatio = _aspectRatio.ToApiString()
                         }
                     }
                 };
