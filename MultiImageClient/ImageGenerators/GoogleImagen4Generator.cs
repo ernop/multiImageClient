@@ -26,6 +26,7 @@ namespace MultiImageClient
         private string _projectId;
         private string _googleServiceAccountKeyPath;
         private GoogleCredential _credential;
+        private GoogleImageSize _imageSize;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GoogleImagen4;
 
@@ -35,14 +36,22 @@ namespace MultiImageClient
             string safetyFilterLevel, 
             string location, 
             string projectId,
-            string googleServiceAccountKeyPath)
+            string googleServiceAccountKeyPath,
+            GoogleImageSize imageSize = GoogleImageSize.Size1K)
 
         {
+            // Imagen 4 does not support 4K resolution
+            if (imageSize == GoogleImageSize.Size4K)
+            {
+                throw new ArgumentException("Imagen 4 does not support 4K resolution. Use 1K or 2K.");
+            }
+            
             _apiKey = apiKey;
             _googleSemaphore = new SemaphoreSlim(maxConcurrency);
             _location = location;
             _projectId = projectId;
             _googleServiceAccountKeyPath = googleServiceAccountKeyPath;
+            _imageSize = imageSize;
 
             if (!string.IsNullOrEmpty(_googleServiceAccountKeyPath))
             {
@@ -68,30 +77,35 @@ namespace MultiImageClient
         public string GetFilenamePart(PromptDetails pd)
         {
             var namePart = string.IsNullOrEmpty(_name) ? "" : $"-{_name}";
-            return $"google-imagen4{namePart}";
+            return $"google-imagen4{namePart}_{_imageSize.ToApiString()}_{_aspectRatio.Replace(":", "x")}";
         }
 
         public decimal GetCost()
         {
-            // Imagen 4 pricing (higher than Imagen 3)
-            return 0.04m;
+            // Imagen 4 pricing - higher resolutions cost more
+            return _imageSize switch
+            {
+                GoogleImageSize.Size1K => 0.04m,
+                GoogleImageSize.Size2K => 0.08m,
+                _ => 0.04m
+            };
         }
 
         public List<string> GetRightParts()
         {
             var namePart = string.IsNullOrEmpty(_name) ? "" : _name;
-            return new List<string> { "imagen4", namePart };
+            return new List<string> { "imagen4", namePart, _imageSize.ToApiString(), _aspectRatio };
         }
 
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))
             {
-                return "google-imagen4";
+                return $"google-imagen4\n{_imageSize.ToApiString()} {_aspectRatio}";
             }
             else
             {
-                return _name;
+                return $"{_name}\n{_imageSize.ToApiString()} {_aspectRatio}";
             }
         }
 
@@ -115,6 +129,7 @@ namespace MultiImageClient
                             { "prompt", Google.Protobuf.WellKnownTypes.Value.ForString(promptDetails.Prompt) },
                             { "numberOfImages", Google.Protobuf.WellKnownTypes.Value.ForNumber(1) },
                             { "aspectRatio", Google.Protobuf.WellKnownTypes.Value.ForString(_aspectRatio) },
+                            { "sampleImageSize", Google.Protobuf.WellKnownTypes.Value.ForString(_imageSize.ToApiString()) },
                             { "enhancePrompt", Google.Protobuf.WellKnownTypes.Value.ForBool(false) },
                             { "includeRaiReason", Google.Protobuf.WellKnownTypes.Value.ForBool(true) },
                             { "safetyFilterLevel", Google.Protobuf.WellKnownTypes.Value.ForString(_safetyFilterLevel) },

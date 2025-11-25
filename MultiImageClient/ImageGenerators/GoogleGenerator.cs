@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -17,11 +17,15 @@ namespace MultiImageClient
         private MultiClientRunStats _stats;
         private string _name;
         private ImageGeneratorApiType _apiType;
+        private GoogleImageSize _imageSize;
+        private string _aspectRatio;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GoogleNanoBanana;
 
         public GoogleGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency,
-            MultiClientRunStats stats, string name = "")
+            MultiClientRunStats stats, string name = "", 
+            GoogleImageSize imageSize = GoogleImageSize.Size1K,
+            string aspectRatio = "1:1")
         {
             _apiKey = apiKey;
             _googleSemaphore = new SemaphoreSlim(maxConcurrency);
@@ -29,21 +33,32 @@ namespace MultiImageClient
             _name = string.IsNullOrEmpty(name) ? "" : name;
             _stats = stats;
             _apiType = apiType;
-
+            _imageSize = imageSize;
+            _aspectRatio = aspectRatio;
         }
 
         public string GetFilenamePart(PromptDetails pd)
         {
-            return $"{_apiType}";
+            var namePart = string.IsNullOrEmpty(_name) ? "" : $"-{_name}";
+            return $"{_apiType}{namePart}_{_imageSize.ToApiString()}_{_aspectRatio.Replace(":", "x")}";
         }
 
         public decimal GetCost()
         {
             // Gemini 2.5 Flash Image uses token-based pricing
             // $30 per 1 million tokens for image output (1290 tokens per image up to 1024x1024px)
+            // Higher resolutions consume proportionally more tokens
             if (_apiType == ImageGeneratorApiType.GoogleNanoBanana)
             {
-                return (30m / 1000000m) * 1290m;
+                var baseTokens = 1290m;
+                var multiplier = _imageSize switch
+                {
+                    GoogleImageSize.Size1K => 1.0m,
+                    GoogleImageSize.Size2K => 4.0m,   // 2x2 = 4x pixels
+                    GoogleImageSize.Size4K => 16.0m,  // 4x4 = 16x pixels
+                    _ => 1.0m
+                };
+                return (30m / 1000000m) * baseTokens * multiplier;
             }
             else if (_apiType == ImageGeneratorApiType.GoogleImagen4)
             {
@@ -57,18 +72,19 @@ namespace MultiImageClient
 
         public List<string> GetRightParts()
         {
-            return new List<string> { _apiType.ToString() };
+            var namePart = string.IsNullOrEmpty(_name) ? "" : _name;
+            return new List<string> { _apiType.ToString(), namePart, _imageSize.ToApiString(), _aspectRatio };
         }
 
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))
             {
-                return $"google-{_apiType.ToString()}";
+                return $"google-{_apiType.ToString()}\n{_imageSize.ToApiString()} {_aspectRatio}";
             }
             else
             {
-                return _name;
+                return $"{_name}\n{_imageSize.ToApiString()} {_aspectRatio}";
             }
         }
 
@@ -96,7 +112,12 @@ namespace MultiImageClient
                     },
                     generationConfig = new
                     {
-                        responseModalities = new[] { "TEXT", "IMAGE" }
+                        responseModalities = new[] { "TEXT", "IMAGE" },
+                        imageConfig = new
+                        {
+                            imageSize = _imageSize.ToApiString(),
+                            aspectRatio = _aspectRatio
+                        }
                     }
                 };
 

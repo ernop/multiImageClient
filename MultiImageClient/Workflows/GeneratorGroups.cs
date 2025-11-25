@@ -1,4 +1,4 @@
-﻿using IdeogramAPIClient;
+using IdeogramAPIClient;
 
 using OpenAI.Images;
 
@@ -63,8 +63,21 @@ namespace MultiImageClient
             //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, bfl3, recraft6, ideogram4, };
             //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
 
-            var google_banana = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats);
-            var googleimagen = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "", "2:5", "BLOCK_NONE", location: _settings.GoogleCloudLocation, projectId: _settings.GoogleCloudProjectId, googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath);
+            // Google Gemini/Nano Banana generators with various resolutions
+            var google_banana = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats, 
+                imageSize: GoogleImageSize.Size1K, aspectRatio: "1:1");
+            var google_banana_2k = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats, 
+                name: "banana-2k", imageSize: GoogleImageSize.Size2K, aspectRatio: "16:9");
+            var google_banana_4k = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats, 
+                name: "banana-4k", imageSize: GoogleImageSize.Size4K, aspectRatio: "1:1");
+            
+            // Google Imagen 4 generators (max 2K, no 4K support)
+            var googleimagen = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "", "16:9", "BLOCK_NONE", 
+                location: _settings.GoogleCloudLocation, projectId: _settings.GoogleCloudProjectId, googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath,
+                imageSize: GoogleImageSize.Size1K);
+            var googleimagen_2k = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "imagen4-2k", "16:9", "BLOCK_NONE", 
+                location: _settings.GoogleCloudLocation, projectId: _settings.GoogleCloudProjectId, googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath,
+                imageSize: GoogleImageSize.Size2K);
             //recraft8, recraft9, 
 
             var myGenerators = new List<IImageGenerator>() { };
