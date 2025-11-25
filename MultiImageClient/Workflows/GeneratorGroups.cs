@@ -1,4 +1,4 @@
-﻿using IdeogramAPIClient;
+using IdeogramAPIClient;
 
 using OpenAI.Images;
 
@@ -63,8 +63,53 @@ namespace MultiImageClient
             //var myGenerators = new List<IImageGenerator>() { dalle3, ideogram2, bfl1, bfl2, bfl3, recraft6, ideogram4, };
             //var myGenerators = new List<IImageGenerator>() { dalle3, recraft1, recraft2, recraft3, recraft4, recraft5, recraft6, ideogram1, ideogram2, bfl1, bfl2 };
 
-            var google_banana = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats);
-            var googleimagen = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "", "2:5", "BLOCK_NONE", location: _settings.GoogleCloudLocation, projectId: _settings.GoogleCloudProjectId, googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath);
+            // Google Gemini/Nano Banana generators with various resolutions
+            var google_banana = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats, 
+                imageSize: GoogleImageSize.Size1K, aspectRatio: GoogleImageAspectRatio.Ratio1x1);
+            var google_banana_2k = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats, 
+                name: "banana-2k", imageSize: GoogleImageSize.Size2K, aspectRatio: GoogleImageAspectRatio.Ratio16x9);
+            var google_banana_4k = new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana, _settings.GoogleGeminiApiKey, _concurrency, _stats, 
+                name: "banana-4k", imageSize: GoogleImageSize.Size4K, aspectRatio: GoogleImageAspectRatio.Ratio1x1);
+            
+            // Google Imagen 4 generators (max 2K, no 4K support) - using options class
+            var imagen4Options1k = new GoogleImageGenerationOptions
+            {
+                ImageSize = GoogleImageSize.Size1K,
+                AspectRatio = GoogleImageAspectRatio.Ratio16x9,
+                SafetyFilterLevel = GoogleSafetyFilterLevel.BlockNone,
+                PersonGeneration = GooglePersonGeneration.AllowAll
+            };
+            var googleimagen = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "", 
+                location: _settings.GoogleCloudLocation, projectId: _settings.GoogleCloudProjectId, 
+                googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath,
+                options: imagen4Options1k);
+            
+            var imagen4Options2k = new GoogleImageGenerationOptions
+            {
+                ImageSize = GoogleImageSize.Size2K,
+                AspectRatio = GoogleImageAspectRatio.Ratio16x9,
+                SafetyFilterLevel = GoogleSafetyFilterLevel.BlockNone,
+                PersonGeneration = GooglePersonGeneration.AllowAll
+            };
+            var googleimagen_2k = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "imagen4-2k", 
+                location: _settings.GoogleCloudLocation, projectId: _settings.GoogleCloudProjectId, 
+                googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath,
+                options: imagen4Options2k);
+            
+            // Example with JPEG output and deterministic seed
+            var imagen4OptionsJpeg = new GoogleImageGenerationOptions
+            {
+                ImageSize = GoogleImageSize.Size2K,
+                AspectRatio = GoogleImageAspectRatio.Ratio3x2,
+                OutputMimeType = GoogleOutputMimeType.Jpeg,
+                CompressionQuality = 90,
+                SafetyFilterLevel = GoogleSafetyFilterLevel.BlockOnlyHigh,
+                Seed = 12345  // Deterministic output
+            };
+            var googleimagen_jpeg = new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency, _stats, "imagen4-jpeg",
+                location: _settings.GoogleCloudLocation, projectId: _settings.GoogleCloudProjectId,
+                googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath,
+                options: imagen4OptionsJpeg);
             //recraft8, recraft9, 
 
             var myGenerators = new List<IImageGenerator>() { };
