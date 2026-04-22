@@ -1,136 +1,94 @@
-﻿
-using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
+    /// For each prompt from the source, asks the user whether to keep / skip / edit
+    /// it, then sends the (possibly edited) prompt in parallel to every generator
+    /// returned by GeneratorGroups.GetAll(). Results are composed into a single
+    /// labelled grid image per prompt.
     public class BatchWorkflow
     {
         public async Task<bool> RunAsync(AbstractPromptSource promptSource, Settings settings, int concurrency, MultiClientRunStats stats)
         {
-            var getter = new GeneratorGroups(settings, concurrency, stats);
-
-            var generators = getter.GetAll();
-            //var generators = getter.GetAllStylesOfRecraft();
-
+            var generators = new GeneratorGroups(settings, concurrency, stats).GetAll().ToList();
             var imageManager = new ImageManager(settings, stats);
-            var claudeService = new ClaudeService(settings.AnthropicApiKey, concurrency, stats);
-
-
-            var claudeStep = new ClaudeRewriteStep("Please take the following idea and expand it into a list of specific items describing material, color, mood, tone, position in the image, and symbolic purpose of whatever the following prompt is about. the point is, intensify and make things very specific including LAYOUT and style and color andappearance and everything an artist would need. create and emit lots of dense, unusual, specific, random, dense sentences. Note: you may never shrink or remove information from the prompt. Your job is ONLY to expand and make it concrete.  What you output should always be longer than what you receive, with much more specific details, etc.", "", claudeService, 0.4m, stats);
-
-            //var steps = new List<ITransformationStep>() { claudeStep };
-            var steps = new List<ITransformationStep>() { };
-
-            var allTasks = new List<Task>();
 
             foreach (var promptString in promptSource.Prompts)
             {
                 Logger.Log($"\n--- Processing prompt: {promptString.Prompt}");
 
-                Console.WriteLine($"\nDo you accept this? y for yes, n for no go to next, or type the prompt you want directly and hit enter.");
-                var val = Console.ReadLine();
-                if (val == "y")
+                System.Console.WriteLine("\nDo you accept this? y for yes, n for skip, or type the prompt you want directly and hit enter. (q to quit)");
+                var val = System.Console.ReadLine();
+                if (val == null)
                 {
-
+                    Logger.Log("stdin closed; ending batch.");
+                    return true;
                 }
-                else if (val == "n")
+                val = val.Trim();
+
+                if (val == "q")
+                {
+                    return true;
+                }
+                if (val == "n")
                 {
                     continue;
                 }
-                else
+                if (val.Length > 0 && val != "y")
                 {
-                    var usingVal = val.Trim();
-                    PromptLogger.LogPrompt(usingVal);
+                    PromptLogger.LogPrompt(val);
                     promptString.UndoLastStep();
-                    promptString.ReplacePrompt(usingVal, "explanation", TransformationType.InitialPrompt);
+                    promptString.ReplacePrompt(val, "explanation", TransformationType.InitialPrompt);
                 }
 
                 if (promptString.Prompt.Length == 0)
                 {
-                    Console.WriteLine("no leng?");
+                    System.Console.WriteLine("empty prompt, skipping.");
                     continue;
                 }
 
-                foreach (var step in steps)
+                var generatorTasks = generators.Select(async generator =>
                 {
-                    var res = await step.DoTransformation(promptString);
-                    if (!res)
-                    {
-                        Logger.Log($"\tStep {step.Name} failed: {promptString.Show()}");
-                        continue;
-                    }
-                    Logger.Log($"\tStep:{step.Name} => {promptString.Show()}");
-                }
-
-                var ii = 0;
-                while (ii < 1)
-                {
-                    // Create tasks for all generators for this prompt
-                    var generatorTasks = generators.Select(async generator =>
-                    {
-                        PromptDetails theCopy = null;
-
-                        try
-                        {
-                            theCopy = promptString.Copy();
-
-                            var result = await generator.ProcessPromptAsync(generator, theCopy);
-                            await imageManager.ProcessAndSaveAsync(result, generator);
-                            Logger.Log($"Finished {generator.GetType().Name} in {result.CreateTotalMs + result.DownloadTotalMs} ms, {result.PromptDetails.Show()}");
-
-                            return result;
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Log($"Task faulted for {generator.GetType().Name}: {ex.Message}");
-
-                            var res = new TaskProcessResult
-                            {
-                                IsSuccess = false,
-                                ErrorMessage = ex.Message,
-                                PromptDetails = theCopy,
-                                ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
-                            };
-
-                            return res;
-                        }
-                    }).ToArray();
-
-                    allTasks.AddRange(generatorTasks);
-                    ii++;
-
-                    stats.PrintStats();
-                    var results = await Task.WhenAll(generatorTasks);
-
+                    PromptDetails theCopy = null;
                     try
                     {
-                        //var res = await ImageCombiner.CreateBatchLayoutImageHorizontalAsync(results, promptString.Prompt, settings);
-                        var res = await ImageCombiner.CreateBatchLayoutImageSquareAsync(results, promptString.Prompt, settings); 
-                        Logger.Log($"Combined images saved to: {res}");
+                        theCopy = promptString.Copy();
+                        Logger.Log($"  -> SENDING to {generator.GetGeneratorSpecPart()} : {theCopy.Prompt}");
+                        var result = await generator.ProcessPromptAsync(generator, theCopy);
+                        await imageManager.ProcessAndSaveAsync(result, generator);
+                        var status = result.IsSuccess ? "OK" : $"FAIL ({result.ErrorMessage})";
+                        Logger.Log($"  <- {status} from {generator.GetGeneratorSpecPart()} in {result.CreateTotalMs + result.DownloadTotalMs} ms");
+                        return result;
                     }
-                    catch (Exception ex)
+                    catch (System.Exception ex)
                     {
-                        Logger.Log($"Failed to combine images: {ex.Message}");
-                        var res2 = await ImageCombiner.CreateBatchLayoutImageSquareAsync(results, promptString.Prompt, settings);
-                        Logger.Log($"Combined images saved to: {res2}");
-                        return false;
+                        Logger.Log($"  <- EXCEPTION from {generator.GetGeneratorSpecPart()}: {ex.Message}");
+                        return new TaskProcessResult
+                        {
+                            IsSuccess = false,
+                            ErrorMessage = ex.Message,
+                            PromptDetails = theCopy ?? promptString,
+                            ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
+                        };
                     }
+                }).ToArray();
+
+                stats.PrintStats();
+                var results = await Task.WhenAll(generatorTasks);
+
+                try
+                {
+                    var composed = await ImageCombiner.CreateBatchLayoutImageSquareAsync(results, promptString.Prompt, settings);
+                    Logger.Log($"Combined images saved to: {composed}");
+                }
+                catch (System.Exception ex)
+                {
+                    Logger.Log($"Failed to combine images for prompt '{promptString.Prompt}': {ex.Message}");
                 }
             }
             return true;
-
-            // Wait for all tasks
-            // while (allTasks.Any(t => !t.IsCompleted))
-            // {
-            //     var completed = allTasks.Count(t => t.IsCompleted);
-            //     var remaining = allTasks.Count - completed;
-            //     Logger.Log($"Status: {completed}/{allTasks.Count} completed, {remaining} remaining...");
-            //     await Task.WhenAny(Task.Delay(5000), Task.WhenAll(allTasks));
-            // }
         }
     }
 }

@@ -1,17 +1,22 @@
 ﻿{
-  "LoadPromptsFrom": "D:\\proj\\IdeogramAPI\\prompts.txt",
-  "IdeogramApiKey": "FILL IN YOUR IDEOGRAM API KEY HERE from https://ideogram.ai/manage-api which you have to pay for",
-  "OpenAIApiKey": "Optional: Fill in the OpenAI key here: from https://platform.openai.com/api-keys which you have to pay for",
-  "BFLApiKey": "Optional: Fill in the BFL key here: from https://beta.bigfriendly.com/ which you have to pay for",
-  "AnthropicApiKey": "Optionally: fill in the anthropic key here.  from https://console.anthropic.com/settings/keys which you have to pay for",
-  "GoogleGeminiApiKey": "FILL IN YOUR GOOGLE GEMINI API KEY HERE from https://ai.google.dev/gemini-api/docs/api-key which you have to pay for",
-  "GoogleCloudLocation": "FILL IN YOUR GOOGLE CLOUD REGION HERE (e.g., us-central1) for Imagen 4 - see https://cloud.google.com/vertex-ai/docs/general/locations",
-  "GoogleCloudProjectId": "FILL IN YOUR GOOGLE CLOUD PROJECT ID HERE for Imagen 4 - from Google Cloud Console",
-  "GoogleServiceAccountKeyPath": "FILL IN THE PATH TO YOUR SERVICE ACCOUNT JSON KEY FILE HERE for Imagen 4 - created in Google Cloud Console IAM & Admin > Service Accounts > Keys",
+  "PromptFiles": [
+    "REQUIRED: absolute path to a prompts .txt file (one prompt per line). You can list more than one file.",
+    "Example second file — or remove this array entry."
+  ],
+  "LoadPromptsFrom": "",
+  "IdeogramApiKey": "Optional: Ideogram API key from https://ideogram.ai/manage-api (paid). Required for Ideogram v2/v2a/v3 generators.",
+  "OpenAIApiKey": "Optional: OpenAI key from https://platform.openai.com/api-keys (paid). Required for DALL-E 3 and GPT Image 1 / GPT Image 1 Mini generators.",
+  "BFLApiKey": "Optional: Black Forest Labs (Flux) key from https://api.bfl.ai/ (paid). Required for BFL v1.1 and BFL v1.1 Ultra generators.",
+  "AnthropicApiKey": "Optional: Anthropic key from https://console.anthropic.com/settings/keys (paid). Required for Claude-based prompt rewriting steps.",
+  "RecraftApiKey": "Optional: Recraft API key from https://www.recraft.ai/ (paid). Required for Recraft generators.",
+  "GoogleGeminiApiKey": "Optional: Google Gemini (AI Studio) key from https://ai.google.dev/gemini-api/docs/api-key. Used by the Gemini image (NanoBanana) generator and as an AI Studio fallback for Imagen.",
+  "GoogleCloudApiKey": "Optional: Google Cloud / Vertex AI API key (alternative to service-account auth).",
+  "GoogleCloudLocation": "REQUIRED for Imagen 4: Google Cloud region, e.g. us-central1. See https://cloud.google.com/vertex-ai/docs/general/locations",
+  "GoogleCloudProjectId": "REQUIRED for Imagen 4: Google Cloud project id from https://console.cloud.google.com/",
+  "GoogleServiceAccountKeyPath": "REQUIRED for Imagen 4: absolute path to a service-account JSON key file (IAM & Admin > Service Accounts > Keys).",
   "ImageDownloadBaseFolder": "D:\\proj\\IdeogramAPI\\ideogramSaves",
   "LogFilePath": "D:\\proj\\IdeogramAPI\\ideogram.log",
   "SaveJsonLog": true,
-  "SaveRawImage": true,
   "EnableLogging": true,
   "AnnotationSide": "right"
 }

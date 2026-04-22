@@ -28,6 +28,14 @@ namespace MultiImageClient
         public string RecraftApiKey { get; set; }
         public string GoogleGeminiApiKey { get; set; }
         public string GoogleCloudLocation { get; set; }
+        /// List of prompt-source text files. Every listed file is read and the
+        /// lines are pooled together. All listed files must exist at run time;
+        /// missing files are a hard error. Prefer this field over the legacy
+        /// LoadPromptsFrom single-file setting.
+        public List<string> PromptFiles { get; set; } = new List<string>();
+
+        /// Legacy single-file prompt source. If set, appended to PromptFiles.
+        /// Kept for backward compatibility with older settings.json files.
         public string LoadPromptsFrom { get; set; }
         public bool EnableLogging { get; set; }
         public string LogFilePath { get; set; }
@@ -48,6 +56,7 @@ namespace MultiImageClient
             string json = File.ReadAllText(filePath);
             var settings = JsonConvert.DeserializeObject<Settings>(json);
             settings.Validate();
+            Logger.Initialize(settings.LogFilePath);
             Logger.Log("Current settings:");
             Logger.Log($"Image Download Base:\t{settings.ImageDownloadBaseFolder}");
             Logger.Log($"Save JSON Log:\t\t{settings.SaveJsonLog}");
@@ -57,35 +66,43 @@ namespace MultiImageClient
             return settings;
         }
 
+        /// Only validates things that EVERY run needs: the log file path and the
+        /// image download folder. Per-generator requirements (Google Cloud fields,
+        /// individual API keys, etc.) live in the generator that needs them.
         public void Validate()
         {
             if (string.IsNullOrWhiteSpace(LogFilePath))
             {
-                throw new ArgumentException("LogFilePath is required");
+                throw new InvalidOperationException(
+                    "settings.json: LogFilePath is required. Set it to a writable file path, e.g. \"C:\\\\proj\\\\multiImageClient\\\\ideogram.log\".");
             }
-
             var logDirectory = Path.GetDirectoryName(LogFilePath);
             if (!string.IsNullOrEmpty(logDirectory))
             {
-                Directory.CreateDirectory(logDirectory);
+                try
+                {
+                    Directory.CreateDirectory(logDirectory);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException(
+                        $"settings.json: LogFilePath='{LogFilePath}' — could not create directory '{logDirectory}': {ex.Message}. Fix the path in settings.json.");
+                }
             }
 
-            if (!Directory.Exists(ImageDownloadBaseFolder))
+            if (string.IsNullOrWhiteSpace(ImageDownloadBaseFolder))
+            {
+                throw new InvalidOperationException(
+                    "settings.json: ImageDownloadBaseFolder is required. Set it to a writable folder, e.g. \"C:\\\\proj\\\\multiImageClient\\\\saves\".");
+            }
+            try
             {
                 Directory.CreateDirectory(ImageDownloadBaseFolder);
             }
-
-            if (string.IsNullOrWhiteSpace(GoogleCloudLocation))
+            catch (Exception ex)
             {
-                throw new ArgumentException("GoogleCloudLocation is required for Imagen 4");
-            }
-            if (string.IsNullOrWhiteSpace(GoogleCloudProjectId))
-            {
-                throw new ArgumentException("GoogleCloudProjectId is required for Imagen 4");
-            }
-            if (string.IsNullOrWhiteSpace(GoogleServiceAccountKeyPath))
-            {
-                throw new ArgumentException("GoogleServiceAccountKeyPath is required for Imagen 4");
+                throw new InvalidOperationException(
+                    $"settings.json: ImageDownloadBaseFolder='{ImageDownloadBaseFolder}' — could not create: {ex.Message}. Fix the path in settings.json.");
             }
         }
     }
