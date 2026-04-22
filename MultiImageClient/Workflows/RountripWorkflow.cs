@@ -16,9 +16,9 @@ namespace MultiImageClient
     {
         private MultiClientRunStats? _stats;
         private Settings? _settings;
-        private int _concurrency;
         private ImageManager? _imageManager;
         private IEnumerable<IImageGenerator>? _generators;
+        private List<ILocalVisionModel>? _visionModels;
 
         private readonly List<string> _questions = new List<string>
         {
@@ -93,25 +93,8 @@ namespace MultiImageClient
             var overallStopwatch = Stopwatch.StartNew();
             Logger.Log("=== Starting RoundTrip Workflow ===");
 
-            var modelLoadStopwatch = Stopwatch.StartNew();
-
-            var internVlModel = new LocalInternVLClient(
-                baseUrl: "http://127.0.0.1:11415",
-                temperature: 0.8f,
-                topP: 0.9f,
-                topK: 50,
-                repetitionPenalty: 1.1f,
-                doSample: true
-            );
-
-            var qwenModel = new LocalQwenClient();
-            var visionModels = new List<ILocalVisionModel>() { internVlModel, qwenModel };
-            foreach (var visionModel in visionModels)
+            foreach (var visionModel in _visionModels!)
             {
-
-                modelLoadStopwatch.Stop();
-                Logger.Log($"Model initialization took: {modelLoadStopwatch.ElapsedMilliseconds} ms");
-
                 var allResponses = new List<string>();
                 var questionTimings = new List<(string question, long milliseconds)>();
 
@@ -217,26 +200,31 @@ namespace MultiImageClient
         public async Task<bool> RunAsync(Settings settings, int concurrency, MultiClientRunStats stats)
         {
             _settings = settings;
-            _concurrency = concurrency;
             _stats = stats;
-            var getter = new GeneratorGroups(settings, concurrency, stats);
-            _generators = getter.GetAll();
-
+            _generators = new GeneratorGroups(settings, concurrency, stats).GetAll();
             _imageManager = new ImageManager(settings, stats);
 
             Logger.Log("=== Checking Vision Model Services ===");
-            
-            var internVLReady = await ModelServiceManager.EnsureInternVLServiceIsRunningAsync();
-            if (!internVLReady)
+
+            if (!await ModelServiceManager.EnsureInternVLServiceIsRunningAsync())
             {
-                Logger.Log("WARNING: InternVL service could not be started. Image descriptions may fail.");
+                throw new System.InvalidOperationException(
+                    "InternVL service (http://127.0.0.1:11415) could not be started. Start it manually (see do_flask_intern.py) or run Batch Workflow instead.");
+            }
+            if (!await ModelServiceManager.EnsureOllamaServiceIsRunningAsync())
+            {
+                throw new System.InvalidOperationException(
+                    "Ollama service could not be started. Install and start Ollama, or run Batch Workflow instead.");
             }
 
-            var ollamaReady = await ModelServiceManager.EnsureOllamaServiceIsRunningAsync();
-            if (!ollamaReady)
+            _visionModels = new List<ILocalVisionModel>
             {
-                Logger.Log("WARNING: Ollama service could not be started. Image descriptions may fail.");
-            }
+                new LocalInternVLClient(
+                    baseUrl: "http://127.0.0.1:11415",
+                    temperature: 0.8f, topP: 0.9f, topK: 50,
+                    repetitionPenalty: 1.1f, doSample: true),
+                new LocalQwenClient(),
+            };
 
             Logger.Log("=== Vision Model Services Check Complete ===\n");
 

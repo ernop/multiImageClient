@@ -38,8 +38,14 @@ namespace MultiImageClient
 
             while (true)
             {
-                Console.WriteLine($"What do you want to do: \n\n1. Batch Workflow (make a bunch images for each prompt you choose or write yourself)\r\n2. Image2desc2image take an image, then describe it, then batch that out into a bunch of images again.");
-                var val = Console.ReadLine().Trim();
+                Console.WriteLine($"What do you want to do: \n\n1. Batch Workflow (make a bunch images for each prompt you choose or write yourself)\r\n2. Image2desc2image take an image, then describe it, then batch that out into a bunch of images again.\r\nq. quit");
+                var line = Console.ReadLine();
+                if (line is null)
+                {
+                    Console.WriteLine("stdin closed, exiting.");
+                    return;
+                }
+                var val = line.Trim();
                 if (val == "1")
                 {
                     var bw = new BatchWorkflow();
@@ -52,9 +58,14 @@ namespace MultiImageClient
                     await rw.RunAsync(settings, concurrency, stats);
                     break;
                 }
+                else if (val.Equals("q", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine("quitting.");
+                    return;
+                }
                 else
                 {
-                    Console.WriteLine("not recognized.)");
+                    Console.WriteLine("not recognized.");
                 }
             }
         }

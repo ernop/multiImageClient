@@ -25,6 +25,9 @@ namespace MultiImageClient
         public int GptImageOneRequestCount { get; set; }
         public int GptImageOneRefusedCount  { get; set; }
 
+        public int GptImage2RequestCount { get; set; }
+        public int GptImage2RefusedCount { get; set; }
+
         public int BFLImageGenerationRequestCount { get; set; }
         public int BFLImageGenerationSuccessCount { get; set; }
         public int BFLImageGenerationErrorCount { get; set; }
@@ -72,6 +75,11 @@ namespace MultiImageClient
                 nonZeroStats.Add($"GPT Image One Requests:{GptImageOneRequestCount}");
             if (GptImageOneRefusedCount > 0)
                 nonZeroStats.Add($"GPT Image One Refused:{GptImageOneRefusedCount}");
+
+            if (GptImage2RequestCount > 0)
+                nonZeroStats.Add($"GPT Image 2 Requests:{GptImage2RequestCount}");
+            if (GptImage2RefusedCount > 0)
+                nonZeroStats.Add($"GPT Image 2 Refused:{GptImage2RefusedCount}");
 
             if (GoogleRequestCount > 0)
                 nonZeroStats.Add($"Google Requests:{GoogleRequestCount}");

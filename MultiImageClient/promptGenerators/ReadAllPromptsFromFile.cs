@@ -1,84 +1,97 @@
-﻿using MultiImageClient;
-
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.IO;
 using System.Linq;
-using System.Reflection.Metadata.Ecma335;
 
 namespace MultiImageClient
 {
-    // the most common method for getting prompts to test, just load them from a big file of old ones I have.
+    /// Loads every line of every file listed in Settings.PromptFiles
+    /// (plus the legacy LoadPromptsFrom, if set) into a single pool and
+    /// yields prompts from that pool in random order, up to ImageCreationLimit.
+    ///
+    /// Fails hard with a clear message if:
+    ///   - no prompt files are configured, or
+    ///   - any configured file is missing or unreadable.
     public class ReadAllPromptsFromFile : AbstractPromptSource
     {
-        private string FilePath { get; set; }
-
-        public ReadAllPromptsFromFile(Settings settings, string path) : base(settings)
+        public ReadAllPromptsFromFile(Settings settings, string _unusedLegacyPath) : base(settings)
         {
-            if (!string.IsNullOrEmpty(path) && File.Exists(path))
-            {
-                FilePath = path;
-            }
-            else
-            {
-                FilePath = "";
-            }
         }
 
         public override string Name => nameof(ReadAllPromptsFromFile);
-        public override int ImageCreationLimit => 100;
+        public override int ImageCreationLimit => int.MaxValue;
         public override int CopiesPer => 1;
         public override int FullyResolvedCopiesPer => 1;
         public override bool RandomizeOrder => true;
         public override string Prefix => "";
         public override string Suffix => "";
+
         public override IEnumerable<PromptDetails> Prompts
         {
             get
             {
-                var sourceFPs = new List<string>() {
-                "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrivatePrompts.txt",
-                "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts-private.txt",
-                "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\myPrompts.txt",
-                "D:\\proj\\multiImageClient\\IdeogramHistoryExtractor\\myPrompts\\prompts3.txt"
-            };
-
-                if (!string.IsNullOrEmpty(FilePath))
+                var files = new List<string>();
+                if (Settings.PromptFiles != null)
                 {
-                    sourceFPs.Add(FilePath);
+                    files.AddRange(Settings.PromptFiles.Where(p => !string.IsNullOrWhiteSpace(p)));
+                }
+                if (!string.IsNullOrWhiteSpace(Settings.LoadPromptsFrom))
+                {
+                    files.Add(Settings.LoadPromptsFrom);
+                }
+
+                if (files.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        "settings.json: PromptFiles is empty. Add the path(s) to your prompts .txt file(s), e.g. \"PromptFiles\": [\"C:\\\\proj\\\\multiImageClient\\\\prompts.txt\"].");
+                }
+
+                var missing = files.Where(f => !File.Exists(f)).ToList();
+                if (missing.Count > 0)
+                {
+                    throw new FileNotFoundException(
+                        $"settings.json: PromptFiles contains file(s) that do not exist: {string.Join(", ", missing)}. Fix the path(s) in settings.json.");
                 }
 
                 var allPromptsRaw = new List<string>();
-
-                foreach (var fp in sourceFPs)
+                foreach (var fp in files)
                 {
-                    var items = File.ReadAllLines(fp).ToList();
-                    foreach (var usePrompt in items)
+                    foreach (var line in File.ReadAllLines(fp))
                     {
-                        if (string.IsNullOrEmpty(usePrompt))
+                        if (!string.IsNullOrWhiteSpace(line))
                         {
-                            continue;
+                            allPromptsRaw.Add(line);
                         }
-                        allPromptsRaw.Add(usePrompt);
                     }
                 }
 
-                Logger.Log($"loaded {allPromptsRaw.Count} prompts total.");
-
-                for (var ii = 0; ii < ImageCreationLimit; ii++)
+                if (allPromptsRaw.Count == 0)
                 {
-                    var aa = Random.Shared.Next(0, allPromptsRaw.Count);
-                    var pd = new PromptDetails();
-                    var usePrompt = allPromptsRaw[aa];
-                    pd.ReplacePrompt(usePrompt, usePrompt, TransformationType.InitialPrompt);
+                    throw new InvalidOperationException(
+                        $"settings.json: PromptFiles {string.Join(", ", files)} contained no non-blank lines.");
+                }
 
+                Logger.Log($"Loaded {allPromptsRaw.Count} prompts from {files.Count} file(s): {string.Join(", ", files)}");
+
+                var order = Enumerable.Range(0, allPromptsRaw.Count).ToList();
+                if (RandomizeOrder)
+                {
+                    for (int i = order.Count - 1; i > 0; i--)
+                    {
+                        var j = Random.Shared.Next(0, i + 1);
+                        (order[i], order[j]) = (order[j], order[i]);
+                    }
+                }
+
+                var limit = Math.Min(ImageCreationLimit, order.Count);
+                for (var ii = 0; ii < limit; ii++)
+                {
+                    var usePrompt = allPromptsRaw[order[ii]];
+                    var pd = new PromptDetails();
+                    pd.ReplacePrompt(usePrompt, usePrompt, TransformationType.InitialPrompt);
                     yield return pd;
                 }
             }
         }
-
-        
     }
 }
-

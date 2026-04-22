@@ -15,54 +15,83 @@ namespace MultiImageClient
 {
     public class GoogleImagen4Generator : IImageGenerator
     {
-        private SemaphoreSlim _googleSemaphore;
+        private readonly SemaphoreSlim _googleSemaphore;
+        private readonly string _apiKey;
+        private readonly MultiClientRunStats _stats;
+        private readonly string _name;
+        private readonly string _aspectRatio;
+        private readonly string _safetyFilterLevel;
+        private readonly string _location;
+        private readonly string _projectId;
+        private readonly string _googleServiceAccountKeyPath;
+
         private PredictionServiceClient _predictionServiceClient;
-        private string _apiKey;
-        private MultiClientRunStats _stats;
-        private string _name;
-        private string _aspectRatio;
-        private string _safetyFilterLevel;
-        private string _location;
-        private string _projectId;
-        private string _googleServiceAccountKeyPath;
         private GoogleCredential _credential;
+        private readonly object _clientLock = new object();
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GoogleImagen4;
 
+        /// Constructor is intentionally cheap: it only stores fields. Credential
+        /// loading and client construction happen lazily on first use so that
+        /// users who never call Imagen 4 don't need any Google Cloud setup.
         public GoogleImagen4Generator(string apiKey, int maxConcurrency,
-            MultiClientRunStats stats, string name, 
-            string aspectRatio, 
-            string safetyFilterLevel, 
-            string location, 
+            MultiClientRunStats stats, string name,
+            string aspectRatio,
+            string safetyFilterLevel,
+            string location,
             string projectId,
             string googleServiceAccountKeyPath)
-
         {
             _apiKey = apiKey;
             _googleSemaphore = new SemaphoreSlim(maxConcurrency);
             _location = location;
             _projectId = projectId;
             _googleServiceAccountKeyPath = googleServiceAccountKeyPath;
-
-            if (!string.IsNullOrEmpty(_googleServiceAccountKeyPath))
-            {
-                _credential = GoogleCredential.FromFile(_googleServiceAccountKeyPath)
-                    .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
-            } else {
-                _credential = GoogleCredential.GetApplicationDefault()
-                    .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
-            }
-
-            _predictionServiceClient = new PredictionServiceClientBuilder
-            {
-                Endpoint = $"{location}-aiplatform.googleapis.com",
-                Credential = _credential
-            }.Build();
-            
             _name = string.IsNullOrEmpty(name) ? "" : name;
             _stats = stats;
             _aspectRatio = aspectRatio;
             _safetyFilterLevel = safetyFilterLevel;
+        }
+
+        private PredictionServiceClient EnsureClient()
+        {
+            if (_predictionServiceClient != null) return _predictionServiceClient;
+            lock (_clientLock)
+            {
+                if (_predictionServiceClient != null) return _predictionServiceClient;
+
+                if (string.IsNullOrWhiteSpace(_location))
+                {
+                    throw new InvalidOperationException(
+                        "settings.json: GoogleCloudLocation is required to use the Imagen 4 generator (e.g. \"us-central1\").");
+                }
+                if (string.IsNullOrWhiteSpace(_projectId))
+                {
+                    throw new InvalidOperationException(
+                        "settings.json: GoogleCloudProjectId is required to use the Imagen 4 generator.");
+                }
+                if (string.IsNullOrWhiteSpace(_googleServiceAccountKeyPath))
+                {
+                    throw new InvalidOperationException(
+                        "settings.json: GoogleServiceAccountKeyPath is required to use the Imagen 4 generator (absolute path to a service-account JSON key file).");
+                }
+                if (!File.Exists(_googleServiceAccountKeyPath))
+                {
+                    throw new InvalidOperationException(
+                        $"settings.json: GoogleServiceAccountKeyPath='{_googleServiceAccountKeyPath}' does not exist. Point it at a real service-account JSON file.");
+                }
+
+                _credential = GoogleCredential.FromFile(_googleServiceAccountKeyPath)
+                    .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
+
+                _predictionServiceClient = new PredictionServiceClientBuilder
+                {
+                    Endpoint = $"{_location}-aiplatform.googleapis.com",
+                    Credential = _credential
+                }.Build();
+
+                return _predictionServiceClient;
+            }
         }
 
         public string GetFilenamePart(PromptDetails pd)
@@ -100,6 +129,7 @@ namespace MultiImageClient
             await _googleSemaphore.WaitAsync();
             try
             {
+                var client = EnsureClient();
                 _stats.GoogleRequestCount++;
 
                 // Google Gemini API endpoint for Imagen 4
@@ -133,7 +163,7 @@ namespace MultiImageClient
 
                 var endpoint = EndpointName.FromProjectLocationPublisherModel(_projectId, _location, "google", "imagen-4.0-generate-001");
                 
-                var response = await _predictionServiceClient.PredictAsync(endpoint, instances, parameters);
+                var response = await client.PredictAsync(endpoint, instances, parameters);
                 
                 var base64Images = new List<CreatedBase64Image>();
                 string commonMimeType = "image/png"; // Default or first detected mime type

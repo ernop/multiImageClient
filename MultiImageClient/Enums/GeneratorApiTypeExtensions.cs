@@ -18,6 +18,8 @@ namespace MultiImageClient
                 ImageGeneratorApiType.Dalle3 => ".png",
                 ImageGeneratorApiType.Recraft => ".png", //actually, I should use the value read from head since it sometimes shows up as .svg.
                 ImageGeneratorApiType.GptImage1 => ".png",
+                ImageGeneratorApiType.GptImage1Mini => ".png",
+                ImageGeneratorApiType.GptImage2 => ".png",
                 ImageGeneratorApiType.GoogleNanoBanana => ".png",
                 ImageGeneratorApiType.GoogleImagen4 => ".png",
                 ImageGeneratorApiType.IdeogramV3 => ".png",

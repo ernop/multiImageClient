@@ -13,3 +13,4 @@ gen-lang*.json
 magic*.png
 **/prompt_log.json
 **/Temp.txt
+2023-prompts.txt
