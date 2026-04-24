@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 using IdeogramAPIClient;
 
 using ImageMagick;
@@ -30,8 +30,8 @@ namespace MultiImageClient
     // 1. Batch Layout Images: Combines multiple generated images from different image generators into horizontal  square grid layouts,
     //    with labels showing which generator produced each image and the original prompt used.
     //
-    // 2. Roundtrip Layout Images: Creates comprehensive visual documentation of the image description → regeneration workflow.
-    //    Shows the full pipeline: original image → describer instructions → generated description → regenerated images.
+    // 2. Roundtrip Layout Images: Creates comprehensive visual documentation of the image description ? regeneration workflow.
+    //    Shows the full pipeline: original image ? describer instructions ? generated description ? regenerated images.
     //    This layout displays:
     //    - The original input image
     //    - The instructions/prompts given to the describer model
@@ -47,12 +47,17 @@ namespace MultiImageClient
     // All combined images are saved to disk in dated folders and automatically opened in the default image viewer.
     public static class ImageCombiner
     {
-        private const int CombinedImageGeneratorFontSize = 24;
-        private const int CombinedImagePromptFontSize = 32;
+        private const int CombinedImageGeneratorFontSize = 12;
+        private const int CombinedImagePromptFontSize = 16;
         private const int GeneratedImageLabelFontSize = 18;
         private const float LabelLineHeightMultiplier = 1.5f;
         private const int PlaceholderWidth = 300;
         private const int LabelFontSize = 12;
+
+        /// Fraction of the generator-label font size added as extra
+        /// descender reservation so letters with descenders (g, p, y)
+        /// are never clipped by the band below.
+        private const float LabelDescenderReserveFraction = 0.25f;
 
 
         private static IEnumerable<LoadedImage> LoadResultImages(IEnumerable<TaskProcessResult> results)
@@ -85,6 +90,7 @@ namespace MultiImageClient
                                 Success = true,
                                 Result = result.IsSuccess ? "successX" : result.ErrorMessage ?? "missing error",
                                 Generator = result.ImageGeneratorDescription,
+                                TimingLabel = FormatTiming(result.CreateTotalMs + result.DownloadTotalMs),
                                 Image = image,
                                 Width = image.Width,
                                 Height = image.Height
@@ -131,10 +137,11 @@ namespace MultiImageClient
 
             var layoutImage = ImageUtils.CreateStandardImage(totalWidth, totalHeight, UIConstants.White);
 
+            var timingFont = FontUtils.CreateFont(Math.Max(8, generatorFont.Size * 0.75f), FontStyle.Regular);
+
             layoutImage.Mutate(ctx =>
             {
                 int currentX = 0;
-                var labelOpts = FontUtils.CreateTextOptions(generatorFont, HorizontalAlignment.Center, VerticalAlignment.Top, UIConstants.LineSpacing);
 
                 foreach (var li in loadedImages)
                 {
@@ -149,11 +156,11 @@ namespace MultiImageClient
                         ctx.DrawErrorPlaceholder(rect, errorText, generatorFont);
                     }
 
-                    labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding);
+                    float centerX = currentX + li.Width / 2f;
+                    float labelY = maxImageHeight + UIConstants.Padding;
 
                     var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
-                    var labelText = li.Generator;
-                    ctx.DrawTextStandard(labelOpts, labelText, labelColor);
+                    DrawCompositeLabelLine(ctx, li.Generator, li.TimingLabel, generatorFont, timingFont, labelColor, centerX, labelY);
 
                     currentX += li.Width;
                 }
@@ -164,7 +171,100 @@ namespace MultiImageClient
 
 
 
-        // This is a square image where the top images are all the outputs of the original 1 prompt => many render attempts of it.
+        /// Renders a generator label as a single horizontal line with a clear
+        /// typographic hierarchy:
+        ///
+        ///   [primary font (bold)] gpt-image-2   [secondary font] medium  square  1m 4s
+        ///
+        /// The first whitespace-delimited token of <paramref name="fullLabel"/>
+        /// (typically the model id) stays in the primary font; the rest of
+        /// the label plus the optional timing ("1m 4s") collapses into one
+        /// secondary-font string drawn to its right. All pieces share a
+        /// single bottom pixel (descenders included) so nothing sits visually
+        /// lower than anything else. Color comes from <paramref name="color"/>
+        /// � no gray text, per AGENTS.md.
+        private static void DrawCompositeLabelLine(
+            IImageProcessingContext ctx,
+            string fullLabel,
+            string? timingLabel,
+            Font primaryFont,
+            Font secondaryFont,
+            Color color,
+            float centerX,
+            float labelY)
+        {
+            if (string.IsNullOrWhiteSpace(fullLabel) && string.IsNullOrWhiteSpace(timingLabel)) return;
+
+            // Split: first whitespace-delimited token is the primary piece
+            // (kept in the big bold font); everything after is secondary.
+            // Extra whitespace in the source is normalized to exactly two
+            // spaces between pieces in the rendered output.
+            var trimmed = (fullLabel ?? string.Empty).Trim();
+            string primary;
+            var secondaryPieces = new List<string>();
+            int firstSpace = trimmed.IndexOf(' ');
+            if (firstSpace < 0)
+            {
+                primary = trimmed;
+            }
+            else
+            {
+                primary = trimmed.Substring(0, firstSpace);
+                var rest = trimmed.Substring(firstSpace + 1);
+                secondaryPieces.AddRange(rest.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            }
+            if (!string.IsNullOrWhiteSpace(timingLabel))
+            {
+                secondaryPieces.Add(timingLabel);
+            }
+            string secondary = string.Join("  ", secondaryPieces);
+
+            // Measure each piece independently so we can lay them out on one
+            // shared baseline.
+            var primaryMeasureOpts = FontUtils.CreateTextOptions(primaryFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
+            primaryMeasureOpts.Origin = new PointF(0, 0);
+            var primaryBounds = string.IsNullOrEmpty(primary)
+                ? new FontRectangle(0, 0, 0, 0)
+                : TextMeasurer.MeasureBounds(primary, primaryMeasureOpts);
+
+            float gap = secondaryPieces.Count == 0 || string.IsNullOrEmpty(primary)
+                ? 0f
+                : Math.Max(8f, primaryFont.Size * 0.6f);
+
+            float secondaryWidth = 0f;
+            FontRectangle secondaryBounds = new FontRectangle(0, 0, 0, 0);
+            if (!string.IsNullOrEmpty(secondary))
+            {
+                var secondaryMeasureOpts = FontUtils.CreateTextOptions(secondaryFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
+                secondaryMeasureOpts.Origin = new PointF(0, 0);
+                secondaryBounds = TextMeasurer.MeasureBounds(secondary, secondaryMeasureOpts);
+                secondaryWidth = secondaryBounds.Width;
+            }
+
+            float totalWidth = primaryBounds.Width + gap + secondaryWidth;
+            float startX = centerX - totalWidth / 2f;
+
+            // Draw primary first at (startX, labelY) with Top alignment so
+            // labelY is the top of its ascenders. Then use its actual bottom
+            // pixel as the shared baseline for the secondary text.
+            float sharedBottom = labelY + primaryBounds.Height;
+            if (!string.IsNullOrEmpty(primary))
+            {
+                var primaryDrawOpts = FontUtils.CreateTextOptions(primaryFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
+                primaryDrawOpts.Origin = new PointF(startX, labelY);
+                ctx.DrawTextStandard(primaryDrawOpts, primary, color);
+                var drawnBounds = TextMeasurer.MeasureBounds(primary, primaryDrawOpts);
+                sharedBottom = drawnBounds.Bottom;
+            }
+
+            if (!string.IsNullOrEmpty(secondary))
+            {
+                var secondaryDrawOpts = FontUtils.CreateTextOptions(secondaryFont, HorizontalAlignment.Left, VerticalAlignment.Bottom, UIConstants.LineSpacing);
+                secondaryDrawOpts.Origin = new PointF(startX + primaryBounds.Width + gap, sharedBottom);
+                ctx.DrawTextStandard(secondaryDrawOpts, secondary, color);
+            }
+        }
+
         private static Image<Rgba32> RenderSquareLayout(IEnumerable<LoadedImage> loadedImages, Font generatorFont)
         {
             int totalImages = loadedImages.Count();
@@ -208,10 +308,11 @@ namespace MultiImageClient
 
             var layoutImage = ImageUtils.CreateStandardImage(layoutWidth, layoutHeight, UIConstants.White);
 
+            var timingFont = FontUtils.CreateFont(Math.Max(8, generatorFont.Size * 0.75f), FontStyle.Regular);
+
             layoutImage.Mutate(ctx =>
             {
                 int currentY = 0;
-                var labelOpts = FontUtils.CreateTextOptions(generatorFont, HorizontalAlignment.Center, VerticalAlignment.Top, UIConstants.LineSpacing);
                 int imageIndex = 0;
 
                 for (int row = 0; row < rows; row++)
@@ -244,11 +345,9 @@ namespace MultiImageClient
                             ctx.DrawErrorPlaceholder(rect, errorText, generatorFont);
                         }
 
-                        labelOpts.Origin = new PointF(columnX + Math.Max(columnWidth, 1) / 2f, labelY);
-
+                        float centerX = columnX + Math.Max(columnWidth, 1) / 2f;
                         var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
-                        var labelText = li.Generator;
-                        ctx.DrawTextStandard(labelOpts, labelText, labelColor);
+                        DrawCompositeLabelLine(ctx, li.Generator, li.TimingLabel, generatorFont, timingFont, labelColor, centerX, labelY);
 
                         imageIndex++;
                     }
@@ -294,7 +393,12 @@ namespace MultiImageClient
             return outputPath;
         }
 
-        public static async Task<string> CreateBatchLayoutImageSquareAsync(IEnumerable<TaskProcessResult> results, string prompt, Settings settings)
+        // openWhenDone controls whether the combined grid image is popped
+        // open in the system default viewer after it's written. Default true
+        // preserves the batch/round-trip workflow behavior. Callers that want
+        // headless behavior (e.g. the REPL, where viewer popups would spam
+        // the desktop) pass false.
+        public static async Task<string> CreateBatchLayoutImageSquareAsync(IEnumerable<TaskProcessResult> results, string prompt, Settings settings, bool openWhenDone = true)
         {
             var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
             var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
@@ -321,7 +425,10 @@ namespace MultiImageClient
                 li.Image?.Dispose();
             }
 
-            OpenImageWithDefaultApplication(outputPath);
+            if (openWhenDone)
+            {
+                OpenImageWithDefaultApplication(outputPath);
+            }
 
             return outputPath;
         }
@@ -658,8 +765,10 @@ namespace MultiImageClient
 
             int wrappingWidth = Math.Max(1, width - UIConstants.Padding * 4);
             int promptHeight = ImageUtils.MeasureTextHeight(prompt, promptFont, UIConstants.LineSpacing, wrappingWidth);
-            int topPadding = UIConstants.Padding * 3;
-            int bottomPadding = UIConstants.Padding * 2;
+            // Halved from the previous Padding*3 / Padding*2 so the
+            // prompt sits closer to the top of its band.
+            int topPadding = (int)Math.Ceiling(UIConstants.Padding * 1.5f);
+            int bottomPadding = UIConstants.Padding;
             int totalHeight = topPadding + promptHeight + bottomPadding;
 
             var promptPanel = ImageUtils.CreateStandardImage(width, totalHeight, UIConstants.White);
@@ -698,11 +807,16 @@ namespace MultiImageClient
 
         private static int MeasureImageSubdescriptionHeight(IEnumerable<LoadedImage> loadedImages, Font generatorFont)
         {
-            return loadedImages
+            int measured = loadedImages
                 .Select(li => $"{li.Result} {li.Generator}" ?? "missing")
                 .Select(label => ImageUtils.MeasureTextHeight(label, generatorFont, UIConstants.LineSpacing))
                 .DefaultIfEmpty(0)
                 .Max();
+            // Add descender reserve: TextMeasurer.MeasureBounds can
+            // under-report for fonts at this size, clipping the tails
+            // of g/p/y/j. See AGENTS.md > Visual & Typography Policy.
+            int descenderReserve = (int)Math.Ceiling(generatorFont.Size * LabelDescenderReserveFraction);
+            return measured + descenderReserve;
         }
 
         
@@ -710,15 +824,62 @@ namespace MultiImageClient
 
         public static LoadedImage GetPlaceholder(TaskProcessResult result)
         {
+            // Try to match what the real image WOULD have been, so the
+            // placeholder occupies the same column footprint and the prompt
+            // panel underneath doesn't get squeezed to a narrow 300-px strip.
+            // Generators (currently just gpt-image-2) stash their chosen size
+            // into PromptDetails.RuntimeMeta["size"] before the API call, so
+            // it's available even on failure results. Fall back to a reasonable
+            // 1024x1024 if no size metadata exists (older generators, unknown
+            // cases), which is still far nicer than the old 300-px square.
+            int width = 1024;
+            int height = 1024;
+            var meta = result.PromptDetails?.RuntimeMeta;
+            if (meta != null && meta.TryGetValue("size", out var sizeStr) && !string.IsNullOrWhiteSpace(sizeStr))
+            {
+                if (TryParseSize(sizeStr, out var w, out var h))
+                {
+                    width = w;
+                    height = h;
+                }
+            }
+
             return new LoadedImage
             {
                 Image = null,
                 Success = false,
                 Result = result.ErrorMessage ?? "ErrorX",
                 Generator = result.ImageGeneratorDescription,
-                Width = PlaceholderWidth,
-                Height = PlaceholderWidth
+                TimingLabel = FormatTiming(result.CreateTotalMs + result.DownloadTotalMs),
+                Width = width,
+                Height = height
             };
+        }
+
+        // "1024x1024" -> (1024, 1024). Returns false for "auto" or any
+        // unparseable string so the caller can fall back to a default.
+        private static bool TryParseSize(string s, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            var parts = s.Split('x');
+            if (parts.Length != 2) return false;
+            if (!int.TryParse(parts[0], out width) || !int.TryParse(parts[1], out height)) return false;
+            if (width <= 0 || height <= 0) return false;
+            return true;
+        }
+
+        /// Formats a total-elapsed-ms value into a short "%dm %ds"
+        /// string. Returns null for non-positive values so the caller
+        /// can unambiguously decide not to render anything.
+        private static string? FormatTiming(long totalMs)
+        {
+            if (totalMs <= 0) return null;
+            int totalSeconds = (int)Math.Round(totalMs / 1000.0);
+            int mins = totalSeconds / 60;
+            int secs = totalSeconds % 60;
+            return mins > 0 ? $"{mins}m {secs}s" : $"{secs}s";
         }
 
         private static Image<Rgba32> RenderEmptyLayout()
@@ -757,6 +918,7 @@ namespace MultiImageClient
 
             await image.SaveAsPngAsync(outputPath);
             Logger.Log($"Combined image saved: {outputPath}");
+            DlMirror.Copy(outputPath, settings.FlatImageMirrorPath);
 
             return outputPath;
         }
@@ -766,6 +928,9 @@ namespace MultiImageClient
             public bool Success { get; set; }
             public string? Result { get; set; }
             public required string Generator { get; set; }
+            /// Preformatted total generation time (e.g. "2m 15s"), or
+            /// null if we have no usable timing for this result.
+            public string? TimingLabel { get; set; }
             public Image<Rgba32>? Image { get; set; }
             public int Width { get; set; }
             public int Height { get; set; }

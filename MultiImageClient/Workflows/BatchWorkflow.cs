@@ -10,37 +10,49 @@ namespace MultiImageClient
     /// labelled grid image per prompt.
     public class BatchWorkflow
     {
-        public async Task<bool> RunAsync(AbstractPromptSource promptSource, Settings settings, int concurrency, MultiClientRunStats stats)
+        public async Task<bool> RunAsync(AbstractPromptSource promptSource, Settings settings, int concurrency, MultiClientRunStats stats, RunOptions options = null)
         {
-            var generators = new GeneratorGroups(settings, concurrency, stats).GetAll().ToList();
+            options ??= new RunOptions();
+            var generators = new GeneratorGroups(settings, concurrency, stats, fast: options.Fast, quickTest: options.QuickTest).GetAll().ToList();
             var imageManager = new ImageManager(settings, stats);
 
+            int processed = 0;
             foreach (var promptString in promptSource.Prompts)
             {
+                if (processed >= options.Limit)
+                {
+                    Logger.Log($"--limit {options.Limit} reached; stopping batch.");
+                    return true;
+                }
+
                 Logger.Log($"\n--- Processing prompt: {promptString.Prompt}");
 
-                System.Console.WriteLine("\nDo you accept this? y for yes, n for skip, or type the prompt you want directly and hit enter. (q to quit)");
-                var val = System.Console.ReadLine();
-                if (val == null)
+                if (!options.Auto)
                 {
-                    Logger.Log("stdin closed; ending batch.");
-                    return true;
-                }
-                val = val.Trim();
+                    System.Console.WriteLine("\nDo you accept this? y for yes, n for skip, or type the prompt you want directly and hit enter. (q to quit)");
+                    var val = System.Console.ReadLine();
+                    if (val == null)
+                    {
+                        Logger.Log("stdin closed; ending batch.");
+                        return true;
+                    }
+                    val = val.Trim();
 
-                if (val == "q")
-                {
-                    return true;
-                }
-                if (val == "n")
-                {
-                    continue;
-                }
-                if (val.Length > 0 && val != "y")
-                {
-                    PromptLogger.LogPrompt(val);
-                    promptString.UndoLastStep();
-                    promptString.ReplacePrompt(val, "explanation", TransformationType.InitialPrompt);
+                    if (val == "q")
+                    {
+                        return true;
+                    }
+                    if (val == "n")
+                    {
+                        continue;
+                    }
+                    if (val.Length > 0 && val != "y")
+                    {
+                        PromptLogger.LogPrompt(val);
+                        PromptLogger.AppendPromptLine(val, settings.TypedPromptsAppendFile);
+                        promptString.UndoLastStep();
+                        promptString.ReplacePrompt(val, "explanation", TransformationType.InitialPrompt);
+                    }
                 }
 
                 if (promptString.Prompt.Length == 0)
@@ -48,6 +60,7 @@ namespace MultiImageClient
                     System.Console.WriteLine("empty prompt, skipping.");
                     continue;
                 }
+                processed++;
 
                 var generatorTasks = generators.Select(async generator =>
                 {

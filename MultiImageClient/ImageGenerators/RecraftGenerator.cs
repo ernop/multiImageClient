@@ -30,10 +30,19 @@ namespace MultiImageClient
         private RecraftDigitalIllustrationSubstyle? _substyleDigital;
         private RecraftRealisticImageSubstyle? _substyleRealistic;
         private RecraftImageSize _imageSize;
+        private RecraftModel _model;
+        private ImageGeneratorApiType _apiType;
         private string _artistic_level;
         private string _name;
 
-        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.Recraft;
+        public ImageGeneratorApiType ApiType => _apiType;
+
+        private static ImageGeneratorApiType ApiTypeFor(RecraftModel model) => model switch
+        {
+            RecraftModel.recraftv4 => ImageGeneratorApiType.RecraftV4,
+            RecraftModel.recraftv4pro => ImageGeneratorApiType.RecraftV4Pro,
+            _ => ImageGeneratorApiType.Recraft,
+        };
 
         public string GetGeneratorSpecPart()
         {
@@ -66,7 +75,7 @@ namespace MultiImageClient
                     alpart = $"\nartistic level {_artistic_level}";
                 }
                 var using2 = string.Join('\n', usingSubstyle.Split('\n').Where(el => !string.IsNullOrWhiteSpace(el)));
-                return $"recraftv3\n{_style}\n{using2}{alpart}";
+                return $"{_model}\n{_style}\n{using2}{alpart}";
             }
             else
             {
@@ -74,7 +83,7 @@ namespace MultiImageClient
             }
         }
 
-        public RecraftGenerator(string apiKey, int maxConcurrency, RecraftImageSize size, RecraftStyle style, RecraftVectorIllustrationSubstyle? substyleVector, RecraftDigitalIllustrationSubstyle? substyleDigital, RecraftRealisticImageSubstyle? substyleRealistic, MultiClientRunStats stats, string name, string artistic_level = "")
+        public RecraftGenerator(string apiKey, int maxConcurrency, RecraftImageSize size, RecraftStyle style, RecraftVectorIllustrationSubstyle? substyleVector, RecraftDigitalIllustrationSubstyle? substyleDigital, RecraftRealisticImageSubstyle? substyleRealistic, MultiClientRunStats stats, string name, string artistic_level = "", RecraftModel model = RecraftModel.recraftv3)
         {
             _recraftClient = new RecraftClient(apiKey);
             _recraftSemaphore = new SemaphoreSlim(maxConcurrency);
@@ -92,6 +101,8 @@ namespace MultiImageClient
             _imageSize = size;
             _stats = stats;
             _name = string.IsNullOrEmpty(name) ? "" : name;
+            _model = model;
+            _apiType = ApiTypeFor(model);
         }
 
         public string GetFilenamePart(PromptDetails pd)
@@ -109,26 +120,26 @@ namespace MultiImageClient
             {
                 usingSubstyle = _substyleVector.ToString();
             }
-            var res = $"recraft{_name}_{_imageSize}_{_style}_{usingSubstyle}";
+            var res = $"{_model}{_name}_{_imageSize}_{_style}_{usingSubstyle}";
             return res;
         }
 
         // https://www.recraft.ai/docs/api-reference/pricing
         public decimal GetCost()
         {
-            switch (_style)
+            // V4 Pro charges a flat premium regardless of raster/vector style.
+            if (_model == RecraftModel.recraftv4pro)
             {
-                case RecraftStyle.digital_illustration:
-                    return 0.04m;
-                case RecraftStyle.realistic_image:
-                    return 0.04m; //unclear actually.
-                case RecraftStyle.vector_illustration:
-                    return 0.08m;
-                case RecraftStyle.any:
-                    return 99.99m;
-                default:
-                    throw new Exception("whoah");
+                return _style == RecraftStyle.vector_illustration ? 0.30m : 0.25m;
             }
+
+            // V2 / V3 / V4 raster: $0.04 (V2: $0.022); vector: $0.08 (V2: $0.044).
+            var isVector = _style == RecraftStyle.vector_illustration;
+            return _model switch
+            {
+                RecraftModel.recraftv2 => isVector ? 0.044m : 0.022m,
+                _ => isVector ? 0.08m : 0.04m,
+            };
         }
 
         public List<string> GetRightParts()
@@ -152,7 +163,7 @@ namespace MultiImageClient
                 alpart = $"artistic level {_artistic_level}";
             }
 
-            var rightsideContents = new List<string>() { "recraft_v3", _name, _style.ToString(), usingSubstyle, alpart };
+            var rightsideContents = new List<string>() { _model.ToString(), _name, _style.ToString(), usingSubstyle, alpart };
             return rightsideContents;
         }
 
@@ -194,7 +205,7 @@ namespace MultiImageClient
                 }
 
                 usingSubstyle = Regex.Replace(usingSubstyle, @"^_([\d])", "$1");
-                var generationResult = await _recraftClient.GenerateImageAsync(usingPrompt, _artistic_level, usingSubstyle, _style.ToString(), _imageSize);
+                var generationResult = await _recraftClient.GenerateImageAsync(usingPrompt, _artistic_level, usingSubstyle, _style.ToString(), _imageSize, _model);
                 Logger.Log($"\tFrom Recraft: {promptDetails.Show()} '{generationResult.Created}'");
                 _stats.RecraftImageGenerationSuccessCount++;
                 var theUrl = generationResult.Data[0].Url;
@@ -209,7 +220,7 @@ namespace MultiImageClient
                     Url = theUrl,
                     ContentType = contentType,
                     PromptDetails = promptDetails,
-                    ImageGenerator = ImageGeneratorApiType.Recraft
+                    ImageGenerator = _apiType
                 };
             }
             catch (Exception ex)
@@ -219,7 +230,7 @@ namespace MultiImageClient
 
                 using var doc = JsonDocument.Parse(jsonPart);
                 var detailedError = doc.RootElement.GetProperty("code").GetString();
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = detailedError, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Recraft, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
+                return new TaskProcessResult { IsSuccess = false, ErrorMessage = detailedError, PromptDetails = promptDetails, ImageGenerator = _apiType, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
             }
             finally
             {
