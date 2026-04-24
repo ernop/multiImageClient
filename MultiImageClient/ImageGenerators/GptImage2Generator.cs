@@ -14,17 +14,25 @@ namespace MultiImageClient
 {
     // OpenAI `gpt-image-2` — released 2026-04-21. Uses the standard
     // Images API at /v1/images/generations. Accepts `size`, `quality`
-    // (low/medium/high/auto), `n`, and `moderation` (auto/low). The
-    // `input_fidelity` parameter must NOT be sent — gpt-image-2 always
-    // processes image inputs at high fidelity and the API rejects the
-    // field. Transparent backgrounds are not supported. Pricing is
+    // (low/medium/high/auto), `n`, and `moderation` (auto/low).
+    //
+    // On THIS endpoint (/generations) the `input_fidelity` parameter must
+    // not be sent — gpt-image-2 always renders at high fidelity and the
+    // generations endpoint rejects the field. Note the OpenAI cookbook's
+    // gpt-image-2 edits examples do pass `input_fidelity="high"`, so the
+    // restriction may be generations-specific; re-test when wiring the
+    // /edits endpoint. Transparent backgrounds are not supported. Pricing is
     // token-based ($30/1M output tokens); GetCost() returns a rough
     // per-quality estimate for reporting only.
     //
     // Popular sizes: 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152,
-    // 3840x2160, 2160x3840, or "auto". Arbitrary resolutions are also
-    // allowed under the constraints: edges multiple of 16, max edge 3840,
-    // total pixels in [655360, 8294400], long:short edge ratio <= 3:1.
+    // 2560x1440 (QHD / 2K — cookbook's "recommended upper reliability
+    // boundary"), 3824x2144 (near-4K; see below), or "auto". Arbitrary
+    // resolutions are also allowed under the constraints: edges multiple of
+    // 16, max edge STRICTLY less than 3840 (cookbook 1.1), total pixels in
+    // [655360, 8294400], long:short edge ratio <= 3:1. 3840x2160 is listed
+    // in some places as "experimental" and may be rejected on some accounts
+    // — 3824x2144 is the safe canonical near-4K.
     public class GptImage2Generator : IImageGenerator
     {
         private const string ModelId = "gpt-image-2";
@@ -47,6 +55,14 @@ namespace MultiImageClient
         // the old "one fixed variant" usage still works without special cases.
         private readonly string[] _sizePool;
         private readonly OpenAIGPTImageOneQuality[] _qualityPool;
+
+        // How many images to request per call (`n` in the request body). 1 is
+        // the common case; >1 is useful for logo/variant exploration (cookbook
+        // 4.5) where a single round-trip returns multiple candidates. The
+        // streaming handler collects all N images and returns them as separate
+        // CreatedBase64Image entries so ImageManager's per-index save path
+        // ("...img0", "...img1", ...) produces distinct files automatically.
+        private readonly int _imageCount;
 
         // When non-empty, each streamed partial PNG is written under this
         // folder (in a per-day "PartialsLive" subfolder) as it arrives. When
@@ -73,10 +89,12 @@ namespace MultiImageClient
             MultiClientRunStats stats,
             string name,
             string partialSaveFolder = null,
-            bool popUpPartials = false)
+            bool popUpPartials = false,
+            int imageCount = 1)
         {
             if (sizePool == null || sizePool.Length == 0) throw new ArgumentException("sizePool must be non-empty", nameof(sizePool));
             if (qualityPool == null || qualityPool.Length == 0) throw new ArgumentException("qualityPool must be non-empty", nameof(qualityPool));
+            if (imageCount < 1) throw new ArgumentException("imageCount must be >= 1", nameof(imageCount));
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             _sizePool = sizePool;
@@ -86,6 +104,7 @@ namespace MultiImageClient
             _stats = stats;
             _partialSaveFolder = partialSaveFolder ?? "";
             _popUpPartials = popUpPartials;
+            _imageCount = imageCount;
         }
 
         // Log tag + fallback label if an outer exception prevents us from
@@ -115,15 +134,17 @@ namespace MultiImageClient
         public decimal GetCost()
         {
             // Random pools make per-call cost unknowable at instance level; report
-            // the ceiling of the active quality pool.
+            // the ceiling of the active quality pool, scaled by `n` since we
+            // always return exactly `n` images per call.
             var worst = _qualityPool.Max();
-            return worst switch
+            var perImage = worst switch
             {
                 OpenAIGPTImageOneQuality.low => 0.02m,
                 OpenAIGPTImageOneQuality.medium => 0.08m,
                 OpenAIGPTImageOneQuality.high => 0.25m,
                 _ => 0.25m,
             };
+            return perImage * _imageCount;
         }
 
         public List<string> GetRightParts()
@@ -135,7 +156,9 @@ namespace MultiImageClient
             var sizept = _sizePool.Length == 1
                 ? $"size {_sizePool[0]}"
                 : $"size RANDOM({string.Join("/", _sizePool)})";
-            return new List<string> { ModelId, _name, sizept, qualitypt, modpt };
+            var parts = new List<string> { ModelId, _name, sizept, qualitypt, modpt };
+            if (_imageCount != 1) parts.Add($"n {_imageCount}");
+            return parts;
         }
 
         // How many partial images to request mid-stream. 0-3. Each partial
@@ -187,7 +210,7 @@ namespace MultiImageClient
                     ["model"] = ModelId,
                     ["prompt"] = promptDetails.Prompt,
                     ["quality"] = chosenQuality.ToString(),
-                    ["n"] = 1,
+                    ["n"] = _imageCount,
                     ["size"] = chosenSize,
                     ["stream"] = true,
                     ["partial_images"] = PartialImageCount,
@@ -239,10 +262,18 @@ namespace MultiImageClient
                         };
                     }
 
-                    Logger.Log($"    [{genTag}] connected, streaming (partial_images={PartialImageCount})");
+                    Logger.Log($"    [{genTag}] connected, streaming (partial_images={PartialImageCount}, n={_imageCount})");
 
-                    string finalB64 = null;
-                    string revisedPrompt = null;
+                    // When n>1 the server streams events for each image in
+                    // parallel; each event can carry an `image_index` (or
+                    // `output_index` on some event shapes) distinguishing
+                    // which of the N images it belongs to. Collect completed
+                    // images into a SortedDictionary keyed by that index so
+                    // the final list comes back in a stable 0..N-1 order.
+                    // When no index is present (n=1 or older event shape),
+                    // we assign sequentially so insertion order wins.
+                    var finalImages = new SortedDictionary<int, (string b64, string revisedPrompt)>();
+                    int nextFallbackIdx = 0;
                     string streamErrorMessage = null;
                     long lastEventMs = 0;
 
@@ -269,33 +300,38 @@ namespace MultiImageClient
                         {
                             case "image_generation.partial_image":
                             {
-                                var idx = root.TryGetProperty("partial_image_index", out var iEl) ? iEl.GetInt32() : -1;
-                                Logger.Log($"    [{genTag}] partial #{idx} at {nowMs} ms (+{sinceLast} ms since last event)");
+                                var pidx = root.TryGetProperty("partial_image_index", out var iEl) ? iEl.GetInt32() : -1;
+                                var imgIdx = ExtractImageIndex(root);
+                                var imgTag = _imageCount > 1 ? $" img{imgIdx}" : "";
+                                Logger.Log($"    [{genTag}] partial #{pidx}{imgTag} at {nowMs} ms (+{sinceLast} ms since last event)");
                                 if (!string.IsNullOrEmpty(_partialSaveFolder)
                                     && root.TryGetProperty("b64_json", out var pbEl)
                                     && pbEl.ValueKind == JsonValueKind.String)
                                 {
-                                    TrySavePartial(pbEl.GetString(), idx, promptDetails, genTag);
+                                    TrySavePartial(pbEl.GetString(), pidx, imgIdx, promptDetails, genTag);
                                 }
                                 break;
                             }
                             case "image_generation.completed":
                             {
-                                if (root.TryGetProperty("b64_json", out var bEl))
+                                var imgIdx = ExtractImageIndex(root);
+                                if (imgIdx < 0) imgIdx = nextFallbackIdx;
+                                nextFallbackIdx = Math.Max(nextFallbackIdx, imgIdx + 1);
+
+                                string b64 = root.TryGetProperty("b64_json", out var bEl) ? bEl.GetString() : null;
+                                string revisedPrompt = root.TryGetProperty("revised_prompt", out var rpEl) ? rpEl.GetString() : null;
+                                if (!string.IsNullOrEmpty(b64))
                                 {
-                                    finalB64 = bEl.GetString();
-                                }
-                                if (root.TryGetProperty("revised_prompt", out var rpEl))
-                                {
-                                    revisedPrompt = rpEl.GetString();
+                                    finalImages[imgIdx] = (b64, revisedPrompt);
                                 }
 
                                 string usageSummary = ExtractUsageSummary(root);
-                                Logger.Log($"    [{genTag}] completed at {nowMs} ms (+{sinceLast} ms since last event).{usageSummary}");
+                                var imgTag = _imageCount > 1 ? $" img{imgIdx}" : "";
+                                Logger.Log($"    [{genTag}] completed{imgTag} at {nowMs} ms (+{sinceLast} ms since last event).{usageSummary}");
 
                                 if (!string.IsNullOrEmpty(revisedPrompt))
                                 {
-                                    Logger.Log($"    [{genTag}] revised_prompt: {revisedPrompt}");
+                                    Logger.Log($"    [{genTag}] revised_prompt{imgTag}: {revisedPrompt}");
                                 }
                                 break;
                             }
@@ -315,7 +351,7 @@ namespace MultiImageClient
                         }
                     }
 
-                    if (string.IsNullOrEmpty(finalB64))
+                    if (finalImages.Count == 0)
                     {
                         _stats.GptImage2RefusedCount++;
                         var msg = streamErrorMessage ?? "stream ended without an image_generation.completed event";
@@ -331,10 +367,18 @@ namespace MultiImageClient
                         };
                     }
 
-                    var b64s = new List<CreatedBase64Image>
+                    if (finalImages.Count < _imageCount)
                     {
-                        new CreatedBase64Image { bytesBase64 = finalB64, newPrompt = revisedPrompt ?? "" }
-                    };
+                        // Partial success — we asked for N but only got M<N back.
+                        // Surface the shortfall in logs but still save what we
+                        // have; a partial batch is usually more useful than
+                        // nothing, and the user can re-roll.
+                        Logger.Log($"    [{genTag}] WARNING: requested n={_imageCount} but only {finalImages.Count} image(s) completed");
+                    }
+
+                    var b64s = finalImages.Values
+                        .Select(v => new CreatedBase64Image { bytesBase64 = v.b64, newPrompt = v.revisedPrompt ?? "" })
+                        .ToList();
 
                     return new TaskProcessResult
                     {
@@ -371,6 +415,24 @@ namespace MultiImageClient
             {
                 _semaphore.Release();
             }
+        }
+
+        // When n>1 the server distinguishes per-image events by one of a
+        // couple possible fields. Try the documented "image_index" first,
+        // then fall back to "output_index" which some streaming builds emit
+        // instead. Returns -1 when neither is present (n=1 case; caller
+        // assigns insertion order).
+        private static int ExtractImageIndex(JsonElement root)
+        {
+            if (root.TryGetProperty("image_index", out var ii) && ii.ValueKind == JsonValueKind.Number)
+            {
+                return ii.GetInt32();
+            }
+            if (root.TryGetProperty("output_index", out var oi) && oi.ValueKind == JsonValueKind.Number)
+            {
+                return oi.GetInt32();
+            }
+            return -1;
         }
 
         // Pretty-prints the `usage` block if present, including the detailed
@@ -466,9 +528,13 @@ namespace MultiImageClient
                 h = snappedH;
             }
 
-            if (w > SizeMaxEdge || h > SizeMaxEdge)
+            // Cookbook (2026-04-21) is explicit that the max edge rule is
+            // strict: "Maximum edge length must be less than 3840px". The
+            // popular size 3840x2160 is flagged as experimental and may 400
+            // on some accounts; safer canonical near-miss is 3824x2144.
+            if (w >= SizeMaxEdge || h >= SizeMaxEdge)
             {
-                error = $"edge over {SizeMaxEdge} (got {w}x{h})";
+                error = $"edge must be < {SizeMaxEdge} (got {w}x{h}; try 3824x2144)";
                 return false;
             }
 
@@ -559,7 +625,12 @@ namespace MultiImageClient
         // Decode and write one partial PNG under {base}/{today}/PartialsLive/
         // and (if configured) open it in the default image viewer. Best-effort:
         // a partial save failure never interrupts the generation.
-        private void TrySavePartial(string b64, int idx, PromptDetails pd, string genTag)
+        //
+        // `partialIdx` is the partial-within-image index (0..PartialImageCount-1,
+        // from the `partial_image_index` event field). `imageIdx` is which of
+        // the N images this partial belongs to when n>1; pass -1 when n=1 and
+        // the server didn't send an image index.
+        private void TrySavePartial(string b64, int partialIdx, int imageIdx, PromptDetails pd, string genTag)
         {
             try
             {
@@ -571,11 +642,13 @@ namespace MultiImageClient
                 var promptPart = FilenameGenerator.TruncatePrompt(pd?.Prompt ?? "partial", 60);
                 // Zero-padded timestamp keeps files sorted by arrival order
                 // across runs; partial index disambiguates within a single call.
+                // When n>1, image index distinguishes per-output streams.
                 var ts = DateTime.Now.ToString("HHmmss_fff");
-                var file = $"{ts}_partial{Math.Max(0, idx):D2}_{promptPart}.png";
+                var imgPart = imageIdx >= 0 && _imageCount > 1 ? $"_img{imageIdx}" : "";
+                var file = $"{ts}_partial{Math.Max(0, partialIdx):D2}{imgPart}_{promptPart}.png";
                 var full = Path.Combine(folder, file);
                 File.WriteAllBytes(full, bytes);
-                Logger.Log($"    [{genTag}] saved partial #{idx} -> {full}");
+                Logger.Log($"    [{genTag}] saved partial #{partialIdx}{imgPart} -> {full}");
 
                 if (_popUpPartials)
                 {
@@ -585,13 +658,13 @@ namespace MultiImageClient
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log($"    [{genTag}] pop-up failed for partial #{idx}: {ex.Message}");
+                        Logger.Log($"    [{genTag}] pop-up failed for partial #{partialIdx}: {ex.Message}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                Logger.Log($"    [{genTag}] failed to save partial #{idx}: {ex.Message}");
+                Logger.Log($"    [{genTag}] failed to save partial #{partialIdx}: {ex.Message}");
             }
         }
 

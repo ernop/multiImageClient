@@ -65,6 +65,11 @@ namespace MultiImageClient
         /// them; the REPL will queue beyond this limit.
         public int ReplConcurrency { get; set; } = 5;
 
+        /// Default `n` (images per call) for the gpt-image-2 slot in REPL
+        /// sessions. Useful for variant exploration (e.g. logo design). Can
+        /// be changed at runtime via `:n N` or per-prompt via `[n=N] ...`.
+        public int ReplImageCount { get; set; } = 1;
+
         /// If true, bypass every other workflow and run GrokShowcaseWorkflow:
         /// pull the first --limit prompts from the active prompt source, fire
         /// them at xAI Grok Imagine in parallel, save each, then compose one
@@ -129,6 +134,14 @@ namespace MultiImageClient
                     case "--repl-concurrency":
                         o.ReplConcurrency = int.Parse(args[++i]);
                         break;
+                    case "--repl-n":
+                        o.ReplImageCount = int.Parse(args[++i]);
+                        if (o.ReplImageCount < 1)
+                        {
+                            Console.Error.WriteLine($"--repl-n must be >= 1 (got {o.ReplImageCount})");
+                            Environment.Exit(2);
+                        }
+                        break;
                     case "--grok-showcase":
                         o.GrokShowcase = true;
                         break;
@@ -165,6 +178,7 @@ namespace MultiImageClient
             Console.WriteLine("  --repl-quality L      REPL session default quality: low|medium|high (default high). Change at runtime with :quality <L>.");
             Console.WriteLine("  --repl-moderation M   REPL session default moderation: auto|low (default low). Change at runtime with :moderation <M>.");
             Console.WriteLine("  --repl-concurrency N  Max prompts in flight simultaneously in REPL mode (default 5). Change at runtime with :concurrency N.");
+            Console.WriteLine("  --repl-n N            REPL session default n (images per gpt-image-2 call, default 1). Change at runtime with :n N, or per-prompt via [n=N] in the override prefix.");
             Console.WriteLine("  --grok-showcase       One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at xAI Grok Imagine in parallel, and open a single combined grid image. Default --limit for this mode is 10.");
             Console.WriteLine("  --grok-pro            Pair with --grok-showcase to route through grok-imagine-image-pro at 2k resolution ($0.07/img, 30 rpm) instead of grok-imagine-image at 1k ($0.02/img, 300 rpm).");
         }

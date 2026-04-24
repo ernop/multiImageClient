@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "MultiImageClient (REPL)": {
+      "commandName": "Project",
+      "commandLineArgs": "--repl",
+      "nativeDebugging": false
+    },
+    "MultiImageClient (interactive menu)": {
+      "commandName": "Project"
+    },
+    "MultiImageClient (REPL, 10 parallel)": {
+      "commandName": "Project",
+      "commandLineArgs": "--repl --repl-concurrency 10"
+    }
+  }
+}

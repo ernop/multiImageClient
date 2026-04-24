@@ -1,4 +1,4 @@
-# MultiImageClient - Agent Entry Point
+﻿# MultiImageClient - Agent Entry Point
 
 Start here. Read this file and the linked documents before doing anything.
 
@@ -38,7 +38,7 @@ See `RunOptions.cs` for the source of truth; this is the current surface:
 - `--fast` — one fixed gpt-image-2 low/1024x1024/moderation=low call per prompt. Cheap smoke-test config.
 - `--quick-test` — like `--fast`, plus every streamed partial PNG is saved AND popped in the default viewer. Still asks y/n per prompt unless combined with `--auto`.
 - `--backfill-dl` — one-shot: mirror every image under `Settings.ImageDownloadBaseFolder` into `Settings.FlatImageMirrorPath` and exit.
-- `--repl` — **interactive prompt-by-prompt REPL with async dispatch**. Defaults: gpt-image-2 at 2048x2048 / high / moderation=low, up to 5 prompts in flight concurrently. Each line is either a prompt (fired asynchronously, stdin stays responsive) or a `:command`. Grids are built and saved but NOT opened in the viewer. Commands: `:size WxH`, `:quality low|medium|high`, `:moderation auto|low`, `:concurrency N`, `:gens list|add|remove|reset` (names: gpt2, dalle3, ideogram, recraft, bfl, google, imagen4), `:status`, `:wait`, `:last`, `:retry`, `:edit`, `:help`, `:quit`. Per-prompt override syntax: `[size=1024x1024,q=low] a red apple on a white plate`. Initial defaults can be pre-set from the command line via `--repl-size`, `--repl-quality`, `--repl-moderation`, `--repl-concurrency`. Implementation in `Workflows/ReplWorkflow.cs`.
+- `--repl` — **interactive prompt-by-prompt REPL with async dispatch**. Defaults: gpt-image-2 at 2048x2048 / high / moderation=low / n=1, up to 5 prompts in flight concurrently. Each line is either a prompt (fired asynchronously, stdin stays responsive) or a `:command`. Grids are built and saved but NOT opened in the viewer. Commands: `:size WxH`, `:quality low|medium|high`, `:moderation auto|low`, `:n N` (images per gpt-image-2 call; >10 requires confirmation), `:concurrency N`, `:gens list|add|remove|reset` (names: gpt2, dalle3, ideogram, recraft, bfl, google, imagen4), `:status`, `:wait`, `:last`, `:retry`, `:edit`, `:help`, `:quit`. Per-prompt override syntax: `[size=1024x1024,q=low,n=4] a red apple on a white plate`. Initial defaults can be pre-set from the command line via `--repl-size`, `--repl-quality`, `--repl-moderation`, `--repl-concurrency`, `--repl-n`. Implementation in `Workflows/ReplWorkflow.cs`.
 
 ## Coding Style & Naming Conventions
 Use 4-space indentation and .NET naming: PascalCase for public types/methods, camelCase for locals, Async suffix for asynchronous methods. Favor explicit types for shared models; use `var` only when the type is obvious. Route new configuration through `ImageGenerationClasses/Settings.cs` instead of ad-hoc JSON parsing. Python utilities under `djangoManager/` should follow PEP 8 snake_case, with comments reserved for non-obvious prompt logic.
@@ -54,14 +54,15 @@ Use 4-space indentation and .NET naming: PascalCase for public types/methods, ca
 
 ## gpt-image-2 Endpoint Options (reference)
 The `/v1/images/generations` endpoint with `model=gpt-image-2` accepts:
-- `size`: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `2048x1152`, `3840x2160`, `2160x3840`, or `auto`. Arbitrary resolutions are legal when edges are multiples of 16, max edge ≤ 3840, total pixels in [655 360, 8 294 400], and long:short ratio ≤ 3:1.
+- `size`: `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `2048x1152`, `2560x1440` (QHD — cookbook's "recommended upper reliability boundary"), `3824x2144` (near-4K), or `auto`. Arbitrary resolutions are legal when edges are multiples of 16, max edge STRICTLY less than 3840 (cookbook 1.1), total pixels in [655 360, 8 294 400], and long:short ratio ≤ 3:1. Legacy 3840x2160 is treated as experimental and rejected by `GptImage2Generator.TryNormalizeSize` — use 3824x2144 instead.
 - `quality`: `low`, `medium`, `high`, `auto`.
 - `moderation`: `auto` (default) or `low` (permissive — we use `low` for batch runs).
-- `output_format`: `png` (default), `jpeg`, `webp`. `output_compression` (0–100) applies to jpeg/webp.
+- `n`: images per call. We plumb this through `GptImage2Generator.imageCount` (ctor) and surface it in the REPL as `:n N` / `[n=N]` override / `--repl-n` flag. Streaming handler collects all N images by `image_index` (or fallback insertion order) and returns them as separate `CreatedBase64Image` entries so `ImageManager`'s per-index save path produces distinct `...img0`, `...img1`, ... files.
+- `output_format`: `png` (default), `jpeg`, `webp`. `output_compression` (0–100) applies to jpeg/webp. (Not currently exposed in the generator.)
 - `background`: `auto`, `transparent`, `opaque` — transparent is not supported by gpt-image-2 (png/webp only, in practice rejected on this model).
 - `stream`: `true` — we always stream and consume SSE to surface partials + heartbeat.
 - `partial_images`: 0–3 (we send 2).
-- **Do NOT send `input_fidelity`** — the endpoint rejects it on gpt-image-2 (always high-fidelity).
+- **Do NOT send `input_fidelity` on `/generations`** — the generations endpoint rejects it on gpt-image-2 (always high-fidelity). Note the OpenAI cookbook's gpt-image-2 **edit** examples do pass `input_fidelity="high"`, so the restriction may be generations-specific; re-test when wiring `/v1/images/edits`.
 
 Pricing is token-based ($30 / 1M output tokens). Rough per-image ceilings we report: low ≈ $0.02, medium ≈ $0.08, high ≈ $0.25.
 
