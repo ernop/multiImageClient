@@ -19,5 +19,8 @@ namespace MultiImageClient
         public static readonly Color PlaceholderFill = Color.FromRgb(240, 240, 240);
         public static readonly Color PlaceholderBorder = Color.FromRgb(200, 200, 200);
         public static readonly Color Gold = Color.FromRgb(255, 215, 0);
+        // We do NOT use gray for text. See AGENTS.md > Visual & Typography Policy.
+        // Secondary labels must get their visual hierarchy from smaller font size and/or
+        // by reusing the existing semantic color (SuccessGreen, ErrorRed, Black, Gold).
     }
 }

@@ -26,6 +26,10 @@ namespace MultiImageClient
         public string BFLApiKey { get; set; }
         public string AnthropicApiKey { get; set; }
         public string RecraftApiKey { get; set; }
+
+        /// xAI (Grok) API key, format "xai-...". Required only when a Grok
+        /// image generator is active. Obtain one at https://console.x.ai/.
+        public string XAIGrokApiKey { get; set; }
         public string GoogleGeminiApiKey { get; set; }
         public string GoogleCloudLocation { get; set; }
         /// List of prompt-source text files. Every listed file is read and the
@@ -46,6 +50,23 @@ namespace MultiImageClient
         /// unused yet we always do RIGHT
         public string AnnotationSide { get; set; } = "bottom";
 
+        /// Optional flat-folder mirror. If non-empty, every saved raw,
+        /// annotated, and combined image is also copied (best-effort) into
+        /// this single folder so you don't have to navigate date folders to
+        /// grab the latest batch. Leave blank to disable; missing or
+        /// unreachable paths are logged and skipped, never fatal.
+        public string FlatImageMirrorPath { get; set; } = "";
+
+        /// Optional "prompts I typed by hand" capture file. When the user
+        /// types a free-form prompt at the interactive batch loop (anything
+        /// other than y/n/q), the typed text is also appended as a single
+        /// line to this file — handy for growing a personal prompt corpus
+        /// over time. Leave blank to disable; the existing JSON prompt_log
+        /// remains the machine-readable history regardless. Embedded
+        /// newlines in the typed prompt are collapsed to spaces so the file
+        /// is always one-prompt-per-line.
+        public string TypedPromptsAppendFile { get; set; } = "";
+
         public static Settings LoadFromFile(string filePath)
         {
             if (!File.Exists(filePath))
@@ -62,6 +83,14 @@ namespace MultiImageClient
             Logger.Log($"Save JSON Log:\t\t{settings.SaveJsonLog}");
             Logger.Log($"Enable Logging:\t\t{settings.EnableLogging}");
             Logger.Log($"Annotation Side:\t{settings.AnnotationSide}");
+            if (!string.IsNullOrWhiteSpace(settings.FlatImageMirrorPath))
+            {
+                Logger.Log($"Flat Mirror Path:\t{settings.FlatImageMirrorPath}");
+            }
+            if (!string.IsNullOrWhiteSpace(settings.TypedPromptsAppendFile))
+            {
+                Logger.Log($"Typed Prompts File:\t{settings.TypedPromptsAppendFile}");
+            }
 
             return settings;
         }

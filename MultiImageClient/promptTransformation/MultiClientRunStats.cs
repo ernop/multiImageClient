@@ -36,6 +36,10 @@ namespace MultiImageClient
         public int RecraftImageGenerationSuccessCount { get; set; }
         public int RecraftImageGenerationErrorCount { get; set; }
 
+        public int GrokImageGenerationRequestCount { get; set; }
+        public int GrokImageGenerationSuccessCount { get; set; }
+        public int GrokImageGenerationErrorCount { get; set; }
+
         public int GoogleRequestCount { get; set; }
         public int GoogleRefusedCount { get; set; }
 
@@ -91,6 +95,9 @@ namespace MultiImageClient
 
             if (RecraftImageGenerationRequestCount > 0 | RecraftImageGenerationErrorCount > 0 | RecraftImageGenerationSuccessCount > 0)
                 nonZeroStats.Add($"Recraft: total:{RecraftImageGenerationRequestCount}, ok:{RecraftImageGenerationSuccessCount}, bad:{RecraftImageGenerationErrorCount} ");
+
+            if (GrokImageGenerationRequestCount > 0 | GrokImageGenerationErrorCount > 0 | GrokImageGenerationSuccessCount > 0)
+                nonZeroStats.Add($"Grok: total:{GrokImageGenerationRequestCount}, ok:{GrokImageGenerationSuccessCount}, bad:{GrokImageGenerationErrorCount} ");
 
             var res = $"Stats: {string.Join(", ", nonZeroStats)}";
             Console.WriteLine(res);

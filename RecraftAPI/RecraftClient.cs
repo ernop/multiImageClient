@@ -17,17 +17,17 @@ namespace RecraftAPIClient
         }
 
 
-        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, RecraftImageSize size)
+        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, RecraftImageSize size, RecraftModel model = RecraftModel.recraftv3)
         {
             var stringSubstyle = "";
             string serialized = "";
-            
+            var modelString = model.ToString();
 
             if (style == "any") {
                 serialized = JsonConvert.SerializeObject(new
                 {
                     prompt,
-                    model = "recraftv3",
+                    model = modelString,
                     style = style,
                     size = size.ToString().TrimStart('_'),
                     response_format = "url"
@@ -38,7 +38,7 @@ namespace RecraftAPIClient
                 serialized = JsonConvert.SerializeObject(new
                 {
                     prompt,
-                    model = "recraftv3",
+                    model = modelString,
                     artistic_level = artistic_level,
                     style = style,
                     substyle = substyle,

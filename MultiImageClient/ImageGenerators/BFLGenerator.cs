@@ -1,28 +1,10 @@
 ﻿using BFLAPIClient;
 
-
-using SixLabors.Fonts;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Drawing.Processing;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
-
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-
-using Color = SixLabors.ImageSharp.Color;
-using FontStyle = SixLabors.Fonts.FontStyle;
-using PointF = SixLabors.ImageSharp.PointF;
-using RectangleF = SixLabors.ImageSharp.RectangleF;
-using SystemFonts = SixLabors.Fonts.SystemFonts;
 
 namespace MultiImageClient
 {
@@ -42,7 +24,7 @@ namespace MultiImageClient
 
         private string _name;
 
-        
+
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))
@@ -59,17 +41,21 @@ namespace MultiImageClient
         {
             var res = $"{_apiType}{_name}";
             var upsamplingPart = _promptUpsampling ? "_up" : "";
-            if (_apiType == ImageGeneratorApiType.BFLv11)
+            switch (_apiType)
             {
-                res = $"{res}_{_height}x{_width}{upsamplingPart}";
-            }
-            else if (_apiType == ImageGeneratorApiType.BFLv11Ultra)
-            {
-                res = $"{res}_{_aspectRatio}{upsamplingPart}";
-            }
-            else
-            {
-                throw new Exception("X");
+                case ImageGeneratorApiType.BFLv11:
+                case ImageGeneratorApiType.BFLFlux2Pro:
+                case ImageGeneratorApiType.BFLFlux2Max:
+                case ImageGeneratorApiType.BFLFlux2Flex:
+                case ImageGeneratorApiType.BFLFlux2Klein4b:
+                case ImageGeneratorApiType.BFLFlux2Klein9b:
+                    res = $"{res}_{_height}x{_width}{upsamplingPart}";
+                    break;
+                case ImageGeneratorApiType.BFLv11Ultra:
+                    res = $"{res}_{_aspectRatio}{upsamplingPart}";
+                    break;
+                default:
+                    throw new Exception($"BFLGenerator: unhandled api type {_apiType}");
             }
 
             return res;
@@ -97,18 +83,30 @@ namespace MultiImageClient
             return rightsideContents;
         }
 
-        // https://bfl.ai/pricing
+        // https://docs.bfl.ai/quick_start/pricing
         public decimal GetCost()
         {
-            if (_apiType == ImageGeneratorApiType.BFLv11)
+            switch (_apiType)
             {
-                return 0.04m;
+                case ImageGeneratorApiType.BFLv11:
+                    return 0.04m;
+                case ImageGeneratorApiType.BFLv11Ultra:
+                    return 0.06m;
+                // FLUX.2 is megapixel-priced; the numbers below are the headline
+                // rate at 1 MP output and will under-report for larger sizes.
+                case ImageGeneratorApiType.BFLFlux2Pro:
+                    return 0.03m;
+                case ImageGeneratorApiType.BFLFlux2Max:
+                    return 0.07m;
+                case ImageGeneratorApiType.BFLFlux2Flex:
+                    return 0.06m;
+                case ImageGeneratorApiType.BFLFlux2Klein4b:
+                    return 0.014m;
+                case ImageGeneratorApiType.BFLFlux2Klein9b:
+                    return 0.015m;
+                default:
+                    throw new Exception($"BFLGenerator: no cost entry for {_apiType}");
             }
-            else if (_apiType == ImageGeneratorApiType.BFLv11Ultra)
-            {
-                return 0.06m;
-                    }
-            else { throw new Exception("Q"); }
         }
         public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {
@@ -117,43 +115,76 @@ namespace MultiImageClient
             try
             {
                 GenerationResponse generationResponse = null;
-                if (_apiType == ImageGeneratorApiType.BFLv11)
+                switch (_apiType)
                 {
-                    var request = new FluxPro11Request
+                    case ImageGeneratorApiType.BFLv11:
                     {
-                        Prompt = promptDetails.Prompt,
-                        Width = _width,
-                        Height = _height,
-                        PromptUpsampling = _promptUpsampling,
-                        SafetyTolerance = 6
-                    };
+                        var request = new FluxPro11Request
+                        {
+                            Prompt = promptDetails.Prompt,
+                            Width = _width,
+                            Height = _height,
+                            PromptUpsampling = _promptUpsampling,
+                            SafetyTolerance = 6
+                        };
+                        generationResponse = await _bflClient.GenerateFluxPro11Async(request);
+                        break;
+                    }
+                    case ImageGeneratorApiType.BFLv11Ultra:
+                    {
+                        var request = new FluxPro11UltraRequest
+                        {
+                            Prompt = promptDetails.Prompt,
+                            AspectRatio = _aspectRatio,
+                            PromptUpsampling = _promptUpsampling,
+                            Width = _width,
+                            Height = _height,
+                            SafetyTolerance = 6
+                        };
+                        generationResponse = await _bflClient.GenerateFluxPro11UltraAsync(request);
+                        break;
+                    }
+                    case ImageGeneratorApiType.BFLFlux2Pro:
+                    case ImageGeneratorApiType.BFLFlux2Max:
+                    case ImageGeneratorApiType.BFLFlux2Flex:
+                    case ImageGeneratorApiType.BFLFlux2Klein4b:
+                    case ImageGeneratorApiType.BFLFlux2Klein9b:
+                    {
+                        var request = new Flux2Request
+                        {
+                            Prompt = promptDetails.Prompt,
+                            Width = _width,
+                            Height = _height,
+                            PromptUpsampling = _promptUpsampling,
+                            SafetyTolerance = 6,
+                        };
+                        // flex lets you steer denoising; keep it permissive by default.
+                        if (_apiType == ImageGeneratorApiType.BFLFlux2Flex)
+                        {
+                            request.Steps = 40;
+                            request.Guidance = 4.5f;
+                        }
 
-                    generationResponse = await _bflClient.GenerateFluxPro11Async(request);
-                }
-                else if (_apiType == ImageGeneratorApiType.BFLv11Ultra)
-                {
-                    var request2 = new FluxPro11UltraRequest
-                    {
-                        Prompt = promptDetails.Prompt,
-                        AspectRatio = _aspectRatio,
-                        PromptUpsampling = _promptUpsampling,
-                        Width = _width,
-                        Height = _height,
-                        SafetyTolerance = 6
-                    };
-                    generationResponse = await _bflClient.GenerateFluxPro11UltraAsync(request2);
-                }
-                else
-                {
-                    Console.WriteLine("error.");
+                        generationResponse = _apiType switch
+                        {
+                            ImageGeneratorApiType.BFLFlux2Pro => await _bflClient.GenerateFlux2ProAsync(request),
+                            ImageGeneratorApiType.BFLFlux2Max => await _bflClient.GenerateFlux2MaxAsync(request),
+                            ImageGeneratorApiType.BFLFlux2Flex => await _bflClient.GenerateFlux2FlexAsync(request),
+                            ImageGeneratorApiType.BFLFlux2Klein4b => await _bflClient.GenerateFlux2Klein4bAsync(request),
+                            ImageGeneratorApiType.BFLFlux2Klein9b => await _bflClient.GenerateFlux2Klein9bAsync(request),
+                            _ => throw new Exception("unreachable"),
+                        };
+                        break;
+                    }
+                    default:
+                        throw new Exception($"BFLGenerator: unsupported api type {_apiType}");
                 }
 
 
                 _stats.BFLImageGenerationRequestCount++;
 
-                Logger.Log($"{promptDetails} From BFL: '{generationResponse.Status}'");
+                Logger.Log($"{promptDetails} From BFL ({_apiType}): '{generationResponse.Status}'");
 
-                // this is where we handle generator-specific error types.
                 if (generationResponse.Status != "Ready")
                 {
                     var baseResponse = new TaskProcessResult { IsSuccess = false, PromptDetails = promptDetails, ImageGeneratorDescription = generator.GetGeneratorSpecPart(), ImageGenerator = _apiType, ErrorMessage = generationResponse.Status };
@@ -172,7 +203,6 @@ namespace MultiImageClient
                     }
                     else
                     {
-                        // also you have to handle the out of money case.
                         _stats.BFLImageGenerationErrorCount++;
                         baseResponse.GenericImageErrorType = GenericImageGenerationErrorType.Unknown;
                         return baseResponse;
@@ -182,11 +212,11 @@ namespace MultiImageClient
                 else
                 {
                     Logger.Log($"{promptDetails} BFL image generated: {generationResponse.Result.Sample}");
-                    _stats.BFLImageGenerationRequestCount++;
-                    var returnedPrompt = generationResponse.Result.Prompt.Trim();
-                    if (returnedPrompt.Trim() != promptDetails.Prompt.Trim())
+                    _stats.BFLImageGenerationSuccessCount++;
+                    var returnedPrompt = generationResponse.Result.Prompt?.Trim();
+                    if (!string.IsNullOrEmpty(returnedPrompt) && returnedPrompt != promptDetails.Prompt.Trim())
                     {
-                        //BFL replaced the prompt. It actually happens!
+                        // BFL rewrote the prompt. It actually happens (prompt upsampling, safety, etc.).
                         promptDetails.ReplacePrompt(returnedPrompt, returnedPrompt, TransformationType.BFLRewrite);
                     }
 
@@ -199,14 +229,12 @@ namespace MultiImageClient
             catch (Exception ex)
             {
                 Logger.Log($"{promptDetails} BFL error: {ex.Message}");
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGeneratorDescription = generator.GetGeneratorSpecPart(), ImageGenerator = ImageGeneratorApiType.BFLv11 };
+                return new TaskProcessResult { IsSuccess = false, ErrorMessage = ex.Message, PromptDetails = promptDetails, ImageGeneratorDescription = generator.GetGeneratorSpecPart(), ImageGenerator = _apiType };
             }
             finally
             {
                 _bflSemaphore.Release();
             }
         }
-
-   
     }
 }

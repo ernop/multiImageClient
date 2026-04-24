@@ -154,6 +154,10 @@ namespace MultiImageClient
                 Logger.Log($"\tError saving {saveType} image: {ex.Message}\r\n{ex}");
             }
 
+            // Optional flat-folder mirror (Settings.FlatImageMirrorPath).
+            // No-op if the setting is blank. Best-effort; never throws.
+            DlMirror.Copy(fullPath, settings.FlatImageMirrorPath);
+
             return fullPath;
         }
 

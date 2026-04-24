@@ -34,6 +34,15 @@ namespace MultiImageClient
         /// </summary>
         public IList<PromptHistoryStep> TransformationSteps { get; set; } = new List<PromptHistoryStep>();
 
+        /// <summary>
+        /// Free-form per-call runtime metadata set by the generator that processed this prompt
+        /// (e.g. the randomly-chosen size/quality for gpt-image-2). Lets the filename builder and
+        /// the combined-image label reflect the actual values used for this particular request
+        /// rather than a static default on the generator instance.
+        /// Keys by convention: "size", "quality", "label".
+        /// </summary>
+        public Dictionary<string, string> RuntimeMeta { get; set; } = new Dictionary<string, string>();
+
         public PromptDetails() { }
 
         /// <summary>

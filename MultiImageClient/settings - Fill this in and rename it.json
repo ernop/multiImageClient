@@ -18,5 +18,7 @@
   "LogFilePath": "D:\\proj\\IdeogramAPI\\ideogram.log",
   "SaveJsonLog": true,
   "EnableLogging": true,
-  "AnnotationSide": "right"
+  "AnnotationSide": "right",
+  "FlatImageMirrorPath": "",
+  "TypedPromptsAppendFile": ""
 }
