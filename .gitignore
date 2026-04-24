@@ -2,6 +2,7 @@
 **/saves/**
 **/settings.json
 **/bin/**
+**/bin-check/**
 **/obj/**
 **/.vs/**
 **/.vscode/**

@@ -62,6 +62,7 @@ namespace MultiImageClient
         private string _size;
         private string _quality;
         private string _moderation;
+        private int _imageCount;
         private int _concurrency;
         private SemaphoreSlim _concurrencyLimit;
 
@@ -96,6 +97,7 @@ namespace MultiImageClient
             _size = NormalizeSizeOrFallback(startSize, "2048x2048", "--repl-size");
             _quality = string.IsNullOrWhiteSpace(options.ReplQuality) ? "high" : options.ReplQuality;
             _moderation = string.IsNullOrWhiteSpace(options.ReplModeration) ? "low" : options.ReplModeration;
+            _imageCount = options.ReplImageCount < 1 ? 1 : options.ReplImageCount;
             _concurrency = options.ReplConcurrency < 1 ? 1 : options.ReplConcurrency;
             _concurrencyLimit = new SemaphoreSlim(_concurrency);
 
@@ -103,7 +105,7 @@ namespace MultiImageClient
             // Both fire in parallel for each dispatched prompt. Grok is only
             // added if an API key is present so the REPL still works on
             // gpt-only setups. Users can :gens add / remove at runtime.
-            _active["gpt2"] = BuildGpt2(_size, _quality, _moderation);
+            _active["gpt2"] = BuildGpt2(_size, _quality, _moderation, _imageCount);
             if (!string.IsNullOrWhiteSpace(_settings.XAIGrokApiKey))
             {
                 _active["grok"] = BuildNamed("grok");
@@ -149,7 +151,7 @@ namespace MultiImageClient
                 // (after stripping any `[size=..]`-style override prefix) as
                 // suspicious and require explicit confirmation before burning
                 // an API call on it.
-                var (_, _, promptOnly) = ParseOverrides(line);
+                var (_, _, _, promptOnly) = ParseOverrides(line);
                 if ((promptOnly ?? "").Trim().Length < 5)
                 {
                     Console.Write($"short prompt ({(promptOnly ?? "").Trim().Length} chars): '{line}'. Send anyway? [y/N] ");
@@ -220,6 +222,29 @@ namespace MultiImageClient
                     _moderation = arg;
                     RebuildGpt2IfActive();
                     Console.WriteLine($"moderation = {_moderation}");
+                    return false;
+
+                case "n":
+                    if (string.IsNullOrEmpty(arg)) { Console.WriteLine($"n = {_imageCount}"); return false; }
+                    if (!int.TryParse(arg, out var nval) || nval < 1)
+                    {
+                        Console.WriteLine($"(n rejected: '{arg}' — must be a positive integer. kept n={_imageCount})");
+                        return false;
+                    }
+                    if (nval > 10)
+                    {
+                        // No hard server cap is documented but N>10 is almost
+                        // always a typo and multiplies cost + partials storm
+                        // linearly. Ask once before committing.
+                        Console.Write($"n={nval} is large; each dispatch will cost {nval}x per image. Confirm? [y/N] ");
+                        var cc = Console.ReadLine();
+                        if (cc == null) return false;
+                        var ck = cc.Trim().ToLowerInvariant();
+                        if (ck != "y" && ck != "yes") { Console.WriteLine($"(cancelled, kept n={_imageCount})"); return false; }
+                    }
+                    _imageCount = nval;
+                    RebuildGpt2IfActive();
+                    Console.WriteLine($"n = {_imageCount}");
                     return false;
 
                 case "concurrency":
@@ -338,7 +363,7 @@ namespace MultiImageClient
 
                 case "reset":
                     _active.Clear();
-                    _active["gpt2"] = BuildGpt2(_size, _quality, _moderation);
+                    _active["gpt2"] = BuildGpt2(_size, _quality, _moderation, _imageCount);
                     if (!string.IsNullOrWhiteSpace(_settings.XAIGrokApiKey))
                     {
                         _active["grok"] = BuildNamed("grok");
@@ -480,8 +505,8 @@ namespace MultiImageClient
                 return;
             }
 
-            // Optional leading override: "[size=1024x1024,q=low] actual prompt"
-            var (overrideSize, overrideQuality, promptText) = ParseOverrides(rawLine);
+            // Optional leading override: "[size=1024x1024,q=low,n=4] actual prompt"
+            var (overrideSize, overrideQuality, overrideN, promptText) = ParseOverrides(rawLine);
             if (string.IsNullOrWhiteSpace(promptText))
             {
                 Console.WriteLine("(empty prompt after parsing overrides, skipping)");
@@ -509,16 +534,17 @@ namespace MultiImageClient
             // affect this job. If there's a per-call override AND gpt2 is
             // active, swap in a one-off gpt2 for this dispatch only.
             var gens = _active.ToList();
-            if ((overrideSize != null || overrideQuality != null)
+            if ((overrideSize != null || overrideQuality != null || overrideN != null)
                 && _active.ContainsKey("gpt2"))
             {
                 var s = overrideSize ?? _size;
                 var q = overrideQuality ?? _quality;
+                var nn = overrideN ?? _imageCount;
                 for (int i = 0; i < gens.Count; i++)
                 {
                     if (gens[i].Key.Equals("gpt2", StringComparison.OrdinalIgnoreCase))
                     {
-                        gens[i] = new KeyValuePair<string, IImageGenerator>("gpt2", BuildGpt2(s, q, _moderation));
+                        gens[i] = new KeyValuePair<string, IImageGenerator>("gpt2", BuildGpt2(s, q, _moderation, nn));
                     }
                 }
             }
@@ -535,8 +561,8 @@ namespace MultiImageClient
             inflight.Task = Task.Run(() => ProcessOneAsync(inflight, gens.Select(kv => kv.Value).ToList()));
             lock (_lock) _inFlight.Add(inflight);
 
-            var overrideNote = (overrideSize != null || overrideQuality != null)
-                ? $"  override: size={overrideSize ?? "(sess)"} q={overrideQuality ?? "(sess)"}"
+            var overrideNote = (overrideSize != null || overrideQuality != null || overrideN != null)
+                ? $"  override: size={overrideSize ?? "(sess)"} q={overrideQuality ?? "(sess)"} n={(overrideN?.ToString() ?? "(sess)")}"
                 : "";
             Logger.Log($"[#{id}] queued ({gens.Count} gen{(gens.Count == 1 ? "" : "s")}){overrideNote}: {promptText}");
 
@@ -632,23 +658,24 @@ namespace MultiImageClient
         // ---------------------------------------------------------------
 
         // Reconstruct the gpt-image-2 slot in _active with the current
-        // session-level size / quality / moderation so the next dispatch
+        // session-level size / quality / moderation / n so the next dispatch
         // picks them up. No-op if gpt2 isn't currently active.
         private void RebuildGpt2IfActive()
         {
             if (_active.ContainsKey("gpt2"))
             {
-                _active["gpt2"] = BuildGpt2(_size, _quality, _moderation);
+                _active["gpt2"] = BuildGpt2(_size, _quality, _moderation, _imageCount);
             }
         }
 
-        private IImageGenerator BuildGpt2(string size, string quality, string moderation)
+        private IImageGenerator BuildGpt2(string size, string quality, string moderation, int imageCount)
         {
             if (!Enum.TryParse<OpenAIGPTImageOneQuality>(quality, true, out var q))
             {
                 Console.WriteLine($"(unknown quality '{quality}', falling back to high)");
                 q = OpenAIGPTImageOneQuality.high;
             }
+            if (imageCount < 1) imageCount = 1;
             // Pass maxConcurrency = _concurrency so gpt-image-2's own internal
             // semaphore doesn't become the bottleneck when the REPL has
             // multiple prompts in flight. The prompt-level semaphore
@@ -666,7 +693,8 @@ namespace MultiImageClient
                 stats: _stats,
                 name: "repl",
                 partialSaveFolder: _settings.ImageDownloadBaseFolder,
-                popUpPartials: false);
+                popUpPartials: false,
+                imageCount: imageCount);
         }
 
         private IImageGenerator BuildNamed(string name)
@@ -674,7 +702,7 @@ namespace MultiImageClient
             switch (name.ToLowerInvariant())
             {
                 case "gpt2":
-                    return BuildGpt2(_size, _quality, _moderation);
+                    return BuildGpt2(_size, _quality, _moderation, _imageCount);
 
                 case "grok":
                     // Standard tier priced per-image regardless of resolution
@@ -749,21 +777,28 @@ namespace MultiImageClient
         // ---------------------------------------------------------------
 
         // Only applies the override to the gpt2 slot; other generators
-        // ignore per-call size/quality flags since they're parametrized
+        // ignore per-call size/quality/n flags since they're parametrized
         // at construction time.
-        private static (string size, string quality, string prompt) ParseOverrides(string line)
+        //
+        // Returned `imageCount` is null when no `n=` was supplied (session
+        // default wins). Parse errors (non-integer n, n<1) cause the whole
+        // line to be treated as a plain prompt — strictly safer than
+        // silently dispatching with the session default when the user
+        // intended an override.
+        private static (string size, string quality, int? imageCount, string prompt) ParseOverrides(string line)
         {
-            if (!line.StartsWith("[")) return (null, null, line);
+            if (!line.StartsWith("[")) return (null, null, null, line);
             var close = line.IndexOf(']');
-            if (close < 0) return (null, null, line);
+            if (close < 0) return (null, null, null, line);
             var inside = line.Substring(1, close - 1);
             var rest = line.Substring(close + 1).TrimStart();
 
             string size = null, quality = null;
+            int? imageCount = null;
             foreach (var tok in inside.Split(',', StringSplitOptions.RemoveEmptyEntries))
             {
                 var kv = tok.Split('=', 2);
-                if (kv.Length != 2) return (null, null, line);
+                if (kv.Length != 2) return (null, null, null, line);
                 var k = kv[0].Trim().ToLowerInvariant();
                 var v = kv[1].Trim();
                 switch (k)
@@ -776,13 +811,17 @@ namespace MultiImageClient
                     case "q":
                         quality = v;
                         break;
+                    case "n":
+                        if (!int.TryParse(v, out var nv) || nv < 1) return (null, null, null, line);
+                        imageCount = nv;
+                        break;
                     default:
                         // Unrecognized key — fall back to treating the whole
                         // line as a plain prompt (safer than silently dropping).
-                        return (null, null, line);
+                        return (null, null, null, line);
                 }
             }
-            return (size, quality, rest);
+            return (size, quality, imageCount, rest);
         }
 
         // ---------------------------------------------------------------
@@ -804,7 +843,7 @@ namespace MultiImageClient
 
         private void PrintShow()
         {
-            Console.WriteLine($"session: size={_size}  quality={_quality}  moderation={_moderation}  concurrency={_concurrency}");
+            Console.WriteLine($"session: size={_size}  quality={_quality}  moderation={_moderation}  n={_imageCount}  concurrency={_concurrency}");
             var names = _active.Count == 0 ? "(none)" : string.Join(" ", _active.Keys);
             Console.WriteLine($"active gens: {names}");
         }
@@ -822,10 +861,12 @@ namespace MultiImageClient
             Console.WriteLine();
             Console.WriteLine("Commands:");
             Console.WriteLine("  :show                    print current session defaults and active generators");
-            Console.WriteLine("  :size WxH                set gpt-image-2 size. Edges snap to multiples of 16, each <=3840,");
+            Console.WriteLine("  :size WxH                set gpt-image-2 size. Edges snap to multiples of 16, each <3840,");
             Console.WriteLine("                           total pixels 655360..8294400, aspect <=3:1, or 'auto'.");
+            Console.WriteLine("                           handy canonical sizes: 1024x1024, 1024x1536, 1536x1024, 2048x2048, 2560x1440 (QHD).");
             Console.WriteLine("  :quality low|medium|high set gpt-image-2 quality");
             Console.WriteLine("  :moderation auto|low     set gpt-image-2 moderation");
+            Console.WriteLine("  :n N                     set gpt-image-2 images-per-call (default 1). N>10 requires confirmation.");
             Console.WriteLine("  :concurrency N           max prompts in flight (applies to subsequent dispatches)");
             Console.WriteLine("  :gens list               list active generators");
             Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok grokpro dalle3 ideogram recraft bfl google imagen4");
@@ -841,7 +882,7 @@ namespace MultiImageClient
             Console.WriteLine("  :quit  /  :exit          wait for in-flight jobs then exit");
             Console.WriteLine("                           (bare 'q', 'x', 'quit', 'exit' on a line by themselves also exit)");
             Console.WriteLine();
-            Console.WriteLine("Per-prompt override (gpt2 only): [size=1024x1024,q=low] a red apple on a white plate");
+            Console.WriteLine("Per-prompt override (gpt2 only): [size=1024x1024,q=low,n=4] a red apple on a white plate");
         }
 
         private static string Trunc(string s, int max)

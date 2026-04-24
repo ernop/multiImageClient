@@ -73,6 +73,8 @@ namespace MultiImageClient
                 // GptImage2MediumPortrait(),
                 // GptImage2HighWide(),
                 // GptImage2High2K(),
+                // GptImage2HighQhdWide(),        // 2560x1440 QHD, cookbook's recommended upper reliability boundary
+                // GptImage2LogoVariants(n: 4),   // one call -> N candidates; see cookbook 4.5
                 // --- other OpenAI image models ---
                 // Dalle3Square(),
                 // Dalle3Wide(),
@@ -124,13 +126,21 @@ namespace MultiImageClient
         // ---------- OpenAI: gpt-image-2 (released 2026-04-21) ----------
         // Quality: low / medium / high / auto.
         // Size can be any of 1024x1024, 1536x1024, 1024x1536, 2048x2048,
-        // 2048x1152, 3840x2160, 2160x3840, or "auto". Moderation is "auto"
-        // (default) or "low" (minimal safety, permissible content only).
+        // 2048x1152, 2560x1440 (QHD — cookbook's recommended upper
+        // reliability boundary), 3824x2144 (near-4K), or "auto". Cookbook
+        // enforces max edge STRICTLY < 3840 so the legacy 3840x2160 is
+        // treated as experimental in our size validator. Moderation is
+        // "auto" (default) or "low" (minimal safety, permissible content
+        // only).
         //
         // Default for batch runs: random AR x random quality with moderation="low".
         // The size pool sticks to the three canonical 1024-edge aspect ratios so
         // per-call cost stays bounded. Quality pool is low/medium/high (no "auto"
         // — we want explicit control and predictable billing).
+        //
+        // Variant factories take an optional `n` (images per call) to support
+        // cookbook patterns like logo-variant generation (section 4.5) where
+        // one round-trip returns N candidates. N=1 preserves prior behavior.
         // --fast: lowest quality, smallest size, permissive moderation. Deterministic
         // fixed variant so test runs are cheap and consistent across invocations.
         private GptImage2Generator GptImage2FastTest() =>
@@ -151,7 +161,7 @@ namespace MultiImageClient
                 partialSaveFolder: _settings.ImageDownloadBaseFolder,
                 popUpPartials: true);
 
-        private GptImage2Generator GptImage2RandomMinimalSafety() =>
+        private GptImage2Generator GptImage2RandomMinimalSafety(int n = 1) =>
             new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
                 sizePool: new[] { "1024x1024", "1024x1536", "1536x1024" },
                 moderation: "low",
@@ -161,23 +171,42 @@ namespace MultiImageClient
                     OpenAIGPTImageOneQuality.medium,
                     OpenAIGPTImageOneQuality.high,
                 },
-                stats: _stats, name: "");
+                stats: _stats, name: "", imageCount: n);
+
+        // Logo/variant exploration per cookbook 4.5: one API call, N
+        // candidates returned in the same round-trip. Filenames pick up the
+        // imgN suffix automatically via FileNameGenerator so the grid shows
+        // all variants side-by-side. Kept off by default (in the commented
+        // GetAll block) because it multiplies per-prompt cost linearly.
+        private GptImage2Generator GptImage2LogoVariants(int n = 4) =>
+            new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
+                sizePool: new[] { "1024x1024" },
+                moderation: "low",
+                qualityPool: new[] { OpenAIGPTImageOneQuality.medium },
+                stats: _stats, name: "variants", imageCount: n);
 
         private GptImage2Generator GptImage2HighSquare() =>
             new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
-                "1024x1024", "", OpenAIGPTImageOneQuality.high, _stats, "");
+                "1024x1024", "low", OpenAIGPTImageOneQuality.high, _stats, "");
 
         private GptImage2Generator GptImage2MediumPortrait() =>
             new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
-                "1024x1536", "", OpenAIGPTImageOneQuality.medium, _stats, "");
+                "1024x1536", "low", OpenAIGPTImageOneQuality.medium, _stats, "");
 
         private GptImage2Generator GptImage2HighWide() =>
             new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
-                "1536x1024", "", OpenAIGPTImageOneQuality.high, _stats, "");
+                "1536x1024", "low", OpenAIGPTImageOneQuality.high, _stats, "");
 
         private GptImage2Generator GptImage2High2K() =>
             new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
-                "2048x2048", "", OpenAIGPTImageOneQuality.high, _stats, "");
+                "2048x2048", "low", OpenAIGPTImageOneQuality.high, _stats, "");
+
+        // Cookbook "recommended upper reliability boundary" at 2K / QHD.
+        // Use when you want more detail than 2048 square but don't want to
+        // tip into the experimental near-4K territory.
+        private GptImage2Generator GptImage2HighQhdWide() =>
+            new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
+                "2560x1440", "low", OpenAIGPTImageOneQuality.high, _stats, "");
 
         // ---------- Ideogram ----------
 
