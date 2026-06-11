@@ -64,7 +64,8 @@ namespace MultiImageClient
                 name: "",
                 aspectRatio: "1:1",
                 quality: "high",
-                resolution: "2k");
+                resolution: "2k",
+                settings: settings);
 
             var imageManager = new ImageManager(settings, stats);
             var modelLabel = pro ? "grok-imagine-image-pro" : "grok-imagine-image";

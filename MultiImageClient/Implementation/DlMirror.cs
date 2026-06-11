@@ -22,6 +22,7 @@ namespace MultiImageClient
         private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
         {
             ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
+            ".mp4", // Grok Imagine video output
         };
 
         /// Synchronously mirror one file to <paramref name="mirrorRoot"/>.

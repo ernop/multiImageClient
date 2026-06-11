@@ -97,6 +97,40 @@ namespace IdeogramAPIClient
             }
         }
 
+        /// Ideogram 4.0 (2026-06-03): plain JSON POST, unlike v3's multipart
+        /// form. 2K-native output, rendering_speed FLASH|TURBO|DEFAULT|QUALITY.
+        public async Task<IdeogramV4GenerateResponse> GenerateImageV4Async(IdeogramV4GenerateRequest request)
+        {
+            if (request == null)
+                throw new ArgumentNullException(nameof(request));
+
+            if (string.IsNullOrWhiteSpace(request.TextPrompt))
+                throw new ArgumentException("TextPrompt is required for Ideogram v4 generation.", nameof(request));
+
+            var jsonRequest = JsonConvert.SerializeObject(request, new JsonSerializerSettings
+            {
+                NullValueHandling = NullValueHandling.Ignore,
+            });
+            var httpContent = new StringContent(jsonRequest, System.Text.Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync("/v1/ideogram-v4/generate", httpContent);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {errorContent}");
+            }
+
+            var content = await response.Content.ReadAsStringAsync();
+            var generateResponse = JsonConvert.DeserializeObject<IdeogramV4GenerateResponse>(content);
+            if (generateResponse == null)
+            {
+                throw new InvalidDataException("Failed to deserialize Ideogram v4 response.");
+            }
+
+            return generateResponse;
+        }
+
         public async Task<IdeogramDescribeResponse> DescribeImageAsync(IdeogramDescribeRequest request)
         {
             using (var formData = new MultipartFormDataContent())

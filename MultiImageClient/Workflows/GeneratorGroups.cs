@@ -81,10 +81,13 @@ namespace MultiImageClient
                 // GptImage1HighSquare(),
                 // GptImageMiniHighWide(),
                 // --- non-OpenAI providers (require extra keys in settings.json) ---
+                // IdeogramV4_Square(),         // Ideogram 4.0 (2026-06-03), current flagship
                 // Ideogram_V3_Wide_Quality(),
+                // RecraftV41AnyStyle(),        // Recraft V4.1 (2026), current flagship
                 // RecraftV4AnyStyle(),
                 // BFLv11_3_2(),
                 // BFLv11Ultra_1_1(),
+                // BFLFlux2ProPreview_Square(), // BFL's latest [pro], lands improvements first
                 // BFLFlux2Pro_Square(),
                 // BFLFlux2Max_Square(),
                 // BFLFlux2Flex_Square(),       // typography-tuned; enable when you have text prompts
@@ -96,9 +99,42 @@ namespace MultiImageClient
                 // we default to the cheap tier here and keep Pro as a toggle.
                 GrokImagine_Square(),
                 // GrokImaginePro_Square(),
-                // GeminiNanoBanana(),
-                // GoogleImagen4_2_5(),
+                // GrokVideo_Wide(),            // VIDEO: mp4 saved to day\Video\, card in the grid
+                // GeminiNanoBanana(),          // gemini-3.1-flash-image (Nano Banana 2), 1:1 2K
+                // GeminiNanoBananaPro(),       // gemini-3-pro-image (Nano Banana Pro), 1:1 2K
+                // GeminiNanoBananaTallPortrait(), // 9:16 2K — replacement for the old Imagen 2:5 slot
+                // GeminiNanoBananaPro4K(),     // pro tier at 4K (~2x token cost)
+                // GoogleImagen4_2_5(),         // DEAD 2026-06-24..30 (Imagen shutdown) — do not re-enable
             };
+        }
+
+        /// One representative generator per provider — the "contact sheet"
+        /// acceptance set used by --all-providers. Each entry is the current
+        /// flagship (June 2026) for that provider:
+        ///   OpenAI   gpt-image-2 (high, square)
+        ///   Ideogram Ideogram 4.0 (DEFAULT speed, 2048x2048)
+        ///   BFL      flux-2-pro-preview (latest [pro])
+        ///   Recraft  V4.1 (any style)
+        ///   xAI      grok-imagine-image (high, 2k)
+        ///   Google   gemini-3-pro-image (Nano Banana Pro)
+        /// includeVideo additionally appends the xAI grok-imagine-video
+        /// generator (mp4 saved to disk, PNG card in the grid).
+        public IEnumerable<IImageGenerator> GetOnePerProvider(bool includeVideo = false)
+        {
+            var list = new List<IImageGenerator>
+            {
+                GptImage2HighSquare(),
+                IdeogramV4_Square(),
+                BFLFlux2ProPreview_Square(),
+                RecraftV41AnyStyle(),
+                GrokImagine_Square(),
+                GeminiNanoBananaPro(),
+            };
+            if (includeVideo)
+            {
+                list.Add(GrokVideo_Wide());
+            }
+            return list;
         }
 
         // ---------- OpenAI: DALL·E 3 ----------
@@ -226,6 +262,25 @@ namespace MultiImageClient
                 IdeogramAspectRatio.ASPECT_16_10, IdeogramRenderingSpeed.QUALITY,
                 "", _stats, "");
 
+        // ---------- Ideogram 4.0 (released 2026-06-03) ----------
+        // JSON endpoint /v1/ideogram-v4/generate; 2K-native resolutions only
+        // ("2048x2048", "2304x1728", "2560x1440", ...). rendering_speed:
+        // FLASH (cheapest) | TURBO | DEFAULT | QUALITY. No style_type /
+        // magic_prompt knobs — text_prompt is auto-expanded server-side into
+        // the structured JSON prompt contract.
+
+        private IdeogramV4Generator IdeogramV4_Square() =>
+            new IdeogramV4Generator(_settings.IdeogramApiKey, _concurrency,
+                "2048x2048", IdeogramRenderingSpeed.DEFAULT, _stats, "");
+
+        private IdeogramV4Generator IdeogramV4_Wide_Quality() =>
+            new IdeogramV4Generator(_settings.IdeogramApiKey, _concurrency,
+                "2560x1440", IdeogramRenderingSpeed.QUALITY, _stats, "");
+
+        private IdeogramV4Generator IdeogramV4_Flash() =>
+            new IdeogramV4Generator(_settings.IdeogramApiKey, _concurrency,
+                "2048x2048", IdeogramRenderingSpeed.FLASH, _stats, "");
+
         // ---------- Black Forest Labs (Flux) ----------
 
         private BFLGenerator BFLv11_3_2() =>
@@ -249,6 +304,14 @@ namespace MultiImageClient
 
         private BFLGenerator BFLFlux2Pro_Square() =>
             new BFLGenerator(ImageGeneratorApiType.BFLFlux2Pro, _settings.BFLApiKey,
+                _concurrency, "1:1", false, 1024, 1024, _stats, "");
+
+        // flux-2-pro-preview: where BFL lands the latest [pro] improvements
+        // first (~2x speed at no quality cost as of mid-2026). Same wire
+        // contract and price as flux-2-pro; prefer this unless a run needs
+        // pinned-model reproducibility.
+        private BFLGenerator BFLFlux2ProPreview_Square() =>
+            new BFLGenerator(ImageGeneratorApiType.BFLFlux2ProPreview, _settings.BFLApiKey,
                 _concurrency, "1:1", false, 1024, 1024, _stats, "");
 
         private BFLGenerator BFLFlux2Pro_Wide() =>
@@ -296,34 +359,63 @@ namespace MultiImageClient
         // ready output. Pass model: RecraftModel.recraftv4 or .recraftv4pro to
         // RecraftGenerator and everything else (style/substyle/artistic_level)
         // works the same.
+        //
+        // IMPORTANT: V4/V4.1 use a DIFFERENT size set than V2/V3. The old
+        // 1365x1024 / 2048x1024 etc. are rejected with invalid_request_parameter.
+        // Standard models: 1:1 is 1024x1024 (others: 1536x768, 1280x832,
+        // 1216x896, ...). Pro models: 1:1 is 2048x2048 (others: 3072x1536,
+        // 2560x1664, 2432x1792, ...). See recraft.ai/docs appendix.
 
         private RecraftGenerator RecraftV4AnyStyle() =>
             new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
-                RecraftImageSize._1365x1024, RecraftStyle.any, null, null, null,
+                RecraftImageSize._1024x1024, RecraftStyle.any, null, null, null,
                 _stats, "", model: RecraftModel.recraftv4);
 
         private RecraftGenerator RecraftV4RealisticStudioPortrait() =>
             new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
-                RecraftImageSize._2048x1024, RecraftStyle.realistic_image,
+                RecraftImageSize._1024x1024, RecraftStyle.realistic_image,
                 null, null, RecraftRealisticImageSubstyle.studio_portrait,
                 _stats, "", model: RecraftModel.recraftv4);
 
         private RecraftGenerator RecraftV4VectorLineArt() =>
             new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
-                RecraftImageSize._1365x1024, RecraftStyle.vector_illustration,
+                RecraftImageSize._1024x1024, RecraftStyle.vector_illustration,
                 RecraftVectorIllustrationSubstyle.line_art, null, null,
                 _stats, "", model: RecraftModel.recraftv4);
 
         private RecraftGenerator RecraftV4ProRealisticPortrait() =>
             new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
-                RecraftImageSize._2048x1024, RecraftStyle.realistic_image,
+                RecraftImageSize._2048x2048, RecraftStyle.realistic_image,
                 null, null, RecraftRealisticImageSubstyle.studio_portrait,
                 _stats, "", model: RecraftModel.recraftv4pro);
 
         private RecraftGenerator RecraftV4ProAnyStyle() =>
             new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
-                RecraftImageSize._1365x1024, RecraftStyle.any, null, null, null,
+                RecraftImageSize._2048x2048, RecraftStyle.any, null, null, null,
                 _stats, "", model: RecraftModel.recraftv4pro);
+
+        // ---------- Recraft V4.1 (2026, current flagship) ----------
+        // Drop-in over V4: better photorealism, new illustration styles, and
+        // strong short-prompt aesthetics. API model strings: recraftv4_1 /
+        // recraftv4_1_pro (the API's own default model is now recraftv4_1).
+        // Same style/substyle/artistic_level plumbing as V3/V4, and the same
+        // V4 size set (1024x1024 standard / 2048x2048 pro for 1:1).
+
+        private RecraftGenerator RecraftV41AnyStyle() =>
+            new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
+                RecraftImageSize._1024x1024, RecraftStyle.any, null, null, null,
+                _stats, "", model: RecraftModel.recraftv4_1);
+
+        private RecraftGenerator RecraftV41RealisticStudioPortrait() =>
+            new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
+                RecraftImageSize._1024x1024, RecraftStyle.realistic_image,
+                null, null, RecraftRealisticImageSubstyle.studio_portrait,
+                _stats, "", model: RecraftModel.recraftv4_1);
+
+        private RecraftGenerator RecraftV41ProAnyStyle() =>
+            new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
+                RecraftImageSize._2048x2048, RecraftStyle.any, null, null, null,
+                _stats, "", model: RecraftModel.recraftv4_1_pro);
 
         // ---------- xAI Grok Imagine ----------
         //
@@ -344,39 +436,89 @@ namespace MultiImageClient
         public GrokImagineGenerator GrokImagine_Square() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "",
-                aspectRatio: "1:1", quality: "high", resolution: "2k");
+                aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
 
         public GrokImagineGenerator GrokImagine_Wide() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "",
-                aspectRatio: "16:9", quality: "high", resolution: "2k");
+                aspectRatio: "16:9", quality: "high", resolution: "2k", settings: _settings);
 
         public GrokImagineGenerator GrokImagine_Portrait() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "",
-                aspectRatio: "3:4", quality: "high", resolution: "2k");
+                aspectRatio: "3:4", quality: "high", resolution: "2k", settings: _settings);
 
         public GrokImagineGenerator GrokImaginePro_Square() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImaginePro, _stats, "",
-                aspectRatio: "1:1", quality: "high", resolution: "2k");
+                aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
 
         public GrokImagineGenerator GrokImaginePro_Portrait() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImaginePro, _stats, "",
-                aspectRatio: "3:4", quality: "high", resolution: "2k");
+                aspectRatio: "3:4", quality: "high", resolution: "2k", settings: _settings);
+
+        // ---------- xAI Grok Imagine VIDEO ----------
+        //
+        // grok-imagine-video via the async /v1/videos/generations endpoint
+        // (start + poll). Duration 1-15s; resolution 480p/720p/1080p; per-
+        // second billing (roughly $0.05/s at 480p). The generator downloads
+        // the mp4 itself into {day}\Video\ and contributes a PNG "video card"
+        // to combined grids, so it multiplexes alongside image generators.
+
+        public GrokImagineVideoGenerator GrokVideo_Wide() =>
+            new GrokImagineVideoGenerator(_settings.XAIGrokApiKey, _concurrency,
+                _stats, _settings, "",
+                aspectRatio: "16:9", resolution: "480p", durationSeconds: 6);
+
+        public GrokImagineVideoGenerator GrokVideo_Wide720p() =>
+            new GrokImagineVideoGenerator(_settings.XAIGrokApiKey, _concurrency,
+                _stats, _settings, "",
+                aspectRatio: "16:9", resolution: "720p", durationSeconds: 8);
 
         // ---------- Google ----------
+        //
+        // June 2026: ALL dedicated Imagen endpoints shut down 06-24..30.
+        // Gemini image models ("Nano Banana") are the replacement family:
+        //   gemini-3.1-flash-image  (Nano Banana 2)  — fast/cheap tier
+        //   gemini-3-pro-image      (Nano Banana Pro) — reasoning tier, 4K-capable
+        // Both take an optional aspectRatio ("1:1","2:3","3:2","3:4","4:3",
+        // "4:5","5:4","9:16","16:9","21:9") and imageSize ("512" flash-only,
+        // "1K","2K","4K" — uppercase K). 2K costs the same tokens as 1K, so
+        // it's the default here; only 4K is pricier.
+        // These need only GoogleGeminiApiKey (AI Studio key) — no Vertex
+        // project/service-account setup like the dead Imagen path required.
 
         private GoogleGenerator GeminiNanoBanana() =>
             new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana,
-                _settings.GoogleGeminiApiKey, _concurrency, _stats);
+                _settings.GoogleGeminiApiKey, _concurrency, _stats,
+                aspectRatio: "1:1", imageSize: "2K");
 
+        private GoogleGenerator GeminiNanoBananaPro() =>
+            new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBananaPro,
+                _settings.GoogleGeminiApiKey, _concurrency, _stats,
+                aspectRatio: "1:1", imageSize: "2K");
+
+        // Direct replacement for the old GoogleImagen4_2_5() slot: tall
+        // portrait output on the cheap flash tier. Imagen's "2:5" has no
+        // exact Gemini equivalent; 9:16 is the closest supported ratio.
+        private GoogleGenerator GeminiNanoBananaTallPortrait() =>
+            new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana,
+                _settings.GoogleGeminiApiKey, _concurrency, _stats,
+                aspectRatio: "9:16", imageSize: "2K");
+
+        private GoogleGenerator GeminiNanoBananaPro4K() =>
+            new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBananaPro,
+                _settings.GoogleGeminiApiKey, _concurrency, _stats,
+                aspectRatio: "1:1", imageSize: "4K");
+
+#pragma warning disable CS0618 // kept until the Imagen shutdown actually lands
         private GoogleImagen4Generator GoogleImagen4_2_5() =>
             new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency,
                 _stats, "", "2:5", "BLOCK_NONE",
                 location: _settings.GoogleCloudLocation,
                 projectId: _settings.GoogleCloudProjectId,
                 googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath);
+#pragma warning restore CS0618
     }
 }

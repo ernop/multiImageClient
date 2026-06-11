@@ -41,6 +41,8 @@ namespace MultiImageClient
         {
             RecraftModel.recraftv4 => ImageGeneratorApiType.RecraftV4,
             RecraftModel.recraftv4pro => ImageGeneratorApiType.RecraftV4Pro,
+            RecraftModel.recraftv4_1 => ImageGeneratorApiType.RecraftV41,
+            RecraftModel.recraftv4_1_pro => ImageGeneratorApiType.RecraftV41Pro,
             _ => ImageGeneratorApiType.Recraft,
         };
 
@@ -127,13 +129,14 @@ namespace MultiImageClient
         // https://www.recraft.ai/docs/api-reference/pricing
         public decimal GetCost()
         {
-            // V4 Pro charges a flat premium regardless of raster/vector style.
-            if (_model == RecraftModel.recraftv4pro)
+            // Pro tiers charge a flat premium regardless of raster/vector style.
+            // V4.1 Pro is assumed to match V4 Pro until Recraft publishes a delta.
+            if (_model == RecraftModel.recraftv4pro || _model == RecraftModel.recraftv4_1_pro)
             {
                 return _style == RecraftStyle.vector_illustration ? 0.30m : 0.25m;
             }
 
-            // V2 / V3 / V4 raster: $0.04 (V2: $0.022); vector: $0.08 (V2: $0.044).
+            // V2 / V3 / V4 / V4.1 raster: $0.04 (V2: $0.022); vector: $0.08 (V2: $0.044).
             var isVector = _style == RecraftStyle.vector_illustration;
             return _model switch
             {
