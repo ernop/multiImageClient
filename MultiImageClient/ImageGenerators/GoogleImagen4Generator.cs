@@ -13,6 +13,13 @@ using System.Linq;
 
 namespace MultiImageClient
 {
+    /// DEPRECATED — Google is shutting down ALL Imagen endpoints (including
+    /// imagen-4.0-generate-001 used here) on 2026-06-24..30. This generator
+    /// will stop working then. Migrate to GoogleGenerator with
+    /// GoogleNanoBanana (gemini-3.1-flash-image) or GoogleNanoBananaPro
+    /// (gemini-3-pro-image), which is Google's official replacement path.
+    /// Kept for reference until the shutdown actually lands.
+    [Obsolete("All Google Imagen endpoints shut down 2026-06-24..30; use GoogleGenerator (Gemini image models) instead.")]
     public class GoogleImagen4Generator : IImageGenerator
     {
         private readonly SemaphoreSlim _googleSemaphore;

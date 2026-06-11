@@ -43,6 +43,18 @@ namespace MultiImageClient
                 return;
             }
 
+            if (options.GrokSync)
+            {
+                await GrokArchive.SyncAsync(settings);
+                return;
+            }
+
+            if (options.GrokExportPath != null)
+            {
+                await GrokArchive.ExportAsync(settings, options.GrokExportPath);
+                return;
+            }
+
             var concurrency = 1;
             var stats = new MultiClientRunStats();
 
@@ -60,6 +72,25 @@ namespace MultiImageClient
             AbstractPromptSource promptSource = string.IsNullOrEmpty(options.OverridePrompt)
                 ? new ReadAllPromptsFromFile(settings, "")
                 : new InlinePromptSource(settings, options.OverridePrompt);
+
+            if (options.GrokVideoTest)
+            {
+                // Exercises text-to-video, grok-image-to-video, and
+                // extend-video with one prompt; saves + ledgers every clip.
+                var videoModes = new GrokVideoModesWorkflow();
+                await videoModes.RunAsync(promptSource, settings);
+                return;
+            }
+
+            if (options.AllProviders)
+            {
+                // One prompt -> one flagship generator per provider -> one
+                // combined contact sheet. Keyless providers fail soft into
+                // error cells, so this is also the cross-provider auth check.
+                var allProviders = new AllProvidersShowcaseWorkflow();
+                await allProviders.RunAsync(promptSource, settings, stats, options);
+                return;
+            }
 
             if (options.GrokShowcase)
             {

@@ -80,6 +80,39 @@ namespace MultiImageClient
         /// at 2k resolution instead of the standard grok-imagine-image at 1k.
         public bool GrokPro { get; set; }
 
+        /// If true, run AllProvidersShowcaseWorkflow: take ONE prompt and
+        /// fire it at one flagship generator per provider (gpt-image-2,
+        /// Ideogram 4.0, flux-2-pro-preview, Recraft V4.1, Grok Imagine,
+        /// Nano Banana Pro), then compose every result into a single
+        /// contact-sheet grid and pop it open. Failed/keyless providers
+        /// show as error cells, so this doubles as a key health check.
+        public bool AllProviders { get; set; }
+
+        /// Pair with --all-providers to ALSO dispatch a Grok Imagine video
+        /// (grok-imagine-video, 6s 480p) for the same prompt. The mp4 is
+        /// saved under the day folder's Video\ subfolder; videos are NOT
+        /// composited into the PNG contact sheet (stills only).
+        public bool WithVideo { get; set; }
+
+        /// If non-null, run GrokArchive.ExportAsync and exit: sync the full
+        /// Grok history, then copy every known image/video plus prompts.txt
+        /// and the ledger into this folder (outside the repo). Defaults to
+        /// C:\GrokArchive when --grok-export is passed without a path.
+        public string? GrokExportPath { get; set; }
+
+        /// If true, run GrokVideoModesWorkflow and exit: exercise all three
+        /// Grok video request modes with one prompt — text-to-video,
+        /// grok-image-to-video, and extend-video — saving each clip and
+        /// recording everything in grok_ledger.jsonl.
+        public bool GrokVideoTest { get; set; }
+
+        /// If true, run GrokArchive.SyncAsync and exit: back-read the entire
+        /// reachable Grok history (xAI Files API inventory + re-pollable
+        /// video request_ids + local JSON logs) into grok_ledger.jsonl and
+        /// download every asset we don't already have locally. Idempotent;
+        /// run it whenever to keep local copies synced.
+        public bool GrokSync { get; set; }
+
         public static RunOptions Parse(string[] args)
         {
             var o = new RunOptions();
@@ -148,6 +181,24 @@ namespace MultiImageClient
                     case "--grok-pro":
                         o.GrokPro = true;
                         break;
+                    case "--all-providers":
+                        o.AllProviders = true;
+                        break;
+                    case "--with-video":
+                        o.WithVideo = true;
+                        break;
+                    case "--grok-sync":
+                        o.GrokSync = true;
+                        break;
+                    case "--grok-export":
+                        // Optional path argument; default to C:\GrokArchive.
+                        o.GrokExportPath = (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                            ? args[++i]
+                            : @"C:\GrokArchive";
+                        break;
+                    case "--grok-video-test":
+                        o.GrokVideoTest = true;
+                        break;
                     case "--help":
                     case "-h":
                         PrintUsage();
@@ -181,6 +232,11 @@ namespace MultiImageClient
             Console.WriteLine("  --repl-n N            REPL session default n (images per gpt-image-2 call, default 1). Change at runtime with :n N, or per-prompt via [n=N] in the override prefix.");
             Console.WriteLine("  --grok-showcase       One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at xAI Grok Imagine in parallel, and open a single combined grid image. Default --limit for this mode is 10.");
             Console.WriteLine("  --grok-pro            Pair with --grok-showcase to route through grok-imagine-image-pro at 2k resolution ($0.07/img, 30 rpm) instead of grok-imagine-image at 1k ($0.02/img, 300 rpm).");
+            Console.WriteLine("  --all-providers       One-shot: fire ONE prompt (--prompt or first PromptFiles line) at one flagship generator per provider (gpt-image-2, Ideogram 4.0, flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro) and open a single contact-sheet grid. Keyless providers show as error cells.");
+            Console.WriteLine("  --with-video          Pair with --all-providers to also dispatch a Grok Imagine VIDEO (6s, 480p) for the same prompt; the mp4 lands in the day folder's Video\\ subfolder. Videos are not composited into the PNG sheet.");
+            Console.WriteLine("  --grok-video-test     One-shot: exercise all three Grok video modes with one prompt (--prompt or first PromptFiles line) — text-to-video, grok-image-to-video, and extend-video (3s, 480p each). Clips are saved, stored durably at xAI, and ledgered.");
+            Console.WriteLine("  --grok-export [path]  One-shot: full Grok history export OUTSIDE the repo. Runs --grok-sync first, then copies every known Grok image/video plus prompts.txt and grok_ledger.jsonl into [path] (default C:\\GrokArchive). Rerunnable; already-present files are skipped.");
+            Console.WriteLine("  --grok-sync           One-shot: back-read/back-download the entire reachable Grok history and exit. Sweeps the xAI Files API inventory, re-polls any ledger video request_ids whose local file is missing, backfills prompts from old JSON logs, and writes everything to grok_ledger.jsonl + saves\\GrokArchive\\. Idempotent — run it whenever to stay synced.");
         }
     }
 }

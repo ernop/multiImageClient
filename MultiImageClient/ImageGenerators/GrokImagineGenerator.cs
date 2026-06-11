@@ -33,6 +33,8 @@ namespace MultiImageClient
 
         public ImageGeneratorApiType ApiType => _apiType;
 
+        private readonly Settings? _settings;
+
         /// apiType         — GrokImagine or GrokImaginePro.
         /// aspectRatio     — one of the xAI-documented AR strings ("1:1", "3:4",
         ///                    "4:3", "16:9", etc.), or "auto" to let xAI pick.
@@ -40,6 +42,9 @@ namespace MultiImageClient
         /// resolution      — "1k" | "2k".
         /// responseFormat  — "url" (default) or "b64_json". "url" is fine for
         ///                    batch runs since we download immediately.
+        /// settings        — optional; when provided, every successful
+        ///                    generation is appended to the Grok history
+        ///                    ledger (grok_ledger.jsonl) for archive/sync.
         public GrokImagineGenerator(
             string apiKey,
             int maxConcurrency,
@@ -49,8 +54,10 @@ namespace MultiImageClient
             string aspectRatio = "1:1",
             string quality = "high",
             string resolution = "1k",
-            string responseFormat = "url")
+            string responseFormat = "url",
+            Settings? settings = null)
         {
+            _settings = settings;
             if (apiType != ImageGeneratorApiType.GrokImagine && apiType != ImageGeneratorApiType.GrokImaginePro)
             {
                 throw new ArgumentException(
@@ -215,6 +222,15 @@ namespace MultiImageClient
                 var usd = response.Usage?.CostUsd;
                 var usdLabel = usd.HasValue ? $" cost=${usd:0.####}" : string.Empty;
                 Logger.Log($"\t<- {TierLabel} [{_model}] OK in {sw.ElapsedMilliseconds} ms{usdLabel}");
+
+                GrokLedger.Append(_settings, new GrokLedgerEntry
+                {
+                    Kind = "image",
+                    Model = _model,
+                    Prompt = prompt,
+                    RemoteUrl = first.Url,
+                    Source = "live",
+                });
 
                 // URL path — typical response. We HEAD it to capture content-type
                 // so downstream conversion logic (webp/jpg -> png) kicks in.

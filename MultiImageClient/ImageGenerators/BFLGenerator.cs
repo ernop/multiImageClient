@@ -45,6 +45,7 @@ namespace MultiImageClient
             {
                 case ImageGeneratorApiType.BFLv11:
                 case ImageGeneratorApiType.BFLFlux2Pro:
+                case ImageGeneratorApiType.BFLFlux2ProPreview:
                 case ImageGeneratorApiType.BFLFlux2Max:
                 case ImageGeneratorApiType.BFLFlux2Flex:
                 case ImageGeneratorApiType.BFLFlux2Klein4b:
@@ -95,6 +96,7 @@ namespace MultiImageClient
                 // FLUX.2 is megapixel-priced; the numbers below are the headline
                 // rate at 1 MP output and will under-report for larger sizes.
                 case ImageGeneratorApiType.BFLFlux2Pro:
+                case ImageGeneratorApiType.BFLFlux2ProPreview:
                     return 0.03m;
                 case ImageGeneratorApiType.BFLFlux2Max:
                     return 0.07m;
@@ -115,6 +117,10 @@ namespace MultiImageClient
             try
             {
                 GenerationResponse generationResponse = null;
+                // BFL rejects safety_tolerance 6 with a 403 ("safety_tolerance > 5
+                // requires authorization") on normal accounts; 5 is the max
+                // permissive value available to us.
+                const int MaxPermissiveSafetyTolerance = 5;
                 switch (_apiType)
                 {
                     case ImageGeneratorApiType.BFLv11:
@@ -125,7 +131,7 @@ namespace MultiImageClient
                             Width = _width,
                             Height = _height,
                             PromptUpsampling = _promptUpsampling,
-                            SafetyTolerance = 6
+                            SafetyTolerance = MaxPermissiveSafetyTolerance
                         };
                         generationResponse = await _bflClient.GenerateFluxPro11Async(request);
                         break;
@@ -139,12 +145,13 @@ namespace MultiImageClient
                             PromptUpsampling = _promptUpsampling,
                             Width = _width,
                             Height = _height,
-                            SafetyTolerance = 6
+                            SafetyTolerance = MaxPermissiveSafetyTolerance
                         };
                         generationResponse = await _bflClient.GenerateFluxPro11UltraAsync(request);
                         break;
                     }
                     case ImageGeneratorApiType.BFLFlux2Pro:
+                    case ImageGeneratorApiType.BFLFlux2ProPreview:
                     case ImageGeneratorApiType.BFLFlux2Max:
                     case ImageGeneratorApiType.BFLFlux2Flex:
                     case ImageGeneratorApiType.BFLFlux2Klein4b:
@@ -156,7 +163,7 @@ namespace MultiImageClient
                             Width = _width,
                             Height = _height,
                             PromptUpsampling = _promptUpsampling,
-                            SafetyTolerance = 6,
+                            SafetyTolerance = MaxPermissiveSafetyTolerance,
                         };
                         // flex lets you steer denoising; keep it permissive by default.
                         if (_apiType == ImageGeneratorApiType.BFLFlux2Flex)
@@ -168,6 +175,7 @@ namespace MultiImageClient
                         generationResponse = _apiType switch
                         {
                             ImageGeneratorApiType.BFLFlux2Pro => await _bflClient.GenerateFlux2ProAsync(request),
+                            ImageGeneratorApiType.BFLFlux2ProPreview => await _bflClient.GenerateFlux2ProPreviewAsync(request),
                             ImageGeneratorApiType.BFLFlux2Max => await _bflClient.GenerateFlux2MaxAsync(request),
                             ImageGeneratorApiType.BFLFlux2Flex => await _bflClient.GenerateFlux2FlexAsync(request),
                             ImageGeneratorApiType.BFLFlux2Klein4b => await _bflClient.GenerateFlux2Klein4bAsync(request),

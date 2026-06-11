@@ -74,7 +74,7 @@ namespace MultiImageClient
         // Catalog of known per-name factories. ':gens add <name>' looks here.
         // Keep in sync with PrintHelp()'s generator list.
         private static readonly string[] KnownGenerators =
-            { "gpt2", "grok", "grokpro", "dalle3", "ideogram", "recraft", "bfl", "google", "imagen4" };
+            { "gpt2", "grok", "grokpro", "dalle3", "ideogram", "recraft", "bfl", "google", "googlepro", "imagen4" };
 
         private class InFlight
         {
@@ -710,14 +710,14 @@ namespace MultiImageClient
                     RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", "grok");
                     return new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                         ImageGeneratorApiType.GrokImagine, _stats, "repl",
-                        aspectRatio: "1:1", quality: "high", resolution: "2k");
+                        aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
 
                 case "grokpro":
                 case "grok_pro":
                     RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", "grokpro");
                     return new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                         ImageGeneratorApiType.GrokImaginePro, _stats, "repl",
-                        aspectRatio: "1:1", quality: "high", resolution: "2k");
+                        aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
 
                 case "dalle3":
                     RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", "dalle3");
@@ -747,15 +747,26 @@ namespace MultiImageClient
                 case "nanobanana":
                     RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", "google");
                     return new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBanana,
-                        _settings.GoogleGeminiApiKey, _concurrency, _stats);
+                        _settings.GoogleGeminiApiKey, _concurrency, _stats, "repl",
+                        aspectRatio: "1:1", imageSize: "2K");
+
+                case "googlepro":
+                case "nanobananapro":
+                    RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", "googlepro");
+                    return new GoogleGenerator(ImageGeneratorApiType.GoogleNanoBananaPro,
+                        _settings.GoogleGeminiApiKey, _concurrency, _stats, "repl",
+                        aspectRatio: "1:1", imageSize: "2K");
 
                 case "imagen4":
+                    // DEPRECATED: Imagen shuts down 2026-06-24..30; kept until then.
                     RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", "imagen4");
+#pragma warning disable CS0618
                     return new GoogleImagen4Generator(_settings.GoogleGeminiApiKey, _concurrency,
                         _stats, "repl", "2:5", "BLOCK_NONE",
                         location: _settings.GoogleCloudLocation,
                         projectId: _settings.GoogleCloudProjectId,
                         googleServiceAccountKeyPath: _settings.GoogleServiceAccountKeyPath);
+#pragma warning restore CS0618
 
                 default:
                     throw new ArgumentException(
@@ -869,7 +880,7 @@ namespace MultiImageClient
             Console.WriteLine("  :n N                     set gpt-image-2 images-per-call (default 1). N>10 requires confirmation.");
             Console.WriteLine("  :concurrency N           max prompts in flight (applies to subsequent dispatches)");
             Console.WriteLine("  :gens list               list active generators");
-            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok grokpro dalle3 ideogram recraft bfl google imagen4");
+            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok grokpro dalle3 ideogram recraft bfl google googlepro imagen4(dead 06-24)");
             Console.WriteLine("  :gens remove <name>      remove a generator from the active set");
             Console.WriteLine("  :gens reset              back to defaults (gpt2 + grok when XAIGrokApiKey is set)");
             Console.WriteLine("  :status                  list in-flight jobs");

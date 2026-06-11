@@ -11,8 +11,10 @@ namespace MultiImageClient
         
         public int IdeogramRequestCount { get; set; }
         public int IdeogramV3RequestCount { get; set; }
+        public int IdeogramV4RequestCount { get; set; }
         public int IdeogramRefusedCount { get; set; }
         public int IdeogramV3RefusedCount { get; set; }
+        public int IdeogramV4RefusedCount { get; set; }
         
         public int ClaudeRequestCount { get; set; }
         public int ClaudeWouldRefuseCount { get; set; }
@@ -39,6 +41,10 @@ namespace MultiImageClient
         public int GrokImageGenerationRequestCount { get; set; }
         public int GrokImageGenerationSuccessCount { get; set; }
         public int GrokImageGenerationErrorCount { get; set; }
+
+        public int GrokVideoGenerationRequestCount { get; set; }
+        public int GrokVideoGenerationSuccessCount { get; set; }
+        public int GrokVideoGenerationErrorCount { get; set; }
 
         public int GoogleRequestCount { get; set; }
         public int GoogleRefusedCount { get; set; }
@@ -69,6 +75,10 @@ namespace MultiImageClient
                 nonZeroStats.Add($"Ideogram Refused:{IdeogramRefusedCount}");
             if (IdeogramV3RefusedCount > 0)
                 nonZeroStats.Add($"Ideogram v3 Refused:{IdeogramV3RefusedCount}");
+            if (IdeogramV4RequestCount > 0)
+                nonZeroStats.Add($"Ideogram v4 Requests:{IdeogramV4RequestCount}");
+            if (IdeogramV4RefusedCount > 0)
+                nonZeroStats.Add($"Ideogram v4 Refused:{IdeogramV4RefusedCount}");
 
             if (Dalle3RequestCount > 0)
                 nonZeroStats.Add($"Dalle3 Requests:{Dalle3RequestCount}");
@@ -98,6 +108,9 @@ namespace MultiImageClient
 
             if (GrokImageGenerationRequestCount > 0 | GrokImageGenerationErrorCount > 0 | GrokImageGenerationSuccessCount > 0)
                 nonZeroStats.Add($"Grok: total:{GrokImageGenerationRequestCount}, ok:{GrokImageGenerationSuccessCount}, bad:{GrokImageGenerationErrorCount} ");
+
+            if (GrokVideoGenerationRequestCount > 0 | GrokVideoGenerationErrorCount > 0 | GrokVideoGenerationSuccessCount > 0)
+                nonZeroStats.Add($"Grok Video: total:{GrokVideoGenerationRequestCount}, ok:{GrokVideoGenerationSuccessCount}, bad:{GrokVideoGenerationErrorCount} ");
 
             var res = $"Stats: {string.Join(", ", nonZeroStats)}";
             Console.WriteLine(res);

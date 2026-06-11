@@ -29,14 +29,18 @@ namespace XAIGrokAPIClient
     /// Models supported (2026-04):
     ///   grok-imagine-image       — $0.02/image, 300 rpm
     ///   grok-imagine-image-pro   — $0.07/image, 30 rpm
+    ///   grok-imagine-video       — async text/image -> video (mp4), 1-15s
     ///
     /// Docs: https://docs.x.ai/developers/model-capabilities/images/generation
     ///       https://docs.x.ai/developers/rest-api-reference/inference/images
+    ///       https://docs.x.ai/developers/model-capabilities/video/generation
+    ///       https://docs.x.ai/developers/rest-api-reference/inference/videos
     public class XAIGrokClient
     {
         public const string BaseUrl = "https://api.x.ai/v1";
         public const string ModelGrokImagine = "grok-imagine-image";
         public const string ModelGrokImaginePro = "grok-imagine-image-pro";
+        public const string ModelGrokImagineVideo = "grok-imagine-video";
 
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
@@ -64,7 +68,179 @@ namespace XAIGrokAPIClient
         public Task<XAIGrokImageResponse> EditAsync(XAIGrokEditRequest request, CancellationToken ct = default)
             => PostAsync("/images/edits", request, ct);
 
-        private async Task<XAIGrokImageResponse> PostAsync<TReq>(string path, TReq body, CancellationToken ct)
+        // ---------- Video (asynchronous: start -> poll) ----------
+
+        /// Step 1 of the video flow: POST /v1/videos/generations. Returns
+        /// immediately with a request_id; the video is NOT ready yet.
+        public Task<XAIGrokVideoStartResponse> StartVideoAsync(XAIGrokVideoGenerateRequest request, CancellationToken ct = default)
+            => PostAsync<XAIGrokVideoGenerateRequest, XAIGrokVideoStartResponse>("/videos/generations", request, ct);
+
+        /// POST /v1/videos/extensions: continue an existing video (by url or
+        /// Files-API file_id) from its last frame. Deferred like generations;
+        /// poll the returned request_id. The finished clip is the original
+        /// PLUS the extension, combined.
+        public Task<XAIGrokVideoStartResponse> StartVideoExtensionAsync(XAIGrokVideoExtendRequest request, CancellationToken ct = default)
+            => PostAsync<XAIGrokVideoExtendRequest, XAIGrokVideoStartResponse>("/videos/extensions", request, ct);
+
+        /// Step 2: GET /v1/videos/{request_id}. status is one of
+        /// pending | done | expired | failed. When done, Video.Url holds a
+        /// temporary mp4 URL — download promptly, xAI expires them. (When the
+        /// request used storage_options, Video.FileOutput carries the durable
+        /// Files-API file_id instead.)
+        public Task<XAIGrokVideoResult> GetVideoAsync(string requestId, CancellationToken ct = default)
+            => GetAsync<XAIGrokVideoResult>($"/videos/{requestId}", ct);
+
+        // ---------- Files API (the only enumerable server-side history) ----------
+
+        /// One page of GET /v1/files. The response always includes a
+        /// pagination_token; keep calling with it until data.Count < limit.
+        /// Server max limit is 100.
+        public Task<XAIGrokFileListResponse> ListFilesPageAsync(
+            int limit = 100,
+            string? paginationToken = null,
+            string sortBy = "created_at",
+            string order = "asc",
+            CancellationToken ct = default)
+        {
+            var path = $"/files?limit={limit}&sort_by={sortBy}&order={order}";
+            if (!string.IsNullOrEmpty(paginationToken))
+            {
+                path += $"&pagination_token={Uri.EscapeDataString(paginationToken)}";
+            }
+            return GetAsync<XAIGrokFileListResponse>(path, ct);
+        }
+
+        /// Walks every page of GET /v1/files and returns the full inventory
+        /// of stored files for the authenticated team, oldest first.
+        public async Task<List<XAIGrokFileObject>> ListAllFilesAsync(CancellationToken ct = default)
+        {
+            var all = new List<XAIGrokFileObject>();
+            string? token = null;
+            const int pageSize = 100;
+            while (true)
+            {
+                var page = await ListFilesPageAsync(pageSize, token, ct: ct).ConfigureAwait(false);
+                all.AddRange(page.Data);
+                if (page.Data.Count < pageSize || string.IsNullOrEmpty(page.PaginationToken))
+                {
+                    break;
+                }
+                token = page.PaginationToken;
+            }
+            return all;
+        }
+
+        /// GET /v1/files/{file_id}/content — raw bytes of a stored file.
+        public async Task<byte[]> DownloadFileContentAsync(string fileId, CancellationToken ct = default)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/files/{fileId}/content");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+
+            using var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (!res.IsSuccessStatusCode)
+            {
+                var text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                throw new XAIGrokException(
+                    $"xAI /files/{fileId}/content returned {(int)res.StatusCode} {res.StatusCode}: {text}",
+                    (int)res.StatusCode,
+                    text);
+            }
+            return await res.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        }
+
+        private async Task<TRes> GetAsync<TRes>(string path, CancellationToken ct)
+            where TRes : XAIGrokResponseBase
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, BaseUrl + path);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            using var res = await _httpClient.SendAsync(req, ct).ConfigureAwait(false);
+            var text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            if (!res.IsSuccessStatusCode)
+            {
+                throw new XAIGrokException(
+                    $"xAI {path} returned {(int)res.StatusCode} {res.StatusCode}: {text}",
+                    (int)res.StatusCode,
+                    text);
+            }
+
+            var parsed = JsonConvert.DeserializeObject<TRes>(text)
+                ?? throw new XAIGrokException(
+                    $"xAI {path} returned an empty/unparseable body.",
+                    (int)res.StatusCode,
+                    text);
+            parsed.RawBody = text;
+            return parsed;
+        }
+
+        /// Convenience wrapper that does the whole start -> poll loop and only
+        /// returns once the video reaches a terminal state (done/failed/expired)
+        /// or the timeout elapses (throws TimeoutException). Defaults follow
+        /// xAI's docs: 5s poll cadence, 10 minute ceiling.
+        public async Task<XAIGrokVideoResult> GenerateVideoAsync(
+            XAIGrokVideoGenerateRequest request,
+            TimeSpan? pollInterval = null,
+            TimeSpan? timeout = null,
+            CancellationToken ct = default)
+        {
+            var start = await StartVideoAsync(request, ct).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(start.RequestId))
+            {
+                throw new XAIGrokException("xAI /videos/generations returned no request_id.", 200, start.RawBody ?? "");
+            }
+            return await PollVideoToCompletionAsync(start.RequestId, pollInterval, timeout, ct).ConfigureAwait(false);
+        }
+
+        /// Extension counterpart of GenerateVideoAsync: start the extension
+        /// and poll until terminal. Same defaults (5s cadence, 10 min ceiling).
+        public async Task<XAIGrokVideoResult> ExtendVideoAsync(
+            XAIGrokVideoExtendRequest request,
+            TimeSpan? pollInterval = null,
+            TimeSpan? timeout = null,
+            CancellationToken ct = default)
+        {
+            var start = await StartVideoExtensionAsync(request, ct).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(start.RequestId))
+            {
+                throw new XAIGrokException("xAI /videos/extensions returned no request_id.", 200, start.RawBody ?? "");
+            }
+            return await PollVideoToCompletionAsync(start.RequestId, pollInterval, timeout, ct).ConfigureAwait(false);
+        }
+
+        private async Task<XAIGrokVideoResult> PollVideoToCompletionAsync(
+            string requestId,
+            TimeSpan? pollInterval,
+            TimeSpan? timeout,
+            CancellationToken ct)
+        {
+            var interval = pollInterval ?? TimeSpan.FromSeconds(5);
+            var ceiling = timeout ?? TimeSpan.FromMinutes(10);
+            var deadline = DateTime.UtcNow + ceiling;
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                var result = await GetVideoAsync(requestId, ct).ConfigureAwait(false);
+                if (!string.Equals(result.Status, "pending", StringComparison.OrdinalIgnoreCase))
+                {
+                    result.RequestId = requestId;
+                    return result;
+                }
+                if (DateTime.UtcNow >= deadline)
+                {
+                    throw new TimeoutException(
+                        $"xAI video request {requestId} still pending after {ceiling.TotalMinutes:0.#} minutes.");
+                }
+                await Task.Delay(interval, ct).ConfigureAwait(false);
+            }
+        }
+
+        private Task<XAIGrokImageResponse> PostAsync<TReq>(string path, TReq body, CancellationToken ct)
+            => PostAsync<TReq, XAIGrokImageResponse>(path, body, ct);
+
+        private async Task<TRes> PostAsync<TReq, TRes>(string path, TReq body, CancellationToken ct)
+            where TRes : XAIGrokResponseBase
         {
             var serializer = new JsonSerializerSettings
             {
@@ -91,7 +267,7 @@ namespace XAIGrokAPIClient
                     text);
             }
 
-            var parsed = JsonConvert.DeserializeObject<XAIGrokImageResponse>(text)
+            var parsed = JsonConvert.DeserializeObject<TRes>(text)
                 ?? throw new XAIGrokException(
                     $"xAI {path} returned an empty/unparseable body.",
                     (int)res.StatusCode,
@@ -99,6 +275,15 @@ namespace XAIGrokAPIClient
             parsed.RawBody = text;
             return parsed;
         }
+    }
+
+    /// Base for all parsed xAI responses so the generic POST helper can stash
+    /// the raw JSON body for debugging regardless of concrete shape.
+    public abstract class XAIGrokResponseBase
+    {
+        /// Original JSON body as returned by xAI. Not part of the wire format.
+        [JsonIgnore]
+        public string? RawBody { get; set; }
     }
 
     // ---------- Request DTOs ----------
@@ -205,7 +390,7 @@ namespace XAIGrokAPIClient
 
     // ---------- Response DTOs ----------
 
-    public class XAIGrokImageResponse
+    public class XAIGrokImageResponse : XAIGrokResponseBase
     {
         [JsonProperty("data")]
         public List<XAIGrokImageData> Data { get; set; } = new();
@@ -216,11 +401,6 @@ namespace XAIGrokAPIClient
         /// Server-populated only on some xAI responses; Unix seconds.
         [JsonProperty("created")]
         public long? Created { get; set; }
-
-        /// Original JSON body as returned by xAI. Handy for debugging pricing
-        /// or schema drift. Not part of the wire format.
-        [JsonIgnore]
-        public string? RawBody { get; set; }
     }
 
     public class XAIGrokImageData
