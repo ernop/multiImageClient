@@ -115,11 +115,16 @@ BFLApi/                      BFL/Flux API client (net9.0)
 IdeogramAPI/                 Ideogram API client (net9.0)
 RecraftAPI/                  Recraft API client (net9.0)
 
+docs/                        focused project documentation by topic
+tools/                       reusable non-app scripts and archive utilities
+
 do_flask_intern.py           optional local InternVL3-1B Flask server
 save_b64.py                  helper to decode base64 payloads from provider responses
 djangoManager/               experimental Django gallery (MySQL-backed, not actively developed)
 IdeogramHistoryExtractor/    older scratch folder
 ```
+
+See `docs/project-organization.md` for where to put new docs, config templates, reusable scripts, and generated/user data. See `docs/grok-web-export-archive.md` for the Grok web export/archive tooling notes.
 
 ## Gallery
 
