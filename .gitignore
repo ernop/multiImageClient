@@ -16,3 +16,5 @@ magic*.png
 **/Temp.txt
 2023-prompts.txt
 **/tmp/**
+**/__pycache__/**
+*.py[cod]
