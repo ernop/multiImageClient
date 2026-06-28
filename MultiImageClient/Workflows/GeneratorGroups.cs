@@ -92,6 +92,15 @@ namespace MultiImageClient
                 // BFLFlux2Max_Square(),
                 // BFLFlux2Flex_Square(),       // typography-tuned; enable when you have text prompts
                 // BFLFlux2Klein9b_Square(),    // sub-second cheap draft variant
+                // LocalFlux2Uncensored_Square(), // local ComfyUI Flux2 Klein + uncensored text encoder workflow
+                // SeedreamDirect_Square(),      // ByteDance ModelArk Seedream 4.5/5.0
+                // HailuoDirect_Square(),        // MiniMax image-01 / image-01-live
+                // KreaDirect_Square(),          // Krea 2 medium/large
+                // BriaDirect_Square(),          // BRIA FIBO direct API
+                // MagnificMysticDirect_Square(),
+                // LumaPhotonDirect_Square(),
+                // RunwayGen4Direct_Square(),
+                // StabilityAiDirect_Square(),   // SD3.5 via Stability API
                 // RecraftV4ProRealisticPortrait(),
                 // RecraftAnyStyle(),           // legacy V3
                 // xAI Grok Imagine (launched 2026-01-28). Pro is 3.5x the price
@@ -333,6 +342,43 @@ namespace MultiImageClient
         private BFLGenerator BFLFlux2Klein9b_Square() =>
             new BFLGenerator(ImageGeneratorApiType.BFLFlux2Klein9b, _settings.BFLApiKey,
                 _concurrency, "1:1", false, 1024, 1024, _stats, "");
+
+        private LocalFlux2ComfyGenerator LocalFlux2Uncensored_Square() =>
+            new LocalFlux2ComfyGenerator(_settings, _concurrency, _stats, "local-flux2-uncensored");
+
+        // ---------- Direct first-party image APIs ----------
+
+        private DirectImageApiGenerator SeedreamDirect_Square() =>
+            new DirectImageApiGenerator(DirectImageProvider.ByteDanceSeedream,
+                _settings, _concurrency, _stats, "seedream-direct");
+
+        private DirectImageApiGenerator HailuoDirect_Square() =>
+            new DirectImageApiGenerator(DirectImageProvider.MiniMaxHailuo,
+                _settings, _concurrency, _stats, "hailuo-direct");
+
+        private DirectImageApiGenerator KreaDirect_Square() =>
+            new DirectImageApiGenerator(DirectImageProvider.Krea,
+                _settings, _concurrency, _stats, "krea-direct");
+
+        private DirectImageApiGenerator BriaDirect_Square() =>
+            new DirectImageApiGenerator(DirectImageProvider.Bria,
+                _settings, _concurrency, _stats, "bria-direct");
+
+        private DirectImageApiGenerator MagnificMysticDirect_Square() =>
+            new DirectImageApiGenerator(DirectImageProvider.Magnific,
+                _settings, _concurrency, _stats, "magnific-direct");
+
+        private DirectImageApiGenerator LumaPhotonDirect_Square() =>
+            new DirectImageApiGenerator(DirectImageProvider.LumaPhoton,
+                _settings, _concurrency, _stats, "luma-direct");
+
+        private DirectImageApiGenerator RunwayGen4Direct_Square() =>
+            new DirectImageApiGenerator(DirectImageProvider.Runway,
+                _settings, _concurrency, _stats, "runway-direct");
+
+        private DirectImageApiGenerator StabilityAiDirect_Square() =>
+            new DirectImageApiGenerator(DirectImageProvider.StabilityAi,
+                _settings, _concurrency, _stats, "stability-direct");
 
         // ---------- Recraft ----------
 

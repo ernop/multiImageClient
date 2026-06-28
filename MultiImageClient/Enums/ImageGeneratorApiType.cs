@@ -59,5 +59,20 @@ namespace MultiImageClient
         // BFL flux-2-pro-preview: where BFL lands the latest [pro]
         // improvements first. Same API contract as flux-2-pro.
         BFLFlux2ProPreview = 29,
+
+        // Local ComfyUI-backed FLUX.2 Klein workflow using a user-supplied
+        // uncensored/ablated text encoder. No hosted API cost; requires a
+        // running local ComfyUI server and API-format workflow JSON.
+        LocalFlux2Uncensored = 30,
+
+        // Direct first-party image APIs added after the aggregator pass.
+        ByteDanceSeedream = 31,
+        MiniMaxHailuoImage = 32,
+        KreaImage = 33,
+        BriaImage = 34,
+        MagnificMystic = 35,
+        LumaPhoton = 36,
+        RunwayGen4Image = 37,
+        StabilityAi = 38,
     }
 }

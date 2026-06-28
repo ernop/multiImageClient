@@ -67,6 +67,72 @@ namespace MultiImageClient
         /// is always one-prompt-per-line.
         public string TypedPromptsAppendFile { get; set; } = "";
 
+        // Local FLUX.2 Klein / ComfyUI integration. The uncensored variant is
+        // workflow-driven: ComfyUI owns the model graph, and MultiImageClient
+        // only patches prompt/size/seed plus any explicit node input overrides.
+        public string LocalFlux2ComfyEndpoint { get; set; } = "http://127.0.0.1:8188";
+        public bool LocalFlux2AllowRemoteEndpoint { get; set; } = false;
+        public string LocalFlux2WorkflowPath { get; set; } = "";
+        public string LocalFlux2PositivePromptNodeId { get; set; } = "";
+        public string LocalFlux2NegativePromptNodeId { get; set; } = "";
+        public string LocalFlux2NegativePrompt { get; set; } = "";
+        public string LocalFlux2ModelName { get; set; } = "";
+        public string LocalFlux2TextEncoderName { get; set; } = "";
+        public string LocalFlux2VaeName { get; set; } = "";
+        public int LocalFlux2Width { get; set; } = 1024;
+        public int LocalFlux2Height { get; set; } = 1024;
+        public int LocalFlux2Steps { get; set; } = 28;
+        public double LocalFlux2Guidance { get; set; } = 1.0;
+        public int? LocalFlux2Seed { get; set; }
+        public int LocalFlux2TimeoutSeconds { get; set; } = 900;
+        public Dictionary<string, Dictionary<string, JToken>> LocalFlux2WorkflowInputOverrides { get; set; } =
+            new Dictionary<string, Dictionary<string, JToken>>();
+
+        public string ByteDanceArkApiKey { get; set; } = "";
+        public string ByteDanceArkBaseUrl { get; set; } = "https://ark.ap-southeast.bytepluses.com/api/v3";
+        public string SeedreamModel { get; set; } = "seedream-4-5-251128";
+        public string SeedreamSize { get; set; } = "2K";
+        public bool SeedreamWatermark { get; set; } = false;
+
+        public string MiniMaxApiKey { get; set; } = "";
+        public string HailuoModel { get; set; } = "image-01";
+        public string HailuoAspectRatio { get; set; } = "1:1";
+        public string HailuoResponseFormat { get; set; } = "base64";
+
+        public string KreaApiKey { get; set; } = "";
+        public string KreaModelVariant { get; set; } = "medium";
+        public string KreaAspectRatio { get; set; } = "1:1";
+        public string KreaResolution { get; set; } = "1K";
+        public string KreaCreativity { get; set; } = "medium";
+
+        public string BriaApiKey { get; set; } = "";
+        public string BriaBaseUrl { get; set; } = "https://engine.prod.bria-api.com/v2";
+        public string BriaAspectRatio { get; set; } = "1:1";
+        public string BriaResolution { get; set; } = "1MP";
+        public int BriaNumResults { get; set; } = 1;
+
+        public string MagnificApiKey { get; set; } = "";
+        public string MagnificAspectRatio { get; set; } = "square_1_1";
+        public string MagnificModel { get; set; } = "realism";
+        public string MagnificResolution { get; set; } = "1K";
+
+        public string LumaApiKey { get; set; } = "";
+        public string LumaPhotonModel { get; set; } = "photon-1";
+        public string LumaAspectRatio { get; set; } = "1:1";
+
+        public string RunwayApiKey { get; set; } = "";
+        public string RunwayApiVersion { get; set; } = "2024-11-06";
+        public string RunwayImageModel { get; set; } = "gen4_image";
+        public string RunwayImageRatio { get; set; } = "1024:1024";
+
+        public string StabilityApiKey { get; set; } = "";
+        public string StabilityModel { get; set; } = "sd3.5-large";
+        public string StabilityAspectRatio { get; set; } = "1:1";
+        public string StabilityOutputFormat { get; set; } = "png";
+        public string StabilityNegativePrompt { get; set; } = "";
+
+        public int DirectImageApiTimeoutSeconds { get; set; } = 600;
+
         public static Settings LoadFromFile(string filePath)
         {
             if (!File.Exists(filePath))

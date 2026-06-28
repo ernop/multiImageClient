@@ -40,6 +40,15 @@ namespace MultiImageClient
                 ImageGeneratorApiType.GrokImagine => ".png",
                 ImageGeneratorApiType.GrokImaginePro => ".png",
                 ImageGeneratorApiType.GrokImagineVideo => ".mp4",
+                ImageGeneratorApiType.LocalFlux2Uncensored => ".png",
+                ImageGeneratorApiType.ByteDanceSeedream => ".png",
+                ImageGeneratorApiType.MiniMaxHailuoImage => ".png",
+                ImageGeneratorApiType.KreaImage => ".png",
+                ImageGeneratorApiType.BriaImage => ".png",
+                ImageGeneratorApiType.MagnificMystic => ".png",
+                ImageGeneratorApiType.LumaPhoton => ".png",
+                ImageGeneratorApiType.RunwayGen4Image => ".png",
+                ImageGeneratorApiType.StabilityAi => ".png",
                 _ => throw new ArgumentException("Unknown image generator type while picking file extension:", nameof(generator))
             };
         }
