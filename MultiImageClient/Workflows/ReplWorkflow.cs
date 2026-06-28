@@ -74,7 +74,7 @@ namespace MultiImageClient
         // Catalog of known per-name factories. ':gens add <name>' looks here.
         // Keep in sync with PrintHelp()'s generator list.
         private static readonly string[] KnownGenerators =
-            { "gpt2", "grok", "grokpro", "dalle3", "ideogram", "recraft", "bfl", "google", "googlepro", "imagen4" };
+            { "gpt2", "grok", "grokpro", "dalle3", "ideogram", "recraft", "bfl", "flux2local", "google", "googlepro", "imagen4" };
 
         private class InFlight
         {
@@ -743,6 +743,11 @@ namespace MultiImageClient
                         _settings.BFLApiKey, _concurrency, "1:1", false, 1024, 1024,
                         _stats, "repl");
 
+                case "flux2local":
+                case "localflux2":
+                case "flux2uncensored":
+                    return new LocalFlux2ComfyGenerator(_settings, _concurrency, _stats, "repl-local-flux2");
+
                 case "google":
                 case "nanobanana":
                     RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", "google");
@@ -880,7 +885,7 @@ namespace MultiImageClient
             Console.WriteLine("  :n N                     set gpt-image-2 images-per-call (default 1). N>10 requires confirmation.");
             Console.WriteLine("  :concurrency N           max prompts in flight (applies to subsequent dispatches)");
             Console.WriteLine("  :gens list               list active generators");
-            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok grokpro dalle3 ideogram recraft bfl google googlepro imagen4(dead 06-24)");
+            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok grokpro dalle3 ideogram recraft bfl flux2local google googlepro imagen4(dead 06-24)");
             Console.WriteLine("  :gens remove <name>      remove a generator from the active set");
             Console.WriteLine("  :gens reset              back to defaults (gpt2 + grok when XAIGrokApiKey is set)");
             Console.WriteLine("  :status                  list in-flight jobs");

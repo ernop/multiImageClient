@@ -67,6 +67,27 @@ namespace MultiImageClient
         /// is always one-prompt-per-line.
         public string TypedPromptsAppendFile { get; set; } = "";
 
+        // Local FLUX.2 Klein / ComfyUI integration. The uncensored variant is
+        // workflow-driven: ComfyUI owns the model graph, and MultiImageClient
+        // only patches prompt/size/seed plus any explicit node input overrides.
+        public string LocalFlux2ComfyEndpoint { get; set; } = "http://127.0.0.1:8188";
+        public bool LocalFlux2AllowRemoteEndpoint { get; set; } = false;
+        public string LocalFlux2WorkflowPath { get; set; } = "";
+        public string LocalFlux2PositivePromptNodeId { get; set; } = "";
+        public string LocalFlux2NegativePromptNodeId { get; set; } = "";
+        public string LocalFlux2NegativePrompt { get; set; } = "";
+        public string LocalFlux2ModelName { get; set; } = "";
+        public string LocalFlux2TextEncoderName { get; set; } = "";
+        public string LocalFlux2VaeName { get; set; } = "";
+        public int LocalFlux2Width { get; set; } = 1024;
+        public int LocalFlux2Height { get; set; } = 1024;
+        public int LocalFlux2Steps { get; set; } = 28;
+        public double LocalFlux2Guidance { get; set; } = 1.0;
+        public int? LocalFlux2Seed { get; set; }
+        public int LocalFlux2TimeoutSeconds { get; set; } = 900;
+        public Dictionary<string, Dictionary<string, JToken>> LocalFlux2WorkflowInputOverrides { get; set; } =
+            new Dictionary<string, Dictionary<string, JToken>>();
+
         public static Settings LoadFromFile(string filePath)
         {
             if (!File.Exists(filePath))

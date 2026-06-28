@@ -20,5 +20,21 @@
   "EnableLogging": true,
   "AnnotationSide": "right",
   "FlatImageMirrorPath": "",
-  "TypedPromptsAppendFile": ""
+  "TypedPromptsAppendFile": "",
+  "LocalFlux2ComfyEndpoint": "http://127.0.0.1:8188",
+  "LocalFlux2AllowRemoteEndpoint": false,
+  "LocalFlux2WorkflowPath": "Optional: absolute path to a ComfyUI API-format workflow JSON for local Flux2 Klein + uncensored text encoder.",
+  "LocalFlux2PositivePromptNodeId": "Optional: ComfyUI node id whose text input receives the prompt. Leave blank to auto-detect.",
+  "LocalFlux2NegativePromptNodeId": "Optional: ComfyUI node id whose text input receives LocalFlux2NegativePrompt.",
+  "LocalFlux2NegativePrompt": "",
+  "LocalFlux2ModelName": "Optional: model filename to patch into loader nodes, e.g. flux2-klein-4b.gguf.",
+  "LocalFlux2TextEncoderName": "Optional: ablated text encoder filename to patch into text encoder loader nodes, e.g. qwen3-4b-abl-q4_0.gguf.",
+  "LocalFlux2VaeName": "Optional: VAE filename to patch into VAELoader nodes.",
+  "LocalFlux2Width": 1024,
+  "LocalFlux2Height": 1024,
+  "LocalFlux2Steps": 28,
+  "LocalFlux2Guidance": 1.0,
+  "LocalFlux2Seed": null,
+  "LocalFlux2TimeoutSeconds": 900,
+  "LocalFlux2WorkflowInputOverrides": {}
 }

@@ -92,6 +92,7 @@ namespace MultiImageClient
                 // BFLFlux2Max_Square(),
                 // BFLFlux2Flex_Square(),       // typography-tuned; enable when you have text prompts
                 // BFLFlux2Klein9b_Square(),    // sub-second cheap draft variant
+                // LocalFlux2Uncensored_Square(), // local ComfyUI Flux2 Klein + uncensored text encoder workflow
                 // RecraftV4ProRealisticPortrait(),
                 // RecraftAnyStyle(),           // legacy V3
                 // xAI Grok Imagine (launched 2026-01-28). Pro is 3.5x the price
@@ -333,6 +334,9 @@ namespace MultiImageClient
         private BFLGenerator BFLFlux2Klein9b_Square() =>
             new BFLGenerator(ImageGeneratorApiType.BFLFlux2Klein9b, _settings.BFLApiKey,
                 _concurrency, "1:1", false, 1024, 1024, _stats, "");
+
+        private LocalFlux2ComfyGenerator LocalFlux2Uncensored_Square() =>
+            new LocalFlux2ComfyGenerator(_settings, _concurrency, _stats, "local-flux2-uncensored");
 
         // ---------- Recraft ----------
 

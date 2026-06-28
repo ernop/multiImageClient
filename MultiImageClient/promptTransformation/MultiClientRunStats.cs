@@ -46,6 +46,10 @@ namespace MultiImageClient
         public int GrokVideoGenerationSuccessCount { get; set; }
         public int GrokVideoGenerationErrorCount { get; set; }
 
+        public int LocalFlux2RequestCount { get; set; }
+        public int LocalFlux2SuccessCount { get; set; }
+        public int LocalFlux2ErrorCount { get; set; }
+
         public int GoogleRequestCount { get; set; }
         public int GoogleRefusedCount { get; set; }
 
@@ -111,6 +115,9 @@ namespace MultiImageClient
 
             if (GrokVideoGenerationRequestCount > 0 | GrokVideoGenerationErrorCount > 0 | GrokVideoGenerationSuccessCount > 0)
                 nonZeroStats.Add($"Grok Video: total:{GrokVideoGenerationRequestCount}, ok:{GrokVideoGenerationSuccessCount}, bad:{GrokVideoGenerationErrorCount} ");
+
+            if (LocalFlux2RequestCount > 0 | LocalFlux2ErrorCount > 0 | LocalFlux2SuccessCount > 0)
+                nonZeroStats.Add($"Local Flux2: total:{LocalFlux2RequestCount}, ok:{LocalFlux2SuccessCount}, bad:{LocalFlux2ErrorCount} ");
 
             var res = $"Stats: {string.Join(", ", nonZeroStats)}";
             Console.WriteLine(res);
