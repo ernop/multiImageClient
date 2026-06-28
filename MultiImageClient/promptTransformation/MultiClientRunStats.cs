@@ -50,6 +50,10 @@ namespace MultiImageClient
         public int LocalFlux2SuccessCount { get; set; }
         public int LocalFlux2ErrorCount { get; set; }
 
+        public int DirectImageGenerationRequestCount { get; set; }
+        public int DirectImageGenerationSuccessCount { get; set; }
+        public int DirectImageGenerationErrorCount { get; set; }
+
         public int GoogleRequestCount { get; set; }
         public int GoogleRefusedCount { get; set; }
 
@@ -118,6 +122,9 @@ namespace MultiImageClient
 
             if (LocalFlux2RequestCount > 0 | LocalFlux2ErrorCount > 0 | LocalFlux2SuccessCount > 0)
                 nonZeroStats.Add($"Local Flux2: total:{LocalFlux2RequestCount}, ok:{LocalFlux2SuccessCount}, bad:{LocalFlux2ErrorCount} ");
+
+            if (DirectImageGenerationRequestCount > 0 | DirectImageGenerationErrorCount > 0 | DirectImageGenerationSuccessCount > 0)
+                nonZeroStats.Add($"Direct Image APIs: total:{DirectImageGenerationRequestCount}, ok:{DirectImageGenerationSuccessCount}, bad:{DirectImageGenerationErrorCount} ");
 
             var res = $"Stats: {string.Join(", ", nonZeroStats)}";
             Console.WriteLine(res);

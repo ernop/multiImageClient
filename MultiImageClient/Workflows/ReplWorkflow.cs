@@ -74,7 +74,7 @@ namespace MultiImageClient
         // Catalog of known per-name factories. ':gens add <name>' looks here.
         // Keep in sync with PrintHelp()'s generator list.
         private static readonly string[] KnownGenerators =
-            { "gpt2", "grok", "grokpro", "dalle3", "ideogram", "recraft", "bfl", "flux2local", "google", "googlepro", "imagen4" };
+            { "gpt2", "grok", "grokpro", "dalle3", "ideogram", "recraft", "bfl", "flux2local", "seedream", "hailuo", "krea", "bria", "magnific", "luma", "runway", "stability", "google", "googlepro", "imagen4" };
 
         private class InFlight
         {
@@ -748,6 +748,51 @@ namespace MultiImageClient
                 case "flux2uncensored":
                     return new LocalFlux2ComfyGenerator(_settings, _concurrency, _stats, "repl-local-flux2");
 
+                case "seedream":
+                case "bytedance":
+                    RequireKey(_settings.ByteDanceArkApiKey, "ByteDanceArkApiKey", "seedream");
+                    return new DirectImageApiGenerator(DirectImageProvider.ByteDanceSeedream,
+                        _settings, _concurrency, _stats, "repl-seedream");
+
+                case "hailuo":
+                case "minimax":
+                    RequireKey(_settings.MiniMaxApiKey, "MiniMaxApiKey", "hailuo");
+                    return new DirectImageApiGenerator(DirectImageProvider.MiniMaxHailuo,
+                        _settings, _concurrency, _stats, "repl-hailuo");
+
+                case "krea":
+                    RequireKey(_settings.KreaApiKey, "KreaApiKey", "krea");
+                    return new DirectImageApiGenerator(DirectImageProvider.Krea,
+                        _settings, _concurrency, _stats, "repl-krea");
+
+                case "bria":
+                    RequireKey(_settings.BriaApiKey, "BriaApiKey", "bria");
+                    return new DirectImageApiGenerator(DirectImageProvider.Bria,
+                        _settings, _concurrency, _stats, "repl-bria");
+
+                case "magnific":
+                case "mystic":
+                    RequireKey(_settings.MagnificApiKey, "MagnificApiKey", "magnific");
+                    return new DirectImageApiGenerator(DirectImageProvider.Magnific,
+                        _settings, _concurrency, _stats, "repl-magnific");
+
+                case "luma":
+                case "photon":
+                    RequireKey(_settings.LumaApiKey, "LumaApiKey", "luma");
+                    return new DirectImageApiGenerator(DirectImageProvider.LumaPhoton,
+                        _settings, _concurrency, _stats, "repl-luma");
+
+                case "runway":
+                    RequireKey(_settings.RunwayApiKey, "RunwayApiKey", "runway");
+                    return new DirectImageApiGenerator(DirectImageProvider.Runway,
+                        _settings, _concurrency, _stats, "repl-runway");
+
+                case "stability":
+                case "stabilityai":
+                    RequireKey(_settings.StabilityApiKey, "StabilityApiKey", "stability");
+                    return new DirectImageApiGenerator(DirectImageProvider.StabilityAi,
+                        _settings, _concurrency, _stats, "repl-stability");
+
                 case "google":
                 case "nanobanana":
                     RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", "google");
@@ -885,7 +930,7 @@ namespace MultiImageClient
             Console.WriteLine("  :n N                     set gpt-image-2 images-per-call (default 1). N>10 requires confirmation.");
             Console.WriteLine("  :concurrency N           max prompts in flight (applies to subsequent dispatches)");
             Console.WriteLine("  :gens list               list active generators");
-            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok grokpro dalle3 ideogram recraft bfl flux2local google googlepro imagen4(dead 06-24)");
+            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok grokpro dalle3 ideogram recraft bfl flux2local seedream hailuo krea bria magnific luma runway stability google googlepro imagen4(dead 06-24)");
             Console.WriteLine("  :gens remove <name>      remove a generator from the active set");
             Console.WriteLine("  :gens reset              back to defaults (gpt2 + grok when XAIGrokApiKey is set)");
             Console.WriteLine("  :status                  list in-flight jobs");

@@ -1,4 +1,4 @@
-{
+﻿{
   "PromptFiles": [
     "REQUIRED: absolute path to a prompts .txt file (one prompt per line). You can list more than one file.",
     "Example second file - or remove this array entry."
@@ -36,5 +36,41 @@
   "LocalFlux2Guidance": 1.0,
   "LocalFlux2Seed": null,
   "LocalFlux2TimeoutSeconds": 900,
-  "LocalFlux2WorkflowInputOverrides": {}
+  "LocalFlux2WorkflowInputOverrides": {},
+  "ByteDanceArkApiKey": "Optional: BytePlus/ModelArk API key. Required for direct Seedream.",
+  "ByteDanceArkBaseUrl": "https://ark.ap-southeast.bytepluses.com/api/v3",
+  "SeedreamModel": "seedream-4-5-251128",
+  "SeedreamSize": "2K",
+  "SeedreamWatermark": false,
+  "MiniMaxApiKey": "Optional: MiniMax API key. Required for Hailuo image-01.",
+  "HailuoModel": "image-01",
+  "HailuoAspectRatio": "1:1",
+  "HailuoResponseFormat": "base64",
+  "KreaApiKey": "Optional: Krea API token. Required for Krea 2.",
+  "KreaModelVariant": "medium",
+  "KreaAspectRatio": "1:1",
+  "KreaResolution": "1K",
+  "KreaCreativity": "medium",
+  "BriaApiKey": "Optional: BRIA API token. Required for BRIA FIBO.",
+  "BriaBaseUrl": "https://engine.prod.bria-api.com/v2",
+  "BriaAspectRatio": "1:1",
+  "BriaResolution": "1MP",
+  "BriaNumResults": 1,
+  "MagnificApiKey": "Optional: Magnific API key. Required for Mystic.",
+  "MagnificAspectRatio": "square_1_1",
+  "MagnificModel": "realism",
+  "MagnificResolution": "1K",
+  "LumaApiKey": "Optional: Luma Dream Machine API key. Required for Photon.",
+  "LumaPhotonModel": "photon-1",
+  "LumaAspectRatio": "1:1",
+  "RunwayApiKey": "Optional: Runway API key. Required for Gen-4 Image.",
+  "RunwayApiVersion": "2024-11-06",
+  "RunwayImageModel": "gen4_image",
+  "RunwayImageRatio": "1024:1024",
+  "StabilityApiKey": "Optional: Stability AI API key. Required for SD3.5.",
+  "StabilityModel": "sd3.5-large",
+  "StabilityAspectRatio": "1:1",
+  "StabilityOutputFormat": "png",
+  "StabilityNegativePrompt": "",
+  "DirectImageApiTimeoutSeconds": 600
 }
