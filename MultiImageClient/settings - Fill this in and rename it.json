@@ -1,7 +1,7 @@
-﻿{
+{
   "PromptFiles": [
     "REQUIRED: absolute path to a prompts .txt file (one prompt per line). You can list more than one file.",
-    "Example second file — or remove this array entry."
+    "Example second file - or remove this array entry."
   ],
   "LoadPromptsFrom": "",
   "IdeogramApiKey": "Optional: Ideogram API key from https://ideogram.ai/manage-api (paid). Required for Ideogram v2/v2a/v3 generators.",
