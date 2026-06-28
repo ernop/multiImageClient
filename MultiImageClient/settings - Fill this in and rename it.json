@@ -1,4 +1,4 @@
-﻿{
+{
   "PromptFiles": [
     "REQUIRED: absolute path to a prompts .txt file (one prompt per line). You can list more than one file.",
     "Example second file - or remove this array entry."
