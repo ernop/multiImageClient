@@ -11,7 +11,6 @@ using Newtonsoft.Json.Converters;
 using System.Reflection;
 using System.Timers;
 using System.Text;
-using System.Windows.Forms;
 
 using IdeogramAPIClient;
 using System.Text.RegularExpressions;

@@ -44,9 +44,20 @@ namespace MultiImageClient
     //
     // 4. Error Handling: Displays error placeholders for failed image generations with descriptive error messages.
     //
-    // All combined images are saved to disk in dated folders and automatically opened in the default image viewer.
+    // All combined images are saved to disk in dated folders. They are only popped open in the
+    // default image viewer when --open-images is set (see ImageCombiner.ViewerPopupsEnabled); runs
+    // are headless by default.
     public static class ImageCombiner
     {
+        /// Master switch for popping generated/combined images open in the
+        /// system default viewer. Defaults to false so runs are headless;
+        /// set it from RunOptions.OpenImages (the --open-images flag) at
+        /// startup. Every viewer launch in the app funnels through
+        /// OpenImageWithDefaultApplication, so this one flag governs all of
+        /// them. Per-call openWhenDone arguments still apply on top of this
+        /// (a caller can opt a specific image OUT even when popups are on).
+        public static bool ViewerPopupsEnabled = false;
+
         private const int CombinedImageGeneratorFontSize = 12;
         private const int CombinedImagePromptFontSize = 16;
         private const int GeneratedImageLabelFontSize = 18;
@@ -418,21 +429,18 @@ namespace MultiImageClient
                 li.Image?.Dispose();
             }
 
-            OpenImageWithDefaultApplication(outputPath);
-
             return outputPath;
         }
 
         // openWhenDone controls whether the combined grid image is popped
-        // open in the system default viewer after it's written. Default true
-        // preserves the batch/round-trip workflow behavior. Callers that want
-        // headless behavior (e.g. the REPL, where viewer popups would spam
-        // the desktop) pass false.
+        // open in the system default viewer after it's written. Defaults to
+        // false: nothing auto-opens. Callers that explicitly want a viewer
+        // popup (none currently) can pass true.
         public static async Task<string> CreateBatchLayoutImageSquareAsync(
             IEnumerable<TaskProcessResult> results,
             string prompt,
             Settings settings,
-            bool openWhenDone = true,
+            bool openWhenDone = false,
             bool showPerImagePrompts = false)
         {
             var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
@@ -790,8 +798,6 @@ namespace MultiImageClient
                 li.Image?.Dispose();
             }
 
-            OpenImageWithDefaultApplication(outputPath);
-
             return outputPath;
         }
         private static Image<Rgba32> RenderPromptPanel(int width, string prompt, Font promptFont)
@@ -823,6 +829,14 @@ namespace MultiImageClient
         
         public static void OpenImageWithDefaultApplication(string imagePath)
         {
+            // Headless by default: only pop the viewer when the user opted in
+            // via --open-images. This is the single chokepoint for every
+            // viewer launch in the app.
+            if (!ViewerPopupsEnabled)
+            {
+                return;
+            }
+
             if (File.Exists(imagePath))
             {
                 try

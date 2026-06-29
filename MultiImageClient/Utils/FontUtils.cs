@@ -9,23 +9,29 @@ namespace MultiImageClient
     {
         private static FontFamily? _cachedSystemFont;
 
+        // Preferred sans-serif families in priority order. Windows ships
+        // Segoe UI / Arial; Linux typically has Liberation Sans (metric-
+        // compatible with Arial) or DejaVu Sans. Whichever is found first
+        // wins, and we fall back to the first available family so text
+        // rendering never throws FontFamilyNotFoundException.
+        private static readonly string[] PreferredFamilies =
+        {
+            "Segoe UI", "Arial", "Liberation Sans", "DejaVu Sans", "Noto Sans",
+        };
+
         // Gets the preferred system font family with fallback logic.
-        // Order: Segoe UI → Arial → First available system font
         public static FontFamily GetSystemFont()
         {
             if (_cachedSystemFont != null)
                 return _cachedSystemFont.Value!;
 
-            if (SystemFonts.TryGet("Segoe UI", out var segoeFontFamily))
+            foreach (var family in PreferredFamilies)
             {
-                _cachedSystemFont = segoeFontFamily;
-                return segoeFontFamily;
-            }
-
-            if (SystemFonts.TryGet("Arial", out var arialFontFamily))
-            {
-                _cachedSystemFont = arialFontFamily;
-                return arialFontFamily;
+                if (SystemFonts.TryGet(family, out var found))
+                {
+                    _cachedSystemFont = found;
+                    return found;
+                }
             }
 
             var fallbackFont = SystemFonts.Families.First();

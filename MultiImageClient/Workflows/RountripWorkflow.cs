@@ -4,14 +4,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.IO;
-using System.Threading;
-using System.Windows.Forms;
 using System.Security.Cryptography;
 using System.Diagnostics;
 
 namespace MultiImageClient
 {
-    /// Reads the clipboard and returns a text string if the item in the clipboard is a png image. if it isn't, it returns '' if it is, it returns a descriptive text string with the image size etc.
+    /// Describes an input image, then uses that description as the prompt for a new generation batch.
     public class RoundTripWorkflow
     {
         private MultiClientRunStats? _stats;
@@ -50,41 +48,36 @@ namespace MultiImageClient
             return SHA256.HashData(data);
         }
 
-        private static byte[]? GetImageFromClipboard()
+        private static async Task<byte[]?> ReadImageBytesFromPathAsync(string imagePath)
         {
-            byte[]? clipboardBytes = null;
+            var normalizedPath = NormalizeInputPath(imagePath);
 
-            var thread = new Thread(() =>
+            if (string.IsNullOrWhiteSpace(normalizedPath))
             {
-                try
-                {
-                    if (!Clipboard.ContainsImage())
-                    {
-                        return;
-                    }
+                return null;
+            }
 
-                    using var image = Clipboard.GetImage();
-                    if (image == null)
-                    {
+            if (!File.Exists(normalizedPath))
+            {
+                Console.WriteLine($"\timage file not found: {normalizedPath}");
+                return null;
+            }
 
-                        return;
-                    }
+            try
+            {
+                return await File.ReadAllBytesAsync(normalizedPath);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Failed to read image file '{normalizedPath}': {ex.Message}");
+                Console.WriteLine($"\tfailed to read image file: {ex.Message}");
+                return null;
+            }
+        }
 
-                    using var ms = new MemoryStream();
-                    image.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-                    clipboardBytes = ms.ToArray();
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log($"Failed to read image from clipboard: {ex.Message}");
-                }
-            });
-
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-            thread.Join();
-
-            return clipboardBytes;
+        private static string NormalizeInputPath(string imagePath)
+        {
+            return (imagePath ?? "").Trim().Trim('"');
         }
 
 
@@ -178,11 +171,10 @@ namespace MultiImageClient
                 try
                 {
                     var combineStopwatch = Stopwatch.StartNew();
-                    var res = await ImageCombiner.CreateRoundtripLayoutImageAsync(imageBytes, results, combinedDescription, "Multi-Question Analysis", describerModelName, _settings);
+                    var res = await ImageCombiner.CreateRoundtripLayoutImageAsync(imageBytes, results, combinedDescription, "Multi-Question Analysis", describerModelName, _settings!);
                     combineStopwatch.Stop();
 
                     Logger.Log($"Combined images in {combineStopwatch.ElapsedMilliseconds} ms, saved to: {res}");
-                    ImageCombiner.OpenImageWithDefaultApplication(res);
                 }
                 catch (Exception ex)
                 {
@@ -194,10 +186,10 @@ namespace MultiImageClient
             }
         }
 
-        //  prompt the user to copy an image to the clipboard.
+        //  prompt the user for an image file path.
         //  then send that to local model qwen with description text.
         //  then send that out to all the image generators again.
-        public async Task<bool> RunAsync(Settings settings, int concurrency, MultiClientRunStats stats)
+        public async Task<bool> RunAsync(Settings settings, int concurrency, MultiClientRunStats stats, string inputImagePath = "")
         {
             _settings = settings;
             _stats = stats;
@@ -228,34 +220,44 @@ namespace MultiImageClient
 
             Logger.Log("=== Vision Model Services Check Complete ===\n");
 
+            if (!string.IsNullOrWhiteSpace(inputImagePath))
+            {
+                var imageBytes = await ReadImageBytesFromPathAsync(inputImagePath);
+                if (imageBytes == null)
+                {
+                    return false;
+                }
+
+                Console.WriteLine($"\tloaded image file. {imageBytes.Length} bytes. Starting describe => multiimage workflow.");
+                await DoWorkAsync(imageBytes);
+                return true;
+            }
+
             while (true)
             {
-                var clipboardStopwatch = Stopwatch.StartNew();
-                var heldNow = GetImageFromClipboard();
-                clipboardStopwatch.Stop();
+                Console.WriteLine("\tenter an image file path; q to quit.");
+                var input = Console.ReadLine();
 
-                if (heldNow == null)
+                if (input == null)
                 {
-                    Console.WriteLine("\tcopy an image to the clipboard; y to continue, q to quit.");
-                    var input = Console.ReadLine().Trim();
-
-                    if (input == "y")
-                    {
-                        continue;
-                    }
-                    else if (input == "q")
-                    {
-                        break;
-                    }
-                    else
-                    {
-                        Console.WriteLine("ok, skipping.");
-                    }
+                    Console.WriteLine("stdin closed, exiting round-trip workflow.");
+                    break;
                 }
-                else
+
+                var value = input.Trim();
+                if (value.Equals("q", StringComparison.OrdinalIgnoreCase))
                 {
-                    Console.WriteLine($"\tnew clipboard image detected. {heldNow.Length} bytes. Clipboard read took {clipboardStopwatch.ElapsedMilliseconds} ms. Starting describe => multiimage workflow.");
-                    await DoWorkAsync(heldNow);
+                    break;
+                }
+
+                var readStopwatch = Stopwatch.StartNew();
+                var imageBytes = await ReadImageBytesFromPathAsync(value);
+                readStopwatch.Stop();
+
+                if (imageBytes != null)
+                {
+                    Console.WriteLine($"\tloaded image file. {imageBytes.Length} bytes. File read took {readStopwatch.ElapsedMilliseconds} ms. Starting describe => multiimage workflow.");
+                    await DoWorkAsync(imageBytes);
                 }
             }
             return true;

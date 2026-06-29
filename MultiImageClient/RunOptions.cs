@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
 
@@ -27,6 +28,10 @@ namespace MultiImageClient
         /// If non-empty, overrides the prompt source with a newline-delimited
         /// prompt file. Lines are processed in file order.
         public string PromptFilePath { get; set; } = "";
+
+        /// Image file to feed into the round-trip workflow. When set, workflow
+        /// 2 runs once against this file instead of asking for an image path.
+        public string InputImagePath { get; set; } = "";
 
         /// 1 = Batch, 2 = RoundTrip, 0 = ask interactively.
         public int Workflow { get; set; }
@@ -139,6 +144,14 @@ namespace MultiImageClient
         /// sample contact sheet. Zero means no retry.
         public int ProviderSampleRetryFailures { get; set; }
 
+        /// Master switch for popping finished images/contact-sheets open in the
+        /// system default viewer. Defaults to false: runs are headless and just
+        /// save to disk. Set with --open-images. Drives
+        /// ImageCombiner.ViewerPopupsEnabled, the single gate every viewer
+        /// launch funnels through. --quick-test turns this on automatically
+        /// since live partial viewing is the whole point of that mode.
+        public bool OpenImages { get; set; }
+
         public static RunOptions Parse(string[] args)
         {
             var o = new RunOptions();
@@ -171,6 +184,10 @@ namespace MultiImageClient
                     case "--prompt-file":
                         o.PromptFilePath = args[++i];
                         break;
+                    case "--input-image":
+                        o.InputImagePath = args[++i];
+                        if (o.Workflow == 0) o.Workflow = 2;
+                        break;
                     case "--workflow":
                         o.Workflow = int.Parse(args[++i]);
                         break;
@@ -188,6 +205,12 @@ namespace MultiImageClient
                         // y/n/custom loop for iterative work. Pair with
                         // --auto explicitly for fully unattended runs.
                         if (o.Workflow == 0) o.Workflow = 1;
+                        // Watching partials refine live IS the point of
+                        // quick-test, so opt into viewer popups automatically.
+                        o.OpenImages = true;
+                        break;
+                    case "--open-images":
+                        o.OpenImages = true;
                         break;
                     case "--repl":
                         o.Repl = true;
@@ -277,21 +300,23 @@ namespace MultiImageClient
             Console.WriteLine("  --prompt-concurrency N  Max prompts in flight where supported (all-providers).");
             Console.WriteLine("  --prompt \"text\"   Use this prompt instead of reading from PromptFiles.");
             Console.WriteLine("  --prompt-file fp  Use a newline-delimited prompt file instead of PromptFiles.");
+            Console.WriteLine("  --input-image path  Use this image file for workflow 2 (round-trip image -> description -> images).");
             Console.WriteLine("  --backfill-dl     One-shot: mirror all images under ImageDownloadBaseFolder to C:\\dl and exit.");
             Console.WriteLine("  --fast            Use cheapest/fastest generator set (gpt-image-2 low 1024x1024). Good for smoke tests.");
-            Console.WriteLine("  --quick-test      Like --fast plus: save every streamed partial PNG and open each one in the default viewer as it arrives. Still asks y/n/custom per prompt unless combined with --auto.");
+            Console.WriteLine("  --open-images     Pop finished images/contact-sheets open in the system default viewer. OFF by default (runs are headless and just save to disk). --quick-test enables this automatically.");
+            Console.WriteLine("  --quick-test      Like --fast plus: save every streamed partial PNG and open each one in the default viewer as it arrives (implies --open-images). Still asks y/n/custom per prompt unless combined with --auto.");
             Console.WriteLine("  --repl            Interactive prompt-by-prompt REPL. Prompts fire asynchronously (up to --repl-concurrency at a time); NO viewer pops. Commands: :help :size :quality :gens :status :wait :edit :retry :quit.");
             Console.WriteLine("  --repl-size WxH       REPL session default size for gpt-image-2 (default 2048x2048). Change at runtime with :size WxH.");
             Console.WriteLine("  --repl-quality L      REPL session default quality: low|medium|high (default high). Change at runtime with :quality <L>.");
             Console.WriteLine("  --repl-moderation M   REPL session default moderation: auto|low (default low). Change at runtime with :moderation <M>.");
             Console.WriteLine("  --repl-concurrency N  Max prompts in flight simultaneously in REPL mode (default 5). Change at runtime with :concurrency N.");
             Console.WriteLine("  --repl-n N            REPL session default n (images per gpt-image-2 call, default 1). Change at runtime with :n N, or per-prompt via [n=N] in the override prefix.");
-            Console.WriteLine("  --grok-showcase       One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at xAI Grok Imagine in parallel, and open a single combined grid image. Default --limit for this mode is 10.");
+            Console.WriteLine("  --grok-showcase       One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at xAI Grok Imagine in parallel, and compose a single combined grid image (pops open only with --open-images). Default --limit for this mode is 10.");
             Console.WriteLine("  --grok-pro            Pair with --grok-showcase to route through grok-imagine-image-pro at 2k resolution ($0.07/img, 30 rpm) instead of grok-imagine-image at 1k ($0.02/img, 300 rpm).");
-            Console.WriteLine("  --all-providers       One-shot: fire ONE prompt (--prompt or first PromptFiles line) at current image endpoints (gpt-image-2, gpt-image-1, gpt-image-1-mini, Ideogram 4.0, flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro) and open a single contact-sheet grid. Keyless providers show as error cells.");
+            Console.WriteLine("  --all-providers       One-shot: fire ONE prompt (--prompt or first PromptFiles line) at current image endpoints (gpt-image-2, gpt-image-1, gpt-image-1-mini, Ideogram 4.0, flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro) and compose a single contact-sheet grid (pops open only with --open-images). Keyless providers show as error cells.");
             Console.WriteLine("  --with-video          Pair with --all-providers to also dispatch a Grok Imagine VIDEO (6s, 480p) for the same prompt; the mp4 lands in the day folder's Video\\ subfolder. Videos are not composited into the PNG sheet.");
             Console.WriteLine("  --grok-video-test     One-shot: exercise all three Grok video modes with one prompt (--prompt or first PromptFiles line) — text-to-video, grok-image-to-video, and extend-video (3s, 480p each). Clips are saved, stored durably at xAI, and ledgered.");
-            Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low.");
+            Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low (pops open only with --open-images).");
             Console.WriteLine("  --provider-sample-file fp   Pair with --provider-sample-showcase to reuse a saved numbered/plain people-fixture prompt list.");
             Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok,recraft.");
             Console.WriteLine("  --provider-sample-retry-failures N  Pair with --provider-sample-showcase to retry failed prompt slots N extra times before composing the sheet.");

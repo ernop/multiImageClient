@@ -27,6 +27,12 @@ namespace MultiImageClient
         {
             var options = RunOptions.Parse(args);
 
+            // Global headless-by-default gate: nothing is popped open in the
+            // system default viewer unless --open-images was passed (or implied
+            // by --quick-test). Every viewer launch funnels through
+            // ImageCombiner.OpenImageWithDefaultApplication, which honors this.
+            ImageCombiner.ViewerPopupsEnabled = options.OpenImages;
+
             // Look for settings.json in the obvious places so `dotnet run`
             // works from either the repo root OR the MultiImageClient folder:
             //   1. current working directory (legacy: run from MultiImageClient\)
@@ -143,7 +149,7 @@ namespace MultiImageClient
             else if (workflow == 2)
             {
                 var rw = new RoundTripWorkflow();
-                await rw.RunAsync(settings, concurrency, stats);
+                await rw.RunAsync(settings, concurrency, stats, options.InputImagePath);
             }
         }
 

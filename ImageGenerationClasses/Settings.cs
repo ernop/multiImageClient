@@ -88,6 +88,7 @@ namespace MultiImageClient
 
             string json = File.ReadAllText(filePath);
             var settings = JsonConvert.DeserializeObject<Settings>(json);
+            settings.NormalizePaths();
             settings.Validate();
             Logger.Initialize(settings.LogFilePath);
             Logger.Log("Current settings:");
@@ -105,6 +106,56 @@ namespace MultiImageClient
             }
 
             return settings;
+        }
+
+        /// Expands a leading "~" to the user's home directory and resolves any
+        /// environment variables (e.g. "$HOME", "%USERPROFILE%"). .NET does NOT
+        /// expand "~" the way a shell does, so a settings.json value like
+        /// "~/proj/saves" would otherwise be created as a literal "~" folder in
+        /// the current working directory. Returns the input unchanged when it's
+        /// null/empty or has nothing to expand.
+        public static string ExpandPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return path;
+            }
+
+            var expanded = Environment.ExpandEnvironmentVariables(path.Trim());
+
+            if (expanded == "~" || expanded.StartsWith("~/") || expanded.StartsWith("~\\"))
+            {
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                if (string.IsNullOrEmpty(home))
+                {
+                    home = Environment.GetEnvironmentVariable("HOME") ?? "";
+                }
+                expanded = expanded.Length <= 1
+                    ? home
+                    : Path.Combine(home, expanded.Substring(2));
+            }
+
+            return expanded;
+        }
+
+        /// Applies ExpandPath to every path-bearing setting so the rest of the
+        /// app only ever sees fully-resolved absolute paths.
+        public void NormalizePaths()
+        {
+            ImageDownloadBaseFolder = ExpandPath(ImageDownloadBaseFolder);
+            LogFilePath = ExpandPath(LogFilePath);
+            FlatImageMirrorPath = ExpandPath(FlatImageMirrorPath);
+            TypedPromptsAppendFile = ExpandPath(TypedPromptsAppendFile);
+            LoadPromptsFrom = ExpandPath(LoadPromptsFrom);
+            GoogleServiceAccountKeyPath = ExpandPath(GoogleServiceAccountKeyPath);
+
+            if (PromptFiles != null)
+            {
+                for (int i = 0; i < PromptFiles.Count; i++)
+                {
+                    PromptFiles[i] = ExpandPath(PromptFiles[i]);
+                }
+            }
         }
 
         /// Only validates things that EVERY run needs: the log file path and the

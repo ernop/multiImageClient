@@ -652,14 +652,9 @@ namespace MultiImageClient
 
                 if (_popUpPartials)
                 {
-                    try
-                    {
-                        Process.Start(new ProcessStartInfo(full) { UseShellExecute = true });
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Log($"    [{genTag}] pop-up failed for partial #{partialIdx}: {ex.Message}");
-                    }
+                    // Funnel through the central viewer launcher so the global
+                    // --open-images master switch governs partial pops too.
+                    ImageCombiner.OpenImageWithDefaultApplication(full);
                 }
             }
             catch (Exception ex)

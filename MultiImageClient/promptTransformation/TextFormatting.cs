@@ -35,7 +35,7 @@ namespace MultiImageClient
             // just trunc. ugh.
             value = value.Length > 2500 ? value[..2500] + "..." : value;
 
-            var font = SystemFonts.CreateFont("Arial", fontSize, FontStyle.Regular);
+            var font = FontUtils.CreateFont(fontSize, FontStyle.Regular);
             const float PADDING = 4;
 
             // Measure text height with wrapping
@@ -82,14 +82,7 @@ namespace MultiImageClient
             var intendedFontSize = 24;
             
             var theText = historySteps.First().Prompt ?? "failed to get text";
-            SixLabors.Fonts.FontFamily fontFamily;
-            if (!SystemFonts.TryGet("Segoe UI", out fontFamily))
-            {
-                if (!SystemFonts.TryGet("Arial", out fontFamily))
-                {
-                    fontFamily = SystemFonts.Families.First(); // Fallback
-                }
-            }
+            var fontFamily = FontUtils.GetSystemFont();
             var testFont = fontFamily.CreateFont(intendedFontSize, FontStyle.Regular);
 
             var horizontalPadding = 10;
