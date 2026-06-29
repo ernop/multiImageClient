@@ -31,6 +31,10 @@ namespace MultiImageClient
 
         public ImageGeneratorApiType ApiType => _apiType;
 
+        private string ModelId => _apiType == ImageGeneratorApiType.GptImage1Mini
+            ? "gpt-image-1-mini"
+            : "gpt-image-1";
+
         public string GetGeneratorSpecPart()
         {
             if (string.IsNullOrEmpty(_name))
@@ -236,7 +240,7 @@ namespace MultiImageClient
                 _stats.GptImageOneRequestCount++;
                 var body = new
                 {
-                    model = "gpt-image-1",
+                    model = ModelId,
                     prompt = promptDetails.Prompt,
                     moderation = _moderation,
                     quality = _quality.ToString(),
@@ -262,7 +266,7 @@ namespace MultiImageClient
                     string errorMessage = doc2.RootElement.GetProperty("error").GetProperty("message").GetString();
                     Console.WriteLine("errorMessage");
                     var cleanedMessage = errorMessage.Split("If you believe").First().Trim();
-                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = cleanedMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.GptImage1, CreateTotalMs = sw.ElapsedMilliseconds, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
+                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = cleanedMessage, PromptDetails = promptDetails, ImageGenerator = _apiType, CreateTotalMs = sw.ElapsedMilliseconds, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
                 }
                 resp.EnsureSuccessStatusCode();
                 var json = await resp.Content.ReadAsStringAsync();
@@ -289,7 +293,7 @@ namespace MultiImageClient
                     ErrorMessage = "",
                     PromptDetails = promptDetails,
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
-                    ImageGenerator = ImageGeneratorApiType.GptImage1,
+                    ImageGenerator = _apiType,
                     CreateTotalMs = sw.ElapsedMilliseconds
                 };
             }
@@ -303,7 +307,7 @@ namespace MultiImageClient
                     PromptDetails = promptDetails,
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
 
-                    ImageGenerator = ImageGeneratorApiType.GptImage1,
+                    ImageGenerator = _apiType,
                     CreateTotalMs = sw.ElapsedMilliseconds
                 };
             }

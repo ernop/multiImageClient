@@ -64,8 +64,14 @@ namespace MultiImageClient
         {
             var loadedImages = new List<LoadedImage>();
 
-            foreach (var result in results.Where(el => el.IsSuccess))
+            foreach (var result in results)
             {
+                if (!result.IsSuccess)
+                {
+                    loadedImages.Add(GetPlaceholder(result));
+                    continue;
+                }
+
                 try
                 {
                     foreach (var imageBytes in result.GetAllImages)
@@ -73,6 +79,9 @@ namespace MultiImageClient
                         if (imageBytes != null && imageBytes.Length > 0)
                         {
                             var image = Image.Load<Rgba32>(imageBytes);
+
+                            var sourceWidth = image.Width;
+                            var sourceHeight = image.Height;
 
                             // Resize if height > 1300px, keeping proportions and max height of 1024px
                             if (image.Height > 1300)
@@ -90,7 +99,9 @@ namespace MultiImageClient
                                 Success = true,
                                 Result = result.IsSuccess ? "successX" : result.ErrorMessage ?? "missing error",
                                 Generator = result.ImageGeneratorDescription,
+                                PromptText = GetDisplayPrompt(result),
                                 TimingLabel = FormatTiming(result.CreateTotalMs + result.DownloadTotalMs),
+                                SourceResolutionLabel = $"{sourceWidth}x{sourceHeight}",
                                 Image = image,
                                 Width = image.Width,
                                 Height = image.Height
@@ -112,14 +123,7 @@ namespace MultiImageClient
                 }
             }
 
-            // Failed result - show placeholder with error
-            foreach (var result in results.Where(el => !el.IsSuccess))
-            {
-
-                loadedImages.Add(GetPlaceholder(result));
-            }
-
-            return loadedImages.OrderBy(el => el.Generator);
+            return loadedImages;
         }
 
         private static Image<Rgba32> RenderHorizontalLayout(IEnumerable<LoadedImage> loadedImages, Font generatorFont)
@@ -265,9 +269,14 @@ namespace MultiImageClient
             }
         }
 
-        private static Image<Rgba32> RenderSquareLayout(IEnumerable<LoadedImage> loadedImages, Font generatorFont)
+        private static Image<Rgba32> RenderSquareLayout(
+            IEnumerable<LoadedImage> loadedImages,
+            Font generatorFont,
+            Font? promptFont = null,
+            bool includeCellPrompts = false)
         {
-            int totalImages = loadedImages.Count();
+            var images = loadedImages.ToList();
+            int totalImages = images.Count;
 
             if (totalImages == 0)
             {
@@ -281,7 +290,7 @@ namespace MultiImageClient
             var rowHeights = new int[rows];
 
             var index = 0;
-            foreach (var li in loadedImages)
+            foreach (var li in images)
             {
                 int column = index % columns;
                 int row = index / columns;
@@ -301,14 +310,25 @@ namespace MultiImageClient
                 xAccumulator += columnWidths[col];
             }
 
-            // every image has its own description section
-            int imageSubdescriptionHeight = MeasureImageSubdescriptionHeight(loadedImages, generatorFont);
-            int subdescripitonHeight = Math.Max(UIConstants.Padding * 2, imageSubdescriptionHeight + UIConstants.Padding * 2);
-            int layoutHeight = rowHeights.Sum() + subdescripitonHeight * rows;
-
-            var layoutImage = ImageUtils.CreateStandardImage(layoutWidth, layoutHeight, UIConstants.White);
-
             var timingFont = FontUtils.CreateFont(Math.Max(8, generatorFont.Size * 0.75f), FontStyle.Regular);
+            var cellPromptFont = promptFont ?? FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
+            var rowTextHeights = new int[rows];
+
+            for (var i = 0; i < images.Count; i++)
+            {
+                var row = i / columns;
+                var col = i % columns;
+                var textHeight = MeasureCellTextHeight(
+                    images[i],
+                    Math.Max(columnWidths[col], 1),
+                    generatorFont,
+                    cellPromptFont,
+                    includeCellPrompts);
+                rowTextHeights[row] = Math.Max(rowTextHeights[row], textHeight);
+            }
+
+            int layoutHeight = rowHeights.Sum() + rowTextHeights.Sum();
+            var layoutImage = ImageUtils.CreateStandardImage(layoutWidth, layoutHeight, UIConstants.White);
 
             layoutImage.Mutate(ctx =>
             {
@@ -318,7 +338,7 @@ namespace MultiImageClient
                 for (int row = 0; row < rows; row++)
                 {
                     int rowHeight = rowHeights[row];
-                    int labelY = currentY + rowHeight + UIConstants.Padding;
+                    int textBandY = currentY + rowHeight;
 
                     for (int col = 0; col < columns; col++)
                     {
@@ -327,7 +347,7 @@ namespace MultiImageClient
                             break;
                         }
 
-                        var li = loadedImages.ToList()[imageIndex];
+                        var li = images[imageIndex];
                         int columnWidth = columnWidths[col];
                         int columnX = columnOffsets[col];
 
@@ -347,12 +367,22 @@ namespace MultiImageClient
 
                         float centerX = columnX + Math.Max(columnWidth, 1) / 2f;
                         var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
-                        DrawCompositeLabelLine(ctx, li.Generator, li.TimingLabel, generatorFont, timingFont, labelColor, centerX, labelY);
+                        var labelY = textBandY + UIConstants.Padding;
+                        DrawCompositeLabelLine(ctx, li.Generator, BuildSecondaryLabel(li), generatorFont, timingFont, labelColor, centerX, labelY);
+                        if (includeCellPrompts && !string.IsNullOrWhiteSpace(li.PromptText))
+                        {
+                            var wrappingWidth = Math.Max(1, columnWidth - UIConstants.Padding * 2);
+                            var promptY = labelY + MeasureCellLabelHeight(li, columnWidth, generatorFont) + UIConstants.Padding / 2f;
+                            var promptOpts = FontUtils.CreateTextOptions(cellPromptFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
+                            promptOpts.Origin = new PointF(columnX + UIConstants.Padding, promptY);
+                            promptOpts.WrappingLength = wrappingWidth;
+                            ctx.DrawTextStandard(promptOpts, li.PromptText, UIConstants.Black);
+                        }
 
                         imageIndex++;
                     }
 
-                    currentY += rowHeight + subdescripitonHeight;
+                    currentY += rowHeight + rowTextHeights[row];
                 }
             });
 
@@ -398,14 +428,19 @@ namespace MultiImageClient
         // preserves the batch/round-trip workflow behavior. Callers that want
         // headless behavior (e.g. the REPL, where viewer popups would spam
         // the desktop) pass false.
-        public static async Task<string> CreateBatchLayoutImageSquareAsync(IEnumerable<TaskProcessResult> results, string prompt, Settings settings, bool openWhenDone = true)
+        public static async Task<string> CreateBatchLayoutImageSquareAsync(
+            IEnumerable<TaskProcessResult> results,
+            string prompt,
+            Settings settings,
+            bool openWhenDone = true,
+            bool showPerImagePrompts = false)
         {
             var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
             var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
 
             var loadedImages = LoadResultImages(results);
 
-            using var layoutImage = RenderSquareLayout(loadedImages, generatorFont);
+            using var layoutImage = RenderSquareLayout(loadedImages, generatorFont, promptFont, showPerImagePrompts);
             using var promptPanel = RenderPromptPanel(layoutImage.Width, prompt, promptFont);
 
             int totalHeight = layoutImage.Height + promptPanel.Height;
@@ -850,10 +885,60 @@ namespace MultiImageClient
                 Success = false,
                 Result = result.ErrorMessage ?? "ErrorX",
                 Generator = result.ImageGeneratorDescription,
+                PromptText = GetDisplayPrompt(result),
                 TimingLabel = FormatTiming(result.CreateTotalMs + result.DownloadTotalMs),
+                SourceResolutionLabel = $"{width}x{height}",
                 Width = width,
                 Height = height
             };
+        }
+
+        private static string? BuildSecondaryLabel(LoadedImage loadedImage)
+        {
+            var parts = new[]
+            {
+                loadedImage.TimingLabel,
+                loadedImage.SourceResolutionLabel,
+            }.Where(s => !string.IsNullOrWhiteSpace(s));
+            var label = string.Join("  ", parts);
+            return string.IsNullOrWhiteSpace(label) ? null : label;
+        }
+
+        private static int MeasureCellTextHeight(
+            LoadedImage loadedImage,
+            int columnWidth,
+            Font generatorFont,
+            Font promptFont,
+            bool includePrompt)
+        {
+            var labelHeight = MeasureCellLabelHeight(loadedImage, columnWidth, generatorFont);
+            var promptHeight = 0;
+            if (includePrompt && !string.IsNullOrWhiteSpace(loadedImage.PromptText))
+            {
+                var wrappingWidth = Math.Max(1, columnWidth - UIConstants.Padding * 2);
+                promptHeight = ImageUtils.MeasureTextHeight(loadedImage.PromptText, promptFont, UIConstants.LineSpacing, wrappingWidth)
+                    + UIConstants.Padding / 2;
+            }
+
+            return Math.Max(
+                UIConstants.Padding * 2,
+                UIConstants.Padding + labelHeight + promptHeight + UIConstants.Padding);
+        }
+
+        private static int MeasureCellLabelHeight(LoadedImage loadedImage, int columnWidth, Font generatorFont)
+        {
+            var label = string.Join(" ", new[] { loadedImage.Generator, BuildSecondaryLabel(loadedImage) }
+                .Where(s => !string.IsNullOrWhiteSpace(s)));
+            var wrappingWidth = Math.Max(1, columnWidth - UIConstants.Padding * 2);
+            var measured = ImageUtils.MeasureTextHeight(label, generatorFont, UIConstants.LineSpacing, wrappingWidth);
+            int descenderReserve = (int)Math.Ceiling(generatorFont.Size * LabelDescenderReserveFraction);
+            return measured + descenderReserve;
+        }
+
+        private static string? GetDisplayPrompt(TaskProcessResult result)
+        {
+            return result.PromptDetails?.TransformationSteps.FirstOrDefault()?.Prompt
+                ?? result.PromptDetails?.Prompt;
         }
 
         // "1024x1024" -> (1024, 1024). Returns false for "auto" or any
@@ -928,9 +1013,11 @@ namespace MultiImageClient
             public bool Success { get; set; }
             public string? Result { get; set; }
             public required string Generator { get; set; }
+            public string? PromptText { get; set; }
             /// Preformatted total generation time (e.g. "2m 15s"), or
             /// null if we have no usable timing for this result.
             public string? TimingLabel { get; set; }
+            public string? SourceResolutionLabel { get; set; }
             public Image<Rgba32>? Image { get; set; }
             public int Width { get; set; }
             public int Height { get; set; }

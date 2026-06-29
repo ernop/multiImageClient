@@ -37,25 +37,40 @@ namespace XAIGrokAPIClient
     ///       https://docs.x.ai/developers/rest-api-reference/inference/videos
     public class XAIGrokClient
     {
-        public const string BaseUrl = "https://api.x.ai/v1";
+        public const string DefaultBaseUrl = "https://api.x.ai/v1";
         public const string ModelGrokImagine = "grok-imagine-image";
         public const string ModelGrokImaginePro = "grok-imagine-image-pro";
         public const string ModelGrokImagineVideo = "grok-imagine-video";
 
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
+        private readonly string _baseUrl;
 
-        public XAIGrokClient(string apiKey, HttpClient? httpClient = null)
+        public XAIGrokClient(string apiKey, HttpClient? httpClient = null, string? baseUrl = null)
         {
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 throw new ArgumentException("xAI API key is required.", nameof(apiKey));
             }
             _apiKey = apiKey;
+            _baseUrl = NormalizeBaseUrl(baseUrl);
             _httpClient = httpClient ?? new HttpClient
             {
                 Timeout = TimeSpan.FromMinutes(5),
             };
+        }
+
+        public string BaseUrl => _baseUrl;
+
+        private static string NormalizeBaseUrl(string? baseUrl)
+        {
+            var normalized = string.IsNullOrWhiteSpace(baseUrl)
+                ? DefaultBaseUrl
+                : baseUrl.Trim().TrimEnd('/');
+
+            return normalized.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+                ? normalized
+                : normalized + "/v1";
         }
 
         /// Text-to-image. Returns the full parsed response so callers can pull
@@ -133,7 +148,7 @@ namespace XAIGrokAPIClient
         /// GET /v1/files/{file_id}/content — raw bytes of a stored file.
         public async Task<byte[]> DownloadFileContentAsync(string fileId, CancellationToken ct = default)
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/files/{fileId}/content");
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/files/{fileId}/content");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
 
             using var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
@@ -151,7 +166,7 @@ namespace XAIGrokAPIClient
         private async Task<TRes> GetAsync<TRes>(string path, CancellationToken ct)
             where TRes : XAIGrokResponseBase
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, BaseUrl + path);
+            using var req = new HttpRequestMessage(HttpMethod.Get, _baseUrl + path);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
             req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
@@ -249,7 +264,7 @@ namespace XAIGrokAPIClient
             };
             var json = JsonConvert.SerializeObject(body, serializer);
 
-            using var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl + path)
+            using var req = new HttpRequestMessage(HttpMethod.Post, _baseUrl + path)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json"),
             };
@@ -401,6 +416,15 @@ namespace XAIGrokAPIClient
         /// Server-populated only on some xAI responses; Unix seconds.
         [JsonProperty("created")]
         public long? Created { get; set; }
+
+        [JsonProperty("model")]
+        public string? Model { get; set; }
+
+        [JsonProperty("respect_moderation")]
+        public bool? RespectModeration { get; set; }
+
+        [JsonProperty("block_reason")]
+        public string? BlockReason { get; set; }
     }
 
     public class XAIGrokImageData
@@ -418,19 +442,25 @@ namespace XAIGrokAPIClient
         /// but we keep the field in case xAI reactivates it.
         [JsonProperty("revised_prompt")]
         public string? RevisedPrompt { get; set; }
+
+        [JsonProperty("respect_moderation")]
+        public bool? RespectModeration { get; set; }
+
+        [JsonProperty("block_reason")]
+        public string? BlockReason { get; set; }
     }
 
     public class XAIGrokUsage
     {
-        /// Cost of this request in USD ticks. One tick == $1e-8 per xAI billing
-        /// conventions; convert with `cost_in_usd_ticks / 1e8` for dollars.
+        /// Cost of this request in USD ticks. xAI documents one cent as
+        /// 100,000,000 ticks, so one dollar is 10,000,000,000 ticks.
         [JsonProperty("cost_in_usd_ticks")]
         public long? CostInUsdTicks { get; set; }
 
         /// Convenience conversion to USD. Returns null if ticks weren't reported.
         [JsonIgnore]
         public decimal? CostUsd => CostInUsdTicks.HasValue
-            ? CostInUsdTicks.Value / 100_000_000m
+            ? CostInUsdTicks.Value / 10_000_000_000m
             : (decimal?)null;
     }
 

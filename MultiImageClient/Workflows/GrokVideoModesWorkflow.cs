@@ -43,7 +43,7 @@ namespace MultiImageClient
                 .FirstOrDefault(s => !string.IsNullOrWhiteSpace(s))
                 ?? "A red kite surfing wind gusts above a green coastal cliff, bright daylight";
 
-            var client = new XAIGrokClient(settings.XAIGrokApiKey);
+            var client = new XAIGrokClient(settings.XAIGrokApiKey, baseUrl: settings.XAIBaseUrl);
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
 
             Logger.Log($"Grok video test: 3 modes x {DurationSeconds}s {Resolution} {AspectRatio}");

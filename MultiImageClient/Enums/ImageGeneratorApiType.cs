@@ -59,5 +59,11 @@ namespace MultiImageClient
         // BFL flux-2-pro-preview: where BFL lands the latest [pro]
         // improvements first. Same API contract as flux-2-pro.
         BFLFlux2ProPreview = 29,
+
+        // Local ComfyUI workflow: FLUX.2 Klein 4B with an uncensored/ablated
+        // Qwen3-4B text encoder. This is local/open-weight, not BFL's API.
+        LocalFlux2Klein = 30,
+
+        WorkflowMock = 1000,
     }
 }

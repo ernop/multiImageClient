@@ -57,7 +57,7 @@ namespace MultiImageClient
                 return;
             }
 
-            var client = new XAIGrokClient(settings.XAIGrokApiKey);
+            var client = new XAIGrokClient(settings.XAIGrokApiKey, baseUrl: settings.XAIBaseUrl);
             var ledger = GrokLedger.ReadAll(settings);
             Logger.Log($"Grok sync: ledger has {ledger.Count} entries ({GrokLedger.GetPath(settings)})");
 

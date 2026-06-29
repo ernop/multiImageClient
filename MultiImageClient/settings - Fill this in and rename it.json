@@ -9,6 +9,8 @@
   "BFLApiKey": "Optional: Black Forest Labs (Flux) key from https://api.bfl.ai/ (paid). Required for BFL v1.1 and BFL v1.1 Ultra generators.",
   "AnthropicApiKey": "Optional: Anthropic key from https://console.anthropic.com/settings/keys (paid). Required for Claude-based prompt rewriting steps.",
   "RecraftApiKey": "Optional: Recraft API key from https://www.recraft.ai/ (paid). Required for Recraft generators.",
+  "XAIGrokApiKey": "Optional: xAI API key from https://console.x.ai/. Required for Grok Imagine image/video generators.",
+  "XAIBaseUrl": "Optional: xAI API base URL. Leave blank for https://api.x.ai/v1, or set a regional host such as https://us-east-1.api.x.ai/v1 if your account has access.",
   "GoogleGeminiApiKey": "Optional: Google Gemini (AI Studio) key from https://ai.google.dev/gemini-api/docs/api-key. Used by the Gemini image (NanoBanana) generator and as an AI Studio fallback for Imagen.",
   "GoogleCloudApiKey": "Optional: Google Cloud / Vertex AI API key (alternative to service-account auth).",
   "GoogleCloudLocation": "REQUIRED for Imagen 4: Google Cloud region, e.g. us-central1. See https://cloud.google.com/vertex-ai/docs/general/locations",
@@ -20,5 +22,9 @@
   "EnableLogging": true,
   "AnnotationSide": "right",
   "FlatImageMirrorPath": "",
-  "TypedPromptsAppendFile": ""
+  "TypedPromptsAppendFile": "",
+  "ComfyUIBaseUrl": "Optional: local ComfyUI server URL, e.g. http://127.0.0.1:8188. Required for Local FLUX.2 Klein.",
+  "ComfyUIFlux2KleinWorkflowPath": "Optional: absolute path to an API-format ComfyUI workflow JSON for FLUX.2 Klein 4B. Put {{PROMPT}} in the positive prompt field.",
+  "ComfyUIPollIntervalMs": 1000,
+  "ComfyUITimeoutSeconds": 900
 }

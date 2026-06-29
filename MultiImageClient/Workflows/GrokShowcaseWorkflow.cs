@@ -1,6 +1,5 @@
 #nullable enable
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -65,79 +64,20 @@ namespace MultiImageClient
                 aspectRatio: "1:1",
                 quality: "high",
                 resolution: "2k",
-                settings: settings);
+                settings: settings,
+                baseUrl: settings.XAIBaseUrl);
 
-            var imageManager = new ImageManager(settings, stats);
             var modelLabel = pro ? "grok-imagine-image-pro" : "grok-imagine-image";
             Logger.Log($"Grok showcase: firing {prompts.Count} prompts at {modelLabel} (concurrency={concurrency}).");
 
-            var tasks = prompts.Select(async promptText =>
-            {
-                var pd = new PromptDetails();
-                pd.ReplacePrompt(promptText, promptText, TransformationType.InitialPrompt);
-                try
-                {
-                    var result = await generator.ProcessPromptAsync(generator, pd);
-                    await imageManager.ProcessAndSaveAsync(result, generator);
-                    var label = result.IsSuccess ? "OK" : $"FAIL ({result.ErrorMessage})";
-                    Logger.Log($"Grok showcase :: {label} :: {Trim(promptText, 80)}");
-                    return result;
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log($"Grok showcase :: EXCEPTION on prompt '{Trim(promptText, 80)}': {ex.Message}");
-                    return new TaskProcessResult
-                    {
-                        IsSuccess = false,
-                        ErrorMessage = ex.Message,
-                        PromptDetails = pd,
-                        ImageGenerator = apiType,
-                        ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
-                    };
-                }
-            }).ToArray();
-
-            stats.PrintStats();
-            var results = await Task.WhenAll(tasks);
-            stats.PrintStats();
-
-            var okCount = results.Count(r => r.IsSuccess);
-            Logger.Log($"Grok showcase: {okCount}/{results.Length} succeeded.");
-
-            // Build a single combined grid image that contains EVERY prompt's
-            // result (not one-grid-per-prompt like BatchWorkflow). The prompt
-            // panel underneath lists the sub-prompts so the popped-open image
-            // is self-documenting.
-            var combinedPromptRecap = BuildRecapString(prompts, modelLabel);
-
-            try
-            {
-                var outPath = await ImageCombiner.CreateBatchLayoutImageSquareAsync(
-                    results,
-                    combinedPromptRecap,
-                    settings,
-                    openWhenDone: true);
-                Logger.Log($"Grok showcase combined image: {outPath}");
-                return outPath;
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"Grok showcase: failed to build combined image: {ex.Message}");
-                return null;
-            }
-        }
-
-        private static string BuildRecapString(IReadOnlyList<string> prompts, string modelLabel)
-        {
-            var header = $"Grok showcase ({modelLabel}) - {prompts.Count} prompts:";
-            var lines = prompts.Select((p, i) => $"{i + 1}. {Trim(p, 180)}");
-            return header + "\n\n" + string.Join("\n", lines);
-        }
-
-        private static string Trim(string s, int max)
-        {
-            if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
-            return s.Length <= max ? s : s.Substring(0, max - 1) + "...";
+            return await GeneratorContactSheetRunner.RunOneGeneratorAsync(
+                generator,
+                prompts,
+                new ImageManager(settings, stats),
+                settings,
+                stats,
+                runLabel: "Grok showcase",
+                sheetHeader: $"Grok showcase ({modelLabel}) - {prompts.Count} prompts:");
         }
     }
 }

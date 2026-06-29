@@ -4,7 +4,9 @@ using OpenAI.Images;
 
 using RecraftAPIClient;
 
+using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace MultiImageClient
 {
@@ -76,8 +78,6 @@ namespace MultiImageClient
                 // GptImage2HighQhdWide(),        // 2560x1440 QHD, cookbook's recommended upper reliability boundary
                 // GptImage2LogoVariants(n: 4),   // one call -> N candidates; see cookbook 4.5
                 // --- other OpenAI image models ---
-                // Dalle3Square(),
-                // Dalle3Wide(),
                 // GptImage1HighSquare(),
                 // GptImageMiniHighWide(),
                 // --- non-OpenAI providers (require extra keys in settings.json) ---
@@ -92,6 +92,7 @@ namespace MultiImageClient
                 // BFLFlux2Max_Square(),
                 // BFLFlux2Flex_Square(),       // typography-tuned; enable when you have text prompts
                 // BFLFlux2Klein9b_Square(),    // sub-second cheap draft variant
+                // LocalFlux2Klein_Uncensored(), // LOCAL ComfyUI: FLUX.2 Klein 4B + ablated Qwen3-4B text encoder
                 // RecraftV4ProRealisticPortrait(),
                 // RecraftAnyStyle(),           // legacy V3
                 // xAI Grok Imagine (launched 2026-01-28). Pro is 3.5x the price
@@ -111,7 +112,8 @@ namespace MultiImageClient
         /// One representative generator per provider — the "contact sheet"
         /// acceptance set used by --all-providers. Each entry is the current
         /// flagship (June 2026) for that provider:
-        ///   OpenAI   gpt-image-2 (high, square)
+        ///   OpenAI   gpt-image-2 (low, square), gpt-image-1, and
+        ///            gpt-image-1-mini
         ///   Ideogram Ideogram 4.0 (DEFAULT speed, 2048x2048)
         ///   BFL      flux-2-pro-preview (latest [pro])
         ///   Recraft  V4.1 (any style)
@@ -121,20 +123,63 @@ namespace MultiImageClient
         /// generator (mp4 saved to disk, PNG card in the grid).
         public IEnumerable<IImageGenerator> GetOnePerProvider(bool includeVideo = false)
         {
-            var list = new List<IImageGenerator>
+            return GetOnePerProviderCatalog(includeVideo).Select(p => p.CreateGenerator()).ToList();
+        }
+
+        public IReadOnlyList<ProviderPreset> GetOnePerProviderCatalog(bool includeVideo = false)
+        {
+            var list = new List<ProviderPreset>
             {
-                GptImage2HighSquare(),
-                IdeogramV4_Square(),
-                BFLFlux2ProPreview_Square(),
-                RecraftV41AnyStyle(),
-                GrokImagine_Square(),
-                GeminiNanoBananaPro(),
+                new("workflow.mock.local", "Workflow Mock local PNG (free)", "Workflow", () => new MockWorkflowImageGenerator()),
+                new("openai.gpt-image-2.low.square", "gpt-image-2 low square", "OpenAI", GptImage2LowSquare),
+                new("openai.gpt-image-1.low.square", "gpt-image-1 low square", "OpenAI", GptImage1LowSquare),
+                new("openai.gpt-image-1-mini.low.square", "gpt-image-1-mini low square", "OpenAI", GptImageMiniLowSquare),
+                new("ideogram.v4.default.square", "Ideogram V4 DEFAULT square", "Ideogram", IdeogramV4_Square),
+                new("bfl.flux-2-pro-preview.square", "BFL Flux 2 Pro Preview square", "BFL", BFLFlux2ProPreview_Square),
+                new("recraft.v4-1.any.square", "Recraft V4.1 any square", "Recraft", RecraftV41AnyStyle),
+                new("xai.grok-imagine.high.2k.square", "xAI Grok Imagine high 2k square", "xAI", GrokImagine_Square),
+                new("xai.grok-imagine.high.1k.square", "xAI Grok Imagine high 1k square", "xAI", GrokImagine1k_Square),
+                new("google.nano-banana-pro.square", "Google Nano Banana Pro square", "Google", GeminiNanoBananaPro),
+                new("local.flux-2-klein-4b.uncensored.comfyui", "Local FLUX.2 Klein 4B uncensored ComfyUI", "Local", LocalFlux2Klein_Uncensored),
             };
+
             if (includeVideo)
             {
-                list.Add(GrokVideo_Wide());
+                list.Add(new ProviderPreset("xai.grok-imagine-video.wide", "xAI Grok Imagine Video wide", "xAI", GrokVideo_Wide));
             }
+
             return list;
+        }
+
+        public IReadOnlyList<ProviderPreset> ResolvePresets(IEnumerable<string> providerPresetIds, bool includeVideo = false)
+        {
+            var catalog = GetOnePerProviderCatalog(includeVideo);
+            var ids = providerPresetIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (ids.Count == 0)
+            {
+                return catalog;
+            }
+
+            return catalog.Where(p => ids.Contains(p.Id)).ToList();
+        }
+
+        /// Review set for comparing providers across the same sampled prompt
+        /// list. This intentionally returns one generator per requested provider
+        /// slot so callers can build one contact sheet per generator.
+        public IEnumerable<IImageGenerator> GetProviderSampleReviewSet()
+        {
+            return new List<IImageGenerator>
+            {
+                GrokImagine_Square(),
+                RecraftV41AnyStyle(),
+                BFLFlux2ProPreview_Square(),
+                LocalFlux2Klein_Uncensored(),
+                GeminiNanoBananaPro(),
+                GptImage2LowSquare(),
+            };
         }
 
         // ---------- OpenAI: DALL·E 3 ----------
@@ -153,6 +198,16 @@ namespace MultiImageClient
             new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency,
                 "1024x1024", "low", OpenAIGPTImageOneQuality.high,
                 ImageGeneratorApiType.GptImage1, _stats, "");
+
+        private GptImageOneGenerator GptImage1LowSquare() =>
+            new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency,
+                "1024x1024", "low", OpenAIGPTImageOneQuality.low,
+                ImageGeneratorApiType.GptImage1, _stats, "");
+
+        private GptImageOneGenerator GptImageMiniLowSquare() =>
+            new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency,
+                "1024x1024", "low", OpenAIGPTImageOneQuality.low,
+                ImageGeneratorApiType.GptImage1Mini, _stats, "");
 
         private GptImageOneGenerator GptImageMiniHighWide() =>
             new GptImageOneGenerator(_settings.OpenAIApiKey, _concurrency,
@@ -224,6 +279,10 @@ namespace MultiImageClient
         private GptImage2Generator GptImage2HighSquare() =>
             new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
                 "1024x1024", "low", OpenAIGPTImageOneQuality.high, _stats, "");
+
+        private GptImage2Generator GptImage2LowSquare() =>
+            new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
+                "1024x1024", "low", OpenAIGPTImageOneQuality.low, _stats, "");
 
         private GptImage2Generator GptImage2MediumPortrait() =>
             new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
@@ -334,6 +393,18 @@ namespace MultiImageClient
             new BFLGenerator(ImageGeneratorApiType.BFLFlux2Klein9b, _settings.BFLApiKey,
                 _concurrency, "1:1", false, 1024, 1024, _stats, "");
 
+        // ---------- Local ComfyUI: FLUX.2 Klein ----------
+
+        private ComfyUIFlux2KleinGenerator LocalFlux2Klein_Uncensored() =>
+            new ComfyUIFlux2KleinGenerator(
+                _settings.ComfyUIBaseUrl,
+                _settings.ComfyUIFlux2KleinWorkflowPath,
+                _concurrency,
+                _stats,
+                name: "uncensored",
+                pollIntervalMs: _settings.ComfyUIPollIntervalMs,
+                timeoutSeconds: _settings.ComfyUITimeoutSeconds);
+
         // ---------- Recraft ----------
 
         private RecraftGenerator RecraftAnyStyle() =>
@@ -436,27 +507,32 @@ namespace MultiImageClient
         public GrokImagineGenerator GrokImagine_Square() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "",
-                aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
+                aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
+
+        public GrokImagineGenerator GrokImagine1k_Square() =>
+            new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
+                ImageGeneratorApiType.GrokImagine, _stats, "1k",
+                aspectRatio: "1:1", quality: "high", resolution: "1k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         public GrokImagineGenerator GrokImagine_Wide() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "",
-                aspectRatio: "16:9", quality: "high", resolution: "2k", settings: _settings);
+                aspectRatio: "16:9", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         public GrokImagineGenerator GrokImagine_Portrait() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "",
-                aspectRatio: "3:4", quality: "high", resolution: "2k", settings: _settings);
+                aspectRatio: "3:4", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         public GrokImagineGenerator GrokImaginePro_Square() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImaginePro, _stats, "",
-                aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
+                aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         public GrokImagineGenerator GrokImaginePro_Portrait() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImaginePro, _stats, "",
-                aspectRatio: "3:4", quality: "high", resolution: "2k", settings: _settings);
+                aspectRatio: "3:4", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         // ---------- xAI Grok Imagine VIDEO ----------
         //

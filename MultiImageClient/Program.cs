@@ -69,9 +69,11 @@ namespace MultiImageClient
                 return;
             }
 
-            AbstractPromptSource promptSource = string.IsNullOrEmpty(options.OverridePrompt)
-                ? new ReadAllPromptsFromFile(settings, "")
-                : new InlinePromptSource(settings, options.OverridePrompt);
+            AbstractPromptSource promptSource = !string.IsNullOrEmpty(options.OverridePrompt)
+                ? new InlinePromptSource(settings, options.OverridePrompt)
+                : !string.IsNullOrEmpty(options.PromptFilePath)
+                    ? new PromptFileSource(settings, options.PromptFilePath)
+                    : new ReadAllPromptsFromFile(settings, "");
 
             if (options.GrokVideoTest)
             {
@@ -89,6 +91,13 @@ namespace MultiImageClient
                 // error cells, so this is also the cross-provider auth check.
                 var allProviders = new AllProvidersShowcaseWorkflow();
                 await allProviders.RunAsync(promptSource, settings, stats, options);
+                return;
+            }
+
+            if (options.ProviderSampleShowcase)
+            {
+                var providerSample = new ProviderSampleShowcaseWorkflow();
+                await providerSample.RunAsync(settings, stats, options);
                 return;
             }
 

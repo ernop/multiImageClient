@@ -121,6 +121,12 @@ namespace MultiImageClient
                 // requires authorization") on normal accounts; 5 is the max
                 // permissive value available to us.
                 const int MaxPermissiveSafetyTolerance = 5;
+                promptDetails.RuntimeMeta["size"] = $"{_width}x{_height}";
+                promptDetails.RuntimeMeta["width"] = _width.ToString();
+                promptDetails.RuntimeMeta["height"] = _height.ToString();
+                promptDetails.RuntimeMeta["prompt_upsampling"] = _promptUpsampling.ToString().ToLowerInvariant();
+                promptDetails.RuntimeMeta["safety_tolerance"] = MaxPermissiveSafetyTolerance.ToString();
+                promptDetails.RuntimeMeta["output_format"] = "png";
                 switch (_apiType)
                 {
                     case ImageGeneratorApiType.BFLv11:
@@ -157,6 +163,7 @@ namespace MultiImageClient
                     case ImageGeneratorApiType.BFLFlux2Klein4b:
                     case ImageGeneratorApiType.BFLFlux2Klein9b:
                     {
+                        promptDetails.RuntimeMeta["endpoint"] = GetFlux2Endpoint(_apiType);
                         var request = new Flux2Request
                         {
                             Prompt = promptDetails.Prompt,
@@ -243,6 +250,20 @@ namespace MultiImageClient
             {
                 _bflSemaphore.Release();
             }
+        }
+
+        private static string GetFlux2Endpoint(ImageGeneratorApiType apiType)
+        {
+            return apiType switch
+            {
+                ImageGeneratorApiType.BFLFlux2Pro => "flux-2-pro",
+                ImageGeneratorApiType.BFLFlux2ProPreview => "flux-2-pro-preview",
+                ImageGeneratorApiType.BFLFlux2Max => "flux-2-max",
+                ImageGeneratorApiType.BFLFlux2Flex => "flux-2-flex",
+                ImageGeneratorApiType.BFLFlux2Klein4b => "flux-2-klein-4b",
+                ImageGeneratorApiType.BFLFlux2Klein9b => "flux-2-klein-9b",
+                _ => throw new Exception($"Not a FLUX.2 endpoint: {apiType}"),
+            };
         }
     }
 }

@@ -30,6 +30,7 @@ namespace MultiImageClient
         /// xAI (Grok) API key, format "xai-...". Required only when a Grok
         /// image generator is active. Obtain one at https://console.x.ai/.
         public string XAIGrokApiKey { get; set; }
+        public string XAIBaseUrl { get; set; } = "";
         public string GoogleGeminiApiKey { get; set; }
         public string GoogleCloudLocation { get; set; }
         /// List of prompt-source text files. Every listed file is read and the
@@ -66,6 +67,17 @@ namespace MultiImageClient
         /// newlines in the typed prompt are collapsed to spaces so the file
         /// is always one-prompt-per-line.
         public string TypedPromptsAppendFile { get; set; } = "";
+
+        /// Local ComfyUI server used by local/open-weight image generators.
+        /// Example: http://127.0.0.1:8188
+        public string ComfyUIBaseUrl { get; set; } = "";
+
+        /// API-format ComfyUI workflow JSON for FLUX.2 Klein 4B. Put
+        /// {{PROMPT}} in the positive prompt field before exporting/saving it.
+        public string ComfyUIFlux2KleinWorkflowPath { get; set; } = "";
+
+        public int ComfyUIPollIntervalMs { get; set; } = 1000;
+        public int ComfyUITimeoutSeconds { get; set; } = 900;
 
         public static Settings LoadFromFile(string filePath)
         {

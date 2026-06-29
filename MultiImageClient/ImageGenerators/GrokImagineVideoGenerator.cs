@@ -65,7 +65,7 @@ namespace MultiImageClient
             {
                 throw new ArgumentOutOfRangeException(nameof(durationSeconds), "xAI video duration must be 1-15 seconds.");
             }
-            _client = new XAIGrokClient(apiKey);
+            _client = new XAIGrokClient(apiKey, baseUrl: settings.XAIBaseUrl);
             _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _stats = stats;

@@ -49,6 +49,10 @@ namespace MultiImageClient
         public int GoogleRequestCount { get; set; }
         public int GoogleRefusedCount { get; set; }
 
+        public int LocalImageGenerationRequestCount { get; set; }
+        public int LocalImageGenerationSuccessCount { get; set; }
+        public int LocalImageGenerationErrorCount { get; set; }
+
         public void PrintStats()
         {
             var nonZeroStats = new List<string>();
@@ -111,6 +115,9 @@ namespace MultiImageClient
 
             if (GrokVideoGenerationRequestCount > 0 | GrokVideoGenerationErrorCount > 0 | GrokVideoGenerationSuccessCount > 0)
                 nonZeroStats.Add($"Grok Video: total:{GrokVideoGenerationRequestCount}, ok:{GrokVideoGenerationSuccessCount}, bad:{GrokVideoGenerationErrorCount} ");
+
+            if (LocalImageGenerationRequestCount > 0 | LocalImageGenerationErrorCount > 0 | LocalImageGenerationSuccessCount > 0)
+                nonZeroStats.Add($"Local image: total:{LocalImageGenerationRequestCount}, ok:{LocalImageGenerationSuccessCount}, bad:{LocalImageGenerationErrorCount} ");
 
             var res = $"Stats: {string.Join(", ", nonZeroStats)}";
             Console.WriteLine(res);

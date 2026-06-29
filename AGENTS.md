@@ -49,6 +49,9 @@ Use 4-space indentation and .NET naming: PascalCase for public types/methods, ca
 - Padding above/below a standalone text panel (e.g. prompt panel below the grid) should be proportional to the font size used inside it, not a fixed `Padding * 3`.
 - Secondary labels that sit beside a primary label (e.g. per-image timing next to the model name) should be bottom-aligned with the primary label so the smaller text hangs off the baseline of the larger one, not free-floating.
 
+## Universal Image Prompt Defaults
+When writing, rewriting, reviewing, or generating prompts for image models, use this default unless the user explicitly requests dark, night, low-key, gloomy, or murky output: clear, bright, full normal daytime lighting; not dim, murky, grimy, muddy, gloomy, shadow-choked, underexposed, dusk-like, night-like, or dark. Prefer readable, coherent, visually organized images with clean composition, clear separation of subjects or groups, concise high-contrast text when text is needed, and attractive balanced color. For OpenAI image models such as `gpt-image-2`, make this explicit in prompt text because the model otherwise tends to drift into dark cinematic drama.
+
 ## Image Saving Policy
 - **Never resize or re-encode the bytes returned by the image endpoint when saving a Raw variant.** `ImageSaving.SaveImageAsync` must write the API's PNG/JPEG/WEBP bytes verbatim via `File.WriteAllBytesAsync`. Thumbnail-scale downsizing for combined-grid display is fine — that's an in-memory copy used only for layout, never written over the Raw file.
 

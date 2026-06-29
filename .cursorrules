@@ -28,3 +28,9 @@
 - Only create shared utilities when there's genuine reuse across different functional areas
 - Branding text and similar elements that appear throughout the app are good candidates for centralization
 
+## Universal Image Prompt Defaults
+- When writing or rewriting image-generation prompts, default to clear, bright, full normal daytime lighting unless the user explicitly asks for dark, night, low-key, gloomy, or murky output.
+- Explicitly avoid dim, murky, grimy, muddy, gloomy, shadow-choked, underexposed, dusk-like, night-like, or dark results.
+- Prefer readable, coherent, visually organized images with clean composition, clear separation of subjects or groups, concise high-contrast text when text is needed, and attractive balanced color.
+- For OpenAI image models such as `gpt-image-2`, include this preference directly in the prompt text because the model tends to drift into dark cinematic drama.
+

@@ -1,0 +1,12 @@
+---
+description: Standing defaults for image-generation prompts
+alwaysApply: true
+---
+
+# Universal Image Defaults
+
+When writing, rewriting, reviewing, or generating prompts for image models, use this as the default unless the user explicitly asks for darkness, night, gloom, murk, horror, or low-key lighting:
+
+> Clear, bright, full normal daytime lighting by default. Not dim, murky, grimy, muddy, gloomy, shadow-choked, underexposed, dusk-like, night-like, or dark. Prefer readable, coherent, visually organized images with clean composition, clear separation of groups, concise high-contrast text, and attractive balanced color. Favor clarity over murky cinematic drama.
+
+For OpenAI image models, including `gpt-image-2`, make this explicit in prompts rather than assuming the model will infer it. If a serious, dramatic, political, symbolic, or conflict scene is requested, keep the drama but preserve full daytime clarity and readability.

@@ -15,9 +15,18 @@ namespace MultiImageClient
         /// Max number of prompts to process. int.MaxValue = no cap.
         public int Limit { get; set; } = int.MaxValue;
 
+        /// Max number of prompts allowed in flight for workflows that support
+        /// prompt-level overlap. Provider-level semaphores still limit each
+        /// backend independently.
+        public int PromptConcurrency { get; set; } = 1;
+
         /// If non-empty, overrides the prompt source: use this single
         /// prompt instead of reading from PromptFiles.
         public string OverridePrompt { get; set; } = "";
+
+        /// If non-empty, overrides the prompt source with a newline-delimited
+        /// prompt file. Lines are processed in file order.
+        public string PromptFilePath { get; set; } = "";
 
         /// 1 = Batch, 2 = RoundTrip, 0 = ask interactively.
         public int Workflow { get; set; }
@@ -113,6 +122,23 @@ namespace MultiImageClient
         /// run it whenever to keep local copies synced.
         public bool GrokSync { get; set; }
 
+        /// If true, randomly sample prompts once, then run that same sample
+        /// through the provider review set and create one contact sheet per
+        /// provider. Defaults to 15 prompts when --limit is omitted.
+        public bool ProviderSampleShowcase { get; set; }
+
+        /// Optional saved prompt list for --provider-sample-showcase. Lines may
+        /// be plain prompts or numbered as "1. prompt".
+        public string ProviderSampleFilePath { get; set; } = "";
+
+        /// Optional comma-separated provider filter for --provider-sample-showcase.
+        /// Matches generator labels, e.g. "gpt-image-2" or "grok,recraft".
+        public string ProviderSampleProviders { get; set; } = "";
+
+        /// Extra attempts for failed prompts before composing the provider
+        /// sample contact sheet. Zero means no retry.
+        public int ProviderSampleRetryFailures { get; set; }
+
         public static RunOptions Parse(string[] args)
         {
             var o = new RunOptions();
@@ -131,8 +157,19 @@ namespace MultiImageClient
                     case "--limit":
                         o.Limit = int.Parse(args[++i]);
                         break;
+                    case "--prompt-concurrency":
+                        o.PromptConcurrency = int.Parse(args[++i]);
+                        if (o.PromptConcurrency < 1)
+                        {
+                            Console.Error.WriteLine($"--prompt-concurrency must be >= 1 (got {o.PromptConcurrency})");
+                            Environment.Exit(2);
+                        }
+                        break;
                     case "--prompt":
                         o.OverridePrompt = args[++i];
+                        break;
+                    case "--prompt-file":
+                        o.PromptFilePath = args[++i];
                         break;
                     case "--workflow":
                         o.Workflow = int.Parse(args[++i]);
@@ -199,6 +236,23 @@ namespace MultiImageClient
                     case "--grok-video-test":
                         o.GrokVideoTest = true;
                         break;
+                    case "--provider-sample-showcase":
+                        o.ProviderSampleShowcase = true;
+                        break;
+                    case "--provider-sample-file":
+                        o.ProviderSampleFilePath = args[++i];
+                        break;
+                    case "--provider-sample-providers":
+                        o.ProviderSampleProviders = args[++i];
+                        break;
+                    case "--provider-sample-retry-failures":
+                        o.ProviderSampleRetryFailures = int.Parse(args[++i]);
+                        if (o.ProviderSampleRetryFailures < 0)
+                        {
+                            Console.Error.WriteLine($"--provider-sample-retry-failures must be >= 0 (got {o.ProviderSampleRetryFailures})");
+                            Environment.Exit(2);
+                        }
+                        break;
                     case "--help":
                     case "-h":
                         PrintUsage();
@@ -220,7 +274,9 @@ namespace MultiImageClient
             Console.WriteLine("  --auto            Non-interactive: skip menu, auto-accept every prompt.");
             Console.WriteLine("  --workflow 1|2    1 = batch, 2 = round-trip. Default: ask.");
             Console.WriteLine("  --limit N         Stop after N prompts.");
+            Console.WriteLine("  --prompt-concurrency N  Max prompts in flight where supported (all-providers).");
             Console.WriteLine("  --prompt \"text\"   Use this prompt instead of reading from PromptFiles.");
+            Console.WriteLine("  --prompt-file fp  Use a newline-delimited prompt file instead of PromptFiles.");
             Console.WriteLine("  --backfill-dl     One-shot: mirror all images under ImageDownloadBaseFolder to C:\\dl and exit.");
             Console.WriteLine("  --fast            Use cheapest/fastest generator set (gpt-image-2 low 1024x1024). Good for smoke tests.");
             Console.WriteLine("  --quick-test      Like --fast plus: save every streamed partial PNG and open each one in the default viewer as it arrives. Still asks y/n/custom per prompt unless combined with --auto.");
@@ -232,9 +288,13 @@ namespace MultiImageClient
             Console.WriteLine("  --repl-n N            REPL session default n (images per gpt-image-2 call, default 1). Change at runtime with :n N, or per-prompt via [n=N] in the override prefix.");
             Console.WriteLine("  --grok-showcase       One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at xAI Grok Imagine in parallel, and open a single combined grid image. Default --limit for this mode is 10.");
             Console.WriteLine("  --grok-pro            Pair with --grok-showcase to route through grok-imagine-image-pro at 2k resolution ($0.07/img, 30 rpm) instead of grok-imagine-image at 1k ($0.02/img, 300 rpm).");
-            Console.WriteLine("  --all-providers       One-shot: fire ONE prompt (--prompt or first PromptFiles line) at one flagship generator per provider (gpt-image-2, Ideogram 4.0, flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro) and open a single contact-sheet grid. Keyless providers show as error cells.");
+            Console.WriteLine("  --all-providers       One-shot: fire ONE prompt (--prompt or first PromptFiles line) at current image endpoints (gpt-image-2, gpt-image-1, gpt-image-1-mini, Ideogram 4.0, flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro) and open a single contact-sheet grid. Keyless providers show as error cells.");
             Console.WriteLine("  --with-video          Pair with --all-providers to also dispatch a Grok Imagine VIDEO (6s, 480p) for the same prompt; the mp4 lands in the day folder's Video\\ subfolder. Videos are not composited into the PNG sheet.");
             Console.WriteLine("  --grok-video-test     One-shot: exercise all three Grok video modes with one prompt (--prompt or first PromptFiles line) — text-to-video, grok-image-to-video, and extend-video (3s, 480p each). Clips are saved, stored durably at xAI, and ledgered.");
+            Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low.");
+            Console.WriteLine("  --provider-sample-file fp   Pair with --provider-sample-showcase to reuse a saved numbered/plain people-fixture prompt list.");
+            Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok,recraft.");
+            Console.WriteLine("  --provider-sample-retry-failures N  Pair with --provider-sample-showcase to retry failed prompt slots N extra times before composing the sheet.");
             Console.WriteLine("  --grok-export [path]  One-shot: full Grok history export OUTSIDE the repo. Runs --grok-sync first, then copies every known Grok image/video plus prompts.txt and grok_ledger.jsonl into [path] (default C:\\GrokArchive). Rerunnable; already-present files are skipped.");
             Console.WriteLine("  --grok-sync           One-shot: back-read/back-download the entire reachable Grok history and exit. Sweeps the xAI Files API inventory, re-polls any ledger video request_ids whose local file is missing, backfills prompts from old JSON logs, and writes everything to grok_ledger.jsonl + saves\\GrokArchive\\. Idempotent — run it whenever to stay synced.");
         }

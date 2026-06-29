@@ -51,15 +51,18 @@
   .tag.mode{color:var(--violet)} .tag.ext{color:var(--gold)} .tag.up{color:var(--green)} .tag.cnt{color:var(--blue)}
   /* center */
   .center{display:flex;flex-direction:column;position:relative}
-  .player{display:flex;align-items:center;justify-content:center;background:#050a12;border-bottom:1px solid var(--line);position:relative;height:48vh;min-height:300px;max-height:620px;overflow:hidden}
+  .player{display:grid;grid-template-rows:minmax(0,1fr) auto;background:#050a12;border-bottom:1px solid var(--line);position:relative;height:var(--player-h,48vh);flex:0 0 var(--player-h,48vh);min-height:340px;max-height:82vh;overflow:hidden}
   .player video,.player img{display:block;background:#050a12}
   .player>img{width:100%;height:100%;object-fit:contain}
-  .playerShell{width:100%;height:100%;min-height:0;display:flex;align-items:center;justify-content:center;position:relative;background:#050a12;overflow:hidden}
+  .playerShell{width:100%;height:100%;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto;background:#050a12;overflow:hidden}
+  .mediaStage{min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
   .playerShell video{width:100%;height:100%;object-fit:contain}
-  .playerControls{position:absolute;left:14px;right:14px;bottom:12px;display:grid;grid-template-columns:auto 1fr auto auto auto;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:#06101fd9;backdrop-filter:blur(8px)}
+  .playerControls{display:grid;grid-template-columns:auto minmax(120px,1fr) auto auto auto auto;gap:10px;align-items:center;margin:8px 10px 10px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:#06101f}
   .playerControls input[type=range]{width:100%;padding:0}
   .volWrap{display:flex;align-items:center;gap:6px}
   .volWrap input{width:86px}
+  .sizeWrap{display:flex;align-items:center;gap:6px}
+  .sizeWrap input{width:92px}
   .time{font-size:11px;color:var(--soft);min-width:86px;text-align:center}
   .pinfo{padding:10px 14px;border-bottom:1px solid var(--line)}
   .pprompt{font-size:13px;max-height:130px;overflow:auto}
@@ -517,6 +520,39 @@ function fmtTime(s){
   const m=Math.floor(s/60), r=Math.floor(s%60).toString().padStart(2,'0');
   return m+':'+r;
 }
+function sourceImageFor(n){
+  let cur=n;
+  const seen=new Set();
+  while(cur && cur.parentId && !seen.has(cur.id)){
+    seen.add(cur.id);
+    const parent=byId.get(cur.parentId);
+    if(!parent) break;
+    if(parent.type==='image') return parent;
+    cur=parent;
+  }
+  return n.type==='image'?n:byId.get(rootOf(n.id));
+}
+function imagePromptChain(image){
+  const chain=[];
+  let cur=image;
+  const seen=new Set();
+  while(cur && cur.type==='image' && !seen.has(cur.id)){
+    seen.add(cur.id);
+    chain.unshift(cur);
+    cur=cur.parentId?byId.get(cur.parentId):null;
+  }
+  return chain.filter(x=>x.prompt);
+}
+function promptChainText(chain){
+  return chain.map((n,i)=>(i===0?'Initial image prompt':'Image continuation '+i)+':\n'+n.prompt).join('\n\n');
+}
+function applyPlayerHeight(value){
+  const v=Math.max(34,Math.min(82,Number(value)||48));
+  document.documentElement.style.setProperty('--player-h',v+'vh');
+  localStorage.setItem('playerH',String(v));
+  return v;
+}
+applyPlayerHeight(localStorage.getItem('playerH')||48);
 function showPromptTools(n){
   const box=$('#promptTools'); box.innerHTML='';
   if(n.prompt){
@@ -540,22 +576,29 @@ function setPromptPanel(n){
   const existing=document.querySelector('.sourcePromptBox');
   if(existing) existing.remove();
   if(n.type==='video'){
-    const root=byId.get(rootOf(n.id));
-    if(root && root.id!==n.id && root.prompt){
+    const source=sourceImageFor(n);
+    const chain=imagePromptChain(source);
+    if(source && source.id!==n.id && chain.length){
       const box=el('div','sourcePromptBox');
       const label=el('div','sourcePromptLabel');
-      label.appendChild(el('span','','Source image prompt'));
+      label.appendChild(el('span','',chain.length>1?'Source image prompt chain':'Source image prompt'));
       const copy=el('button','iconBtn','⧉');
-      copy.title='Copy source image prompt';
-      copy.onclick=()=>copyText(root.prompt,copy);
+      copy.title='Copy source image prompt chain';
+      copy.onclick=()=>copyText(promptChainText(chain),copy);
       label.appendChild(copy);
       box.appendChild(label);
       const text=el('div','sourcePromptText');
-      text.appendChild(renderLinkedText(root.prompt));
+      chain.forEach((step,i)=>{
+        if(i){ text.appendChild(document.createElement('br')); text.appendChild(document.createElement('br')); }
+        const head=el('span','tag',i===0?'initial':'continuation '+i);
+        text.appendChild(head);
+        text.appendChild(document.createTextNode(' '));
+        text.appendChild(renderLinkedText(step.prompt));
+      });
       box.appendChild(text);
       const tools=el('div','promptTools');
       const focus=el('button','chip','Open source image');
-      focus.onclick=()=>showNode(root);
+      focus.onclick=()=>showNode(source);
       tools.appendChild(focus);
       box.appendChild(tools);
       $('#pinfo').appendChild(box);
@@ -564,7 +607,9 @@ function setPromptPanel(n){
 }
 function renderCustomPlayer(ve){
   const shell=el('div','playerShell');
-  shell.appendChild(ve);
+  const stage=el('div','mediaStage');
+  stage.appendChild(ve);
+  shell.appendChild(stage);
   const controls=el('div','playerControls');
   const playBtn=el('button','','Pause');
   const range=document.createElement('input'); range.type='range'; range.min='0'; range.max='1000'; range.value='0';
@@ -574,7 +619,11 @@ function renderCustomPlayer(ve){
   const vol=document.createElement('input'); vol.type='range'; vol.min='0'; vol.max='100'; vol.value=String(Math.round((ve.volume||0)*100)); vol.title='Volume';
   volWrap.appendChild(el('span','muted','Vol'));
   volWrap.appendChild(vol);
-  controls.appendChild(playBtn); controls.appendChild(range); controls.appendChild(time); controls.appendChild(mute); controls.appendChild(volWrap);
+  const sizeWrap=el('div','sizeWrap');
+  const size=document.createElement('input'); size.type='range'; size.min='34'; size.max='82'; size.value=localStorage.getItem('playerH')||'48'; size.title='Player size';
+  sizeWrap.appendChild(el('span','muted','Size'));
+  sizeWrap.appendChild(size);
+  controls.appendChild(playBtn); controls.appendChild(range); controls.appendChild(time); controls.appendChild(mute); controls.appendChild(volWrap); controls.appendChild(sizeWrap);
   shell.appendChild(controls);
   const update=()=>{
     const d=ve.duration||0, c=ve.currentTime||0;
@@ -583,10 +632,12 @@ function renderCustomPlayer(ve){
     playBtn.textContent=ve.paused?'Play':'Pause';
     mute.textContent=ve.muted?'Muted':'Sound';
     vol.value=String(Math.round((ve.volume||0)*100));
+    size.value=localStorage.getItem('playerH')||'48';
   };
   playBtn.onclick=()=>ve.paused?ve.play().catch(()=>{}):ve.pause();
   mute.onclick=()=>{ ve.muted=!ve.muted; update(); };
   vol.oninput=()=>{ ve.volume=Number(vol.value)/100; ve.muted=ve.volume===0; update(); };
+  size.oninput=()=>applyPlayerHeight(size.value);
   range.oninput=()=>{ const d=ve.duration||0; if(d) ve.currentTime=(Number(range.value)/1000)*d; };
   ve.ontimeupdate=update; ve.onloadedmetadata=update; ve.onplay=update; ve.onpause=update; ve.onvolumechange=update;
   clearInterval(seekTimer); seekTimer=setInterval(update,500);
@@ -632,17 +683,23 @@ function showNode(n){
   const promptCell=el('div','');
   promptCell.appendChild(renderLinkedText(n.prompt||'—'));
   add('Prompt', promptCell);
-  const root=byId.get(rootOf(n.id));
-  if(n.type==='video' && root && root.id!==n.id && root.prompt){
+  const source=sourceImageFor(n);
+  const sourceChain=imagePromptChain(source);
+  if(n.type==='video' && source && source.id!==n.id && sourceChain.length){
     const sourceCell=el('div','');
-    sourceCell.appendChild(renderLinkedText(root.prompt));
+    sourceChain.forEach((step,i)=>{
+      if(i){ sourceCell.appendChild(document.createElement('br')); sourceCell.appendChild(document.createElement('br')); }
+      sourceCell.appendChild(el('span','tag',i===0?'initial':'continuation '+i));
+      sourceCell.appendChild(document.createTextNode(' '));
+      sourceCell.appendChild(renderLinkedText(step.prompt));
+    });
     const copySource=el('button','iconBtn','⧉');
-    copySource.title='Copy source image prompt';
+    copySource.title='Copy source image prompt chain';
     copySource.style.marginTop='6px';
-    copySource.onclick=()=>copyText(root.prompt,copySource);
+    copySource.onclick=()=>copyText(promptChainText(sourceChain),copySource);
     sourceCell.appendChild(document.createElement('br'));
     sourceCell.appendChild(copySource);
-    add('Source prompt', sourceCell);
+    add(sourceChain.length>1?'Source chain':'Source prompt', sourceCell);
   }
   add('Mode', n.mode);
   add('Model', n.model);

@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,6 +31,7 @@ namespace MultiImageClient
         private readonly string _resolution;
         private readonly string _responseFormat;
         private readonly string _name;
+        private readonly string _baseUrl;
 
         public ImageGeneratorApiType ApiType => _apiType;
 
@@ -55,7 +57,8 @@ namespace MultiImageClient
             string quality = "high",
             string resolution = "1k",
             string responseFormat = "url",
-            Settings? settings = null)
+            Settings? settings = null,
+            string? baseUrl = null)
         {
             _settings = settings;
             if (apiType != ImageGeneratorApiType.GrokImagine && apiType != ImageGeneratorApiType.GrokImaginePro)
@@ -69,7 +72,7 @@ namespace MultiImageClient
                 ? XAIGrokClient.ModelGrokImaginePro
                 : XAIGrokClient.ModelGrokImagine;
 
-            _client = new XAIGrokClient(apiKey);
+            _client = new XAIGrokClient(apiKey, baseUrl: baseUrl);
             _httpClient = new HttpClient();
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _stats = stats;
@@ -78,6 +81,7 @@ namespace MultiImageClient
             _quality = quality;
             _resolution = resolution;
             _responseFormat = responseFormat;
+            _baseUrl = _client.BaseUrl;
         }
 
         /// Short human-readable tier label used in the combined-grid panel
@@ -144,6 +148,7 @@ namespace MultiImageClient
             {
                 TierLabel,
                 _model,
+                _baseUrl,
             };
             parts.Add(string.IsNullOrWhiteSpace(_aspectRatio)
                 ? "AR auto"
@@ -198,9 +203,10 @@ namespace MultiImageClient
 
                 var pxHint = EstimatePixelsLabel();
                 var pxSuffix = string.IsNullOrEmpty(pxHint) ? "" : $" ({pxHint})";
-                Logger.Log($"\t-> {TierLabel} [{_model}] AR={_aspectRatio} q={_quality} res={_resolution}{pxSuffix}: {prompt}");
+                Logger.Log($"\t-> {TierLabel} [{_model}] host={_baseUrl} AR={_aspectRatio} q={_quality} res={_resolution}{pxSuffix}: {prompt}");
                 var response = await _client.GenerateAsync(req);
                 sw.Stop();
+                LogModerationMetadata(response);
 
                 if (response.Data == null || response.Data.Count == 0)
                 {
@@ -208,7 +214,22 @@ namespace MultiImageClient
                     return new TaskProcessResult
                     {
                         IsSuccess = false,
-                        ErrorMessage = "Grok returned empty data[] with no images.",
+                        ErrorMessage = BuildModerationAwareMessage("Grok returned empty data[] with no images.", response),
+                        PromptDetails = promptDetails,
+                        ImageGenerator = _apiType,
+                        ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
+                        CreateTotalMs = sw.ElapsedMilliseconds,
+                    };
+                }
+
+                var first = response.Data[0];
+                if (response.RespectModeration == false || first.RespectModeration == false)
+                {
+                    _stats.GrokImageGenerationErrorCount++;
+                    return new TaskProcessResult
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = BuildModerationAwareMessage("Grok image filtered by moderation.", response, first),
                         PromptDetails = promptDetails,
                         ImageGenerator = _apiType,
                         ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
@@ -218,10 +239,10 @@ namespace MultiImageClient
 
                 _stats.GrokImageGenerationSuccessCount++;
 
-                var first = response.Data[0];
                 var usd = response.Usage?.CostUsd;
                 var usdLabel = usd.HasValue ? $" cost=${usd:0.####}" : string.Empty;
-                Logger.Log($"\t<- {TierLabel} [{_model}] OK in {sw.ElapsedMilliseconds} ms{usdLabel}");
+                var actualModelLabel = string.IsNullOrWhiteSpace(response.Model) ? "" : $" actualModel={response.Model}";
+                Logger.Log($"\t<- {TierLabel} [{_model}] OK in {sw.ElapsedMilliseconds} ms{usdLabel}{actualModelLabel}");
 
                 GrokLedger.Append(_settings, new GrokLedgerEntry
                 {
@@ -286,7 +307,7 @@ namespace MultiImageClient
                 return new TaskProcessResult
                 {
                     IsSuccess = false,
-                    ErrorMessage = "Grok returned data[0] with neither url nor b64_json.",
+                    ErrorMessage = BuildModerationAwareMessage("Grok returned data[0] with neither url nor b64_json.", response, first),
                     PromptDetails = promptDetails,
                     ImageGenerator = _apiType,
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
@@ -297,11 +318,12 @@ namespace MultiImageClient
             {
                 sw.Stop();
                 _stats.GrokImageGenerationErrorCount++;
-                Logger.Log($"\t<- Grok {_model} FAIL http={ex.StatusCode}: {Truncate(ex.ResponseBody, 500)}");
+                var detail = FormatGrokError(ex.ResponseBody);
+                Logger.Log($"\t<- Grok {_model} FAIL host={_baseUrl} http={ex.StatusCode}: {Truncate(detail, 500)}");
                 return new TaskProcessResult
                 {
                     IsSuccess = false,
-                    ErrorMessage = $"{ex.StatusCode}: {Truncate(ex.ResponseBody, 300)}",
+                    ErrorMessage = $"{ex.StatusCode}: {Truncate(detail, 300)}",
                     PromptDetails = promptDetails,
                     ImageGenerator = _apiType,
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
@@ -312,7 +334,7 @@ namespace MultiImageClient
             {
                 sw.Stop();
                 _stats.GrokImageGenerationErrorCount++;
-                Logger.Log($"\t<- Grok {_model} EXCEPTION: {ex.Message}");
+                Logger.Log($"\t<- Grok {_model} EXCEPTION host={_baseUrl}: {ex.Message}");
                 return new TaskProcessResult
                 {
                     IsSuccess = false,
@@ -333,6 +355,74 @@ namespace MultiImageClient
         {
             if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
             return s.Length <= max ? s : s.Substring(0, max) + "...";
+        }
+
+        private static void LogModerationMetadata(XAIGrokImageResponse response)
+        {
+            var parts = new List<string>();
+            if (response.RespectModeration.HasValue) parts.Add($"respect_moderation={response.RespectModeration.Value}");
+            if (!string.IsNullOrWhiteSpace(response.BlockReason)) parts.Add($"block_reason={response.BlockReason}");
+            if (!string.IsNullOrWhiteSpace(response.Model)) parts.Add($"model={response.Model}");
+            var item = response.Data?.FirstOrDefault();
+            if (item != null)
+            {
+                if (item.RespectModeration.HasValue) parts.Add($"data[0].respect_moderation={item.RespectModeration.Value}");
+                if (!string.IsNullOrWhiteSpace(item.BlockReason)) parts.Add($"data[0].block_reason={item.BlockReason}");
+            }
+
+            if (parts.Count > 0)
+            {
+                Logger.Log($"\t   Grok metadata: {string.Join("; ", parts)}");
+            }
+        }
+
+        private static string BuildModerationAwareMessage(
+            string fallback,
+            XAIGrokImageResponse response,
+            XAIGrokImageData? item = null)
+        {
+            var reason = item?.BlockReason ?? response.BlockReason;
+            var moderation = item?.RespectModeration ?? response.RespectModeration;
+            var parts = new List<string> { fallback };
+            if (moderation.HasValue) parts.Add($"respect_moderation={moderation.Value}");
+            if (!string.IsNullOrWhiteSpace(reason)) parts.Add($"block_reason={reason}");
+            if (!string.IsNullOrWhiteSpace(response.Model)) parts.Add($"model={response.Model}");
+            return string.Join(" ", parts);
+        }
+
+        private static string FormatGrokError(string responseBody)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(responseBody);
+                var root = doc.RootElement;
+                var parts = new List<string>();
+                AddJsonProperty(root, parts, "code");
+                AddJsonProperty(root, parts, "error");
+                AddJsonProperty(root, parts, "block_reason");
+                AddJsonProperty(root, parts, "respect_moderation");
+                if (root.TryGetProperty("usage", out var usage)
+                    && usage.TryGetProperty("cost_in_usd_ticks", out var costTicks))
+                {
+                    parts.Add($"usage.cost_in_usd_ticks={costTicks}");
+                }
+                if (parts.Count > 0)
+                {
+                    return string.Join("; ", parts) + $"; raw={responseBody}";
+                }
+            }
+            catch
+            {
+                // Keep the original body if it was not JSON.
+            }
+
+            return responseBody;
+        }
+
+        private static void AddJsonProperty(System.Text.Json.JsonElement root, List<string> parts, string name)
+        {
+            if (!root.TryGetProperty(name, out var value)) return;
+            parts.Add($"{name}={value}");
         }
     }
 }

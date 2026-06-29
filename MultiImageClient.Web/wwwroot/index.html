@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MultiImage Workflow Lab</title>
+  <style>
+    :root {
+      --paper: #fffdf4;
+      --panel: #fff8dc;
+      --ink: #111111;
+      --blue: #123c69;
+      --gold: #b8860b;
+      --green: #147a28;
+      --red: #a31313;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: var(--paper);
+      color: var(--ink);
+    }
+    header {
+      padding: 18px 24px;
+      background: var(--blue);
+      color: white;
+      display: flex;
+      align-items: baseline;
+      gap: 18px;
+    }
+    header h1 { margin: 0; font-size: 24px; }
+    header span { font-size: 14px; color: white; }
+    main {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      min-height: calc(100vh - 64px);
+    }
+    aside {
+      padding: 18px;
+      border-right: 3px solid var(--gold);
+      background: var(--panel);
+      overflow-y: auto;
+    }
+    section {
+      padding: 18px;
+      overflow-y: auto;
+    }
+    label { display: block; font-weight: 700; margin: 12px 0 6px; }
+    textarea, input, select {
+      width: 100%;
+      font: inherit;
+      color: var(--ink);
+      background: white;
+      border: 2px solid var(--gold);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    textarea { min-height: 130px; resize: vertical; }
+    button {
+      border: 0;
+      background: var(--blue);
+      color: white;
+      font-weight: 700;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    button.secondary { background: var(--gold); color: var(--ink); }
+    button:disabled { background: #5f1b1b; cursor: not-allowed; }
+    .providers {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .provider {
+      border: 2px solid var(--gold);
+      border-radius: 8px;
+      background: white;
+      padding: 8px;
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 8px;
+      align-items: start;
+    }
+    .provider small { display: block; margin-top: 3px; color: var(--ink); }
+    .run-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .run-card, .job, .node, .selected-panel {
+      border: 2px solid var(--gold);
+      border-radius: 12px;
+      background: white;
+      padding: 12px;
+    }
+    .run-card { cursor: pointer; }
+    .run-card.active { border-color: var(--blue); box-shadow: 0 0 0 3px #d4af37; }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    .nodes {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+    }
+    .node img {
+      width: 100%;
+      max-height: 320px;
+      object-fit: contain;
+      background: var(--paper);
+      border: 1px solid var(--gold);
+      border-radius: 8px;
+    }
+    .node {
+      cursor: pointer;
+    }
+    .node.selected {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px #d4af37;
+    }
+    .node h3 { margin: 8px 0 6px; color: var(--blue); }
+    .node p { white-space: pre-wrap; }
+    .node .lineage { font-size: 12px; color: var(--ink); }
+    .status-done { color: var(--green); font-weight: 700; }
+    .status-failed { color: var(--red); font-weight: 700; }
+    .jobs { display: grid; gap: 8px; margin: 12px 0; }
+    .meta { font-size: 13px; color: var(--ink); }
+    .console-panel {
+      border: 2px solid var(--gold);
+      border-radius: 12px;
+      background: white;
+      margin: 12px 0 16px;
+      overflow: hidden;
+    }
+    .console-header {
+      background: var(--blue);
+      color: white;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .console-header strong { color: white; }
+    .console-path {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--gold);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .console {
+      height: 240px;
+      overflow: auto;
+      background: #111111;
+      color: white;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      padding: 10px;
+      white-space: pre-wrap;
+    }
+    .log-error { color: #ffb4b4; }
+    .log-info { color: white; }
+    .selected-panel {
+      margin-top: 14px;
+    }
+    .selected-panel h3 { margin: 0 0 8px; color: var(--blue); }
+    .selected-panel p { white-space: pre-wrap; }
+    .quick-panel {
+      border: 2px solid var(--blue);
+      border-radius: 12px;
+      background: white;
+      padding: 10px;
+      margin: 12px 0;
+    }
+    .quick-panel strong { color: var(--blue); }
+    .empty {
+      border: 3px dashed var(--gold);
+      border-radius: 12px;
+      padding: 28px;
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MultiImage Workflow Lab</h1>
+    <span>prompt -> multi-image -> describe -> remix -> repeat</span>
+  </header>
+  <main>
+    <aside>
+      <label for="prompt">Original or remix prompt</label>
+      <textarea id="prompt" placeholder="Type a prompt to start a workflow loop..."></textarea>
+      <label for="title">Run title</label>
+      <input id="title" placeholder="Optional short title">
+      <button id="createRun">Create Run / Root Prompt Node</button>
+
+      <div class="quick-panel">
+        <strong>Fast local testing</strong>
+        <div class="meta">Uses mock image + mock describer. No paid API calls.</div>
+        <button id="quickLocal" class="secondary">Use Fast Local Test Settings</button>
+      </div>
+
+      <label>Providers</label>
+      <div id="providers" class="providers"></div>
+
+      <label for="count">Repeat count per selected provider</label>
+      <input id="count" type="number" min="1" max="20" value="1">
+      <button id="generate" class="secondary" disabled>Run GenerateImages Stage</button>
+
+      <label>Describer</label>
+      <select id="describer"></select>
+      <label for="describePrompt">Describe prompt</label>
+      <textarea id="describePrompt" placeholder="Optional. Leave blank for default visual prompt-transfer description."></textarea>
+      <button id="describe" class="secondary" disabled>Describe Selected Image</button>
+
+      <label for="remixInstructions">Remix instructions</label>
+      <textarea id="remixInstructions" placeholder="Optional. e.g. preserve clothing, make lighting warmer, target Grok style..."></textarea>
+      <button id="remix" class="secondary" disabled>Create Remix Prompt Node</button>
+
+      <div class="selected-panel">
+        <h3>Selected Node</h3>
+        <div id="selectedDetails" class="meta">Select a node to inspect and act on it.</div>
+      </div>
+
+      <label>Recent runs</label>
+      <div id="runs" class="run-list"></div>
+    </aside>
+    <section>
+      <div class="topbar">
+        <div>
+          <h2 id="runTitle">No run selected</h2>
+          <div id="runPrompt" class="meta"></div>
+          <div id="runSummary" class="meta"></div>
+        </div>
+        <div>
+          <button id="refresh">Refresh</button>
+          <button class="secondary" id="selectNewest">Select Newest Node</button>
+        </div>
+      </div>
+      <div id="jobs" class="jobs"></div>
+      <div class="console-panel">
+        <div class="console-header">
+          <strong>Live Server Console</strong>
+          <button class="secondary" id="refreshLogs">Refresh Logs</button>
+        </div>
+        <div id="logPath" class="console-path">Log file: loading...</div>
+        <div id="console" class="console">Loading logs...</div>
+      </div>
+      <div id="nodes" class="nodes">
+        <div class="empty">Create a run/root prompt node, choose provider presets, then run GenerateImages. Images will appear here as child nodes.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let providers = [];
+    let describers = [];
+    let runs = [];
+    let currentRun = null;
+    let selectedNodeId = null;
+
+    const $ = id => document.getElementById(id);
+
+    async function api(path, options) {
+      const res = await fetch(path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...options
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || res.statusText);
+      }
+      return res.json();
+    }
+
+    async function loadProviders() {
+      providers = await api('/api/providers');
+      $('providers').innerHTML = providers.map(p => `
+        <label class="provider">
+          <input type="checkbox" value="${p.id}" ${p.enabled ? 'checked' : 'disabled'}>
+          <span>
+            ${escapeHtml(p.label)}
+            <small>${escapeHtml(p.apiType)} | ~$${Number(p.estimatedCost).toFixed(3)}${p.enabled ? '' : ' | ' + escapeHtml(p.disabledReason)}</small>
+          </span>
+        </label>
+      `).join('');
+    }
+
+    async function loadDescribers() {
+      describers = await api('/api/describers');
+      $('describer').innerHTML = describers.map(d => `
+        <option value="${d.id}" ${d.enabled ? '' : 'disabled'}>${escapeHtml(d.label)}${d.enabled ? '' : ' | ' + escapeHtml(d.disabledReason)}</option>
+      `).join('');
+    }
+
+    async function loadRuns() {
+      runs = await api('/api/runs');
+      $('runs').innerHTML = runs.map(run => `
+        <div class="run-card ${currentRun && currentRun.id === run.id ? 'active' : ''}" onclick="selectRun('${run.id}')">
+          <strong>${escapeHtml(run.title || run.id)}</strong>
+          <div class="meta">${new Date(run.updatedAt).toLocaleString()} | ${run.nodes.length} nodes</div>
+        </div>
+      `).join('');
+    }
+
+    async function selectRun(id) {
+      currentRun = await api('/api/runs/' + id);
+      selectedNodeId = currentRun.nodes[0]?.id || null;
+      $('generate').disabled = false;
+      renderRun();
+      await loadRuns();
+    }
+
+    function renderRun() {
+      if (!currentRun) return;
+      $('runTitle').textContent = currentRun.title || currentRun.id;
+      $('runPrompt').textContent = currentRun.originalPrompt;
+      $('runSummary').textContent = summarizeRun(currentRun);
+      $('prompt').value = $('prompt').value || currentRun.originalPrompt;
+      $('nodes').innerHTML = currentRun.nodes.map(node => renderNode(node)).join('');
+      renderSelectedNode();
+    }
+
+    function summarizeRun(run) {
+      const counts = run.nodes.reduce((acc, node) => {
+        acc[node.type] = (acc[node.type] || 0) + 1;
+        return acc;
+      }, {});
+      return `nodes: ${run.nodes.length} | edges: ${run.edges.length} | jobs: ${(run.jobs || []).length} | ` +
+        Object.entries(counts).map(([k, v]) => `${k}: ${v}`).join(' | ');
+    }
+
+    function renderNode(node) {
+      const statusClass = node.status === 'failed' ? 'status-failed' : 'status-done';
+      const image = node.imagePath ? `<img src="${node.imagePath}" alt="${escapeHtml(node.provider)}">` : '';
+      const text = node.error || node.text || node.prompt || '';
+      const parents = currentRun.edges.filter(e => e.to === node.id).map(e => `${e.kind}: ${e.from}`).join('\n');
+      return `
+        <article class="node ${selectedNodeId === node.id ? 'selected' : ''}" onclick="selectNode('${node.id}')">
+          ${image}
+          <h3>${escapeHtml(node.type)} ${node.provider ? '|' : ''} ${escapeHtml(node.provider || '')}</h3>
+          <div class="${statusClass}">${escapeHtml(node.status)}</div>
+          <div class="lineage">${escapeHtml(parents || 'root')}</div>
+          <p>${escapeHtml(text)}</p>
+          <button onclick="useNodePrompt(event, '${node.id}')">Copy Node Text To Prompt Box</button>
+          ${node.imagePath ? `<button class="secondary" onclick="openImage(event, '${node.imagePath}')">Open Image</button>` : ''}
+        </article>
+      `;
+    }
+
+    async function loadJobs() {
+      const jobs = await api('/api/jobs');
+      $('jobs').innerHTML = jobs.slice(0, 8).map(job => `
+        <div class="job">
+          <strong>${escapeHtml(job.type)} | ${escapeHtml(job.status)}</strong>
+          <div>${escapeHtml(job.message || '')}</div>
+          <div class="meta">${escapeHtml(job.runId)} | ${job.nodeIds.length} nodes</div>
+        </div>
+      `).join('');
+    }
+
+    async function loadLogs() {
+      const data = await api('/api/logs?count=180');
+      $('logPath').textContent = 'Log file: ' + data.logPath;
+      const consoleEl = $('console');
+      const wasNearBottom = consoleEl.scrollTop + consoleEl.clientHeight >= consoleEl.scrollHeight - 24;
+      consoleEl.innerHTML = data.entries.map(entry => {
+        const ts = new Date(entry.timestamp).toLocaleTimeString();
+        const klass = entry.level === 'error' ? 'log-error' : 'log-info';
+        return `<div class="${klass}">[${ts}] ${escapeHtml(entry.level.toUpperCase())} ${escapeHtml(entry.scope)} | ${escapeHtml(entry.message)}</div>`;
+      }).join('');
+      if (wasNearBottom) {
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+      }
+    }
+
+    window.useNodePrompt = function (event, nodeId) {
+      event.stopPropagation();
+      const node = currentRun?.nodes.find(n => n.id === nodeId);
+      if (node) $('prompt').value = node.prompt || node.text || currentRun.originalPrompt;
+    };
+
+    window.openImage = function (event, imagePath) {
+      event.stopPropagation();
+      window.open(imagePath, '_blank');
+    };
+
+    window.selectNode = function (nodeId) {
+      selectedNodeId = nodeId;
+      renderRun();
+    };
+
+    function getSelectedNode() {
+      return currentRun?.nodes.find(n => n.id === selectedNodeId) || null;
+    }
+
+    function renderSelectedNode() {
+      const node = getSelectedNode();
+      $('describe').disabled = !currentRun || !node || node.type !== 'image' || !node.imagePath;
+      $('remix').disabled = !currentRun || !node || !['description', 'image', 'prompt'].includes(node.type);
+      if (!node) {
+        $('selectedDetails').textContent = 'Select a node to inspect and act on it.';
+        return;
+      }
+      const parents = currentRun.edges.filter(e => e.to === node.id).map(e => `${e.kind}: ${e.from}`).join('\n') || 'root';
+      const children = currentRun.edges.filter(e => e.from === node.id).map(e => `${e.kind}: ${e.to}`).join('\n') || 'none yet';
+      $('selectedDetails').innerHTML = `
+        <strong>${escapeHtml(node.type)} ${escapeHtml(node.id)}</strong><br>
+        provider: ${escapeHtml(node.provider || '(none)')}<br>
+        status: ${escapeHtml(node.status)}<br>
+        parents:<br><pre>${escapeHtml(parents)}</pre>
+        children:<br><pre>${escapeHtml(children)}</pre>
+      `;
+    }
+
+    $('createRun').onclick = async () => {
+      const prompt = $('prompt').value.trim();
+      if (!prompt) return alert('Prompt is required.');
+      currentRun = await api('/api/runs', {
+        method: 'POST',
+        body: JSON.stringify({ prompt, title: $('title').value.trim() })
+      });
+      selectedNodeId = currentRun.nodes[0]?.id || null;
+      $('generate').disabled = false;
+      renderRun();
+      await loadRuns();
+    };
+
+    $('quickLocal').onclick = () => {
+      document.querySelectorAll('#providers input[type=checkbox]').forEach(input => {
+        input.checked = input.value === 'workflow.mock.local';
+      });
+      $('describer').value = 'mock.visual';
+      $('count').value = 1;
+      $('describePrompt').value = '';
+      $('remixInstructions').value = 'Use this selected mock image description to make a clear next test image.';
+    };
+
+    $('generate').onclick = async () => {
+      if (!currentRun) return;
+      const providerIds = [...document.querySelectorAll('#providers input:checked')].map(input => input.value);
+      if (providerIds.length === 0) return alert('Choose at least one provider.');
+      await api(`/api/runs/${currentRun.id}/generate`, {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt: $('prompt').value.trim() || currentRun.originalPrompt,
+          parentNodeId: selectedNodeId || '',
+          providerIds,
+          count: Number($('count').value || 1)
+        })
+      });
+      await refreshAll();
+    };
+
+    $('describe').onclick = async () => {
+      const node = getSelectedNode();
+      if (!currentRun || !node || node.type !== 'image') return alert('Select an image node first.');
+      await api(`/api/runs/${currentRun.id}/describe`, {
+        method: 'POST',
+        body: JSON.stringify({
+          imageNodeId: node.id,
+          describerId: $('describer').value,
+          prompt: $('describePrompt').value.trim()
+        })
+      });
+      await refreshAll();
+    };
+
+    $('remix').onclick = async () => {
+      const node = getSelectedNode();
+      if (!currentRun || !node) return alert('Select a node first.');
+      const descriptionNodeId = node.type === 'description' ? node.id : '';
+      const sourceNodeId = descriptionNodeId
+        ? (currentRun.edges.find(e => e.to === node.id)?.from || node.id)
+        : node.id;
+      const remixNode = await api(`/api/runs/${currentRun.id}/remix`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sourceNodeId,
+          descriptionNodeId,
+          instructions: $('remixInstructions').value.trim()
+        })
+      });
+      selectedNodeId = remixNode.id;
+      $('prompt').value = remixNode.prompt || remixNode.text || '';
+      await refreshAll();
+    };
+
+    $('refresh').onclick = refreshAll;
+    $('refreshLogs').onclick = loadLogs;
+    $('selectNewest').onclick = () => {
+      if (!currentRun || currentRun.nodes.length === 0) return;
+      selectedNodeId = currentRun.nodes[currentRun.nodes.length - 1].id;
+      renderRun();
+    };
+
+    async function refreshAll() {
+      await loadRuns();
+      if (currentRun) currentRun = await api('/api/runs/' + currentRun.id);
+      if (currentRun && selectedNodeId && !currentRun.nodes.some(n => n.id === selectedNodeId)) {
+        selectedNodeId = currentRun.nodes[0]?.id || null;
+      }
+      renderRun();
+      await loadJobs();
+      await loadLogs();
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+      }[ch]));
+    }
+
+    async function init() {
+      await loadProviders();
+      await loadDescribers();
+      await loadRuns();
+      await loadJobs();
+      await loadLogs();
+      setInterval(refreshAll, 5000);
+    }
+
+    init().catch(err => alert(err.message));
+  </script>
+</body>
+</html>
