@@ -18,3 +18,4 @@ magic*.png
 **/tmp/**
 **/__pycache__/**
 *.py[cod]
+test-new.txt
