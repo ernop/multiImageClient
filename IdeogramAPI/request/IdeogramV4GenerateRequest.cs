@@ -27,7 +27,7 @@ namespace IdeogramAPIClient
         /// "2560x1440" (16:9), "1440x2560" (9:16), "2496x1664" (3:2), etc.
         /// Null lets the API pick (2048x2048).
         [JsonProperty("resolution", NullValueHandling = NullValueHandling.Ignore)]
-        public string Resolution { get; set; }
+        public string? Resolution { get; set; }
 
         /// FLASH | TURBO | DEFAULT | QUALITY. Null = DEFAULT.
         [JsonProperty("rendering_speed", NullValueHandling = NullValueHandling.Ignore)]

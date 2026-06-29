@@ -27,7 +27,7 @@ namespace IdeogramAPIClient
             var jsonRequest = JsonConvert.SerializeObject(new { image_request = request }, new JsonSerializerSettings
             {
                 NullValueHandling = NullValueHandling.Ignore,
-                Converters = new List<JsonConverter> { new StringEnumConverter(camelCaseText: false) }
+                Converters = new List<JsonConverter> { new StringEnumConverter() }
             });
 
             var httpContent = new StringContent(jsonRequest, System.Text.Encoding.UTF8, "application/json");
@@ -42,6 +42,10 @@ namespace IdeogramAPIClient
 
             var content = await response.Content.ReadAsStringAsync();
             var generateResponse = JsonConvert.DeserializeObject<GenerateResponse>(content);
+            if (generateResponse == null)
+            {
+                throw new InvalidDataException("Failed to deserialize Ideogram generate response.");
+            }
             return generateResponse;
         }        
 
@@ -153,6 +157,10 @@ namespace IdeogramAPIClient
 
                 var content = await response.Content.ReadAsStringAsync();
                 var describeResponse = JsonConvert.DeserializeObject<IdeogramDescribeResponse>(content);
+                if (describeResponse == null)
+                {
+                    throw new InvalidDataException("Failed to deserialize Ideogram describe response.");
+                }
                 return describeResponse;
             }
         }

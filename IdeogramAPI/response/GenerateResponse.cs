@@ -14,6 +14,6 @@ namespace IdeogramAPIClient
         public DateTime Created { get; set; }
 
         [JsonProperty("data")]
-        public List<ImageObject> Data { get; set; }
+        public List<ImageObject> Data { get; set; } = new();
     }
 }

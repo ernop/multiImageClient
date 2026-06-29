@@ -6,7 +6,7 @@ namespace IdeogramAPIClient
 {
     public class IdeogramDescribeRequest
     {
-        public byte[] ImageFile { get; set; }
-        public string DescribeModelVersion { get; set; }
+        public byte[] ImageFile { get; set; } = Array.Empty<byte>();
+        public string DescribeModelVersion { get; set; } = string.Empty;
     }
 }

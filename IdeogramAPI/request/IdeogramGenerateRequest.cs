@@ -61,6 +61,6 @@ namespace IdeogramAPIClient
         public IdeogramStyleType? StyleType { get; set; }
 
         [JsonProperty("negative_prompt")]
-        public string NegativePrompt { get; set; }
+        public string? NegativePrompt { get; set; }
     }
 }

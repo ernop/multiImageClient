@@ -11,6 +11,6 @@ namespace IdeogramAPIClient
     public class VisionResponse
     {
         [JsonProperty("descriptions")]
-        public List<string> Descriptions { get; set; }
+        public List<string> Descriptions { get; set; } = new();
     }
 }

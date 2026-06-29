@@ -19,7 +19,6 @@ namespace RecraftAPIClient
 
         public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, RecraftImageSize size, RecraftModel model = RecraftModel.recraftv3)
         {
-            var stringSubstyle = "";
             string serialized = "";
             var modelString = model.ToString();
 
@@ -61,7 +60,7 @@ namespace RecraftAPIClient
 
             var responseContent = await response.Content.ReadAsStringAsync();
 
-            return JsonConvert.DeserializeObject<GenerationResponse>(responseContent);
+            return JsonConvert.DeserializeObject<GenerationResponse>(responseContent)!;
         }
 
         public async Task<StyleResponse> CreateStyleAsync(byte[] imageData, RecraftStyle style)
@@ -74,7 +73,7 @@ namespace RecraftAPIClient
             await EnsureSuccessfulResponse(response);
 
             var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<StyleResponse>(responseContent);
+            return JsonConvert.DeserializeObject<StyleResponse>(responseContent)!;
         }
 
         public async Task<ImageResponse> VectorizeImageAsync(byte[] imageData, string responseFormat = "url")
@@ -90,7 +89,7 @@ namespace RecraftAPIClient
             await EnsureSuccessfulResponse(response);
 
             var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<ImageResponse>(responseContent);
+            return JsonConvert.DeserializeObject<ImageResponse>(responseContent)!;
         }
 
         public async Task<ImageResponse> RemoveBackgroundAsync(byte[] imageData, string responseFormat = "url")
@@ -106,7 +105,7 @@ namespace RecraftAPIClient
             await EnsureSuccessfulResponse(response);
 
             var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<ImageResponse>(responseContent);
+            return JsonConvert.DeserializeObject<ImageResponse>(responseContent)!;
         }
 
         public async Task<ImageResponse> ClarityUpscaleAsync(byte[] imageData, string responseFormat = "url")
@@ -122,7 +121,7 @@ namespace RecraftAPIClient
             await EnsureSuccessfulResponse(response);
 
             var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<ImageResponse>(responseContent);
+            return JsonConvert.DeserializeObject<ImageResponse>(responseContent)!;
         }
 
         public async Task<ImageResponse> GenerativeUpscaleAsync(byte[] imageData, string responseFormat = "url")
@@ -138,7 +137,7 @@ namespace RecraftAPIClient
             await EnsureSuccessfulResponse(response);
 
             var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<ImageResponse>(responseContent);
+            return JsonConvert.DeserializeObject<ImageResponse>(responseContent)!;
         }
 
         private async Task EnsureSuccessfulResponse(HttpResponseMessage response)
@@ -154,7 +153,7 @@ namespace RecraftAPIClient
     public class GenerationResponse
     {
         [JsonProperty("data")]
-        public List<ImageData> Data { get; set; }
+        public List<ImageData> Data { get; set; } = new();
 
         [JsonProperty("created")]
         public long Created { get; set; }
@@ -163,21 +162,21 @@ namespace RecraftAPIClient
     public class StyleResponse
     {
         [JsonProperty("id")]
-        public string Id { get; set; }
+        public string Id { get; set; } = string.Empty;
     }
 
     public class ImageResponse
     {
         [JsonProperty("image")]
-        public ImageData Image { get; set; }
+        public ImageData Image { get; set; } = new();
     }
 
     public class ImageData
     {
         [JsonProperty("url")]
-        public string Url { get; set; }
+        public string Url { get; set; } = string.Empty;
 
         [JsonProperty("b64_json")]
-        public string Base64Json { get; set; }
+        public string Base64Json { get; set; } = string.Empty;
     }
 }

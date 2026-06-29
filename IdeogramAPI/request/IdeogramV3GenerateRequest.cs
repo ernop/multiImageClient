@@ -15,7 +15,7 @@ namespace IdeogramAPIClient
 
         public string Prompt { get; }
 
-        public string AspectRatio { get; set; }
+        public string AspectRatio { get; set; } = string.Empty;
 
 
         public IdeogramRenderingSpeed? RenderingSpeed { get; set; }

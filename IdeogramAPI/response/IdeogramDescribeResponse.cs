@@ -6,12 +6,12 @@ namespace IdeogramAPIClient
     public class IdeogramDescription
     {
         [JsonProperty("text")]
-        public string Text { get; set; }
+        public string Text { get; set; } = string.Empty;
     }
 
     public class IdeogramDescribeResponse
     {
         [JsonProperty("descriptions")]
-        public List<IdeogramDescription> Descriptions { get; set; }
+        public List<IdeogramDescription> Descriptions { get; set; } = new();
     }
 }
