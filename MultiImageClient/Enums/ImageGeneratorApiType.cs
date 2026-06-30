@@ -64,6 +64,20 @@ namespace MultiImageClient
         // Qwen3-4B text encoder. This is local/open-weight, not BFL's API.
         LocalFlux2Klein = 30,
 
+        // xAI Grok Imagine image editing: POST /v1/images/edits with one or
+        // more source images plus edit instructions.
+        GrokImagineEdit = 31,
+
+        // Local ComfyUI workflow: Alibaba/Tongyi-MAI Z-Image or Z-Image-Turbo.
+        // This is local/open-weight and uses the same ComfyUI queue/history path.
+        LocalZImage = 32,
+
+        // Consumer grok.com session endpoints (browser cookies, not api.x.ai).
+        GrokWebImagine = 33,
+        GrokWebImaginePro = 34,
+        GrokWebImagineVideo = 35,
+        GrokWebImagineEdit = 36,
+
         WorkflowMock = 1000,
     }
 }

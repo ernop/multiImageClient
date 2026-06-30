@@ -4,9 +4,11 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,6 +25,21 @@ namespace MultiImageClient
         private readonly int _pollIntervalMs;
         private readonly int _timeoutSeconds;
         private readonly string _name;
+        private readonly int _width;
+        private readonly int _height;
+        private readonly string _diffusionModelName;
+        private readonly string _checkpointName;
+        private readonly string _vaeName;
+        private readonly string _textEncoderName;
+        private readonly string _textEncoder2Name;
+        private readonly string _loraName;
+        private readonly double _loraModelStrength;
+        private readonly double _loraClipStrength;
+        private readonly ImageGeneratorApiType _apiType;
+        private readonly string _modelName;
+        private readonly string _filenamePrefix;
+        private readonly string _workflowPathSettingName;
+        private readonly bool _warnWhenUncensoredWithoutAblatedEncoder;
 
         public ComfyUIFlux2KleinGenerator(
             string baseUrl,
@@ -31,33 +48,64 @@ namespace MultiImageClient
             MultiClientRunStats stats,
             string name = "uncensored",
             int pollIntervalMs = 1000,
-            int timeoutSeconds = 900)
+            int timeoutSeconds = 900,
+            Flux2KleinResolution resolution = Flux2KleinResolution._1024x1024,
+            string diffusionModelName = "",
+            string checkpointName = "",
+            string vaeName = "",
+            string textEncoderName = "",
+            string textEncoder2Name = "",
+            string loraName = "",
+            double loraModelStrength = 0.8,
+            double loraClipStrength = 0.8,
+            ImageGeneratorApiType apiType = ImageGeneratorApiType.LocalFlux2Klein,
+            string modelName = "FLUX.2 Klein 4B",
+            string filenamePrefix = "local_flux2_klein_4b",
+            string workflowPathSettingName = "ComfyUIFlux2KleinWorkflowPath",
+            bool warnWhenUncensoredWithoutAblatedEncoder = true)
         {
             _baseUrl = (baseUrl ?? string.Empty).Trim().TrimEnd('/');
             _workflowPath = workflowPath ?? string.Empty;
             _pollIntervalMs = Math.Max(250, pollIntervalMs);
             _timeoutSeconds = Math.Max(30, timeoutSeconds);
             _name = string.IsNullOrWhiteSpace(name) ? "uncensored" : name.Trim();
+            (_width, _height) = resolution.GetDimensions();
             _stats = stats;
             _semaphore = new SemaphoreSlim(Math.Max(1, maxConcurrency));
             _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(Math.Min(_timeoutSeconds, 120)) };
+            _diffusionModelName = diffusionModelName?.Trim() ?? "";
+            _checkpointName = checkpointName?.Trim() ?? "";
+            _vaeName = vaeName?.Trim() ?? "";
+            _textEncoderName = textEncoderName?.Trim() ?? "";
+            _textEncoder2Name = textEncoder2Name?.Trim() ?? "";
+            _loraName = loraName?.Trim() ?? "";
+            _loraModelStrength = loraModelStrength;
+            _loraClipStrength = loraClipStrength;
+            _apiType = apiType;
+            _modelName = string.IsNullOrWhiteSpace(modelName) ? "local image model" : modelName.Trim();
+            _filenamePrefix = string.IsNullOrWhiteSpace(filenamePrefix) ? "local_comfyui" : filenamePrefix.Trim();
+            _workflowPathSettingName = string.IsNullOrWhiteSpace(workflowPathSettingName)
+                ? "ComfyUIWorkflowPath"
+                : workflowPathSettingName.Trim();
+            _warnWhenUncensoredWithoutAblatedEncoder = warnWhenUncensoredWithoutAblatedEncoder;
         }
 
-        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.LocalFlux2Klein;
+        public ImageGeneratorApiType ApiType => _apiType;
 
-        public string GetFilenamePart(PromptDetails pd) => $"local_flux2_klein_4b_{_name}";
+        public string GetFilenamePart(PromptDetails pd) => $"{_filenamePrefix}_{_name}_{_width}x{_height}";
 
         public List<string> GetRightParts()
         {
             return new List<string>
             {
                 "local ComfyUI",
-                "FLUX.2 Klein 4B",
+                _modelName,
+                $"{_width}x{_height}",
                 _name,
             };
         }
 
-        public string GetGeneratorSpecPart() => $"Local FLUX.2 Klein 4B [{_name}]";
+        public string GetGeneratorSpecPart() => $"Local {_modelName} {_width}x{_height} [{_name}]";
 
         public decimal GetCost() => 0m;
 
@@ -71,14 +119,38 @@ namespace MultiImageClient
                 ValidateConfig();
 
                 var prompt = promptDetails.Prompt ?? string.Empty;
-                promptDetails.RuntimeMeta["size"] = "1024x1024";
+                promptDetails.RuntimeMeta["size"] = $"{_width}x{_height}";
                 promptDetails.RuntimeMeta["endpoint"] = _baseUrl;
                 promptDetails.RuntimeMeta["workflow"] = _workflowPath;
-                promptDetails.RuntimeMeta["model"] = "FLUX.2 Klein 4B local ComfyUI";
+                promptDetails.RuntimeMeta["model"] = $"{_modelName} local ComfyUI";
+                AddRuntimeMetaIfSet(promptDetails, "diffusionModel", _diffusionModelName);
+                AddRuntimeMetaIfSet(promptDetails, "checkpoint", _checkpointName);
+                AddRuntimeMetaIfSet(promptDetails, "vae", _vaeName);
+                AddRuntimeMetaIfSet(promptDetails, "lora", _loraName);
+                if (!string.IsNullOrWhiteSpace(_loraName))
+                {
+                    promptDetails.RuntimeMeta["loraModelStrength"] = _loraModelStrength.ToString(CultureInfo.InvariantCulture);
+                    promptDetails.RuntimeMeta["loraClipStrength"] = _loraClipStrength.ToString(CultureInfo.InvariantCulture);
+                }
 
                 var workflow = LoadWorkflow(prompt);
+
+                // Surface which text encoder the workflow actually loads so every
+                // run is verifiable. The "uncensored" label only means something
+                // if the encoder is the ablated GGUF — warn loudly otherwise.
+                var encoders = ExtractEncoderNames(workflow);
+                var encoderLabel = encoders.Count > 0 ? string.Join("+", encoders) : "(unknown)";
+                promptDetails.RuntimeMeta["textEncoder"] = encoderLabel;
+                var looksAblated = encoders.Any(e => e.Contains("abl", StringComparison.OrdinalIgnoreCase));
+                if (_warnWhenUncensoredWithoutAblatedEncoder
+                    && _name.Contains("uncensored", StringComparison.OrdinalIgnoreCase)
+                    && !looksAblated)
+                {
+                    Logger.Log($"\t[WARN] Local {_modelName} is labeled '{_name}' but its workflow text encoder is '{encoderLabel}', which does NOT look ablated/uncensored. Check {_workflowPath}.");
+                }
+
                 var promptId = await QueuePromptAsync(workflow);
-                Logger.Log($"\t-> Local FLUX.2 Klein queued ComfyUI prompt_id={promptId}: {prompt}");
+                Logger.Log($"\t-> Local {_modelName} queued ComfyUI prompt_id={promptId} [{_width}x{_height}, encoder={encoderLabel}]: {prompt}");
 
                 var images = await WaitForImagesAsync(promptId);
                 sw.Stop();
@@ -109,7 +181,7 @@ namespace MultiImageClient
             {
                 sw.Stop();
                 _stats.LocalImageGenerationErrorCount++;
-                Logger.Log($"\t<- Local FLUX.2 Klein FAIL: {ex.Message}");
+                Logger.Log($"\t<- Local {_modelName} FAIL: {ex.Message}");
                 return Fail(ex.Message, promptDetails, generator, sw.ElapsedMilliseconds);
             }
             finally
@@ -140,12 +212,12 @@ namespace MultiImageClient
 
             if (string.IsNullOrWhiteSpace(_workflowPath))
             {
-                throw new InvalidOperationException("settings.json: ComfyUIFlux2KleinWorkflowPath is empty. Save a ComfyUI API workflow JSON with {{PROMPT}} in the prompt field.");
+                throw new InvalidOperationException($"settings.json: {_workflowPathSettingName} is empty. Save a ComfyUI API workflow JSON with {{PROMPT}} in the prompt field.");
             }
 
             if (!File.Exists(_workflowPath))
             {
-                throw new FileNotFoundException($"ComfyUI FLUX.2 Klein workflow file not found: {_workflowPath}", _workflowPath);
+                throw new FileNotFoundException($"ComfyUI {_modelName} workflow file not found: {_workflowPath}", _workflowPath);
             }
         }
 
@@ -154,6 +226,7 @@ namespace MultiImageClient
             var workflow = JObject.Parse(File.ReadAllText(_workflowPath));
             var replacedPrompt = ReplaceStringTokens(workflow, "{{PROMPT}}", prompt);
             ReplaceStringTokens(workflow, "{{SEED}}", Random.Shared.NextInt64(1, long.MaxValue).ToString());
+            ApplyConfiguredModelTokens(workflow);
 
             if (!replacedPrompt)
             {
@@ -161,7 +234,142 @@ namespace MultiImageClient
                     $"Workflow '{_workflowPath}' does not contain a {{PROMPT}} placeholder. Export the ComfyUI workflow in API format and put {{PROMPT}} in the positive prompt text.");
             }
 
+            var unresolved = FindUnresolvedPlaceholders(workflow);
+            if (unresolved.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Workflow '{_workflowPath}' still contains unresolved placeholder(s): {string.Join(", ", unresolved)}. "
+                    + "Set the matching ComfyUI* field in settings.json or remove the placeholder from the workflow.");
+            }
+
+            ApplyResolution(workflow, _width, _height);
+
             return workflow;
+        }
+
+        private void ApplyConfiguredModelTokens(JObject workflow)
+        {
+            var replacements = new Dictionary<string, string>
+            {
+                ["{{CHECKPOINT}}"] = _checkpointName,
+                ["{{CKPT}}"] = _checkpointName,
+                ["{{UNET}}"] = _diffusionModelName,
+                ["{{DIFFUSION_MODEL}}"] = _diffusionModelName,
+                ["{{VAE}}"] = _vaeName,
+                ["{{CLIP}}"] = _textEncoderName,
+                ["{{CLIP1}}"] = _textEncoderName,
+                ["{{TEXT_ENCODER}}"] = _textEncoderName,
+                ["{{TEXT_ENCODER1}}"] = _textEncoderName,
+                ["{{CLIP2}}"] = _textEncoder2Name,
+                ["{{TEXT_ENCODER2}}"] = _textEncoder2Name,
+                ["{{LORA}}"] = _loraName,
+                ["{{LORA_STRENGTH_MODEL}}"] = _loraModelStrength.ToString(CultureInfo.InvariantCulture),
+                ["{{LORA_STRENGTH_CLIP}}"] = _loraClipStrength.ToString(CultureInfo.InvariantCulture),
+            };
+
+            foreach (var pair in replacements)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    continue;
+                }
+
+                ReplaceStringTokens(workflow, pair.Key, pair.Value);
+            }
+        }
+
+        // Force the chosen resolution onto whatever latent-image node the saved
+        // workflow uses, so the enum wins over the hard-coded width/height in the
+        // JSON. Targets any EmptyLatentImage-style node (class_type ending in
+        // "LatentImage", e.g. EmptyFlux2LatentImage).
+        private static void ApplyResolution(JObject workflow, int width, int height)
+        {
+            foreach (var node in workflow.Values().OfType<JObject>())
+            {
+                var classType = node.Value<string>("class_type");
+                if (classType == null || !classType.EndsWith("LatentImage", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (node["inputs"] is JObject inputs)
+                {
+                    inputs["width"] = width;
+                    inputs["height"] = height;
+                }
+            }
+        }
+
+        // Collect the clip/text-encoder filenames referenced by any CLIP loader
+        // node (CLIPLoader, CLIPLoaderGGUF, DualCLIPLoader, ...) so callers can
+        // confirm which encoder a run actually used.
+        private static List<string> ExtractEncoderNames(JObject workflow)
+        {
+            var names = new List<string>();
+            foreach (var node in workflow.Values().OfType<JObject>())
+            {
+                var classType = node.Value<string>("class_type") ?? string.Empty;
+                if (!classType.Contains("CLIP", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (node["inputs"] is not JObject inputs)
+                {
+                    continue;
+                }
+
+                foreach (var prop in inputs.Properties())
+                {
+                    if (prop.Name.StartsWith("clip_name", StringComparison.OrdinalIgnoreCase)
+                        && prop.Value.Type == JTokenType.String)
+                    {
+                        var value = prop.Value.Value<string>();
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            names.Add(value!);
+                        }
+                    }
+                }
+            }
+
+            return names;
+        }
+
+        private static SortedSet<string> FindUnresolvedPlaceholders(JToken token)
+        {
+            var placeholders = new SortedSet<string>(StringComparer.Ordinal);
+            CollectUnresolvedPlaceholders(token, placeholders);
+            return placeholders;
+        }
+
+        private static void CollectUnresolvedPlaceholders(JToken token, SortedSet<string> placeholders)
+        {
+            if (token is JValue value && value.Type == JTokenType.String)
+            {
+                var s = value.Value<string>();
+                if (s != null)
+                {
+                    foreach (Match match in Regex.Matches(s, @"\{\{[A-Z0-9_]+\}\}"))
+                    {
+                        placeholders.Add(match.Value);
+                    }
+                }
+                return;
+            }
+
+            foreach (var child in token.Children())
+            {
+                CollectUnresolvedPlaceholders(child, placeholders);
+            }
+        }
+
+        private static void AddRuntimeMetaIfSet(PromptDetails promptDetails, string key, string value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                promptDetails.RuntimeMeta[key] = value;
+            }
         }
 
         private static bool ReplaceStringTokens(JToken token, string marker, string replacement)

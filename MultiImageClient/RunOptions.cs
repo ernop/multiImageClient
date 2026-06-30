@@ -120,6 +120,40 @@ namespace MultiImageClient
         /// recording everything in grok_ledger.jsonl.
         public bool GrokVideoTest { get; set; }
 
+        /// If true, run one xAI Grok image edit and exit. Uses --input-image
+        /// as the source image and --prompt (or first prompt source entry) as
+        /// edit instructions.
+        public bool GrokEdit { get; set; }
+
+        /// Optional aspect ratio override for --grok-edit. Empty means let xAI
+        /// inherit the source image aspect ratio.
+        public string GrokEditAspectRatio { get; set; } = "";
+
+        /// If true, run GrokWebWorkflow: batch prompts through consumer
+        /// grok.com session endpoints (browser cookies), not api.x.ai.
+        public bool GrokWeb { get; set; }
+
+        /// Cookie file for --grok-web. Overrides settings.json GrokWebCookiePath.
+        public string GrokWebCookies { get; set; } = "";
+
+        /// image | video | video-from-image | edit
+        public string GrokWebMode { get; set; } = "image";
+
+        /// Aspect ratio for --grok-web image/video runs (default 2:3).
+        public string GrokWebAspectRatio { get; set; } = "2:3";
+
+        /// Video length in seconds for --grok-web video modes.
+        public int GrokWebVideoLength { get; set; } = 6;
+
+        /// 480p or 720p for --grok-web video modes.
+        public string GrokWebVideoResolution { get; set; } = "480p";
+
+        /// When true, request side-by-side variants on grok.com web endpoints.
+        public bool GrokWebSideBySide { get; set; } = true;
+
+        /// When true (default), save full grok-web WebSocket capture under saves/.../grok-web-capture/.
+        public bool GrokWebCapture { get; set; } = true;
+
         /// If true, run GrokArchive.SyncAsync and exit: back-read the entire
         /// reachable Grok history (xAI Files API inventory + re-pollable
         /// video request_ids + local JSON logs) into grok_ledger.jsonl and
@@ -143,6 +177,12 @@ namespace MultiImageClient
         /// Extra attempts for failed prompts before composing the provider
         /// sample contact sheet. Zero means no retry.
         public int ProviderSampleRetryFailures { get; set; }
+
+        /// Output resolution for local ComfyUI image generators.
+        /// Set with --local-size WxH (e.g. 1536x1024). Defaults to 1024x1024.
+        /// Only affects runs that include local generators (e.g.
+        /// --provider-sample-providers local, --all-providers).
+        public Flux2KleinResolution LocalFlux2KleinResolution { get; set; } = Flux2KleinResolution._1024x1024;
 
         /// Master switch for popping finished images/contact-sheets open in the
         /// system default viewer. Defaults to false: runs are headless and just
@@ -212,6 +252,17 @@ namespace MultiImageClient
                     case "--open-images":
                         o.OpenImages = true;
                         break;
+                    case "--local-size":
+                        {
+                            var raw = args[++i];
+                            if (!Flux2KleinResolutionExtensions.TryParseSize(raw, out var localRes))
+                            {
+                                Console.Error.WriteLine($"--local-size '{raw}' invalid. Valid sizes: {Flux2KleinResolutionExtensions.ValidSizesCsv()}");
+                                Environment.Exit(2);
+                            }
+                            o.LocalFlux2KleinResolution = localRes;
+                        }
+                        break;
                     case "--repl":
                         o.Repl = true;
                         break;
@@ -259,6 +310,37 @@ namespace MultiImageClient
                     case "--grok-video-test":
                         o.GrokVideoTest = true;
                         break;
+                    case "--grok-edit":
+                        o.GrokEdit = true;
+                        break;
+                    case "--grok-edit-aspect-ratio":
+                        o.GrokEditAspectRatio = args[++i];
+                        break;
+                    case "--grok-web":
+                        o.GrokWeb = true;
+                        if (o.Workflow == 0) o.Workflow = 1;
+                        break;
+                    case "--grok-web-cookies":
+                        o.GrokWebCookies = args[++i];
+                        break;
+                    case "--grok-web-mode":
+                        o.GrokWebMode = args[++i];
+                        break;
+                    case "--grok-web-aspect-ratio":
+                        o.GrokWebAspectRatio = args[++i];
+                        break;
+                    case "--grok-web-length":
+                        o.GrokWebVideoLength = int.Parse(args[++i]);
+                        break;
+                    case "--grok-web-resolution":
+                        o.GrokWebVideoResolution = args[++i];
+                        break;
+                    case "--grok-web-no-side-by-side":
+                        o.GrokWebSideBySide = false;
+                        break;
+                    case "--grok-web-no-capture":
+                        o.GrokWebCapture = false;
+                        break;
                     case "--provider-sample-showcase":
                         o.ProviderSampleShowcase = true;
                         break;
@@ -304,6 +386,7 @@ namespace MultiImageClient
             Console.WriteLine("  --backfill-dl     One-shot: mirror all images under ImageDownloadBaseFolder to C:\\dl and exit.");
             Console.WriteLine("  --fast            Use cheapest/fastest generator set (gpt-image-2 low 1024x1024). Good for smoke tests.");
             Console.WriteLine("  --open-images     Pop finished images/contact-sheets open in the system default viewer. OFF by default (runs are headless and just save to disk). --quick-test enables this automatically.");
+            Console.WriteLine("  --local-size WxH  Output resolution for local ComfyUI image generators such as FLUX.2 Klein and Z-Image (default 1024x1024). Valid: 1024x1024, 1536x1024, 1024x1536, 1152x896, 896x1152, 1344x768, 768x1344, 1408x1408.");
             Console.WriteLine("  --quick-test      Like --fast plus: save every streamed partial PNG and open each one in the default viewer as it arrives (implies --open-images). Still asks y/n/custom per prompt unless combined with --auto.");
             Console.WriteLine("  --repl            Interactive prompt-by-prompt REPL. Prompts fire asynchronously (up to --repl-concurrency at a time); NO viewer pops. Commands: :help :size :quality :gens :status :wait :edit :retry :quit.");
             Console.WriteLine("  --repl-size WxH       REPL session default size for gpt-image-2 (default 2048x2048). Change at runtime with :size WxH.");
@@ -316,6 +399,16 @@ namespace MultiImageClient
             Console.WriteLine("  --all-providers       One-shot: fire ONE prompt (--prompt or first PromptFiles line) at current image endpoints (gpt-image-2, gpt-image-1, gpt-image-1-mini, Ideogram 4.0, flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro) and compose a single contact-sheet grid (pops open only with --open-images). Keyless providers show as error cells.");
             Console.WriteLine("  --with-video          Pair with --all-providers to also dispatch a Grok Imagine VIDEO (6s, 480p) for the same prompt; the mp4 lands in the day folder's Video\\ subfolder. Videos are not composited into the PNG sheet.");
             Console.WriteLine("  --grok-video-test     One-shot: exercise all three Grok video modes with one prompt (--prompt or first PromptFiles line) — text-to-video, grok-image-to-video, and extend-video (3s, 480p each). Clips are saved, stored durably at xAI, and ledgered.");
+            Console.WriteLine("  --grok-edit           One-shot: edit --input-image with Grok Imagine using --prompt as edit instructions. Saves the result and a one-cell contact sheet. Pair with --grok-pro for grok-imagine-image-pro.");
+            Console.WriteLine("  --grok-edit-aspect-ratio AR  Optional output aspect ratio for --grok-edit (e.g. 1:1, 16:9). Default: inherit source image AR.");
+            Console.WriteLine("  --grok-web            Batch prompts through consumer grok.com session endpoints (browser cookies, not api.x.ai). Uses --prompt-file or PromptFiles.");
+            Console.WriteLine("  --grok-web-cookies fp Override settings.json GrokWebCookiePath with a Netscape cookies.txt or raw Cookie header export.");
+            Console.WriteLine("  --grok-web-mode M     image (default) | video | video-from-image | edit");
+            Console.WriteLine("  --grok-web-aspect-ratio AR  Aspect ratio for grok-web image/video (default 2:3).");
+            Console.WriteLine("  --grok-web-length N   Video length seconds for grok-web video modes (default 6).");
+            Console.WriteLine("  --grok-web-resolution R  480p (default) or 720p for grok-web video modes.");
+            Console.WriteLine("  --grok-web-no-side-by-side  Request a single variant instead of side-by-side on grok-web.");
+            Console.WriteLine("  --grok-web-no-capture  Disable full WebSocket session capture (on by default under saves/.../grok-web-capture/).");
             Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low (pops open only with --open-images).");
             Console.WriteLine("  --provider-sample-file fp   Pair with --provider-sample-showcase to reuse a saved numbered/plain people-fixture prompt list.");
             Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok,recraft.");

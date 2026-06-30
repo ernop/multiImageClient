@@ -2,21 +2,21 @@
   "1": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "flux-2-klein-4b.safetensors",
+      "unet_name": "{{UNET}}",
       "weight_dtype": "default"
     }
   },
   "2": {
-    "class_type": "CLIPLoaderGGUF",
+    "class_type": "CLIPLoader",
     "inputs": {
-      "clip_name": "qwen3-4b-abl-q4_0.gguf",
+      "clip_name": "{{TEXT_ENCODER}}",
       "type": "flux2"
     }
   },
   "3": {
     "class_type": "VAELoader",
     "inputs": {
-      "vae_name": "flux2-vae.safetensors"
+      "vae_name": "{{VAE}}"
     }
   },
   "4": {
@@ -37,7 +37,7 @@
     "class_type": "FluxGuidance",
     "inputs": {
       "conditioning": ["4", 0],
-      "guidance": 6.0
+      "guidance": 1.0
     }
   },
   "7": {
@@ -56,7 +56,7 @@
       "negative": ["5", 0],
       "latent_image": ["7", 0],
       "seed": "{{SEED}}",
-      "steps": 50,
+      "steps": 4,
       "cfg": 1.0,
       "sampler_name": "euler",
       "scheduler": "simple",
@@ -74,7 +74,7 @@
     "class_type": "SaveImage",
     "inputs": {
       "images": ["9", 0],
-      "filename_prefix": "flux2_klein_uncensored"
+      "filename_prefix": "flux2_klein_9b"
     }
   }
 }

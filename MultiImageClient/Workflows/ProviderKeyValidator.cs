@@ -8,24 +8,32 @@ namespace MultiImageClient
     {
         public static string? DescribeKeyProblem(ImageGeneratorApiType apiType, Settings settings)
         {
-            if (apiType == ImageGeneratorApiType.LocalFlux2Klein)
+            if (apiType == ImageGeneratorApiType.LocalFlux2Klein || apiType == ImageGeneratorApiType.LocalZImage)
             {
+                var (workflowPath, workflowSettingName) = GetLocalComfyWorkflowPath(apiType, settings);
+
                 if (string.IsNullOrWhiteSpace(settings.ComfyUIBaseUrl))
                 {
                     return "settings.json: ComfyUIBaseUrl is empty - start ComfyUI and set it to http://127.0.0.1:8188";
                 }
 
-                if (string.IsNullOrWhiteSpace(settings.ComfyUIFlux2KleinWorkflowPath))
+                if (string.IsNullOrWhiteSpace(workflowPath))
                 {
-                    return "settings.json: ComfyUIFlux2KleinWorkflowPath is empty - save an API-format FLUX.2 Klein ComfyUI workflow JSON with {{PROMPT}} in the prompt field";
+                    return $"settings.json: {workflowSettingName} is empty - save an API-format ComfyUI workflow JSON with {{PROMPT}} in the prompt field";
                 }
 
-                if (!File.Exists(settings.ComfyUIFlux2KleinWorkflowPath))
+                if (!File.Exists(workflowPath))
                 {
-                    return $"settings.json: ComfyUIFlux2KleinWorkflowPath does not exist: {settings.ComfyUIFlux2KleinWorkflowPath}";
+                    return $"settings.json: {workflowSettingName} does not exist: {workflowPath}";
                 }
 
                 return null;
+            }
+
+            if (apiType is ImageGeneratorApiType.GrokWebImagine or ImageGeneratorApiType.GrokWebImaginePro
+                or ImageGeneratorApiType.GrokWebImagineVideo or ImageGeneratorApiType.GrokWebImagineEdit)
+            {
+                return DescribeGrokWebCookieProblem(settings);
             }
 
             var (keyName, keyValue) = apiType switch
@@ -47,6 +55,7 @@ namespace MultiImageClient
                     => ("RecraftApiKey", settings.RecraftApiKey),
                 ImageGeneratorApiType.GrokImagine or ImageGeneratorApiType.GrokImaginePro
                     or ImageGeneratorApiType.GrokImagineVideo
+                    or ImageGeneratorApiType.GrokImagineEdit
                     => ("XAIGrokApiKey", settings.XAIGrokApiKey),
                 ImageGeneratorApiType.GoogleNanoBanana or ImageGeneratorApiType.GoogleNanoBananaPro
                     or ImageGeneratorApiType.GoogleImagen4
@@ -70,6 +79,37 @@ namespace MultiImageClient
             }
 
             return null;
+        }
+
+        private static string? DescribeGrokWebCookieProblem(Settings settings)
+        {
+            var path = settings.GrokWebCookiePath;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return "settings.json: GrokWebCookiePath is empty - export grok.com cookies to a file and set the path, or pass --grok-web-cookies";
+            }
+
+            if (!File.Exists(path))
+            {
+                return $"settings.json: GrokWebCookiePath does not exist: {path}";
+            }
+
+            return null;
+        }
+
+        private static (string WorkflowPath, string SettingName) GetLocalComfyWorkflowPath(ImageGeneratorApiType apiType, Settings settings)
+        {
+            if (apiType == ImageGeneratorApiType.LocalZImage)
+            {
+                return (settings.ComfyUIZImageWorkflowPath, nameof(settings.ComfyUIZImageWorkflowPath));
+            }
+
+            if (!string.IsNullOrWhiteSpace(settings.ComfyUIWorkflowPath))
+            {
+                return (settings.ComfyUIWorkflowPath, nameof(settings.ComfyUIWorkflowPath));
+            }
+
+            return (settings.ComfyUIFlux2KleinWorkflowPath, nameof(settings.ComfyUIFlux2KleinWorkflowPath));
         }
     }
 }

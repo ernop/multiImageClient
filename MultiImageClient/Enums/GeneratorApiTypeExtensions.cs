@@ -40,7 +40,13 @@ namespace MultiImageClient
                 ImageGeneratorApiType.GrokImagine => ".png",
                 ImageGeneratorApiType.GrokImaginePro => ".png",
                 ImageGeneratorApiType.GrokImagineVideo => ".mp4",
+                ImageGeneratorApiType.GrokImagineEdit => ".png",
+                ImageGeneratorApiType.GrokWebImagine => ".png",
+                ImageGeneratorApiType.GrokWebImaginePro => ".png",
+                ImageGeneratorApiType.GrokWebImagineVideo => ".mp4",
+                ImageGeneratorApiType.GrokWebImagineEdit => ".png",
                 ImageGeneratorApiType.LocalFlux2Klein => ".png",
+                ImageGeneratorApiType.LocalZImage => ".png",
                 _ => throw new ArgumentException("Unknown image generator type while picking file extension:", nameof(generator))
             };
         }

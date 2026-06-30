@@ -3,7 +3,7 @@
 This is the local/open-weight path for FLUX.2 Klein 4B. It is separate from the
 BFL hosted API and does not use `BFLApiKey`.
 
-## Model Setup
+## Model Pieces
 
 Install or update ComfyUI, then install the FLUX.2 Klein 4B text-to-image
 workflow from ComfyUI's workflow templates.
@@ -14,12 +14,23 @@ Model files expected by the standard ComfyUI FLUX.2 Klein 4B workflow:
 - `ComfyUI/models/vae/flux2-vae.safetensors`
 - text encoder:
   - default: `ComfyUI/models/text_encoders/qwen_3_4b.safetensors`
-  - uncensored path: replace that loader with an ablated Qwen3-4B text encoder,
-    such as `qwen3-4b-abl-q4_0.gguf`, using a GGUF-compatible loader.
+  - custom GGUF/safetensors encoders require a matching ComfyUI loader node.
 
-The ablated text encoder removes prompt-side filtering. It does not add visual
-knowledge that the base diffusion model never learned, so explicit anatomy may
-still need a compatible LoRA.
+The diffusion model/UNET is the denoiser: it turns latent noise into an image
+conditioned on text embeddings. The text encoder converts your prompt into those
+conditioning embeddings. The VAE decodes final latents back into pixels. A LoRA
+is a small adapter loaded on top of the diffusion model and sometimes the text
+encoder; it shifts style, subject knowledge, composition habits, or domain
+details without replacing the base model.
+
+LoRA strength is normally split:
+
+- `strength_model`: how hard the LoRA changes the diffusion/UNET behavior.
+  Start around `0.5`-`0.9`; higher values can overpower composition or produce
+  artifacts.
+- `strength_clip`: how hard the LoRA changes prompt/text-encoder behavior.
+  Start at the same value as model strength, then lower it if prompts become too
+  literal or unstable.
 
 ## Workflow Contract
 
@@ -34,12 +45,33 @@ Optional: put `{{SEED}}` in any string field where you want this client to inser
 a random seed. If your seed field is numeric, leave it fixed or randomize it in
 the ComfyUI workflow.
 
+Optional model placeholders can be placed directly in loader node string fields:
+
+- UNET / diffusion loader: `{{UNET}}` or `{{DIFFUSION_MODEL}}`
+- checkpoint loader: `{{CHECKPOINT}}` or `{{CKPT}}`
+- VAE loader: `{{VAE}}`
+- text encoder loader: `{{TEXT_ENCODER}}`, `{{TEXT_ENCODER1}}`, or `{{CLIP}}`
+- second text encoder loader: `{{TEXT_ENCODER2}}` or `{{CLIP2}}`
+- LoRA loader: `{{LORA}}`
+- LoRA strengths: `{{LORA_STRENGTH_MODEL}}`, `{{LORA_STRENGTH_CLIP}}`
+
+If any `{{...}}` placeholder remains unresolved after settings are applied, the
+C# generator fails before queueing the ComfyUI prompt. That catches misspelled
+settings or half-edited workflows early.
+
 Then set these in `MultiImageClient/settings.json`:
 
 ```json
 {
   "ComfyUIBaseUrl": "http://127.0.0.1:8188",
-  "ComfyUIFlux2KleinWorkflowPath": "C:\\path\\to\\flux2-klein-4b-uncensored-api.json",
+  "ComfyUIWorkflowPath": "C:\\path\\to\\flux2-klein-4b-api.json",
+  "ComfyUIWorkflowName": "flux2-klein-custom",
+  "ComfyUIDiffusionModelName": "flux-2-klein-4b-fp8.safetensors",
+  "ComfyUIVaeName": "flux2-vae.safetensors",
+  "ComfyUITextEncoderName": "qwen_3_4b.safetensors",
+  "ComfyUILoraName": "your-adapter.safetensors",
+  "ComfyUILoraModelStrength": 0.8,
+  "ComfyUILoraClipStrength": 0.8,
   "ComfyUIPollIntervalMs": 1000,
   "ComfyUITimeoutSeconds": 900
 }

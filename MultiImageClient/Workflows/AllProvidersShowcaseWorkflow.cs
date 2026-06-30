@@ -10,8 +10,8 @@ namespace MultiImageClient
     /// "Every provider, one image" runner: takes each prompt from the active
     /// prompt source and fires it at one flagship generator per provider in parallel (see
     /// GeneratorGroups.GetOnePerProvider — gpt-image-2, Ideogram 4.0,
-    /// flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro, and
-    /// optionally Grok video). Each prompt's results are saved via the normal
+    /// flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro, local
+    /// ComfyUI presets, and optionally Grok video). Each prompt's results are saved via the normal
     /// ImageManager pipeline, then composed into that prompt's contact-sheet grid.
     ///
     /// Providers whose API keys are missing/invalid fail soft: their cell in
@@ -40,7 +40,7 @@ namespace MultiImageClient
                 return null;
             }
 
-            var groups = new GeneratorGroups(settings, concurrency: 1, stats);
+            var groups = new GeneratorGroups(settings, concurrency: 1, stats, localFlux2KleinResolution: options.LocalFlux2KleinResolution);
             var generators = groups.GetOnePerProvider(includeVideo: options.WithVideo).ToList();
 
             var imageManager = new ImageManager(settings, stats);

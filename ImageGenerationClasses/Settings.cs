@@ -30,6 +30,10 @@ namespace MultiImageClient
         /// xAI (Grok) API key, format "xai-...". Required only when a Grok
         /// image generator is active. Obtain one at https://console.x.ai/.
         public string XAIGrokApiKey { get; set; }
+
+        /// Netscape cookies.txt or raw Cookie-header export for grok.com.
+        /// Required for --grok-web consumer-session generators.
+        public string GrokWebCookiePath { get; set; } = "";
         public string XAIBaseUrl { get; set; } = "";
         public string GoogleGeminiApiKey { get; set; }
         public string GoogleCloudLocation { get; set; }
@@ -72,9 +76,45 @@ namespace MultiImageClient
         /// Example: http://127.0.0.1:8188
         public string ComfyUIBaseUrl { get; set; } = "";
 
-        /// API-format ComfyUI workflow JSON for FLUX.2 Klein 4B. Put
-        /// {{PROMPT}} in the positive prompt field before exporting/saving it.
+        /// API-format ComfyUI workflow JSON for local/open-weight image runs.
+        /// Put {{PROMPT}} in the positive prompt field before exporting/saving it.
+        public string ComfyUIWorkflowPath { get; set; } = "";
+
+        /// Short label for filenames/metadata when the local ComfyUI workflow is active.
+        public string ComfyUIWorkflowName { get; set; } = "";
+
+        /// Optional model filenames to inject into placeholder-bearing ComfyUI API workflows.
+        /// These are ComfyUI model names, not filesystem paths, e.g. the filename visible in
+        /// a loader node's dropdown under models/diffusion_models, models/vae, etc.
+        public string ComfyUIDiffusionModelName { get; set; } = "";
+        public string ComfyUICheckpointName { get; set; } = "";
+        public string ComfyUIVaeName { get; set; } = "";
+        public string ComfyUITextEncoderName { get; set; } = "";
+        public string ComfyUITextEncoder2Name { get; set; } = "";
+        public string ComfyUILoraName { get; set; } = "";
+        public double ComfyUILoraModelStrength { get; set; } = 0.8;
+        public double ComfyUILoraClipStrength { get; set; } = 0.8;
+
+        /// Legacy API-format ComfyUI workflow JSON for FLUX.2 Klein 4B. Kept so
+        /// existing settings.json files continue to work; prefer ComfyUIWorkflowPath.
         public string ComfyUIFlux2KleinWorkflowPath { get; set; } = "";
+
+        /// API-format ComfyUI workflow JSON for local Z-Image or Z-Image-Turbo runs.
+        /// Put {{PROMPT}} in the positive prompt field before exporting/saving it.
+        public string ComfyUIZImageWorkflowPath { get; set; } = "";
+
+        /// Short label for filenames/metadata when the local Z-Image workflow is active.
+        public string ComfyUIZImageWorkflowName { get; set; } = "";
+
+        /// Optional Z-Image-specific model filenames for placeholder-bearing workflows.
+        public string ComfyUIZImageDiffusionModelName { get; set; } = "";
+        public string ComfyUIZImageCheckpointName { get; set; } = "";
+        public string ComfyUIZImageVaeName { get; set; } = "";
+        public string ComfyUIZImageTextEncoderName { get; set; } = "";
+        public string ComfyUIZImageTextEncoder2Name { get; set; } = "";
+        public string ComfyUIZImageLoraName { get; set; } = "";
+        public double ComfyUIZImageLoraModelStrength { get; set; } = 0.8;
+        public double ComfyUIZImageLoraClipStrength { get; set; } = 0.8;
 
         public int ComfyUIPollIntervalMs { get; set; } = 1000;
         public int ComfyUITimeoutSeconds { get; set; } = 900;
@@ -148,6 +188,10 @@ namespace MultiImageClient
             TypedPromptsAppendFile = ExpandPath(TypedPromptsAppendFile);
             LoadPromptsFrom = ExpandPath(LoadPromptsFrom);
             GoogleServiceAccountKeyPath = ExpandPath(GoogleServiceAccountKeyPath);
+            ComfyUIWorkflowPath = ExpandPath(ComfyUIWorkflowPath);
+            ComfyUIFlux2KleinWorkflowPath = ExpandPath(ComfyUIFlux2KleinWorkflowPath);
+            ComfyUIZImageWorkflowPath = ExpandPath(ComfyUIZImageWorkflowPath);
+            GrokWebCookiePath = ExpandPath(GrokWebCookiePath);
 
             if (PromptFiles != null)
             {

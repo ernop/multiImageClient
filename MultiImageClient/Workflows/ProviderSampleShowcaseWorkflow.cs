@@ -21,8 +21,9 @@ namespace MultiImageClient
             var prompts = LoadPrompts(options.ProviderSampleFilePath, sampleSize);
             var providerConcurrency = options.PromptConcurrency > 1 ? options.PromptConcurrency : 5;
 
-            var groups = new GeneratorGroups(settings, providerConcurrency, stats);
+            var groups = new GeneratorGroups(settings, providerConcurrency, stats, localFlux2KleinResolution: options.LocalFlux2KleinResolution);
             var generators = FilterGenerators(groups.GetProviderSampleReviewSet(), options.ProviderSampleProviders).ToList();
+            AddProviderSampleAliases(generators, groups, options.ProviderSampleProviders);
             var imageManager = new ImageManager(settings, stats);
             var samplePath = string.IsNullOrWhiteSpace(options.ProviderSampleFilePath)
                 ? SavePromptSample(settings, prompts)
@@ -131,6 +132,34 @@ namespace MultiImageClient
                 var label = $"{g.GetGeneratorSpecPart()} {g.ApiType}".ToLowerInvariant();
                 return filters.Any(label.Contains);
             });
+        }
+
+        private static void AddProviderSampleAliases(
+            List<IImageGenerator> generators,
+            GeneratorGroups groups,
+            string providerFilter)
+        {
+            if (string.IsNullOrWhiteSpace(providerFilter))
+            {
+                return;
+            }
+
+            var filters = providerFilter
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => s.ToLowerInvariant())
+                .ToHashSet();
+
+            if ((filters.Contains("grok-imagine-image-pro") || filters.Contains("grok-pro"))
+                && generators.All(g => g.ApiType != ImageGeneratorApiType.GrokImaginePro))
+            {
+                generators.Add(groups.GrokImaginePro_Square());
+            }
+
+            if (filters.Contains("grok-imagine-image")
+                && generators.All(g => g.ApiType != ImageGeneratorApiType.GrokImagine))
+            {
+                generators.Add(groups.GrokImagine_Square());
+            }
         }
 
         private static string SavePromptSample(Settings settings, IReadOnlyList<string> prompts)

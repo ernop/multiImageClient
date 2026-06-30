@@ -29,14 +29,16 @@ namespace MultiImageClient
         private readonly MultiClientRunStats _stats;
         private readonly bool _fast;
         private readonly bool _quickTest;
+        private readonly Flux2KleinResolution _localFlux2KleinResolution;
 
-        public GeneratorGroups(Settings settings, int concurrency, MultiClientRunStats stats, bool fast = false, bool quickTest = false)
+        public GeneratorGroups(Settings settings, int concurrency, MultiClientRunStats stats, bool fast = false, bool quickTest = false, Flux2KleinResolution localFlux2KleinResolution = Flux2KleinResolution._1024x1024)
         {
             _settings = settings;
             _concurrency = concurrency;
             _stats = stats;
             _fast = fast;
             _quickTest = quickTest;
+            _localFlux2KleinResolution = localFlux2KleinResolution;
         }
 
         /// The active generator set for the current run.
@@ -92,7 +94,8 @@ namespace MultiImageClient
                 // BFLFlux2Max_Square(),
                 // BFLFlux2Flex_Square(),       // typography-tuned; enable when you have text prompts
                 // BFLFlux2Klein9b_Square(),    // sub-second cheap draft variant
-                // LocalFlux2Klein_Uncensored(), // LOCAL ComfyUI: FLUX.2 Klein 4B + ablated Qwen3-4B text encoder
+                // LocalFlux2Klein_Custom(), // LOCAL ComfyUI: FLUX.2 Klein 4B/custom workflow
+                // LocalZImageTurbo_Custom(), // LOCAL ComfyUI: Z-Image/Z-Image-Turbo custom workflow
                 // RecraftV4ProRealisticPortrait(),
                 // RecraftAnyStyle(),           // legacy V3
                 // xAI Grok Imagine (launched 2026-01-28). Pro is 3.5x the price
@@ -140,7 +143,8 @@ namespace MultiImageClient
                 new("xai.grok-imagine.high.2k.square", "xAI Grok Imagine high 2k square", "xAI", GrokImagine_Square),
                 new("xai.grok-imagine.high.1k.square", "xAI Grok Imagine high 1k square", "xAI", GrokImagine1k_Square),
                 new("google.nano-banana-pro.square", "Google Nano Banana Pro square", "Google", GeminiNanoBananaPro),
-                new("local.flux-2-klein-4b.uncensored.comfyui", "Local FLUX.2 Klein 4B uncensored ComfyUI", "Local", LocalFlux2Klein_Uncensored),
+                new("local.flux-2-klein-4b.uncensored.comfyui", "Local FLUX.2 Klein 4B custom ComfyUI", "Local", LocalFlux2Klein_Custom),
+                new("local.z-image-turbo.comfyui", "Local Z-Image Turbo custom ComfyUI", "Local", LocalZImageTurbo_Custom),
             };
 
             if (includeVideo)
@@ -174,9 +178,11 @@ namespace MultiImageClient
             return new List<IImageGenerator>
             {
                 GrokImagine_Square(),
+                IdeogramV4_Square(),
                 RecraftV41AnyStyle(),
                 BFLFlux2ProPreview_Square(),
-                LocalFlux2Klein_Uncensored(),
+                LocalFlux2Klein_Custom(),
+                LocalZImageTurbo_Custom(),
                 GeminiNanoBananaPro(),
                 GptImage2LowSquare(),
             };
@@ -393,17 +399,71 @@ namespace MultiImageClient
             new BFLGenerator(ImageGeneratorApiType.BFLFlux2Klein9b, _settings.BFLApiKey,
                 _concurrency, "1:1", false, 1024, 1024, _stats, "");
 
-        // ---------- Local ComfyUI: FLUX.2 Klein ----------
+        // ---------- Local ComfyUI: FLUX.2 Klein and Z-Image ----------
 
-        private ComfyUIFlux2KleinGenerator LocalFlux2Klein_Uncensored() =>
-            new ComfyUIFlux2KleinGenerator(
+        private ComfyUIFlux2KleinGenerator LocalFlux2Klein_Custom()
+        {
+            var workflowPath = !string.IsNullOrWhiteSpace(_settings.ComfyUIWorkflowPath)
+                ? _settings.ComfyUIWorkflowPath
+                : _settings.ComfyUIFlux2KleinWorkflowPath;
+            var workflowName = !string.IsNullOrWhiteSpace(_settings.ComfyUIWorkflowName)
+                ? _settings.ComfyUIWorkflowName
+                : "custom";
+            var isKlein9b = _settings.ComfyUIDiffusionModelName.Contains("9b", StringComparison.OrdinalIgnoreCase)
+                || workflowName.Contains("9b", StringComparison.OrdinalIgnoreCase);
+            var modelName = isKlein9b ? "FLUX.2 Klein 9B" : "FLUX.2 Klein 4B";
+            var filenamePrefix = isKlein9b ? "local_flux2_klein_9b" : "local_flux2_klein_4b";
+
+            return new ComfyUIFlux2KleinGenerator(
                 _settings.ComfyUIBaseUrl,
-                _settings.ComfyUIFlux2KleinWorkflowPath,
+                workflowPath,
                 _concurrency,
                 _stats,
-                name: "uncensored",
+                name: workflowName,
                 pollIntervalMs: _settings.ComfyUIPollIntervalMs,
-                timeoutSeconds: _settings.ComfyUITimeoutSeconds);
+                timeoutSeconds: _settings.ComfyUITimeoutSeconds,
+                resolution: _localFlux2KleinResolution,
+                diffusionModelName: _settings.ComfyUIDiffusionModelName,
+                checkpointName: _settings.ComfyUICheckpointName,
+                vaeName: _settings.ComfyUIVaeName,
+                textEncoderName: _settings.ComfyUITextEncoderName,
+                textEncoder2Name: _settings.ComfyUITextEncoder2Name,
+                loraName: _settings.ComfyUILoraName,
+                loraModelStrength: _settings.ComfyUILoraModelStrength,
+                loraClipStrength: _settings.ComfyUILoraClipStrength,
+                modelName: modelName,
+                filenamePrefix: filenamePrefix);
+        }
+
+        private ComfyUIFlux2KleinGenerator LocalZImageTurbo_Custom()
+        {
+            var workflowName = !string.IsNullOrWhiteSpace(_settings.ComfyUIZImageWorkflowName)
+                ? _settings.ComfyUIZImageWorkflowName
+                : "z-image-turbo";
+
+            return new ComfyUIFlux2KleinGenerator(
+                _settings.ComfyUIBaseUrl,
+                _settings.ComfyUIZImageWorkflowPath,
+                _concurrency,
+                _stats,
+                name: workflowName,
+                pollIntervalMs: _settings.ComfyUIPollIntervalMs,
+                timeoutSeconds: _settings.ComfyUITimeoutSeconds,
+                resolution: _localFlux2KleinResolution,
+                diffusionModelName: _settings.ComfyUIZImageDiffusionModelName,
+                checkpointName: _settings.ComfyUIZImageCheckpointName,
+                vaeName: _settings.ComfyUIZImageVaeName,
+                textEncoderName: _settings.ComfyUIZImageTextEncoderName,
+                textEncoder2Name: _settings.ComfyUIZImageTextEncoder2Name,
+                loraName: _settings.ComfyUIZImageLoraName,
+                loraModelStrength: _settings.ComfyUIZImageLoraModelStrength,
+                loraClipStrength: _settings.ComfyUIZImageLoraClipStrength,
+                apiType: ImageGeneratorApiType.LocalZImage,
+                modelName: "Z-Image Turbo",
+                filenamePrefix: "local_z_image_turbo",
+                workflowPathSettingName: nameof(Settings.ComfyUIZImageWorkflowPath),
+                warnWhenUncensoredWithoutAblatedEncoder: false);
+        }
 
         // ---------- Recraft ----------
 
