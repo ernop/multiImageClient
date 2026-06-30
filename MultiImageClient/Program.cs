@@ -81,6 +81,20 @@ namespace MultiImageClient
                     ? new PromptFileSource(settings, options.PromptFilePath)
                     : new ReadAllPromptsFromFile(settings, "");
 
+            if (options.GrokEdit)
+            {
+                var grokEdit = new GrokEditWorkflow();
+                await grokEdit.RunAsync(promptSource, settings, stats, options);
+                return;
+            }
+
+            if (options.GrokWeb)
+            {
+                var grokWeb = new GrokWebWorkflow();
+                await grokWeb.RunAsync(promptSource, settings, stats, options);
+                return;
+            }
+
             if (options.GrokVideoTest)
             {
                 // Exercises text-to-video, grok-image-to-video, and

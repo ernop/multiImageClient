@@ -20,3 +20,5 @@ magic*.png
 *.py[cod]
 test-new.txt
 wilson.txt
+grok-cookies.txt
+**/grok-cookies*.txt
