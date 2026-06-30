@@ -88,9 +88,8 @@ namespace MultiImageClient
                 throw new FileNotFoundException($"Provider sample prompt file not found: {promptFilePath}", promptFilePath);
             }
 
-            var prompts = File.ReadAllLines(promptFilePath)
+            var prompts = PromptFileLines.ReadNonCommentLines(promptFilePath)
                 .Select(CleanPromptLine)
-                .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Take(sampleSize)
                 .ToList();
 

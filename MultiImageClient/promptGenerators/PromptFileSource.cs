@@ -32,14 +32,8 @@ namespace MultiImageClient
                 }
 
                 var yielded = 0;
-                foreach (var line in File.ReadLines(fullPath))
+                foreach (var prompt in PromptFileLines.ReadNonCommentLines(fullPath))
                 {
-                    var prompt = line.Trim();
-                    if (string.IsNullOrWhiteSpace(prompt))
-                    {
-                        continue;
-                    }
-
                     var pd = new PromptDetails();
                     pd.ReplacePrompt(prompt, prompt, TransformationType.InitialPrompt);
                     yielded++;
@@ -48,7 +42,7 @@ namespace MultiImageClient
 
                 if (yielded == 0)
                 {
-                    throw new InvalidOperationException($"Prompt file contained no non-blank lines: {fullPath}");
+                    throw new InvalidOperationException($"Prompt file contained no prompts (blank and # comment lines are skipped): {fullPath}");
                 }
             }
         }

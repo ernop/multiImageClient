@@ -56,19 +56,13 @@ namespace MultiImageClient
                 var allPromptsRaw = new List<string>();
                 foreach (var fp in files)
                 {
-                    foreach (var line in File.ReadAllLines(fp))
-                    {
-                        if (!string.IsNullOrWhiteSpace(line))
-                        {
-                            allPromptsRaw.Add(line);
-                        }
-                    }
+                    allPromptsRaw.AddRange(PromptFileLines.ReadNonCommentLines(fp));
                 }
 
                 if (allPromptsRaw.Count == 0)
                 {
                     throw new InvalidOperationException(
-                        $"settings.json: PromptFiles {string.Join(", ", files)} contained no non-blank lines.");
+                        $"settings.json: PromptFiles {string.Join(", ", files)} contained no prompts (blank and # comment lines are skipped).");
                 }
 
                 Logger.Log($"Loaded {allPromptsRaw.Count} prompts from {files.Count} file(s): {string.Join(", ", files)}");

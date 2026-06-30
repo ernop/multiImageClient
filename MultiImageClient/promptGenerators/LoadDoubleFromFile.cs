@@ -60,14 +60,9 @@ namespace MultiImageClient
             var sourcePrompts = new List<string>();
             foreach (var fp in sourceFPs)
             {
-                var items = File.ReadAllLines(fp).ToList();
-                foreach (var usePrompt in items)
+                foreach (var usePrompt in PromptFileLines.ReadNonCommentLines(fp))
                 {
                     if ((usePrompt.Contains("{{") || usePrompt.Contains("[[")) && !(usePrompt.Contains("[[[") || usePrompt.Contains("}}}")))
-                    {
-                        continue;
-                    }
-                    if (string.IsNullOrEmpty(usePrompt))
                     {
                         continue;
                     }

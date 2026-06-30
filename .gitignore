@@ -8,17 +8,16 @@
 **/.vscode/**
 **/ideogram_pages/**
 **/ideogram_data_all.json
-/MultiImageClient/claude-bad.txt
 /djangoManager/imageMaker/logs/django.log
 gen-lang*.json
 magic*.png
 **/prompt_log.json
-**/Temp.txt
-2023-prompts.txt
 **/tmp/**
 **/__pycache__/**
 *.py[cod]
-test-new.txt
-wilson.txt
-grok-cookies.txt
-**/grok-cookies*.txt
+
+# Local scratch prompt/cookie files — keep repo txt that are checked in via ! rules below.
+*.txt
+!MultiImageClient/prompts.txt
+!djangoManager/imageMaker/requirements.txt
+!smoke_in.txt

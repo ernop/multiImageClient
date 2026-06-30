@@ -478,10 +478,9 @@ namespace MultiImageClient
                     Console.WriteLine($"(prompt file missing, skipping: {fp})");
                     continue;
                 }
-                foreach (var raw in File.ReadAllLines(fp))
+                foreach (var raw in PromptFileLines.ReadNonCommentLines(fp))
                 {
-                    var t = raw?.Trim();
-                    if (!string.IsNullOrEmpty(t)) lines.Add(t);
+                    lines.Add(raw);
                 }
             }
 
