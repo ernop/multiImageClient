@@ -56,7 +56,9 @@ namespace MultiImageClient
             // Ensure the filename is unique
             int count = 0;
             string uniqueFilename;
-            var ext = ".png";
+            var ext = saveType == SaveType.Raw
+                ? RawExtensionForContentType(contentType)
+                : ".png";
 
             do
             {
@@ -67,6 +69,21 @@ namespace MultiImageClient
             return uniqueFilename;
         }
 
+        private static string RawExtensionForContentType(string contentType)
+        {
+            if (string.IsNullOrEmpty(contentType))
+            {
+                return ".png";
+            }
 
+            return contentType switch
+            {
+                "image/jpeg" => ".jpg",
+                "image/png" => ".png",
+                "image/webp" => ".webp",
+                "image/gif" => ".gif",
+                _ => ".png",
+            };
+        }
     }
 }

@@ -33,44 +33,49 @@ namespace MultiImageClient
                 throw new Exception("no bytes in the image data received; probably caller's problem.)");
             }
 
-            // just one time, convert the bytes to png if needed.
-            if (contentType == "image/webp")
-            {
-                var fakeImage = new MagickImage(imageBytes, MagickFormat.WebP);
-                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
-            }
-            else if (contentType == "image/svg+xml")
-            {
-                var fakeImage = new MagickImage(imageBytes, MagickFormat.Svg);
-                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
-            }
-            else if (contentType == "image/jpeg")
-            {
-                var fakeImage = new MagickImage(imageBytes, MagickFormat.Jpg);
-                imageBytes = fakeImage.ToByteArray(MagickFormat.Png);
-            }
-            else if (contentType == "image/png")
-            {
-                //Console.WriteLine("png do nothing, all good");
-            }
-            else if (contentType == null)
-            {
-                //Console.WriteLine("contentType null, so fall into .png");
-            }
-            else
-            {
-                Console.WriteLine("some other weird contenttype. {result.ContentType}");
-            }
+            // Raw: endpoint bytes verbatim. Annotated variants: decode to PNG for ImageSharp/Magick overlays.
+            var rawBytes = imageBytes;
+            var annotatedBytes = ConvertBytesForAnnotatedVariants(imageBytes, contentType);
+            const string annotatedContentType = "image/png";
 
-            thesePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.Raw, generator);
-            thesePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.FullAnnotation, generator);
-            thesePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.FinalPrompt, generator);
-            thesePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.InitialIdea, generator);
-            thesePaths[SaveType.JustOverride] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.JustOverride, generator);
-            thesePaths[SaveType.Label] = await ImageSaving.SaveImageAsync(pd, imageBytes, n, contentType, settings, SaveType.Label, generator);
+            thesePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(pd, rawBytes, n, contentType, settings, SaveType.Raw, generator);
+            thesePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(pd, annotatedBytes, n, annotatedContentType, settings, SaveType.FullAnnotation, generator);
+            thesePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(pd, annotatedBytes, n, annotatedContentType, settings, SaveType.FinalPrompt, generator);
+            thesePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(pd, annotatedBytes, n, annotatedContentType, settings, SaveType.InitialIdea, generator);
+            thesePaths[SaveType.JustOverride] = await ImageSaving.SaveImageAsync(pd, annotatedBytes, n, annotatedContentType, settings, SaveType.JustOverride, generator);
+            thesePaths[SaveType.Label] = await ImageSaving.SaveImageAsync(pd, annotatedBytes, n, annotatedContentType, settings, SaveType.Label, generator);
 
 
             return thesePaths;
+        }
+
+        private static byte[] ConvertBytesForAnnotatedVariants(byte[] imageBytes, string? contentType)
+        {
+            if (contentType == "image/png" || contentType == null)
+            {
+                return imageBytes;
+            }
+
+            if (contentType == "image/jpeg")
+            {
+                using var image = new MagickImage(imageBytes, MagickFormat.Jpg);
+                return image.ToByteArray(MagickFormat.Png);
+            }
+
+            if (contentType == "image/webp")
+            {
+                using var image = new MagickImage(imageBytes, MagickFormat.WebP);
+                return image.ToByteArray(MagickFormat.Png);
+            }
+
+            if (contentType == "image/svg+xml")
+            {
+                using var image = new MagickImage(imageBytes, MagickFormat.Svg);
+                return image.ToByteArray(MagickFormat.Png);
+            }
+
+            Logger.Log($"\tUnexpected content type for annotation conversion: {contentType}; using bytes as-is.");
+            return imageBytes;
         }
 
         public async Task<TaskProcessResult> ProcessAndSaveAsync(TaskProcessResult result, IImageGenerator generator)
