@@ -17,7 +17,8 @@ namespace MultiImageClient
             string runLabel,
             string sheetHeader,
             int retryFailures = 0,
-            bool openWhenDone = true)
+            bool openWhenDone = true,
+            bool stopOnRateLimit = true)
         {
             var generatorLabel = Flatten(generator.GetGeneratorSpecPart());
             Logger.Log($"\n{runLabel}: starting {generatorLabel} for {prompts.Count} prompt(s).");
@@ -51,10 +52,37 @@ namespace MultiImageClient
             }
 
             stats.PrintStats();
-            var tasks = prompts.Select((promptText, index) => RunPromptAsync(promptText, index, attemptNumber: 1)).ToArray();
-            var results = await Task.WhenAll(tasks);
+            var results = new TaskProcessResult[prompts.Count];
+            var stoppedForRateLimit = false;
 
-            for (var retry = 1; retry <= retryFailures; retry++)
+            if (stopOnRateLimit)
+            {
+                for (var i = 0; i < prompts.Count; i++)
+                {
+                    results[i] = await RunPromptAsync(prompts[i], i, attemptNumber: 1);
+                    if (results[i].IsSuccess || !IsRateLimited(results[i].ErrorMessage))
+                    {
+                        continue;
+                    }
+
+                    stoppedForRateLimit = true;
+                    var remaining = prompts.Count - i - 1;
+                    Logger.Log($"{runLabel} {generatorLabel}: rate limit at prompt {i + 1}/{prompts.Count}; stopping batch ({remaining} remaining skipped).");
+                    for (var j = i + 1; j < prompts.Count; j++)
+                    {
+                        results[j] = SkippedResult(prompts[j], generator, "Skipped: batch stopped after rate limit.");
+                    }
+
+                    break;
+                }
+            }
+            else
+            {
+                var tasks = prompts.Select((promptText, index) => RunPromptAsync(promptText, index, attemptNumber: 1)).ToArray();
+                results = await Task.WhenAll(tasks);
+            }
+
+            for (var retry = 1; retry <= retryFailures && !stoppedForRateLimit; retry++)
             {
                 var failedIndexes = results
                     .Select((result, index) => new { result, index })
@@ -126,6 +154,33 @@ namespace MultiImageClient
         {
             if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
             return s.Length <= max ? s : s.Substring(0, max - 1) + "...";
+        }
+
+        public static bool IsRateLimited(string? errorMessage)
+        {
+            if (string.IsNullOrWhiteSpace(errorMessage))
+            {
+                return false;
+            }
+
+            var msg = errorMessage.ToLowerInvariant();
+            return msg.Contains("rate_limit_exceeded")
+                   || msg.Contains("rate limit")
+                   || msg.Contains("429");
+        }
+
+        private static TaskProcessResult SkippedResult(string promptText, IImageGenerator generator, string reason)
+        {
+            var pd = new PromptDetails();
+            pd.ReplacePrompt(promptText, promptText, TransformationType.InitialPrompt);
+            return new TaskProcessResult
+            {
+                IsSuccess = false,
+                ErrorMessage = reason,
+                PromptDetails = pd,
+                ImageGenerator = generator.ApiType,
+                ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
+            };
         }
     }
 }

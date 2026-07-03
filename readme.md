@@ -124,7 +124,7 @@ djangoManager/               experimental Django gallery (MySQL-backed, not acti
 IdeogramHistoryExtractor/    older scratch folder
 ```
 
-See `docs/project-organization.md` for where to put new docs, config templates, reusable scripts, and generated/user data. See `docs/grok-web-export-archive.md` for the Grok web export/archive tooling notes.
+See `docs/project-organization.md` for where to put new docs, config templates, reusable scripts, and generated/user data. See `docs/grok-web-export-archive.md` for the Grok web export/archive tooling notes and `docs/ideogram-history-archive.md` for Ideogram web history export.
 
 ## Gallery
 

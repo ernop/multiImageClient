@@ -13,7 +13,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 ## Related Projects
 
 - **SocialAI** (`/proj/SocialAI/`) — Discord bot for Midjourney image capture
-- **ideogramHistoryDownloader** (GitHub) — download Ideogram generation history (may be subsumed here)
+- **ideogramHistoryDownloader** (GitHub) — absorbed into `tools/ideogram-export/`; see `docs/ideogram-history-archive.md`
 - **cmdline-dalle3-csharp** (GitHub) — DALL-E 3 CLI (predecessor, may be subsumed here)
 - **IdeogramApiCSharp** (GitHub) — Ideogram API client (predecessor)
 - **myBrowser** (`/proj/myBrowser/`) — meta-project; see `capabilities.md` for cross-project skill inventory

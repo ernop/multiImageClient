@@ -8,6 +8,10 @@
 **/.vscode/**
 **/ideogram_pages/**
 **/ideogram_data_all.json
+**/ideogram_requests/**
+**/fetch_log.jsonl
+IdeogramHistoryExtractor/config.json
+IdeogramHistoryExtractor/myPrompts/**
 /djangoManager/imageMaker/logs/django.log
 gen-lang*.json
 magic*.png
@@ -15,6 +19,7 @@ magic*.png
 **/tmp/**
 **/__pycache__/**
 *.py[cod]
+.venv-ideogram-export/
 
 # Local scratch prompt/cookie files — keep repo txt that are checked in via ! rules below.
 *.txt

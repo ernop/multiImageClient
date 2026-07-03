@@ -1,0 +1,5 @@
+{
+  "username": "YOUR_IDEOGRAM_USERNAME",
+  "authorization": "Bearer REPLACE_WITH_FULL_AUTHORIZATION_HEADER_VALUE",
+  "cookie": "session_cookie=...; cf_clearance=...; __cf_bm=..."
+}
