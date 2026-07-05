@@ -11,6 +11,7 @@
 **/ideogram_requests/**
 **/fetch_log.jsonl
 IdeogramHistoryExtractor/config.json
+IdeogramHistoryExtractor/fetch_run.log
 IdeogramHistoryExtractor/myPrompts/**
 /djangoManager/imageMaker/logs/django.log
 gen-lang*.json
