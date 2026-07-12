@@ -10,7 +10,7 @@ using XAIGrokAPIClient;
 namespace MultiImageClient
 {
     /// One-shot exerciser for the three Grok video request modes
-    /// (--grok-video-test):
+    /// (--grok-api-video-test):
     ///
     ///   1. text-to-video   — prompt alone.
     ///   2. image-to-video  — generate a still with grok-imagine-image first,
@@ -20,7 +20,7 @@ namespace MultiImageClient
     ///                        combined mp4.
     ///
     /// Every clip is requested with storage_options (durable Files-API copy,
-    /// so --grok-sync can always recover it), saved under the day folder's
+    /// so --grok-api-sync can always recover it), saved under the day folder's
     /// Video\ subfolder, mirrored, and recorded in grok_ledger.jsonl.
     /// Videos are deliberately short (3s) and 480p to keep the test cheap
     /// (~$0.15 per clip + $0.02 for the still).

@@ -67,12 +67,12 @@ namespace MultiImageClient
                         client,
                         maxConcurrency: 1,
                         stats,
-                        pro: options.GrokPro,
+                        pro: options.GrokWebPro,
                         aspectRatio: options.GrokWebAspectRatio,
                         enableSideBySide: options.GrokWebSideBySide,
                         settings: settings,
                         captureSessions: options.GrokWebCapture);
-                    sheetHeader = options.GrokPro
+                    sheetHeader = options.GrokWebPro
                         ? "Grok Web Imagine Pro"
                         : "Grok Web Imagine";
                     break;

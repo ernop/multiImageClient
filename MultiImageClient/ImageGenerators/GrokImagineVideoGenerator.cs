@@ -125,7 +125,7 @@ namespace MultiImageClient
 
                 // storage_options => xAI keeps a durable, never-expiring copy in
                 // the team's Files API store. That's the only server-side
-                // history xAI exposes, so it's what makes `--grok-sync`
+                // history xAI exposes, so it's what makes `--grok-api-sync`
                 // able to re-download every clip later, from any machine.
                 var storedFilename = FilenameGenerator.SanitizeFilename(
                     $"{DateTime.UtcNow:yyyyMMddHHmmss}_{GetFilenamePart(null!)}_{FilenameGenerator.TruncatePrompt(prompt, 80)}") + ".mp4";

@@ -1,0 +1,3 @@
+#!/bin/sh
+d="$(cd "$(dirname "$0")" && pwd)"
+PYTHONPATH="$d" exec "$d/.venv/bin/python" -m vid2img "$@"

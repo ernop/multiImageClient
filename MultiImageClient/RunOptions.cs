@@ -84,15 +84,36 @@ namespace MultiImageClient
         /// be changed at runtime via `:n N` or per-prompt via `[n=N] ...`.
         public int ReplImageCount { get; set; } = 1;
 
+        /// If true, run ShowcaseWorkflow: pull prompts from the active prompt
+        /// source (--prompt / --prompt-file / PromptFiles, honoring --limit,
+        /// no default cap), run them through the selected generators, and
+        /// compose one contact sheet per generator. Generators come from
+        /// --gens; without --gens it uses the standard batch set
+        /// (GeneratorGroups.GetAll — "whatever models we're currently using").
+        public bool Showcase { get; set; }
+
+        /// Comma-separated generator short names for --showcase. Same
+        /// vocabulary as the REPL plus grok-web: gpt2, grok-api, grok-api-pro,
+        /// grok-web, dalle3, ideogram, recraft, bfl, google, googlepro,
+        /// local-klein, local-zimage. grok-web honors the --grok-web-* flags
+        /// (cookies, aspect ratio, pro/fast tier).
+        public string Gens { get; set; } = "";
+
+        // NAMING RULE (user-facing surface): "grok-api" = the official
+        // api.x.ai API-key version (public, GDPR-suitable ruleset);
+        // "grok-web" = the consumer grok.com cookie-session version
+        // (American web-app ruleset). Internal type names keep the
+        // Grok* / GrokWeb* prefixes.
+
         /// If true, bypass every other workflow and run GrokShowcaseWorkflow:
         /// pull the first --limit prompts from the active prompt source, fire
-        /// them at xAI Grok Imagine in parallel, save each, then compose one
-        /// combined grid image and pop it open.
-        public bool GrokShowcase { get; set; }
+        /// them at xAI Grok Imagine (grok-api) in parallel, save each, then
+        /// compose one combined grid image and pop it open.
+        public bool GrokApiShowcase { get; set; }
 
-        /// Pair with --grok-showcase to route through grok-imagine-image-pro
+        /// Pair with --grok-api-showcase to route through grok-imagine-image-pro
         /// at 2k resolution instead of the standard grok-imagine-image at 1k.
-        public bool GrokPro { get; set; }
+        public bool GrokApiPro { get; set; }
 
         /// If true, run AllProvidersShowcaseWorkflow: take ONE prompt and
         /// fire it at one flagship generator per provider (gpt-image-2,
@@ -109,29 +130,35 @@ namespace MultiImageClient
         public bool WithVideo { get; set; }
 
         /// If non-null, run GrokArchive.ExportAsync and exit: sync the full
-        /// Grok history, then copy every known image/video plus prompts.txt
+        /// grok-api history, then copy every known image/video plus prompts.txt
         /// and the ledger into this folder (outside the repo). Defaults to
-        /// C:\GrokArchive when --grok-export is passed without a path.
-        public string? GrokExportPath { get; set; }
+        /// C:\GrokArchive when --grok-api-export is passed without a path.
+        public string? GrokApiExportPath { get; set; }
 
         /// If true, run GrokVideoModesWorkflow and exit: exercise all three
-        /// Grok video request modes with one prompt — text-to-video,
+        /// grok-api video request modes with one prompt — text-to-video,
         /// grok-image-to-video, and extend-video — saving each clip and
         /// recording everything in grok_ledger.jsonl.
-        public bool GrokVideoTest { get; set; }
+        public bool GrokApiVideoTest { get; set; }
 
-        /// If true, run one xAI Grok image edit and exit. Uses --input-image
+        /// If true, run one grok-api image edit and exit. Uses --input-image
         /// as the source image and --prompt (or first prompt source entry) as
         /// edit instructions.
-        public bool GrokEdit { get; set; }
+        public bool GrokApiEdit { get; set; }
 
-        /// Optional aspect ratio override for --grok-edit. Empty means let xAI
-        /// inherit the source image aspect ratio.
-        public string GrokEditAspectRatio { get; set; } = "";
+        /// Optional aspect ratio override for --grok-api-edit. Empty means let
+        /// xAI inherit the source image aspect ratio.
+        public string GrokApiEditAspectRatio { get; set; } = "";
 
         /// If true, run GrokWebWorkflow: batch prompts through consumer
         /// grok.com session endpoints (browser cookies), not api.x.ai.
         public bool GrokWeb { get; set; }
+
+        /// Tier for --grok-web image mode: the web app's only quality knob is
+        /// its pro toggle (enable_pro on the wire). Defaults to pro/quality;
+        /// pass --grok-web-fast to opt into the fast tier, or --grok-web-pro
+        /// to state the default explicitly.
+        public bool GrokWebPro { get; set; } = true;
 
         /// Cookie file for --grok-web. Overrides settings.json GrokWebCookiePath.
         public string GrokWebCookies { get; set; } = "";
@@ -154,12 +181,30 @@ namespace MultiImageClient
         /// When true (default), save full grok-web WebSocket capture under saves/.../grok-web-capture/.
         public bool GrokWebCapture { get; set; } = true;
 
+        /// If true, run MetaWebWorkflow: batch prompts through the meta.ai
+        /// consumer web app (reverse-engineered Muse Image, browser cookies).
+        public bool MetaWeb { get; set; }
+
+        /// Cookie file for --meta-web. Overrides settings.json MetaWebCookiePath.
+        public string MetaWebCookies { get; set; } = "";
+
+        /// VERTICAL | HORIZONTAL | SQUARE for --meta-web (default SQUARE).
+        public string MetaWebOrientation { get; set; } = "SQUARE";
+
+        /// Images per prompt for --meta-web.
+        public int MetaWebNumImages { get; set; } = 1;
+
+        /// Persisted-query TEXT_TO_IMAGE doc_id override for --meta-web.
+        /// Overrides settings.json MetaWebImageDocId. Meta rotates these; grab
+        /// the current one from DevTools > Network on https://www.meta.ai.
+        public string MetaWebDocId { get; set; } = "";
+
         /// If true, run GrokArchive.SyncAsync and exit: back-read the entire
-        /// reachable Grok history (xAI Files API inventory + re-pollable
+        /// reachable grok-api history (xAI Files API inventory + re-pollable
         /// video request_ids + local JSON logs) into grok_ledger.jsonl and
         /// download every asset we don't already have locally. Idempotent;
         /// run it whenever to keep local copies synced.
-        public bool GrokSync { get; set; }
+        public bool GrokApiSync { get; set; }
 
         /// If true, randomly sample prompts once, then run that same sample
         /// through the provider review set and create one contact sheet per
@@ -183,6 +228,17 @@ namespace MultiImageClient
         /// Only affects runs that include local generators (e.g.
         /// --provider-sample-providers local, --all-providers).
         public Flux2KleinResolution LocalFlux2KleinResolution { get; set; } = Flux2KleinResolution._1024x1024;
+
+        /// If true, start the local web UI: a Kestrel server on localhost
+        /// serving a browser control panel (paste image + prompt -> fan out to
+        /// selected generators -> live side-by-side results). The C# process
+        /// keeps doing everything it does today (generators, ImageManager
+        /// saves, contact sheets); the browser is just the front door.
+        /// See Workflows/UiWorkflow.cs.
+        public bool Ui { get; set; }
+
+        /// Port for --ui. The server binds 127.0.0.1 only.
+        public int UiPort { get; set; } = 5960;
 
         /// Master switch for popping finished images/contact-sheets open in the
         /// system default viewer. Defaults to false: runs are headless and just
@@ -266,6 +322,12 @@ namespace MultiImageClient
                     case "--repl":
                         o.Repl = true;
                         break;
+                    case "--ui":
+                        o.Ui = true;
+                        break;
+                    case "--ui-port":
+                        o.UiPort = int.Parse(args[++i]);
+                        break;
                     case "--repl-size":
                         o.ReplSize = args[++i];
                         break;
@@ -286,11 +348,17 @@ namespace MultiImageClient
                             Environment.Exit(2);
                         }
                         break;
-                    case "--grok-showcase":
-                        o.GrokShowcase = true;
+                    case "--showcase":
+                        o.Showcase = true;
                         break;
-                    case "--grok-pro":
-                        o.GrokPro = true;
+                    case "--gens":
+                        o.Gens = args[++i];
+                        break;
+                    case "--grok-api-showcase":
+                        o.GrokApiShowcase = true;
+                        break;
+                    case "--grok-api-pro":
+                        o.GrokApiPro = true;
                         break;
                     case "--all-providers":
                         o.AllProviders = true;
@@ -298,27 +366,34 @@ namespace MultiImageClient
                     case "--with-video":
                         o.WithVideo = true;
                         break;
-                    case "--grok-sync":
-                        o.GrokSync = true;
+                    case "--grok-api-sync":
+                        o.GrokApiSync = true;
                         break;
-                    case "--grok-export":
+                    case "--grok-api-export":
                         // Optional path argument; default to C:\GrokArchive.
-                        o.GrokExportPath = (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                        o.GrokApiExportPath = (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
                             ? args[++i]
                             : @"C:\GrokArchive";
                         break;
-                    case "--grok-video-test":
-                        o.GrokVideoTest = true;
+                    case "--grok-api-video-test":
+                        o.GrokApiVideoTest = true;
                         break;
-                    case "--grok-edit":
-                        o.GrokEdit = true;
+                    case "--grok-api-edit":
+                        o.GrokApiEdit = true;
                         break;
-                    case "--grok-edit-aspect-ratio":
-                        o.GrokEditAspectRatio = args[++i];
+                    case "--grok-api-edit-aspect-ratio":
+                        o.GrokApiEditAspectRatio = args[++i];
                         break;
                     case "--grok-web":
                         o.GrokWeb = true;
                         if (o.Workflow == 0) o.Workflow = 1;
+                        break;
+                    case "--grok-web-pro":
+                    case "--grok-web-quality":
+                        o.GrokWebPro = true;
+                        break;
+                    case "--grok-web-fast":
+                        o.GrokWebPro = false;
                         break;
                     case "--grok-web-cookies":
                         o.GrokWebCookies = args[++i];
@@ -340,6 +415,21 @@ namespace MultiImageClient
                         break;
                     case "--grok-web-no-capture":
                         o.GrokWebCapture = false;
+                        break;
+                    case "--meta-web":
+                        o.MetaWeb = true;
+                        break;
+                    case "--meta-web-cookies":
+                        o.MetaWebCookies = args[++i];
+                        break;
+                    case "--meta-web-orientation":
+                        o.MetaWebOrientation = args[++i];
+                        break;
+                    case "--meta-web-num-images":
+                        o.MetaWebNumImages = int.Parse(args[++i]);
+                        break;
+                    case "--meta-web-doc-id":
+                        o.MetaWebDocId = args[++i];
                         break;
                     case "--provider-sample-showcase":
                         o.ProviderSampleShowcase = true;
@@ -364,6 +454,11 @@ namespace MultiImageClient
                         Environment.Exit(0);
                         break;
                     default:
+                        if (RenamedGrokFlags.TryGetValue(a, out var newName))
+                        {
+                            Console.Error.WriteLine($"{a} was renamed to {newName} (grok-api = official api.x.ai key version, grok-web = grok.com cookie-session version).");
+                            Environment.Exit(2);
+                        }
                         Console.Error.WriteLine($"Unknown argument: {a}");
                         PrintUsage();
                         Environment.Exit(2);
@@ -372,6 +467,19 @@ namespace MultiImageClient
             }
             return o;
         }
+
+        // Old grok flag spellings -> current names, so stale shell history
+        // fails with a pointer instead of a generic "unknown argument".
+        private static readonly Dictionary<string, string> RenamedGrokFlags = new()
+        {
+            ["--grok-showcase"] = "--grok-api-showcase",
+            ["--grok-pro"] = "--grok-api-pro (or --grok-web-pro for the cookie version)",
+            ["--grok-sync"] = "--grok-api-sync",
+            ["--grok-export"] = "--grok-api-export",
+            ["--grok-video-test"] = "--grok-api-video-test",
+            ["--grok-edit"] = "--grok-api-edit",
+            ["--grok-edit-aspect-ratio"] = "--grok-api-edit-aspect-ratio",
+        };
 
         private static void PrintUsage()
         {
@@ -388,20 +496,27 @@ namespace MultiImageClient
             Console.WriteLine("  --open-images     Pop finished images/contact-sheets open in the system default viewer. OFF by default (runs are headless and just save to disk). --quick-test enables this automatically.");
             Console.WriteLine("  --local-size WxH  Output resolution for local ComfyUI image generators such as FLUX.2 Klein and Z-Image (default 1024x1024). Valid: 1024x1024, 1536x1024, 1024x1536, 1152x896, 896x1152, 1344x768, 768x1344, 1408x1408.");
             Console.WriteLine("  --quick-test      Like --fast plus: save every streamed partial PNG and open each one in the default viewer as it arrives (implies --open-images). Still asks y/n/custom per prompt unless combined with --auto.");
+            Console.WriteLine("  --ui              Start the local web UI (browser control panel): paste an image + prompt, fan out to selected generators (gpt-image-2 edit, grok-web pro, grok-api), watch results fill in live. Binds 127.0.0.1 only.");
+            Console.WriteLine("  --ui-port N       Port for --ui (default 5960).");
             Console.WriteLine("  --repl            Interactive prompt-by-prompt REPL. Prompts fire asynchronously (up to --repl-concurrency at a time); NO viewer pops. Commands: :help :size :quality :gens :status :wait :edit :retry :quit.");
             Console.WriteLine("  --repl-size WxH       REPL session default size for gpt-image-2 (default 2048x2048). Change at runtime with :size WxH.");
             Console.WriteLine("  --repl-quality L      REPL session default quality: low|medium|high (default high). Change at runtime with :quality <L>.");
             Console.WriteLine("  --repl-moderation M   REPL session default moderation: auto|low (default low). Change at runtime with :moderation <M>.");
             Console.WriteLine("  --repl-concurrency N  Max prompts in flight simultaneously in REPL mode (default 5). Change at runtime with :concurrency N.");
             Console.WriteLine("  --repl-n N            REPL session default n (images per gpt-image-2 call, default 1). Change at runtime with :n N, or per-prompt via [n=N] in the override prefix.");
-            Console.WriteLine("  --grok-showcase       One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at xAI Grok Imagine in parallel, and compose a single combined grid image (pops open only with --open-images). Default --limit for this mode is 10.");
-            Console.WriteLine("  --grok-pro            Pair with --grok-showcase to route through grok-imagine-image-pro at 2k resolution ($0.07/img, 30 rpm) instead of grok-imagine-image at 1k ($0.02/img, 300 rpm).");
+            Console.WriteLine("  --showcase            Generic one-shot: run ALL prompts from the active prompt source (--prompt/--prompt-file/PromptFiles, honoring --limit; no default cap) through the selected generators and compose one contact sheet per generator (pops open only with --open-images).");
+            Console.WriteLine("  --gens csv            Pair with --showcase to pick generators by short name: gpt2 grok-api grok-api-pro grok-web meta-web dalle3 ideogram recraft bfl google googlepro local-klein local-zimage. Without --gens the standard batch set runs. grok-web honors the --grok-web-* flags; meta-web honors the --meta-web-* flags.");
+            Console.WriteLine("Grok naming: grok-api = official api.x.ai key version (public/GDPR ruleset); grok-web = consumer grok.com cookie-session version (web-app ruleset).");
+            Console.WriteLine("  --grok-api-showcase   One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at grok-api in parallel, and compose a single combined grid image (pops open only with --open-images). Default --limit for this mode is 10.");
+            Console.WriteLine("  --grok-api-pro        Pair with --grok-api-showcase to route through grok-imagine-image-pro at 2k resolution ($0.07/img, 30 rpm) instead of grok-imagine-image at 1k ($0.02/img, 300 rpm).");
             Console.WriteLine("  --all-providers       One-shot: fire ONE prompt (--prompt or first PromptFiles line) at current image endpoints (gpt-image-2, gpt-image-1, gpt-image-1-mini, Ideogram 4.0, flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro) and compose a single contact-sheet grid (pops open only with --open-images). Keyless providers show as error cells.");
             Console.WriteLine("  --with-video          Pair with --all-providers to also dispatch a Grok Imagine VIDEO (6s, 480p) for the same prompt; the mp4 lands in the day folder's Video\\ subfolder. Videos are not composited into the PNG sheet.");
-            Console.WriteLine("  --grok-video-test     One-shot: exercise all three Grok video modes with one prompt (--prompt or first PromptFiles line) — text-to-video, grok-image-to-video, and extend-video (3s, 480p each). Clips are saved, stored durably at xAI, and ledgered.");
-            Console.WriteLine("  --grok-edit           One-shot: edit --input-image with Grok Imagine using --prompt as edit instructions. Saves the result and a one-cell contact sheet. Pair with --grok-pro for grok-imagine-image-pro.");
-            Console.WriteLine("  --grok-edit-aspect-ratio AR  Optional output aspect ratio for --grok-edit (e.g. 1:1, 16:9). Default: inherit source image AR.");
+            Console.WriteLine("  --grok-api-video-test One-shot: exercise all three grok-api video modes with one prompt (--prompt or first PromptFiles line) — text-to-video, grok-image-to-video, and extend-video (3s, 480p each). Clips are saved, stored durably at xAI, and ledgered.");
+            Console.WriteLine("  --grok-api-edit       One-shot: edit --input-image via grok-api using --prompt as edit instructions. Saves the result and a one-cell contact sheet. Pair with --grok-api-pro for grok-imagine-image-pro.");
+            Console.WriteLine("  --grok-api-edit-aspect-ratio AR  Optional output aspect ratio for --grok-api-edit (e.g. 1:1, 16:9). Default: inherit source image AR.");
             Console.WriteLine("  --grok-web            Batch prompts through consumer grok.com session endpoints (browser cookies, not api.x.ai). Uses --prompt-file or PromptFiles.");
+            Console.WriteLine("  --grok-web-pro        Use the web app's Pro/quality image tier. THIS IS THE DEFAULT; the flag exists to state it explicitly (alias: --grok-web-quality).");
+            Console.WriteLine("  --grok-web-fast       Use the web app's fast (non-pro) image tier instead of the default Pro/quality tier.");
             Console.WriteLine("  --grok-web-cookies fp Override settings.json GrokWebCookiePath with a Netscape cookies.txt or raw Cookie header export.");
             Console.WriteLine("  --grok-web-mode M     image (default) | video | video-from-image | edit");
             Console.WriteLine("  --grok-web-aspect-ratio AR  Aspect ratio for grok-web image/video (default 2:3).");
@@ -409,12 +524,17 @@ namespace MultiImageClient
             Console.WriteLine("  --grok-web-resolution R  480p (default) or 720p for grok-web video modes.");
             Console.WriteLine("  --grok-web-no-side-by-side  Request a single variant instead of side-by-side on grok-web.");
             Console.WriteLine("  --grok-web-no-capture  Disable full WebSocket session capture (on by default under saves/.../grok-web-capture/).");
+            Console.WriteLine("  --meta-web            Batch prompts through the meta.ai consumer web app (reverse-engineered Muse Image, browser cookies). Best-effort: Meta rotates persisted-query doc_ids. Uses --prompt-file or PromptFiles.");
+            Console.WriteLine("  --meta-web-cookies fp Override settings.json MetaWebCookiePath with a Netscape cookies.txt or raw Cookie header export from https://www.meta.ai (needs datr + abra_sess).");
+            Console.WriteLine("  --meta-web-orientation O  VERTICAL | HORIZONTAL | SQUARE for --meta-web (default SQUARE).");
+            Console.WriteLine("  --meta-web-num-images N   Images per prompt for --meta-web (default 1).");
+            Console.WriteLine("  --meta-web-doc-id ID  Override the TEXT_TO_IMAGE persisted-query doc_id. Capture the current value from DevTools > Network on https://www.meta.ai if --meta-web fails with a validation error.");
             Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low (pops open only with --open-images).");
             Console.WriteLine("  --provider-sample-file fp   Pair with --provider-sample-showcase to reuse a saved numbered/plain people-fixture prompt list.");
-            Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok,recraft.");
+            Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok-api,recraft (grok-api-pro adds the pro tier).");
             Console.WriteLine("  --provider-sample-retry-failures N  Pair with --provider-sample-showcase to retry failed prompt slots N extra times before composing the sheet.");
-            Console.WriteLine("  --grok-export [path]  One-shot: full Grok history export OUTSIDE the repo. Runs --grok-sync first, then copies every known Grok image/video plus prompts.txt and grok_ledger.jsonl into [path] (default C:\\GrokArchive). Rerunnable; already-present files are skipped.");
-            Console.WriteLine("  --grok-sync           One-shot: back-read/back-download the entire reachable Grok history and exit. Sweeps the xAI Files API inventory, re-polls any ledger video request_ids whose local file is missing, backfills prompts from old JSON logs, and writes everything to grok_ledger.jsonl + saves\\GrokArchive\\. Idempotent — run it whenever to stay synced.");
+            Console.WriteLine("  --grok-api-export [path]  One-shot: full grok-api history export OUTSIDE the repo. Runs --grok-api-sync first, then copies every known Grok image/video plus prompts.txt and grok_ledger.jsonl into [path] (default C:\\GrokArchive). Rerunnable; already-present files are skipped.");
+            Console.WriteLine("  --grok-api-sync       One-shot: back-read/back-download the entire reachable grok-api history and exit. Sweeps the xAI Files API inventory, re-polls any ledger video request_ids whose local file is missing, backfills prompts from old JSON logs, and writes everything to grok_ledger.jsonl + saves\\GrokArchive\\. Idempotent — run it whenever to stay synced.");
         }
     }
 }

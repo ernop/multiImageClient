@@ -34,6 +34,20 @@ namespace MultiImageClient
         /// Netscape cookies.txt or raw Cookie-header export for grok.com.
         /// Required for --grok-web consumer-session generators.
         public string GrokWebCookiePath { get; set; } = "";
+
+        /// Netscape cookies.txt or raw Cookie-header export for meta.ai.
+        /// Required for --meta-web (reverse-engineered Muse Image). Needs the
+        /// HttpOnly `datr` + session cookie (`abra_sess`/`ecto_1_sess`).
+        public string MetaWebCookiePath { get; set; } = "";
+
+        /// Optional overrides for meta.ai's reverse-engineered persisted-query
+        /// GraphQL surface. Meta rotates the doc_id and mutates the schema
+        /// frequently; when --meta-web starts failing with a validation error,
+        /// capture the current TEXT_TO_IMAGE doc_id from DevTools > Network and
+        /// drop it here (or pass --meta-web-doc-id). Blank = built-in defaults.
+        public string MetaWebImageDocId { get; set; } = "";
+        public string MetaWebPollMediaDocId { get; set; } = "";
+        public string MetaWebGraphqlEndpoint { get; set; } = "";
         public string XAIBaseUrl { get; set; } = "";
         public string GoogleGeminiApiKey { get; set; }
         public string GoogleCloudLocation { get; set; }
@@ -192,6 +206,7 @@ namespace MultiImageClient
             ComfyUIFlux2KleinWorkflowPath = ExpandPath(ComfyUIFlux2KleinWorkflowPath);
             ComfyUIZImageWorkflowPath = ExpandPath(ComfyUIZImageWorkflowPath);
             GrokWebCookiePath = ExpandPath(GrokWebCookiePath);
+            MetaWebCookiePath = ExpandPath(MetaWebCookiePath);
 
             if (PromptFiles != null)
             {

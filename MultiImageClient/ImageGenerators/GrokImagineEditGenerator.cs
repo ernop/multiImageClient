@@ -205,7 +205,11 @@ namespace MultiImageClient
             var bytes = await File.ReadAllBytesAsync(path);
             var mime = GuessImageMimeType(path);
             var dataUri = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
-            return XAIGrokImageInput.FromBase64(dataUri);
+            // xAI /images/edits requires the input as `url` or `file_id`; the
+            // legacy {type:"base64", data:...} shape is rejected with
+            // "Image input must have either 'url' or 'file_id' set"
+            // (observed 2026-07-12). Data URIs are accepted in `url`.
+            return XAIGrokImageInput.FromUrl(dataUri);
         }
 
         private async Task<string?> ResolveContentTypeAsync(XAIGrokImageData first)

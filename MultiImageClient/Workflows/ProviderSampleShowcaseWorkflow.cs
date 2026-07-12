@@ -123,7 +123,7 @@ namespace MultiImageClient
 
             var filters = providerFilter
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(s => s.ToLowerInvariant())
+                .Select(s => NormalizeProviderFilter(s.ToLowerInvariant()))
                 .ToList();
 
             return generators.Where(g =>
@@ -132,6 +132,16 @@ namespace MultiImageClient
                 return filters.Any(label.Contains);
             });
         }
+
+        // Filter tokens are substring-matched against generator labels, so the
+        // user-facing "grok-api" name (official api.x.ai version, as opposed
+        // to the cookie-session grok-web) is mapped onto the label vocabulary.
+        private static string NormalizeProviderFilter(string token) => token switch
+        {
+            "grok-api" => "grok",
+            "grok-api-pro" => "grok-imagine-image-pro",
+            _ => token,
+        };
 
         private static void AddProviderSampleAliases(
             List<IImageGenerator> generators,
@@ -148,13 +158,13 @@ namespace MultiImageClient
                 .Select(s => s.ToLowerInvariant())
                 .ToHashSet();
 
-            if ((filters.Contains("grok-imagine-image-pro") || filters.Contains("grok-pro"))
+            if ((filters.Contains("grok-imagine-image-pro") || filters.Contains("grok-pro") || filters.Contains("grok-api-pro"))
                 && generators.All(g => g.ApiType != ImageGeneratorApiType.GrokImaginePro))
             {
                 generators.Add(groups.GrokImaginePro_Square());
             }
 
-            if (filters.Contains("grok-imagine-image")
+            if ((filters.Contains("grok-imagine-image") || filters.Contains("grok-api"))
                 && generators.All(g => g.ApiType != ImageGeneratorApiType.GrokImagine))
             {
                 generators.Add(groups.GrokImagine_Square());

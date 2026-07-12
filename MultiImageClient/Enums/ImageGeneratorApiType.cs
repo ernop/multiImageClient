@@ -78,6 +78,16 @@ namespace MultiImageClient
         GrokWebImagineVideo = 35,
         GrokWebImagineEdit = 36,
 
+        // OpenAI gpt-image-2 image editing: POST /v1/images/edits with one or
+        // more source images plus edit instructions. Do NOT send
+        // input_fidelity (rejected on this model, confirmed 2026-07-06).
+        GptImage2Edit = 37,
+
+        // Consumer meta.ai session endpoint (browser cookies, not an official
+        // Muse Image API — none exists yet). Reverse-engineered persisted-query
+        // GraphQL, best-effort. See MetaWebClient.
+        MetaWebImagine = 38,
+
         WorkflowMock = 1000,
     }
 }

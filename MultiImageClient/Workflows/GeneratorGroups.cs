@@ -170,6 +170,35 @@ namespace MultiImageClient
             return catalog.Where(p => ids.Contains(p.Id)).ToList();
         }
 
+        /// User-facing short names for --showcase --gens (and consistent with
+        /// the REPL's :gens vocabulary). One canonical config per name.
+        /// "grok-web" and "meta-web" are deliberately NOT built here — they need
+        /// a cookie client and per-run flags, so ShowcaseWorkflow builds them
+        /// itself. They are listed for help/validation completeness only.
+        public static readonly string[] ShortNames =
+            { "gpt2", "grok-api", "grok-api-pro", "grok-web", "meta-web", "dalle3", "ideogram", "recraft", "bfl", "google", "googlepro", "local-klein", "local-zimage" };
+
+        public IImageGenerator BuildByShortName(string name)
+        {
+            switch (name.Trim().ToLowerInvariant())
+            {
+                case "gpt2": return GptImage2RandomMinimalSafety();
+                case "grok-api": case "grok": return GrokImagine_Square();
+                case "grok-api-pro": case "grokpro": return GrokImaginePro_Square();
+                case "dalle3": return Dalle3Square();
+                case "ideogram": return IdeogramV4_Square();
+                case "recraft": return RecraftV41AnyStyle();
+                case "bfl": return BFLFlux2ProPreview_Square();
+                case "google": case "nanobanana": return GeminiNanoBanana();
+                case "googlepro": case "nanobananapro": return GeminiNanoBananaPro();
+                case "local-klein": return LocalFlux2Klein_Custom();
+                case "local-zimage": return LocalZImageTurbo_Custom();
+                default:
+                    throw new ArgumentException(
+                        $"Unknown generator short name '{name}'. Known: {string.Join(", ", ShortNames)}.");
+            }
+        }
+
         /// Review set for comparing providers across the same sampled prompt
         /// list. This intentionally returns one generator per requested provider
         /// slot so callers can build one contact sheet per generator.

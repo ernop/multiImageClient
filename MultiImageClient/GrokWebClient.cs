@@ -580,6 +580,9 @@ namespace MultiImageClient
                     (int)response.StatusCode,
                     body);
             }
+            // grok.com's upload response shape drifts; keep the raw body in the
+            // log so id-extraction failures are diagnosable after the fact.
+            Logger.Log($"\t(grok-web) upload-file-v2 response: {Truncate(body, 800)}");
 
             var assetId = TryExtractAssetId(body);
             if (string.IsNullOrEmpty(assetId))
@@ -861,6 +864,18 @@ namespace MultiImageClient
             {
                 Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
             };
+            // /rest/app-chat is behind stricter anti-bot rules than the other
+            // REST endpoints (upload, media/post) — without the browser's
+            // fetch-metadata headers it 403s with "Request rejected by
+            // anti-bot rules" (observed 2026-07-12).
+            request.Headers.TryAddWithoutValidation("Accept", "*/*");
+            request.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+            request.Headers.TryAddWithoutValidation("sec-ch-ua", "\"Chromium\";v=\"136\", \"Google Chrome\";v=\"136\", \"Not.A/Brand\";v=\"99\"");
+            request.Headers.TryAddWithoutValidation("sec-ch-ua-mobile", "?0");
+            request.Headers.TryAddWithoutValidation("sec-ch-ua-platform", "\"Windows\"");
+            request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
+            request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
+            request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
 
             using var response = await _http.SendAsync(
                 request,
@@ -1163,6 +1178,28 @@ namespace MultiImageClient
             try
             {
                 using var doc = JsonDocument.Parse(body);
+
+                // Current (2026-07) upload-file-v2 shape nests the asset id:
+                // { "uploadId": ..., "fileMetadata": { "fileMetadataId": ... } }.
+                // uploadId is NOT an asset id — /rest/assets/{uploadId} 404s —
+                // so the nested lookup must run before any top-level/regex
+                // fallback can grab the wrong UUID.
+                if (doc.RootElement.TryGetProperty("fileMetadata", out var meta)
+                    && meta.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var name in new[] { "fileMetadataId", "id" })
+                    {
+                        if (meta.TryGetProperty(name, out var nested))
+                        {
+                            var value = nested.GetString();
+                            if (!string.IsNullOrWhiteSpace(value))
+                            {
+                                return value;
+                            }
+                        }
+                    }
+                }
+
                 foreach (var name in new[] { "assetId", "fileMetadataId", "id", "fileId" })
                 {
                     if (doc.RootElement.TryGetProperty(name, out var el))

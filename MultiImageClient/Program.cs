@@ -49,15 +49,15 @@ namespace MultiImageClient
                 return;
             }
 
-            if (options.GrokSync)
+            if (options.GrokApiSync)
             {
                 await GrokArchive.SyncAsync(settings);
                 return;
             }
 
-            if (options.GrokExportPath != null)
+            if (options.GrokApiExportPath != null)
             {
-                await GrokArchive.ExportAsync(settings, options.GrokExportPath);
+                await GrokArchive.ExportAsync(settings, options.GrokApiExportPath);
                 return;
             }
 
@@ -75,13 +75,32 @@ namespace MultiImageClient
                 return;
             }
 
+            // Local web UI: Kestrel on 127.0.0.1, browser front door onto the
+            // same generators + ImageManager pipeline. Runs until Ctrl-C.
+            if (options.Ui)
+            {
+                var ui = new UiWorkflow();
+                await ui.RunAsync(settings, stats, options);
+                return;
+            }
+
             AbstractPromptSource promptSource = !string.IsNullOrEmpty(options.OverridePrompt)
                 ? new InlinePromptSource(settings, options.OverridePrompt)
                 : !string.IsNullOrEmpty(options.PromptFilePath)
                     ? new PromptFileSource(settings, options.PromptFilePath)
                     : new ReadAllPromptsFromFile(settings, "");
 
-            if (options.GrokEdit)
+            if (options.Showcase)
+            {
+                // Generic contact-sheet one-shot: all prompts from the active
+                // prompt source through the generators picked by --gens (or
+                // the standard batch set), one sheet per generator.
+                var showcaseWorkflow = new ShowcaseWorkflow();
+                await showcaseWorkflow.RunAsync(promptSource, settings, stats, options);
+                return;
+            }
+
+            if (options.GrokApiEdit)
             {
                 var grokEdit = new GrokEditWorkflow();
                 await grokEdit.RunAsync(promptSource, settings, stats, options);
@@ -95,7 +114,14 @@ namespace MultiImageClient
                 return;
             }
 
-            if (options.GrokVideoTest)
+            if (options.MetaWeb)
+            {
+                var metaWeb = new MetaWebWorkflow();
+                await metaWeb.RunAsync(promptSource, settings, stats, options);
+                return;
+            }
+
+            if (options.GrokApiVideoTest)
             {
                 // Exercises text-to-video, grok-image-to-video, and
                 // extend-video with one prompt; saves + ledgers every clip.
@@ -121,13 +147,13 @@ namespace MultiImageClient
                 return;
             }
 
-            if (options.GrokShowcase)
+            if (options.GrokApiShowcase)
             {
                 // --limit defaults to int.MaxValue; clamp to 10 for the showcase
                 // so the grid stays readable and the cheap tier stays ~$0.20.
                 var showcaseLimit = options.Limit == int.MaxValue ? 10 : options.Limit;
                 var showcase = new GrokShowcaseWorkflow();
-                await showcase.RunAsync(promptSource, settings, stats, pro: options.GrokPro, limit: showcaseLimit);
+                await showcase.RunAsync(promptSource, settings, stats, pro: options.GrokApiPro, limit: showcaseLimit);
                 return;
             }
 

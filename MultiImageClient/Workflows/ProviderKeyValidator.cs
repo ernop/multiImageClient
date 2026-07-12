@@ -36,6 +36,11 @@ namespace MultiImageClient
                 return DescribeGrokWebCookieProblem(settings);
             }
 
+            if (apiType == ImageGeneratorApiType.MetaWebImagine)
+            {
+                return DescribeMetaWebCookieProblem(settings);
+            }
+
             var (keyName, keyValue) = apiType switch
             {
                 ImageGeneratorApiType.Dalle3 or ImageGeneratorApiType.GptImage1
@@ -92,6 +97,22 @@ namespace MultiImageClient
             if (!File.Exists(path))
             {
                 return $"settings.json: GrokWebCookiePath does not exist: {path}";
+            }
+
+            return null;
+        }
+
+        private static string? DescribeMetaWebCookieProblem(Settings settings)
+        {
+            var path = settings.MetaWebCookiePath;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return "settings.json: MetaWebCookiePath is empty - export meta.ai cookies to a file and set the path, or pass --meta-web-cookies";
+            }
+
+            if (!File.Exists(path))
+            {
+                return $"settings.json: MetaWebCookiePath does not exist: {path}";
             }
 
             return null;

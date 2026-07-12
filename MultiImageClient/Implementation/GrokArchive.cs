@@ -13,7 +13,7 @@ using XAIGrokAPIClient;
 namespace MultiImageClient
 {
     /// Reusable Grok history archiver/sync. Call SyncAsync(settings) any time
-    /// (or via the --grok-sync CLI flag) to bring the local archive up to
+    /// (or via the --grok-api-sync CLI flag) to bring the local archive up to
     /// date. It is idempotent and incremental — already-downloaded assets are
     /// skipped — so it doubles as the "keep local copies synced" mechanism.
     ///

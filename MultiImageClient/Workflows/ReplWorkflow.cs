@@ -73,8 +73,10 @@ namespace MultiImageClient
 
         // Catalog of known per-name factories. ':gens add <name>' looks here.
         // Keep in sync with PrintHelp()'s generator list.
+        // "grok-api" = official api.x.ai key version. The consumer-cookie
+        // grok-web path is workflow-level (--grok-web) and not a REPL slot.
         private static readonly string[] KnownGenerators =
-            { "gpt2", "grok", "grokpro", "dalle3", "ideogram", "recraft", "bfl", "google", "googlepro", "imagen4" };
+            { "gpt2", "grok-api", "grok-api-pro", "dalle3", "ideogram", "recraft", "bfl", "google", "googlepro", "imagen4" };
 
         private class InFlight
         {
@@ -101,14 +103,14 @@ namespace MultiImageClient
             _concurrency = options.ReplConcurrency < 1 ? 1 : options.ReplConcurrency;
             _concurrencyLimit = new SemaphoreSlim(_concurrency);
 
-            // Default active set: gpt-image-2 + Grok Imagine (standard tier).
+            // Default active set: gpt-image-2 + grok-api (standard tier).
             // Both fire in parallel for each dispatched prompt. Grok is only
             // added if an API key is present so the REPL still works on
             // gpt-only setups. Users can :gens add / remove at runtime.
             _active["gpt2"] = BuildGpt2(_size, _quality, _moderation, _imageCount);
             if (!string.IsNullOrWhiteSpace(_settings.XAIGrokApiKey))
             {
-                _active["grok"] = BuildNamed("grok");
+                _active["grok-api"] = BuildNamed("grok-api");
             }
         }
 
@@ -343,7 +345,7 @@ namespace MultiImageClient
                     }
                     try
                     {
-                        var key = rest.ToLowerInvariant();
+                        var key = NormalizeGenName(rest);
                         var g = BuildNamed(key);
                         _active[key] = g;
                         Console.WriteLine($"added {key}: {g.GetGeneratorSpecPart()}");
@@ -357,7 +359,7 @@ namespace MultiImageClient
                 case "remove":
                 case "rm":
                     if (string.IsNullOrEmpty(rest)) { Console.WriteLine("usage: :gens remove <name>"); return; }
-                    if (_active.Remove(rest.ToLowerInvariant())) Console.WriteLine($"removed {rest}");
+                    if (_active.Remove(NormalizeGenName(rest))) Console.WriteLine($"removed {rest}");
                     else Console.WriteLine($"not active: {rest}");
                     return;
 
@@ -366,7 +368,7 @@ namespace MultiImageClient
                     _active["gpt2"] = BuildGpt2(_size, _quality, _moderation, _imageCount);
                     if (!string.IsNullOrWhiteSpace(_settings.XAIGrokApiKey))
                     {
-                        _active["grok"] = BuildNamed("grok");
+                        _active["grok-api"] = BuildNamed("grok-api");
                     }
                     Console.WriteLine($"reset to defaults ({string.Join(" + ", _active.Keys)})");
                     return;
@@ -696,6 +698,20 @@ namespace MultiImageClient
                 imageCount: imageCount);
         }
 
+        // Maps old grok spellings onto the canonical "grok-api" names so the
+        // _active dictionary always uses one key per generator regardless of
+        // which spelling the user typed.
+        private static string NormalizeGenName(string raw)
+        {
+            var key = raw.Trim().ToLowerInvariant();
+            return key switch
+            {
+                "grok" => "grok-api",
+                "grokpro" or "grok_pro" => "grok-api-pro",
+                _ => key,
+            };
+        }
+
         private IImageGenerator BuildNamed(string name)
         {
             switch (name.ToLowerInvariant())
@@ -703,17 +719,19 @@ namespace MultiImageClient
                 case "gpt2":
                     return BuildGpt2(_size, _quality, _moderation, _imageCount);
 
-                case "grok":
+                case "grok-api":
+                case "grok": // old name
                     // Standard tier priced per-image regardless of resolution
                     // — 2k is a free upgrade over 1k so we take it.
-                    RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", "grok");
+                    RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", "grok-api");
                     return new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                         ImageGeneratorApiType.GrokImagine, _stats, "repl",
                         aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
 
-                case "grokpro":
+                case "grok-api-pro":
+                case "grokpro": // old name
                 case "grok_pro":
-                    RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", "grokpro");
+                    RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", "grok-api-pro");
                     return new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                         ImageGeneratorApiType.GrokImaginePro, _stats, "repl",
                         aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
@@ -879,9 +897,9 @@ namespace MultiImageClient
             Console.WriteLine("  :n N                     set gpt-image-2 images-per-call (default 1). N>10 requires confirmation.");
             Console.WriteLine("  :concurrency N           max prompts in flight (applies to subsequent dispatches)");
             Console.WriteLine("  :gens list               list active generators");
-            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok grokpro dalle3 ideogram recraft bfl google googlepro imagen4(dead 06-24)");
+            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok-api grok-api-pro dalle3 ideogram recraft bfl google googlepro imagen4(dead 06-24)");
             Console.WriteLine("  :gens remove <name>      remove a generator from the active set");
-            Console.WriteLine("  :gens reset              back to defaults (gpt2 + grok when XAIGrokApiKey is set)");
+            Console.WriteLine("  :gens reset              back to defaults (gpt2 + grok-api when XAIGrokApiKey is set)");
             Console.WriteLine("  :status                  list in-flight jobs");
             Console.WriteLine("  :wait                    block until every in-flight job finishes");
             Console.WriteLine("  :last                    reprint last-submitted prompt");

@@ -129,14 +129,22 @@ namespace MultiImageClient
             {
                 sw.Stop();
                 _stats.GrokImageGenerationErrorCount++;
-                Logger.Log($"\t<- Grok Web Edit FAIL: {ex.Message}");
-                return Fail(ex.Message, promptDetails, generator, sw.ElapsedMilliseconds);
+                // The server's response body is where the actual reason lives
+                // (moderation verdict, Cloudflare block, etc).
+                var detail = ex is GrokWebException gwe && !string.IsNullOrEmpty(gwe.ResponseBody)
+                    ? $"{ex.Message} body={Truncate(gwe.ResponseBody, 400)}"
+                    : ex.Message;
+                Logger.Log($"\t<- Grok Web Edit FAIL: {detail}");
+                return Fail(detail, promptDetails, generator, sw.ElapsedMilliseconds);
             }
             finally
             {
                 _semaphore.Release();
             }
         }
+
+        private static string Truncate(string s, int max)
+            => string.IsNullOrEmpty(s) ? "" : (s.Length <= max ? s : s.Substring(0, max) + "...");
 
         private static string GuessContentType(string url)
         {

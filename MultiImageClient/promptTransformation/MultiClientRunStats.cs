@@ -46,6 +46,10 @@ namespace MultiImageClient
         public int GrokVideoGenerationSuccessCount { get; set; }
         public int GrokVideoGenerationErrorCount { get; set; }
 
+        public int MetaWebImageGenerationRequestCount { get; set; }
+        public int MetaWebImageGenerationSuccessCount { get; set; }
+        public int MetaWebImageGenerationErrorCount { get; set; }
+
         public int GoogleRequestCount { get; set; }
         public int GoogleRefusedCount { get; set; }
 
@@ -115,6 +119,9 @@ namespace MultiImageClient
 
             if (GrokVideoGenerationRequestCount > 0 | GrokVideoGenerationErrorCount > 0 | GrokVideoGenerationSuccessCount > 0)
                 nonZeroStats.Add($"Grok Video: total:{GrokVideoGenerationRequestCount}, ok:{GrokVideoGenerationSuccessCount}, bad:{GrokVideoGenerationErrorCount} ");
+
+            if (MetaWebImageGenerationRequestCount > 0 | MetaWebImageGenerationErrorCount > 0 | MetaWebImageGenerationSuccessCount > 0)
+                nonZeroStats.Add($"Meta Web: total:{MetaWebImageGenerationRequestCount}, ok:{MetaWebImageGenerationSuccessCount}, bad:{MetaWebImageGenerationErrorCount} ");
 
             if (LocalImageGenerationRequestCount > 0 | LocalImageGenerationErrorCount > 0 | LocalImageGenerationSuccessCount > 0)
                 nonZeroStats.Add($"Local image: total:{LocalImageGenerationRequestCount}, ok:{LocalImageGenerationSuccessCount}, bad:{LocalImageGenerationErrorCount} ");

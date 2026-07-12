@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiImageClient</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>MultiImageClient</h1>
+  <span class="tagline">paste an image, write a prompt, fan out</span>
+</header>
+
+<main>
+  <section id="composer">
+    <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse">
+      <div id="paste-hint">
+        <strong>Ctrl+V</strong> to paste an image<br>
+        or drop / click to browse
+      </div>
+      <img id="input-preview" alt="" hidden>
+      <button id="clear-image" type="button" hidden>&times; remove</button>
+      <input id="file-input" type="file" accept="image/*" hidden>
+    </div>
+
+    <div id="compose-right">
+      <textarea id="prompt" rows="3"
+        placeholder="Prompt… (Ctrl+Enter to send). With an image attached this is an edit instruction; without one it's a plain text-to-image prompt."></textarea>
+
+      <div id="gens-row"><!-- generator checkboxes injected here --></div>
+
+      <div id="opts-row">
+        <label>shape <select id="opt-shape"></select></label>
+        <label>detail <select id="opt-detail"></select></label>
+        <label>quality
+          <select id="opt-quality">
+            <option>low</option><option>medium</option><option selected>high</option>
+          </select>
+        </label>
+        <label>n <input id="opt-n" type="number" min="1" max="10" value="1"></label>
+        <label>moderation
+          <select id="opt-moderation">
+            <option selected>low</option><option>auto</option>
+          </select>
+        </label>
+        <span class="opts-note">shape/detail apply to every target &middot; quality/n/moderation &rarr; gpt-image-2 &middot; edits with shape=auto keep the source image's shape</span>
+      </div>
+
+      <div id="send-row">
+        <button id="send" type="button">Generate</button>
+        <span id="send-error"></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="jobs"></section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -40,14 +40,14 @@ namespace MultiImageClient
                 stats,
                 settings,
                 options.InputImagePath,
-                pro: options.GrokPro,
-                aspectRatio: options.GrokEditAspectRatio);
+                pro: options.GrokApiPro,
+                aspectRatio: options.GrokApiEditAspectRatio);
 
-            var modelLabel = options.GrokPro ? "grok-imagine-image-pro" : "grok-imagine-image";
-            var arLabel = string.IsNullOrWhiteSpace(options.GrokEditAspectRatio)
+            var modelLabel = options.GrokApiPro ? "grok-imagine-image-pro" : "grok-imagine-image";
+            var arLabel = string.IsNullOrWhiteSpace(options.GrokApiEditAspectRatio)
                 ? "source aspect ratio"
-                : options.GrokEditAspectRatio;
-            Logger.Log($"Grok edit: {modelLabel}, input={options.InputImagePath}, output AR={arLabel}");
+                : options.GrokApiEditAspectRatio;
+            Logger.Log($"Grok API edit: {modelLabel}, input={options.InputImagePath}, output AR={arLabel}");
 
             return await GeneratorContactSheetRunner.RunOneGeneratorAsync(
                 generator,
@@ -55,8 +55,8 @@ namespace MultiImageClient
                 new ImageManager(settings, stats),
                 settings,
                 stats,
-                runLabel: "Grok edit",
-                sheetHeader: $"Grok edit ({modelLabel})",
+                runLabel: "Grok API edit",
+                sheetHeader: $"Grok API edit ({modelLabel})",
                 openWhenDone: true);
         }
     }

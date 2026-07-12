@@ -34,7 +34,7 @@ namespace MultiImageClient
         {
             if (string.IsNullOrWhiteSpace(settings.XAIGrokApiKey))
             {
-                Console.Error.WriteLine("Grok showcase aborted: settings.json is missing XAIGrokApiKey.");
+                Console.Error.WriteLine("Grok API showcase aborted: settings.json is missing XAIGrokApiKey.");
                 return null;
             }
 
@@ -47,7 +47,7 @@ namespace MultiImageClient
             if (prompts.Count == 0)
             {
                 Console.Error.WriteLine(
-                    "Grok showcase aborted: prompt source produced no prompts. "
+                    "Grok API showcase aborted: prompt source produced no prompts. "
                     + "Supply --prompt \"...\" or point PromptFiles at a readable file.");
                 return null;
             }
@@ -68,7 +68,7 @@ namespace MultiImageClient
                 baseUrl: settings.XAIBaseUrl);
 
             var modelLabel = pro ? "grok-imagine-image-pro" : "grok-imagine-image";
-            Logger.Log($"Grok showcase: firing {prompts.Count} prompts at {modelLabel} (concurrency={concurrency}).");
+            Logger.Log($"Grok API showcase: firing {prompts.Count} prompts at {modelLabel} (concurrency={concurrency}).");
 
             return await GeneratorContactSheetRunner.RunOneGeneratorAsync(
                 generator,
@@ -76,8 +76,8 @@ namespace MultiImageClient
                 new ImageManager(settings, stats),
                 settings,
                 stats,
-                runLabel: "Grok showcase",
-                sheetHeader: $"Grok showcase ({modelLabel}) - {prompts.Count} prompts:");
+                runLabel: "Grok API showcase",
+                sheetHeader: $"Grok API showcase ({modelLabel}) - {prompts.Count} prompts:");
         }
     }
 }
