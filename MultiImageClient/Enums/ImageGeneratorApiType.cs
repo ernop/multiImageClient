@@ -5,6 +5,8 @@ namespace MultiImageClient
     public enum ImageGeneratorApiType
     {
         Midjourney = 1,
+        // RETIRED: OpenAI shut down dall-e-3 on 2026-05-12 (model_not_found).
+        // Kept only so old saved JSON logs still deserialize.
         Dalle3 = 2,
         Ideogram = 3,
         BFLv11 = 4,

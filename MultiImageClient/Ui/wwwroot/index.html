@@ -28,6 +28,12 @@
       <textarea id="prompt" rows="3"
         placeholder="Prompt… (Ctrl+Enter to send). With an image attached this is an edit instruction; without one it's a plain text-to-image prompt."></textarea>
 
+      <div id="gen-controls">
+        <button id="gens-enable-all" type="button">Enable all</button>
+        <button id="gens-disable-all" type="button">Disable all</button>
+        <button id="gens-toggle-all" type="button">Toggle all</button>
+        <span id="gens-count"></span>
+      </div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
 
       <div id="opts-row">
@@ -44,7 +50,7 @@
             <option selected>low</option><option>auto</option>
           </select>
         </label>
-        <span class="opts-note">shape/detail apply to every target &middot; quality/n/moderation &rarr; gpt-image-2 &middot; edits with shape=auto keep the source image's shape</span>
+        <span class="opts-note">shape/detail map to gpt-image and Grok targets; other providers use their named preset &middot; quality/n/moderation &rarr; OpenAI image models &middot; only gpt-image-2 and Grok targets currently accept input images</span>
       </div>
 
       <div id="send-row">

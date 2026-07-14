@@ -23,15 +23,63 @@ The intended user experience is:
 
 This follows the existing `grok-api` versus `grok-web` distinction.
 
-## Current implementation
+## Status (2026-07-12)
 
-The repository currently contains the following scaffold:
+The Playwright browser transport described under "Recommended architecture" is
+implemented:
+
+- `MetaWebClient.cs` rewritten as a Playwright client: persistent Chromium
+  profile (default `~/.config/multi-image-client/meta-ai-profile`), optional
+  cookie injection, headed login mode (`--meta-web-headed`), one shared
+  browser per workflow, internal `SemaphoreSlim` serialization, baseline
+  snapshot → real-composer submit → settle-wait → filtered download with
+  content-type + magic-byte validation, verbatim bytes returned.
+- `MetaWebSessionCapture.cs` added: opt-in diagnostics
+  (`MetaWebCaptureSessions`) — events.jsonl + failure screenshots, no cookies.
+- GraphQL-era config removed: `MetaWebImageDocId`, `MetaWebPollMediaDocId`,
+  `MetaWebGraphqlEndpoint`, `--meta-web-doc-id`, `--meta-web-orientation`,
+  `--meta-web-num-images`. Added: `MetaWebBrowserProfilePath`,
+  `MetaWebBrowserExecutablePath`, `MetaWebHeaded`, `MetaWebTimeoutSeconds`,
+  `MetaWebCaptureSessions`, `--meta-web-headed`, `--playwright-install`.
+- Cookie guidance corrected to `datr` + `ecto_1_sess` (`abra_sess` optional).
+- Verified without credentials: solution builds cleanly; no-session run aborts
+  with an actionable message; headless launch against live meta.ai reaches the
+  auth check and reports "not authenticated" correctly.
+
+Live smoke test PASSED (2026-07-12, after two selector findings):
+
+- Finding 1: the composer is `<textarea data-testid="composer-input">` and is
+  HIDDEN by Playwright's visibility rules (invisible element backing a styled
+  box). Fix: wait for Attached (never Visible) in the auth check.
+- Finding 2: Focus/Click on the hidden textarea silently no-op (focus lands on
+  BODY, typed text goes nowhere, settle-loop times out with zero events). Fix:
+  click the center of the composer's nearest visible ancestor — like a real
+  user — then verify the text landed in the textarea before pressing Enter and
+  verify the composer emptied afterwards; each step fails loudly.
+- Prompts are prefixed with "Imagine " (Meta's image trigger, same as the
+  retired GraphQL path sent) so chat-style prompts still generate images
+  instead of text answers.
+- Verified live headless off the persistent profile: single prompt OK (~20s),
+  two sequential prompts OK with no cross-prompt leak, raw bytes saved
+  verbatim (WEBP), annotations + contact sheets correct.
+
+Operational constraint: the persistent Chromium profile can be held by only
+ONE process at a time — a running `--ui` server and a CLI `--meta-web` run
+collide (the client maps the profile-lock error to an actionable message).
+
+Still open: `--ui` exposure (in progress separately), headed-mode re-test
+after these changes, expired-session behavior test, and unit tests (repo has
+no test project yet).
+
+## Original scaffold (historical)
+
+The pre-rewrite scaffold contained:
 
 - `MultiImageClient/MetaWebCookieLoader.cs`
   - Reads a raw Cookie header, DevTools cookie export, Netscape `cookies.txt`, or simple `name=value` lines.
   - Filters cookies for `meta.ai`.
 - `MultiImageClient/MetaWebClient.cs`
-  - Currently attempts image generation through an old persisted-query GraphQL mutation.
+  - Attempted image generation through an old persisted-query GraphQL mutation (retired; see below).
   - Downloads media URLs and maps failures to `MetaWebException`.
 - `MultiImageClient/ImageGenerators/MetaWebImagineGenerator.cs`
   - Implements `IImageGenerator`.

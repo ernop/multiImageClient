@@ -12,16 +12,25 @@ namespace MultiImageClient
     /// or simple name=value lines, and produces one Cookie header string.
     ///
     /// meta.ai auth is cookie-only (no API key). The load-bearing cookies are
-    /// the browser identifier `datr` plus a session cookie — current builds use
-    /// `abra_sess`, older ones `ecto_1_sess`. We require `datr` and at least one
-    /// session cookie; everything else Meta sets is passed through untouched
-    /// because the persisted-query endpoint is picky about the full jar.
+    /// the browser identifier `datr` plus a session cookie — current sessions
+    /// use `ecto_1_sess` (`abra_sess` appears in some accounts but is optional).
+    /// We require `datr` and at least one session cookie; everything else Meta
+    /// sets is passed through untouched because the site is picky about the
+    /// full jar. Prefer exporting the complete meta.ai cookie set.
     public static class MetaWebCookieLoader
     {
         private const string BrowserIdCookie = "datr";
-        private static readonly string[] SessionCookies = { "abra_sess", "ecto_1_sess" };
+        private static readonly string[] SessionCookies = { "ecto_1_sess", "abra_sess" };
 
         public static string LoadCookieHeader(string path)
+        {
+            var pairs = LoadCookiePairs(path);
+            return string.Join("; ", pairs.Select(kvp => $"{kvp.Key}={kvp.Value}"));
+        }
+
+        /// Individual name/value pairs, for injection into a Playwright browser
+        /// context (which needs discrete cookies rather than one header line).
+        public static Dictionary<string, string> LoadCookiePairs(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
             {
@@ -43,8 +52,9 @@ namespace MultiImageClient
             // Raw Cookie header pasted from the Network tab: datr=...; abra_sess=...; ...
             if (!text.Contains('\n') && text.Contains('=') && text.Contains(';'))
             {
-                ValidateRequiredCookies(ParseHeaderPairs(text));
-                return text.Trim();
+                var headerPairs = ParseHeaderPairs(text);
+                ValidateRequiredCookies(headerPairs);
+                return headerPairs;
             }
 
             var pairs = ParseCookieFile(text);
@@ -55,7 +65,7 @@ namespace MultiImageClient
             }
 
             ValidateRequiredCookies(pairs);
-            return string.Join("; ", pairs.Select(kvp => $"{kvp.Key}={kvp.Value}"));
+            return pairs;
         }
 
         private static Dictionary<string, string> ParseCookieFile(string text)
@@ -198,7 +208,7 @@ namespace MultiImageClient
             throw new InvalidOperationException(
                 "Meta web cookie file is missing required auth cookies: "
                 + string.Join(", ", missing)
-                + ". document.cookie is not enough — copy from DevTools > Application > Cookies > https://www.meta.ai and include HttpOnly rows like datr and abra_sess.");
+                + ". document.cookie is not enough — copy from DevTools > Application > Cookies > https://www.meta.ai and include HttpOnly rows like datr and ecto_1_sess.");
         }
     }
 }

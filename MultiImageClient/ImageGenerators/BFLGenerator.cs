@@ -2,7 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.Net.Http;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -12,12 +12,12 @@ namespace MultiImageClient
     {
         private SemaphoreSlim _bflSemaphore;
         private BFLClient _bflClient;
-        private HttpClient _httpClient;
         private MultiClientRunStats _stats;
         private string _aspectRatio = "1:1";
         private bool _promptUpsampling = false;
         private int _width { get; set; }
         private int _height { get; set; }
+        private string _inputImagePath;
         private ImageGeneratorApiType _apiType { get; }
 
         public ImageGeneratorApiType ApiType => _apiType;
@@ -62,12 +62,14 @@ namespace MultiImageClient
             return res;
         }
 
-        public BFLGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency, string aspectRatio, bool promptUpscaling, int width, int height, MultiClientRunStats stats, string name)
+        /// inputImagePath: when set (FLUX.2 endpoints only), the image is sent as
+        ///   input_image conditioning — a reference/guide the model draws on, not
+        ///   a mask-based edit. All FLUX.2 variants support this.
+        public BFLGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency, string aspectRatio, bool promptUpscaling, int width, int height, MultiClientRunStats stats, string name, string inputImagePath = null)
         {
             _apiType = apiType;
             _bflClient = new BFLClient(apiKey);
             _bflSemaphore = new SemaphoreSlim(maxConcurrency);
-            _httpClient = new HttpClient();
 
             _aspectRatio = aspectRatio;
             _promptUpsampling = promptUpscaling;
@@ -76,6 +78,7 @@ namespace MultiImageClient
 
             _stats = stats;
             _name = string.IsNullOrEmpty(name) ? "" : name;
+            _inputImagePath = inputImagePath;
         }
         public List<string> GetRightParts()
         {
@@ -172,6 +175,11 @@ namespace MultiImageClient
                             PromptUpsampling = _promptUpsampling,
                             SafetyTolerance = MaxPermissiveSafetyTolerance,
                         };
+                        if (!string.IsNullOrEmpty(_inputImagePath))
+                        {
+                            request.InputImage = Convert.ToBase64String(File.ReadAllBytes(_inputImagePath));
+                            promptDetails.RuntimeMeta["input_image"] = Path.GetFileName(_inputImagePath);
+                        }
                         // flex lets you steer denoising; keep it permissive by default.
                         if (_apiType == ImageGeneratorApiType.BFLFlux2Flex)
                         {
@@ -198,9 +206,13 @@ namespace MultiImageClient
 
                 _stats.BFLImageGenerationRequestCount++;
 
+                if (generationResponse == null)
+                {
+                    throw new InvalidOperationException("BFL returned an empty generation response.");
+                }
                 Logger.Log($"{promptDetails} From BFL ({_apiType}): '{generationResponse.Status}'");
 
-                if (generationResponse.Status != "Ready")
+                if (!string.Equals(generationResponse.Status, "Ready", StringComparison.OrdinalIgnoreCase))
                 {
                     var baseResponse = new TaskProcessResult { IsSuccess = false, PromptDetails = promptDetails, ImageGeneratorDescription = generator.GetGeneratorSpecPart(), ImageGenerator = _apiType, ErrorMessage = generationResponse.Status };
                     if (generationResponse.Status == "Content Moderated")
@@ -226,6 +238,11 @@ namespace MultiImageClient
                 }
                 else
                 {
+                    if (string.IsNullOrWhiteSpace(generationResponse.Result?.Sample))
+                    {
+                        throw new InvalidOperationException(
+                            "BFL reported Ready but did not provide a result image URL.");
+                    }
                     Logger.Log($"{promptDetails} BFL image generated: {generationResponse.Result.Sample}");
                     _stats.BFLImageGenerationSuccessCount++;
                     var returnedPrompt = generationResponse.Result.Prompt?.Trim();
@@ -235,9 +252,7 @@ namespace MultiImageClient
                         promptDetails.ReplacePrompt(returnedPrompt, returnedPrompt, TransformationType.BFLRewrite);
                     }
 
-                    var headResponse = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, generationResponse.Result.Sample));
-                    var contentType = headResponse.Content.Headers.ContentType?.MediaType;
-                    return new TaskProcessResult { IsSuccess = true, Url = generationResponse.Result.Sample, ContentType = contentType, ImageGeneratorDescription = generator.GetGeneratorSpecPart(), PromptDetails = promptDetails, ImageGenerator = _apiType };
+                    return new TaskProcessResult { IsSuccess = true, Url = generationResponse.Result.Sample, ImageGeneratorDescription = generator.GetGeneratorSpecPart(), PromptDetails = promptDetails, ImageGenerator = _apiType };
                 }
 
             }

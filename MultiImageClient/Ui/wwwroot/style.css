@@ -83,7 +83,31 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 #prompt:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
-#gens-row { display: flex; flex-wrap: wrap; gap: 8px; }
+#gen-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+#gen-controls button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+#gen-controls button:hover { color: #fff; background: var(--accent); }
+#gens-count { font-size: 12px; color: var(--accent-dark); margin-left: 4px; }
+
+#gens-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+  gap: 8px;
+}
 .gen-toggle {
   display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--line); border-radius: 20px;
@@ -134,7 +158,17 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   border-radius: 6px; border: 1px solid var(--line);
 }
 .job-prompt { font-size: 14px; line-height: 1.5; flex: 1; word-break: break-word; }
-.job-meta { font-size: 12px; color: var(--accent-dark); white-space: nowrap; }
+.job-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--accent-dark);
+  white-space: nowrap;
+}
+.job-connection { font-weight: 700; color: var(--ok); }
+.job-connection.err { color: var(--err); }
 
 .job-cells {
   display: grid;
@@ -156,7 +190,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .cell-name { font-weight: 700; }
 .cell-time { font-size: 12px; color: var(--ok); font-weight: 600; }
 .cell-time.err { color: var(--err); }
-.cell-status { font-size: 13px; }
+.cell-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--accent-dark); }
 .cell-status.err { color: var(--err); font-weight: 600; word-break: break-word; }
 
 .cell-images { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -167,8 +201,22 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   border: 1px solid var(--line);
   display: block;
 }
+.cell-images .partial-image { position: relative; }
+.cell-images .partial-image::after {
+  content: "partial preview";
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: #fff;
+  background: var(--accent-dark);
+  font-size: 11px;
+  font-weight: 700;
+}
 
 .spinner {
+  flex: 0 0 auto;
   width: 22px; height: 22px;
   border: 3px solid var(--line);
   border-top-color: var(--accent);

@@ -72,6 +72,7 @@ namespace MultiImageClient
         // off and partials are logged but not persisted.
         private readonly string _partialSaveFolder;
         private readonly bool _popUpPartials;
+        private readonly Action<int, int, byte[]> _partialImageCallback;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GptImage2;
 
@@ -90,7 +91,8 @@ namespace MultiImageClient
             string name,
             string partialSaveFolder = null,
             bool popUpPartials = false,
-            int imageCount = 1)
+            int imageCount = 1,
+            Action<int, int, byte[]> partialImageCallback = null)
         {
             if (sizePool == null || sizePool.Length == 0) throw new ArgumentException("sizePool must be non-empty", nameof(sizePool));
             if (qualityPool == null || qualityPool.Length == 0) throw new ArgumentException("qualityPool must be non-empty", nameof(qualityPool));
@@ -105,6 +107,7 @@ namespace MultiImageClient
             _partialSaveFolder = partialSaveFolder ?? "";
             _popUpPartials = popUpPartials;
             _imageCount = imageCount;
+            _partialImageCallback = partialImageCallback;
         }
 
         // Log tag + fallback label if an outer exception prevents us from
@@ -304,11 +307,11 @@ namespace MultiImageClient
                                 var imgIdx = ExtractImageIndex(root);
                                 var imgTag = _imageCount > 1 ? $" img{imgIdx}" : "";
                                 Logger.Log($"    [{genTag}] partial #{pidx}{imgTag} at {nowMs} ms (+{sinceLast} ms since last event)");
-                                if (!string.IsNullOrEmpty(_partialSaveFolder)
+                                if ((!string.IsNullOrEmpty(_partialSaveFolder) || _partialImageCallback != null)
                                     && root.TryGetProperty("b64_json", out var pbEl)
                                     && pbEl.ValueKind == JsonValueKind.String)
                                 {
-                                    TrySavePartial(pbEl.GetString(), pidx, imgIdx, promptDetails, genTag);
+                                    TryPublishPartial(pbEl.GetString(), pidx, imgIdx, promptDetails, genTag);
                                 }
                                 break;
                             }
@@ -630,11 +633,17 @@ namespace MultiImageClient
         // from the `partial_image_index` event field). `imageIdx` is which of
         // the N images this partial belongs to when n>1; pass -1 when n=1 and
         // the server didn't send an image index.
-        private void TrySavePartial(string b64, int partialIdx, int imageIdx, PromptDetails pd, string genTag)
+        private void TryPublishPartial(string b64, int partialIdx, int imageIdx, PromptDetails pd, string genTag)
         {
             try
             {
                 var bytes = Convert.FromBase64String(b64);
+                _partialImageCallback?.Invoke(partialIdx, imageIdx, bytes);
+                if (string.IsNullOrEmpty(_partialSaveFolder))
+                {
+                    return;
+                }
+
                 var today = DateTime.Now.ToString("yyyy-MM-dd-dddd");
                 var folder = Path.Combine(_partialSaveFolder, today, "PartialsLive");
                 Directory.CreateDirectory(folder);

@@ -2,8 +2,10 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -153,6 +155,17 @@ namespace MultiImageClient
             };
         }
 
+        /// gpt-image-1 / mini support the three canonical 1024-edge sizes.
+        public static string Gpt1Size(string shape)
+        {
+            return Norm(shape, Shapes) switch
+            {
+                "landscape" or "wide" => "1536x1024",
+                "portrait" or "tall" => "1024x1536",
+                _ => "1024x1024",
+            };
+        }
+
         /// Aspect-ratio string for the grok generators. Empty string means
         /// "no preference" — callers substitute their own default (or, for
         /// edits, let the source image's AR win).
@@ -185,19 +198,36 @@ namespace MultiImageClient
     /// when the job has an input image, plain text-to-image otherwise), fans
     /// out in parallel, saves through the standard ImageManager pipeline, and
     /// emits progress events onto the job. Modeled on ReplWorkflow.ProcessOneAsync.
-    public class UiJobRunner
+    public class UiJobRunner : IAsyncDisposable
     {
         // Generator keys exposed to the browser. Availability is checked at
         // /api/config time and again defensively at build time.
         public const string KeyGpt2 = "gpt2";
+        public const string KeyGpt1 = "gpt1";
+        public const string KeyGpt1Mini = "gpt1-mini";
+        public const string KeyIdeogram = "ideogram";
+        public const string KeyRecraft = "recraft";
+        public const string KeyBfl = "bfl";
+        public const string KeyGoogle = "google";
+        public const string KeyGooglePro = "googlepro";
+        public const string KeyLocalKlein = "local-klein";
+        public const string KeyLocalZImage = "local-zimage";
         public const string KeyGrokWeb = "grok-web";
         public const string KeyGrokApi = "grok-api";
         public const string KeyGrokApiPro = "grok-api-pro";
+        public const string KeyMetaWeb = "meta-web";
 
         private readonly Settings _settings;
         private readonly MultiClientRunStats _stats;
         private readonly RunOptions _options;
         private readonly ImageManager _imageManager;
+        private readonly GeneratorGroups _generatorGroups;
+        private readonly MetaWebClientOptions _metaWebOptions;
+        private readonly MetaWebClient? _metaWebClient;
+        private readonly string? _metaWebStartupProblem;
+        private readonly object _comfyProbeLock = new();
+        private DateTime _comfyProbeExpiresAt;
+        private string? _cachedComfyProbeProblem;
 
         // Cap concurrent jobs, not generators-within-a-job: each job already
         // fans out internally, and each generator has its own semaphore.
@@ -209,6 +239,26 @@ namespace MultiImageClient
             _stats = stats;
             _options = options;
             _imageManager = new ImageManager(settings, stats);
+            _generatorGroups = new GeneratorGroups(settings, concurrency: 1, stats);
+            _metaWebOptions = MetaWebClient.BuildOptions(
+                settings,
+                cookieOverride: options.MetaWebCookies,
+                headedOverride: options.MetaWebHeaded);
+            if (MetaWebClient.DescribeAvailabilityProblem(_metaWebOptions) == null)
+            {
+                try
+                {
+                    // One browser context for the whole UI lifetime. MetaWebClient
+                    // serializes page use internally, so concurrent UI jobs cannot
+                    // type into the same Meta composer at once.
+                    _metaWebClient = new MetaWebClient(_metaWebOptions);
+                }
+                catch (Exception ex)
+                {
+                    _metaWebStartupProblem = ex.Message;
+                    Logger.Log($"Meta web unavailable: {ex.Message}");
+                }
+            }
         }
 
         public string? ResolveGrokWebCookiePath()
@@ -221,19 +271,83 @@ namespace MultiImageClient
             return File.Exists(expanded) ? expanded : null;
         }
 
-        public bool IsAvailable(string key) => key switch
+        public string? DescribeAvailabilityProblem(string key) => key switch
         {
-            KeyGpt2 => !string.IsNullOrWhiteSpace(_settings.OpenAIApiKey),
-            KeyGrokWeb => ResolveGrokWebCookiePath() != null,
-            KeyGrokApi or KeyGrokApiPro => !string.IsNullOrWhiteSpace(_settings.XAIGrokApiKey),
-            _ => false,
+            KeyGpt2 or KeyGpt1 or KeyGpt1Mini
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GptImage2, _settings),
+            KeyIdeogram
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV4, _settings),
+            KeyRecraft
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.RecraftV41, _settings),
+            KeyBfl
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.BFLFlux2ProPreview, _settings),
+            KeyGoogle or KeyGooglePro
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GoogleNanoBananaPro, _settings),
+            KeyLocalKlein
+                => DescribeComfyAvailability(ImageGeneratorApiType.LocalFlux2Klein),
+            KeyLocalZImage
+                => DescribeComfyAvailability(ImageGeneratorApiType.LocalZImage),
+            KeyGrokWeb => ResolveGrokWebCookiePath() == null
+                ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
+                : null,
+            KeyGrokApi or KeyGrokApiPro
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GrokImagine, _settings),
+            KeyMetaWeb => _metaWebStartupProblem ?? MetaWebClient.DescribeAvailabilityProblem(_metaWebOptions),
+            _ => $"unknown generator '{key}'",
         };
+
+        public bool IsAvailable(string key) => DescribeAvailabilityProblem(key) == null;
+
+        private string? DescribeComfyAvailability(ImageGeneratorApiType apiType)
+        {
+            var settingsProblem = ProviderKeyValidator.DescribeKeyProblem(apiType, _settings);
+            if (settingsProblem != null)
+            {
+                return settingsProblem;
+            }
+
+            lock (_comfyProbeLock)
+            {
+                if (DateTime.UtcNow < _comfyProbeExpiresAt)
+                {
+                    return _cachedComfyProbeProblem;
+                }
+
+                try
+                {
+                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                    var url = $"{_settings.ComfyUIBaseUrl.TrimEnd('/')}/system_stats";
+                    using var response = client.GetAsync(url).GetAwaiter().GetResult();
+                    _cachedComfyProbeProblem = response.IsSuccessStatusCode
+                        ? null
+                        : $"ComfyUI at {_settings.ComfyUIBaseUrl} returned HTTP {(int)response.StatusCode}";
+                }
+                catch (Exception ex)
+                {
+                    _cachedComfyProbeProblem =
+                        $"ComfyUI is not reachable at {_settings.ComfyUIBaseUrl}: {ex.GetBaseException().Message}";
+                }
+
+                _comfyProbeExpiresAt = DateTime.UtcNow.AddSeconds(5);
+                return _cachedComfyProbeProblem;
+            }
+        }
 
         public async Task RunJobAsync(UiJob job, UiJobSpec spec)
         {
+            job.Emit(new
+            {
+                type = "job-queued",
+                at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
             await _jobLimit.WaitAsync();
             try
             {
+                job.Emit(new
+                {
+                    type = "job-start",
+                    at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                });
                 Logger.Log($"[ui #{job.Id}] START ({spec.GeneratorKeys.Count} gen(s), image={(job.HasInputImage ? job.InputImagePath : "none")}): {job.Prompt}");
 
                 var pd = new PromptDetails();
@@ -272,7 +386,13 @@ namespace MultiImageClient
 
         private async Task<TaskProcessResult> RunOneAsync(UiJob job, UiJobSpec spec, string key, PromptDetails pd)
         {
-            job.Emit(new { type = "gen-start", gen = key });
+            var wallClock = Stopwatch.StartNew();
+            job.Emit(new
+            {
+                type = "gen-start",
+                gen = key,
+                at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
             GrokWebClient? grokWebClient = null;
             PromptDetails? copy = null;
             try
@@ -285,6 +405,18 @@ namespace MultiImageClient
                     grokWebClient = GrokWebClient.FromCookieFile(cookiePath);
                     generator = await BuildGrokWebAsync(grokWebClient, job, spec);
                 }
+                else if (key == KeyMetaWeb)
+                {
+                    if (job.HasInputImage)
+                    {
+                        throw new NotSupportedException("meta-web image editing is not implemented; remove the input image for text-to-image generation");
+                    }
+                    generator = new MetaWebImagineGenerator(
+                        _metaWebClient ?? throw new InvalidOperationException(
+                            DescribeAvailabilityProblem(KeyMetaWeb) ?? "meta-web browser client is unavailable"),
+                        maxConcurrency: 1,
+                        _stats);
+                }
                 else
                 {
                     generator = BuildGenerator(key, spec, job);
@@ -296,18 +428,34 @@ namespace MultiImageClient
                 await _imageManager.ProcessAndSaveAsync(result, generator);
 
                 var urls = new List<string>();
+                byte[] firstImageBytes = null;
                 int i = 0;
                 foreach (var bytes in result.GetAllImages)
                 {
+                    firstImageBytes ??= bytes;
                     job.StoreImage(key, i, bytes, result.ContentType ?? "image/png");
                     urls.Add($"/api/jobs/{job.Id}/images/{key}/{i}");
                     i++;
                 }
 
                 var elapsed = result.CreateTotalMs + result.DownloadTotalMs;
+                if (elapsed <= 0)
+                {
+                    elapsed = wallClock.ElapsedMilliseconds;
+                }
                 var label = copy.RuntimeMeta.TryGetValue("label", out var l) && !string.IsNullOrEmpty(l)
                     ? l
                     : result.ImageGeneratorDescription;
+                // Append the actual produced pixel size so the card reflects what
+                // the provider really returned, not just the requested aspect.
+                // grok /images/edits in particular does not reliably honor the
+                // requested AR, so "AR 2:3 · 1024x1024" makes the mismatch visible
+                // instead of silently mislabeling a square as 2:3.
+                var actualSize = firstImageBytes != null ? ReadImageSize(firstImageBytes) : null;
+                if (actualSize != null)
+                {
+                    label = string.IsNullOrEmpty(label) ? actualSize : $"{label} · {actualSize}";
+                }
                 job.Emit(new
                 {
                     type = "gen-result",
@@ -325,8 +473,14 @@ namespace MultiImageClient
             {
                 // GrokWebException carries the server's response body — that's
                 // where the actual reason lives ("post not found" etc).
-                var detail = ex is GrokWebException gwe && !string.IsNullOrEmpty(gwe.ResponseBody)
-                    ? $"{ex.Message} {Truncate(gwe.ResponseBody, 300)}"
+                var responseBody = ex switch
+                {
+                    GrokWebException gwe => gwe.ResponseBody,
+                    MetaWebException mwe => mwe.ResponseBody,
+                    _ => "",
+                };
+                var detail = !string.IsNullOrEmpty(responseBody)
+                    ? $"{ex.Message} {Truncate(responseBody, 300)}"
                     : ex.Message;
                 Logger.Log($"[ui #{job.Id}]   <- EXCEPTION from {key}: {detail}");
                 job.Emit(new
@@ -335,7 +489,7 @@ namespace MultiImageClient
                     gen = key,
                     ok = false,
                     error = detail,
-                    ms = 0L,
+                    ms = wallClock.ElapsedMilliseconds,
                     images = new List<string>(),
                     label = key,
                 });
@@ -377,6 +531,12 @@ namespace MultiImageClient
 
         private IImageGenerator BuildGenerator(string key, UiJobSpec spec, UiJob job)
         {
+            var availabilityProblem = DescribeAvailabilityProblem(key);
+            if (availabilityProblem != null)
+            {
+                throw new InvalidOperationException(availabilityProblem);
+            }
+
             switch (key)
             {
                 case KeyGpt2:
@@ -403,7 +563,44 @@ namespace MultiImageClient
                         stats: _stats, name: "ui",
                         partialSaveFolder: _settings.ImageDownloadBaseFolder,
                         popUpPartials: false,
-                        imageCount: spec.ImageCount);
+                        imageCount: spec.ImageCount,
+                        partialImageCallback: (partialIndex, imageIndex, bytes) =>
+                        {
+                            var outputIndex = Math.Max(0, imageIndex);
+                            var partialKey = $"{key}-partial";
+                            job.StoreImage(partialKey, outputIndex, bytes, "image/png");
+                            job.Emit(new
+                            {
+                                type = "gen-partial",
+                                gen = key,
+                                partialIndex,
+                                imageIndex = outputIndex,
+                                url = $"/api/jobs/{job.Id}/images/{partialKey}/{outputIndex}",
+                                at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            });
+                        });
+                }
+
+                case KeyGpt1:
+                case KeyGpt1Mini:
+                {
+                    if (job.HasInputImage)
+                    {
+                        throw new NotSupportedException($"{key} image editing is not implemented in the local UI");
+                    }
+                    if (!Enum.TryParse<OpenAIGPTImageOneQuality>(spec.Quality, true, out var quality))
+                    {
+                        quality = OpenAIGPTImageOneQuality.high;
+                    }
+                    return new GptImageOneGenerator(
+                        _settings.OpenAIApiKey,
+                        maxConcurrency: 2,
+                        size: UiShapeMapping.Gpt1Size(spec.Shape),
+                        moderation: spec.Moderation,
+                        quality,
+                        apiType: key == KeyGpt1 ? ImageGeneratorApiType.GptImage1 : ImageGeneratorApiType.GptImage1Mini,
+                        _stats,
+                        name: $"{key} ui");
                 }
 
                 case KeyGrokApi:
@@ -429,9 +626,114 @@ namespace MultiImageClient
                         settings: _settings);
                 }
 
+                case KeyGoogle:
+                case KeyGooglePro:
+                {
+                    if (!job.HasInputImage)
+                    {
+                        return _generatorGroups.BuildByShortName(key);
+                    }
+                    // Reference/guide: Gemini is natively multimodal, so the pasted
+                    // image rides along as a reference part. Mirror the text preset
+                    // (1:1 2K) used by GeneratorGroups.GeminiNanoBanana[Pro].
+                    RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
+                    var googleApiType = key == KeyGooglePro
+                        ? ImageGeneratorApiType.GoogleNanoBananaPro
+                        : ImageGeneratorApiType.GoogleNanoBanana;
+                    return new GoogleGenerator(
+                        googleApiType, _settings.GoogleGeminiApiKey, maxConcurrency: 2,
+                        _stats, name: $"{key} ui",
+                        aspectRatio: "1:1", imageSize: "2K",
+                        inputImagePath: job.InputImagePath);
+                }
+
+                case KeyBfl:
+                {
+                    if (!job.HasInputImage)
+                    {
+                        return _generatorGroups.BuildByShortName(key);
+                    }
+                    // Reference/guide: FLUX.2 takes the pasted image as input_image
+                    // conditioning. Mirror the pro-preview 1:1 1024 preset.
+                    RequireKey(_settings.BFLApiKey, "BFLApiKey", key);
+                    return new BFLGenerator(
+                        ImageGeneratorApiType.BFLFlux2ProPreview, _settings.BFLApiKey,
+                        maxConcurrency: 2, "1:1", false, 1024, 1024, _stats, "bfl ui",
+                        inputImagePath: job.InputImagePath);
+                }
+
+                case KeyIdeogram:
+                case KeyRecraft:
+                case KeyLocalKlein:
+                case KeyLocalZImage:
+                {
+                    if (job.HasInputImage)
+                    {
+                        throw new NotSupportedException($"{key} is text-to-image only in the local UI; remove the input image");
+                    }
+                    return _generatorGroups.BuildByShortName(key);
+                }
+
                 default:
                     throw new ArgumentException($"unknown generator '{key}'");
             }
+        }
+
+        // Minimal PNG/JPEG dimension reader for the display label. Returns "WxH",
+        // or null for anything it doesn't recognize — no decode, no exceptions used
+        // for control flow. PNG and JPEG cover every provider the UI shows.
+        private static string ReadImageSize(byte[] b)
+        {
+            if (b == null) return null;
+
+            // PNG: 8-byte signature, then IHDR with width @16, height @20 (BE).
+            if (b.Length >= 24 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47)
+            {
+                int w = (b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19];
+                int h = (b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23];
+                return (w > 0 && h > 0) ? $"{w}x{h}" : null;
+            }
+
+            // JPEG: FF D8, then walk segments to the first SOF (C0..CF except
+            // C4/C8/CC); its payload is precision(1), height(2), width(2).
+            if (b.Length >= 4 && b[0] == 0xFF && b[1] == 0xD8)
+            {
+                int p = 2;
+                while (p + 9 < b.Length)
+                {
+                    if (b[p] != 0xFF) { p++; continue; }
+                    int marker = b[p + 1];
+                    // Standalone markers (padding, RSTn, SOI/EOI) carry no length.
+                    if (marker == 0xFF || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD9))
+                    {
+                        p += 2;
+                        continue;
+                    }
+                    int segLen = (b[p + 2] << 8) | b[p + 3];
+                    if (segLen < 2) return null;
+                    bool isSof = marker >= 0xC0 && marker <= 0xCF
+                        && marker != 0xC4 && marker != 0xC8 && marker != 0xCC;
+                    if (isSof)
+                    {
+                        int h = (b[p + 5] << 8) | b[p + 6];
+                        int w = (b[p + 7] << 8) | b[p + 8];
+                        return (w > 0 && h > 0) ? $"{w}x{h}" : null;
+                    }
+                    p += 2 + segLen;
+                }
+                return null;
+            }
+
+            return null;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (_metaWebClient != null)
+            {
+                await _metaWebClient.DisposeAsync();
+            }
+            _jobLimit.Dispose();
         }
 
         private static string Truncate(string s, int max)

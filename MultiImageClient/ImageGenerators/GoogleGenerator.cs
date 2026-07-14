@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -19,6 +20,7 @@ namespace MultiImageClient
         private ImageGeneratorApiType _apiType;
         private string _aspectRatio;
         private string _imageSize;
+        private string _inputImagePath;
 
         public ImageGeneratorApiType ApiType => _apiType;
 
@@ -40,9 +42,13 @@ namespace MultiImageClient
         /// imageSize: "512" (3.1-flash only), "1K", "2K", "4K" (K must be
         ///   uppercase) — or null for the API default (1K). Per the token
         ///   table, 2K costs the same tokens as 1K; only 4K is pricier.
+        /// inputImagePath: when set, the image is sent as a visual reference/guide
+        ///   part alongside the prompt (Gemini is natively multimodal), and the
+        ///   instruction is reworded so the model treats it as guidance, not a
+        ///   literal edit target.
         public GoogleGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency,
             MultiClientRunStats stats, string name = "",
-            string aspectRatio = null, string imageSize = null)
+            string aspectRatio = null, string imageSize = null, string inputImagePath = null)
         {
             if (apiType != ImageGeneratorApiType.GoogleNanoBanana && apiType != ImageGeneratorApiType.GoogleNanoBananaPro)
             {
@@ -58,6 +64,7 @@ namespace MultiImageClient
             _apiType = apiType;
             _aspectRatio = aspectRatio;
             _imageSize = imageSize;
+            _inputImagePath = inputImagePath;
         }
 
         public string GetFilenamePart(PromptDetails pd)
@@ -128,7 +135,7 @@ namespace MultiImageClient
 
                 var generationConfig = new Dictionary<string, object>
                 {
-                    ["responseModalities"] = new[] { "TEXT", "IMAGE" }
+                    ["responseModalities"] = new[] { "IMAGE" }
                 };
                 var imageConfig = new Dictionary<string, object>();
                 if (!string.IsNullOrEmpty(_aspectRatio))
@@ -144,17 +151,35 @@ namespace MultiImageClient
                     generationConfig["imageConfig"] = imageConfig;
                 }
 
+                var hasReference = !string.IsNullOrEmpty(_inputImagePath);
+                var instruction = hasReference
+                    ? "Using the attached image as a visual reference and guide (style, subject, and composition), "
+                        + "create a new image that fulfills the following request. Return image output, not a prose explanation: "
+                    : "Create an image that visually fulfills the following request. "
+                        + "Return image output, not a prose explanation: ";
+
+                var parts = new List<object>
+                {
+                    new { text = instruction + promptDetails.Prompt }
+                };
+                if (hasReference)
+                {
+                    var refBytes = await File.ReadAllBytesAsync(_inputImagePath);
+                    parts.Add(new
+                    {
+                        inlineData = new
+                        {
+                            mimeType = MimeFromPath(_inputImagePath),
+                            data = Convert.ToBase64String(refBytes)
+                        }
+                    });
+                }
+
                 var requestBody = new
                 {
                     contents = new[]
                     {
-                        new
-                        {
-                            parts = new[]
-                            {
-                                new { text = promptDetails.Prompt }
-                            }
-                        }
+                        new { parts = parts.ToArray() }
                     },
                     generationConfig
                 };
@@ -192,6 +217,7 @@ namespace MultiImageClient
                 if (responseData?.candidates?.Length > 0)
                 {
                     var base64Images = new List<CreatedBase64Image>();
+                    var textResponses = new List<string>();
                     // Gemini image models typically return image/jpeg; trust the
                     // declared mime type so downstream conversion-to-png triggers.
                     string contentType = null;
@@ -216,8 +242,7 @@ namespace MultiImageClient
                                 // Log any text responses for debugging
                                 else if (!string.IsNullOrEmpty(part.text))
                                 {
-                                    Console.WriteLine($"Gemini text response: {part.text}");
-                                    //throw new Exception("qq");
+                                    textResponses.Add(part.text);
                                 }
                             }
                         }
@@ -236,12 +261,32 @@ namespace MultiImageClient
                             ImageGeneratorDescription = generator.GetGeneratorSpecPart()
                         };
                     }
+
+                    if (textResponses.Count > 0)
+                    {
+                        var returnedText = string.Join(" ", textResponses);
+                        if (returnedText.Length > 500)
+                        {
+                            returnedText = returnedText[..500] + "...";
+                        }
+                        Logger.Log($"Gemini image model {ModelFor(_apiType)} returned text instead of an image: {returnedText}");
+                        return new TaskProcessResult
+                        {
+                            IsSuccess = false,
+                            ErrorMessage = $"Google {ModelFor(_apiType)} returned text instead of image output: {returnedText}",
+                            PromptDetails = promptDetails,
+                            ImageGenerator = GetImageGeneratorType(),
+                            ImageGeneratorDescription = generator.GetGeneratorSpecPart()
+                        };
+                    }
                 }
 
+                var diagnostic = responseContent.Length > 700 ? responseContent[..700] + "..." : responseContent;
+                Logger.Log($"Gemini image model {ModelFor(_apiType)} returned no image data. Response: {diagnostic}");
                 return new TaskProcessResult
                 {
                     IsSuccess = false,
-                    ErrorMessage = "No image data returned from Google Gemini API",
+                    ErrorMessage = $"Google {ModelFor(_apiType)} returned no image data. Response: {diagnostic}",
                     PromptDetails = promptDetails,
                     ImageGenerator = GetImageGeneratorType(),
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart()
@@ -263,6 +308,18 @@ namespace MultiImageClient
             {
                 _googleSemaphore.Release();
             }
+        }
+
+        private static string MimeFromPath(string path)
+        {
+            var ext = Path.GetExtension(path)?.ToLowerInvariant();
+            return ext switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                ".gif" => "image/gif",
+                _ => "image/png",
+            };
         }
 
         private ImageGeneratorApiType GetImageGeneratorType()

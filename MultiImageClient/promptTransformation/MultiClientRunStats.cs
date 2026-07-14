@@ -21,9 +21,6 @@ namespace MultiImageClient
         public int ClaudeRefusedCount { get; set; }
         public int ClaudeRewroteCount { get; set; }
 
-        public int Dalle3RequestCount { get; set; }
-        public int Dalle3RefusedCount { get; set; }
-
         public int GptImageOneRequestCount { get; set; }
         public int GptImageOneRefusedCount  { get; set; }
 
@@ -87,11 +84,6 @@ namespace MultiImageClient
                 nonZeroStats.Add($"Ideogram v4 Requests:{IdeogramV4RequestCount}");
             if (IdeogramV4RefusedCount > 0)
                 nonZeroStats.Add($"Ideogram v4 Refused:{IdeogramV4RefusedCount}");
-
-            if (Dalle3RequestCount > 0)
-                nonZeroStats.Add($"Dalle3 Requests:{Dalle3RequestCount}");
-            if (Dalle3RefusedCount > 0)
-                nonZeroStats.Add($"Dalle3 Refused:{Dalle3RefusedCount}");
 
             if (GptImageOneRequestCount > 0)
                 nonZeroStats.Add($"GPT Image One Requests:{GptImageOneRequestCount}");

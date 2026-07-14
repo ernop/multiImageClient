@@ -10,6 +10,11 @@ namespace MultiImageClient
         {
             if (apiType == ImageGeneratorApiType.LocalFlux2Klein || apiType == ImageGeneratorApiType.LocalZImage)
             {
+                if (!settings.EnableLocalGenerators)
+                {
+                    return "not installed - local ComfyUI generators are off (EnableLocalGenerators=false in settings.json)";
+                }
+
                 var (workflowPath, workflowSettingName) = GetLocalComfyWorkflowPath(apiType, settings);
 
                 if (string.IsNullOrWhiteSpace(settings.ComfyUIBaseUrl))
@@ -103,20 +108,7 @@ namespace MultiImageClient
         }
 
         private static string? DescribeMetaWebCookieProblem(Settings settings)
-        {
-            var path = settings.MetaWebCookiePath;
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return "settings.json: MetaWebCookiePath is empty - export meta.ai cookies to a file and set the path, or pass --meta-web-cookies";
-            }
-
-            if (!File.Exists(path))
-            {
-                return $"settings.json: MetaWebCookiePath does not exist: {path}";
-            }
-
-            return null;
-        }
+            => MetaWebClient.DescribeAvailabilityProblem(MetaWebClient.BuildOptions(settings));
 
         private static (string WorkflowPath, string SettingName) GetLocalComfyWorkflowPath(ImageGeneratorApiType apiType, Settings settings)
         {

@@ -13,7 +13,7 @@ namespace MultiImageClient
     ///
     /// Generator selection (--gens, comma-separated short names — same
     /// vocabulary as the REPL, plus grok-web and meta-web):
-    ///   gpt2, grok-api, grok-api-pro, grok-web, meta-web, dalle3, ideogram,
+    ///   gpt2, grok-api, grok-api-pro, grok-web, meta-web, ideogram,
     ///   recraft, bfl, google, googlepro, local-klein, local-zimage
     /// Without --gens it runs the standard batch set (GeneratorGroups.GetAll),
     /// i.e. "whatever models we're currently using".
@@ -187,38 +187,24 @@ namespace MultiImageClient
             RunOptions options,
             ref MetaWebClient? metaClient)
         {
-            var cookiePath = !string.IsNullOrWhiteSpace(options.MetaWebCookies)
-                ? options.MetaWebCookies
-                : settings.MetaWebCookiePath;
+            var clientOptions = MetaWebClient.BuildOptions(
+                settings,
+                cookieOverride: options.MetaWebCookies,
+                headedOverride: options.MetaWebHeaded);
 
-            if (string.IsNullOrWhiteSpace(cookiePath))
+            var problem = MetaWebClient.DescribeAvailabilityProblem(clientOptions);
+            if (problem != null)
             {
-                Logger.Log("Showcase :: meta-web :: SKIPPED (set MetaWebCookiePath in settings.json or pass --meta-web-cookies)");
+                Logger.Log($"Showcase :: meta-web :: SKIPPED ({problem})");
                 return null;
             }
 
-            if (!File.Exists(Settings.ExpandPath(cookiePath)))
-            {
-                Logger.Log($"Showcase :: meta-web :: SKIPPED (cookie file not found: {Settings.ExpandPath(cookiePath)})");
-                return null;
-            }
-
-            var docId = !string.IsNullOrWhiteSpace(options.MetaWebDocId)
-                ? options.MetaWebDocId
-                : settings.MetaWebImageDocId;
-
-            metaClient ??= new MetaWebClient(
-                MetaWebCookieLoader.LoadCookieHeader(cookiePath),
-                imageDocId: docId,
-                endpoint: settings.MetaWebGraphqlEndpoint,
-                pollDocId: settings.MetaWebPollMediaDocId);
+            metaClient ??= new MetaWebClient(clientOptions);
 
             return new MetaWebImagineGenerator(
                 metaClient,
                 maxConcurrency: 1,
-                stats,
-                orientation: options.MetaWebOrientation,
-                numImages: options.MetaWebNumImages);
+                stats);
         }
     }
 }

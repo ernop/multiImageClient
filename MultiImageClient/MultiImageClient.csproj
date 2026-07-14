@@ -33,6 +33,7 @@
     <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.16.0" />
     <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.14.0" />
     <PackageReference Include="Magick.NET.Core" Version="14.14.0" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.61.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="OpenAI" Version="2.1.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />

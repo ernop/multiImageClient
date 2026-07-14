@@ -94,7 +94,7 @@ namespace MultiImageClient
 
         /// Comma-separated generator short names for --showcase. Same
         /// vocabulary as the REPL plus grok-web: gpt2, grok-api, grok-api-pro,
-        /// grok-web, dalle3, ideogram, recraft, bfl, google, googlepro,
+        /// grok-web, ideogram, recraft, bfl, google, googlepro,
         /// local-klein, local-zimage. grok-web honors the --grok-web-* flags
         /// (cookies, aspect ratio, pro/fast tier).
         public string Gens { get; set; } = "";
@@ -182,22 +182,20 @@ namespace MultiImageClient
         public bool GrokWebCapture { get; set; } = true;
 
         /// If true, run MetaWebWorkflow: batch prompts through the meta.ai
-        /// consumer web app (reverse-engineered Muse Image, browser cookies).
+        /// consumer web app (Muse Image) via a Playwright browser session.
         public bool MetaWeb { get; set; }
 
         /// Cookie file for --meta-web. Overrides settings.json MetaWebCookiePath.
         public string MetaWebCookies { get; set; } = "";
 
-        /// VERTICAL | HORIZONTAL | SQUARE for --meta-web (default SQUARE).
-        public string MetaWebOrientation { get; set; } = "SQUARE";
+        /// Show the meta-web browser window. Required for the one-time login
+        /// into the persistent profile; useful for troubleshooting after that.
+        public bool MetaWebHeaded { get; set; }
 
-        /// Images per prompt for --meta-web.
-        public int MetaWebNumImages { get; set; } = 1;
-
-        /// Persisted-query TEXT_TO_IMAGE doc_id override for --meta-web.
-        /// Overrides settings.json MetaWebImageDocId. Meta rotates these; grab
-        /// the current one from DevTools > Network on https://www.meta.ai.
-        public string MetaWebDocId { get; set; } = "";
+        /// If true, run Playwright's browser installer (chromium) and exit.
+        /// One-time setup for --meta-web when no MetaWebBrowserExecutablePath
+        /// is configured.
+        public bool PlaywrightInstall { get; set; }
 
         /// If true, run GrokArchive.SyncAsync and exit: back-read the entire
         /// reachable grok-api history (xAI Files API inventory + re-pollable
@@ -422,14 +420,11 @@ namespace MultiImageClient
                     case "--meta-web-cookies":
                         o.MetaWebCookies = args[++i];
                         break;
-                    case "--meta-web-orientation":
-                        o.MetaWebOrientation = args[++i];
+                    case "--meta-web-headed":
+                        o.MetaWebHeaded = true;
                         break;
-                    case "--meta-web-num-images":
-                        o.MetaWebNumImages = int.Parse(args[++i]);
-                        break;
-                    case "--meta-web-doc-id":
-                        o.MetaWebDocId = args[++i];
+                    case "--playwright-install":
+                        o.PlaywrightInstall = true;
                         break;
                     case "--provider-sample-showcase":
                         o.ProviderSampleShowcase = true;
@@ -505,7 +500,7 @@ namespace MultiImageClient
             Console.WriteLine("  --repl-concurrency N  Max prompts in flight simultaneously in REPL mode (default 5). Change at runtime with :concurrency N.");
             Console.WriteLine("  --repl-n N            REPL session default n (images per gpt-image-2 call, default 1). Change at runtime with :n N, or per-prompt via [n=N] in the override prefix.");
             Console.WriteLine("  --showcase            Generic one-shot: run ALL prompts from the active prompt source (--prompt/--prompt-file/PromptFiles, honoring --limit; no default cap) through the selected generators and compose one contact sheet per generator (pops open only with --open-images).");
-            Console.WriteLine("  --gens csv            Pair with --showcase to pick generators by short name: gpt2 grok-api grok-api-pro grok-web meta-web dalle3 ideogram recraft bfl google googlepro local-klein local-zimage. Without --gens the standard batch set runs. grok-web honors the --grok-web-* flags; meta-web honors the --meta-web-* flags.");
+            Console.WriteLine("  --gens csv            Pair with --showcase to pick generators by short name: gpt2 grok-api grok-api-pro grok-web meta-web ideogram recraft bfl google googlepro local-klein local-zimage. Without --gens the standard batch set runs. grok-web honors the --grok-web-* flags; meta-web honors the --meta-web-* flags.");
             Console.WriteLine("Grok naming: grok-api = official api.x.ai key version (public/GDPR ruleset); grok-web = consumer grok.com cookie-session version (web-app ruleset).");
             Console.WriteLine("  --grok-api-showcase   One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at grok-api in parallel, and compose a single combined grid image (pops open only with --open-images). Default --limit for this mode is 10.");
             Console.WriteLine("  --grok-api-pro        Pair with --grok-api-showcase to route through grok-imagine-image-pro at 2k resolution ($0.07/img, 30 rpm) instead of grok-imagine-image at 1k ($0.02/img, 300 rpm).");
@@ -524,11 +519,10 @@ namespace MultiImageClient
             Console.WriteLine("  --grok-web-resolution R  480p (default) or 720p for grok-web video modes.");
             Console.WriteLine("  --grok-web-no-side-by-side  Request a single variant instead of side-by-side on grok-web.");
             Console.WriteLine("  --grok-web-no-capture  Disable full WebSocket session capture (on by default under saves/.../grok-web-capture/).");
-            Console.WriteLine("  --meta-web            Batch prompts through the meta.ai consumer web app (reverse-engineered Muse Image, browser cookies). Best-effort: Meta rotates persisted-query doc_ids. Uses --prompt-file or PromptFiles.");
-            Console.WriteLine("  --meta-web-cookies fp Override settings.json MetaWebCookiePath with a Netscape cookies.txt or raw Cookie header export from https://www.meta.ai (needs datr + abra_sess).");
-            Console.WriteLine("  --meta-web-orientation O  VERTICAL | HORIZONTAL | SQUARE for --meta-web (default SQUARE).");
-            Console.WriteLine("  --meta-web-num-images N   Images per prompt for --meta-web (default 1).");
-            Console.WriteLine("  --meta-web-doc-id ID  Override the TEXT_TO_IMAGE persisted-query doc_id. Capture the current value from DevTools > Network on https://www.meta.ai if --meta-web fails with a validation error.");
+            Console.WriteLine("  --meta-web            Batch prompts through the meta.ai consumer web app (Muse Image) by driving a real Playwright browser session. Best-effort/unofficial; text-to-image only; Meta decides the image count. Uses --prompt-file or PromptFiles.");
+            Console.WriteLine("  --meta-web-headed     Show the meta-web browser window. Run this once to log in to meta.ai; the persistent profile (MetaWebBrowserProfilePath) keeps the session for headless runs.");
+            Console.WriteLine("  --meta-web-cookies fp Override settings.json MetaWebCookiePath with a Netscape cookies.txt or raw Cookie header export from https://www.meta.ai (needs datr + ecto_1_sess; full jar preferred). Alternative to the headed login.");
+            Console.WriteLine("  --playwright-install  One-time setup: download Playwright's Chromium for --meta-web, then exit. Not needed if MetaWebBrowserExecutablePath points at an existing Chrome/Chromium.");
             Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low (pops open only with --open-images).");
             Console.WriteLine("  --provider-sample-file fp   Pair with --provider-sample-showcase to reuse a saved numbered/plain people-fixture prompt list.");
             Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok-api,recraft (grok-api-pro adds the pro tier).");

@@ -1,6 +1,8 @@
 ﻿using Newtonsoft.Json;
 
+using System;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace BFLAPIClient
@@ -17,6 +19,7 @@ namespace BFLAPIClient
         private const string BaseUrl = "https://api.bfl.ai";
 
         public int DefaultPollingIntervalMs { get; set; } = 2000;
+        public TimeSpan PollingTimeout { get; set; } = TimeSpan.FromMinutes(5);
 
         public BFLClient(string apiKey, int defaultPollingIntervalMs = 2000)
         {
@@ -44,18 +47,38 @@ namespace BFLAPIClient
         private async Task<GenerationResponse> GenerateAndWaitForResultAsync<TRequest>(string endpoint, TRequest request)
         {
             var initial = await GenerateAsync(endpoint, request);
+            if (initial == null || string.IsNullOrWhiteSpace(initial.Id))
+            {
+                throw new HttpRequestException("BFL submit response did not contain a generation id.");
+            }
             var id = initial.Id;
             var pollingUrl = initial.PollingUrl;
+            using var timeoutCts = new CancellationTokenSource(PollingTimeout);
 
-            var current = await GetResultAsync(pollingUrl, id);
-
-            while (current.Status == "Pending")
+            try
             {
-                await Task.Delay(DefaultPollingIntervalMs);
-                current = await GetResultAsync(pollingUrl, id);
-            }
+                var current = await GetResultAsync(pollingUrl, id);
+                while (string.Equals(current?.Status, "Pending", StringComparison.OrdinalIgnoreCase))
+                {
+                    await Task.Delay(DefaultPollingIntervalMs, timeoutCts.Token);
+                    current = await GetResultAsync(pollingUrl, id);
+                }
 
-            return current;
+                if (current == null)
+                {
+                    throw new HttpRequestException($"BFL returned an empty polling response for generation {id}.");
+                }
+                if (string.IsNullOrWhiteSpace(current.Status))
+                {
+                    throw new HttpRequestException($"BFL polling response for generation {id} did not contain a status.");
+                }
+                return current;
+            }
+            catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"BFL generation {id} remained pending for {PollingTimeout.TotalMinutes:0.#} minutes.");
+            }
         }
 
         private async Task<GenerationResponse> GenerateAsync<TRequest>(string endpoint, TRequest request)

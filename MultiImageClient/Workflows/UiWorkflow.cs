@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -38,7 +39,8 @@ namespace MultiImageClient
             }
 
             var jobs = new UiJobRegistry();
-            var runner = new UiJobRunner(settings, stats, options);
+            var activeJobs = new ConcurrentDictionary<string, Task>();
+            await using var runner = new UiJobRunner(settings, stats, options);
 
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
@@ -61,9 +63,19 @@ namespace MultiImageClient
                 var generators = new[]
                 {
                     new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise." },
+                    new { key = UiJobRunner.KeyGpt1, label = "gpt-image-1", detail = "OpenAI image generation. Text-to-image in this UI." },
+                    new { key = UiJobRunner.KeyGpt1Mini, label = "gpt-image-1-mini", detail = "OpenAI lower-cost image generation. Text-to-image in this UI." },
+                    new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0 DEFAULT 2048x2048 preset." },
+                    new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1 any-style 1024x1024 preset." },
+                    new { key = UiJobRunner.KeyBfl, label = "FLUX.2 Pro Preview", detail = "Black Forest Labs current FLUX.2 Pro preview preset. A pasted image is used as a reference/guide (input_image conditioning)." },
+                    new { key = UiJobRunner.KeyGoogle, label = "Nano Banana 2", detail = "Google gemini-3.1-flash-image, 2K square preset. A pasted image is used as a reference/guide." },
+                    new { key = UiJobRunner.KeyGooglePro, label = "Nano Banana Pro", detail = "Google gemini-3-pro-image, 2K square preset. A pasted image is used as a reference/guide." },
                     new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = "grok.com cookie session (WebSocket). NOTE: edit-with-image is currently blocked by grok.com anti-bot rules (403 on /rest/app-chat as of 2026-07-12); text-to-image works." },
                     new { key = UiJobRunner.KeyGrokApi, label = "grok-api", detail = "api.x.ai standard tier." },
                     new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api pro", detail = "api.x.ai pro tier, 2k." },
+                    new { key = UiJobRunner.KeyMetaWeb, label = "meta-web Muse Image", detail = "Meta AI browser session through Playwright. Text-to-image only; experimental and best-effort." },
+                    new { key = UiJobRunner.KeyLocalKlein, label = "local FLUX.2 Klein", detail = "Configured local ComfyUI FLUX.2 Klein workflow." },
+                    new { key = UiJobRunner.KeyLocalZImage, label = "local Z-Image Turbo", detail = "Configured local ComfyUI Z-Image workflow." },
                 }
                 .Select(g => new
                 {
@@ -71,6 +83,7 @@ namespace MultiImageClient
                     g.label,
                     g.detail,
                     available = runner.IsAvailable(g.key),
+                    availabilityProblem = runner.DescribeAvailabilityProblem(g.key),
                     // Default-on set = the core use case: gpt-image-2 + grok-web pro.
                     defaultOn = g.key is UiJobRunner.KeyGpt2 or UiJobRunner.KeyGrokWeb,
                 });
@@ -116,6 +129,7 @@ namespace MultiImageClient
                     hasImage = j.HasInputImage,
                     done = j.IsDone,
                     createdAt = j.CreatedAt.ToString("HH:mm:ss"),
+                    createdAtUnixMs = new DateTimeOffset(j.CreatedAt).ToUnixTimeMilliseconds(),
                 });
                 return Results.Json(new { jobs = list });
             });
@@ -141,7 +155,8 @@ namespace MultiImageClient
                 var unavailable = genKeys.Where(k => !runner.IsAvailable(k)).ToList();
                 if (unavailable.Count > 0)
                 {
-                    return Results.BadRequest(new { error = $"not available (missing key/cookies?): {string.Join(", ", unavailable)}" });
+                    var reasons = unavailable.Select(k => $"{k}: {runner.DescribeAvailabilityProblem(k)}");
+                    return Results.BadRequest(new { error = $"not available: {string.Join("; ", reasons)}" });
                 }
 
                 var n = 1;
@@ -159,6 +174,25 @@ namespace MultiImageClient
                 var file = form.Files.GetFile("image");
                 if (file != null && file.Length > 0)
                 {
+                    var imageCapable = new[]
+                    {
+                        UiJobRunner.KeyGpt2,
+                        UiJobRunner.KeyGrokApi,
+                        UiJobRunner.KeyGrokApiPro,
+                        UiJobRunner.KeyGoogle,
+                        UiJobRunner.KeyGooglePro,
+                        UiJobRunner.KeyBfl,
+                    };
+                    var incompatible = genKeys
+                        .Where(key => !imageCapable.Contains(key, StringComparer.OrdinalIgnoreCase))
+                        .ToList();
+                    if (incompatible.Count > 0)
+                    {
+                        return Results.BadRequest(new
+                        {
+                            error = $"These generators are text-to-image only in the local UI: {string.Join(", ", incompatible)}. Remove the input image or deselect them.",
+                        });
+                    }
                     (inputImagePath, inputImageBytes, inputImageContentType) = await SaveInputImageAsync(file, settings);
                 }
 
@@ -179,8 +213,29 @@ namespace MultiImageClient
                     job.StoreImage("input", 0, inputImageBytes, inputImageContentType);
                 }
                 jobs.Add(job);
-                job.Emit(new { type = "accepted", gens = genKeys, hasImage = job.HasInputImage, prompt });
-                _ = Task.Run(() => runner.RunJobAsync(job, spec));
+                job.Emit(new
+                {
+                    type = "accepted",
+                    gens = genKeys,
+                    hasImage = job.HasInputImage,
+                    prompt,
+                    at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                });
+                activeJobs[job.Id] = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await runner.RunJobAsync(job, spec);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"[ui #{job.Id}] job runner failed: {ex}");
+                    }
+                    finally
+                    {
+                        activeJobs.TryRemove(job.Id, out _);
+                    }
+                });
 
                 return Results.Json(new { id = job.Id });
             });
@@ -245,6 +300,17 @@ namespace MultiImageClient
             TryOpenBrowser(url);
 
             await app.RunAsync();
+
+            var remaining = activeJobs.Values.ToArray();
+            if (remaining.Length > 0)
+            {
+                Logger.Log($"UI shutdown: waiting up to 30 seconds for {remaining.Length} active job(s).");
+                var allJobs = Task.WhenAll(remaining);
+                if (await Task.WhenAny(allJobs, Task.Delay(TimeSpan.FromSeconds(30))) != allJobs)
+                {
+                    Logger.Log("UI shutdown: active jobs did not finish within the 30-second grace period.");
+                }
+            }
         }
 
         // Prefer the source tree copies (live-editable during dev: tweak

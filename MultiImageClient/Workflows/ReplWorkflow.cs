@@ -76,7 +76,7 @@ namespace MultiImageClient
         // "grok-api" = official api.x.ai key version. The consumer-cookie
         // grok-web path is workflow-level (--grok-web) and not a REPL slot.
         private static readonly string[] KnownGenerators =
-            { "gpt2", "grok-api", "grok-api-pro", "dalle3", "ideogram", "recraft", "bfl", "google", "googlepro", "imagen4" };
+            { "gpt2", "grok-api", "grok-api-pro", "ideogram", "recraft", "bfl", "google", "googlepro", "imagen4" };
 
         private class InFlight
         {
@@ -736,10 +736,7 @@ namespace MultiImageClient
                         ImageGeneratorApiType.GrokImaginePro, _stats, "repl",
                         aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
 
-                case "dalle3":
-                    RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", "dalle3");
-                    return new Dalle3Generator(_settings.OpenAIApiKey, _concurrency,
-                        GeneratedImageQuality.High, GeneratedImageSize.W1024xH1024, _stats, "repl");
+                // "dalle3" removed: OpenAI retired dall-e-3 on 2026-05-12.
 
                 case "ideogram":
                     RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", "ideogram");
@@ -897,7 +894,7 @@ namespace MultiImageClient
             Console.WriteLine("  :n N                     set gpt-image-2 images-per-call (default 1). N>10 requires confirmation.");
             Console.WriteLine("  :concurrency N           max prompts in flight (applies to subsequent dispatches)");
             Console.WriteLine("  :gens list               list active generators");
-            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok-api grok-api-pro dalle3 ideogram recraft bfl google googlepro imagen4(dead 06-24)");
+            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok-api grok-api-pro ideogram recraft bfl google googlepro imagen4(dead 06-24)");
             Console.WriteLine("  :gens remove <name>      remove a generator from the active set");
             Console.WriteLine("  :gens reset              back to defaults (gpt2 + grok-api when XAIGrokApiKey is set)");
             Console.WriteLine("  :status                  list in-flight jobs");

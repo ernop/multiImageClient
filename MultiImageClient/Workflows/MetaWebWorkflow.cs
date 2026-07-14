@@ -1,14 +1,15 @@
 #nullable enable
 using System;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
     /// --meta-web: batch prompts through the meta.ai consumer web app (Muse
-    /// Image) using browser cookies. Mirrors GrokWebWorkflow; single-session
-    /// concurrency of 1. One contact sheet for the run.
+    /// Image) by driving a real Playwright browser session. Mirrors
+    /// GrokWebWorkflow; single-session concurrency of 1. One contact sheet for
+    /// the run. First run: --meta-web-headed to log in once; the persistent
+    /// profile keeps the session afterwards.
     public class MetaWebWorkflow
     {
         public async Task<string?> RunAsync(
@@ -17,19 +18,15 @@ namespace MultiImageClient
             MultiClientRunStats stats,
             RunOptions options)
         {
-            var cookiePath = !string.IsNullOrWhiteSpace(options.MetaWebCookies)
-                ? options.MetaWebCookies
-                : settings.MetaWebCookiePath;
+            var clientOptions = MetaWebClient.BuildOptions(
+                settings,
+                cookieOverride: options.MetaWebCookies,
+                headedOverride: options.MetaWebHeaded);
 
-            if (string.IsNullOrWhiteSpace(cookiePath))
+            var problem = MetaWebClient.DescribeAvailabilityProblem(clientOptions);
+            if (problem != null)
             {
-                Console.Error.WriteLine("Meta web aborted: set MetaWebCookiePath in settings.json or pass --meta-web-cookies /path/to/cookies.txt");
-                return null;
-            }
-
-            if (!File.Exists(Settings.ExpandPath(cookiePath)))
-            {
-                Console.Error.WriteLine($"Meta web aborted: cookie file not found: {Settings.ExpandPath(cookiePath)}");
+                Console.Error.WriteLine($"Meta web aborted: {problem}");
                 return null;
             }
 
@@ -45,34 +42,36 @@ namespace MultiImageClient
                 return null;
             }
 
-            // Per-run doc_id override wins over settings.json; settings supplies the fallback.
-            var docId = !string.IsNullOrWhiteSpace(options.MetaWebDocId)
-                ? options.MetaWebDocId
-                : settings.MetaWebImageDocId;
+            MetaWebClient client;
+            try
+            {
+                client = new MetaWebClient(clientOptions);
+            }
+            catch (InvalidOperationException ex)
+            {
+                Console.Error.WriteLine($"Meta web aborted: {ex.Message}");
+                Logger.Log($"Meta web aborted: {ex.Message}");
+                return null;
+            }
 
-            using var client = new MetaWebClient(
-                MetaWebCookieLoader.LoadCookieHeader(cookiePath),
-                imageDocId: docId,
-                endpoint: settings.MetaWebGraphqlEndpoint,
-                pollDocId: settings.MetaWebPollMediaDocId);
+            await using (client)
+            {
+                var generator = new MetaWebImagineGenerator(
+                    client,
+                    maxConcurrency: 1,
+                    stats);
 
-            var generator = new MetaWebImagineGenerator(
-                client,
-                maxConcurrency: 1,
-                stats,
-                orientation: options.MetaWebOrientation,
-                numImages: options.MetaWebNumImages);
-
-            Logger.Log($"Meta web: prompts={prompts.Count}, orientation={options.MetaWebOrientation}, doc_id={client.ImageDocId}, cookies={Settings.ExpandPath(cookiePath)}");
-            return await GeneratorContactSheetRunner.RunOneGeneratorAsync(
-                generator,
-                prompts,
-                new ImageManager(settings, stats),
-                settings,
-                stats,
-                runLabel: "Meta web",
-                sheetHeader: "Meta Web Imagine (Muse Image)",
-                openWhenDone: options.OpenImages);
+                Logger.Log($"Meta web: prompts={prompts.Count}, headed={clientOptions.Headed}, profile={clientOptions.BrowserProfilePath}");
+                return await GeneratorContactSheetRunner.RunOneGeneratorAsync(
+                    generator,
+                    prompts,
+                    new ImageManager(settings, stats),
+                    settings,
+                    stats,
+                    runLabel: "Meta web",
+                    sheetHeader: "Meta Web Imagine (Muse Image)",
+                    openWhenDone: options.OpenImages);
+            }
         }
     }
 }

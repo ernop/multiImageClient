@@ -29,7 +29,6 @@ Everything below is wired up in `MultiImageClient/ImageGenerators/`. Any provide
 | Black Forest Labs — Flux v1.1 / v1.1 Ultra | `BFLGenerator.cs` | `BFLApiKey` |
 | Ideogram — v2, v2-turbo, v2a, v2a-turbo | `IdeogramGenerator.cs` | `IdeogramApiKey` |
 | Ideogram — v3 | `IdeogramV3Generator.cs` | `IdeogramApiKey` |
-| OpenAI — DALL·E 3 | `Dalle3Generator.cs` | `OpenAIApiKey` |
 | OpenAI — GPT-Image-1 / GPT-Image-1 Mini | `GptImageOneGenerator.cs` | `OpenAIApiKey` |
 | Recraft (many styles & substyles) | `RecraftGenerator.cs` | `RecraftApiKey` |
 | Google Gemini image ("NanoBanana") | `GoogleGenerator.cs` | `GoogleGeminiApiKey` |
@@ -103,7 +102,7 @@ Cosmetic flags: `SaveJsonLog`, `EnableLogging`, `AnnotationSide`.
 MultiImageClient/            main console app (net9.0-windows)
   Program.cs                 entry point
   Workflows/                 BatchWorkflow, RoundTripWorkflow, GeneratorGroups
-  ImageGenerators/           one file per provider (BFL, Ideogram, Dalle3, Recraft, GPT-Image-1, Gemini, Imagen 4)
+  ImageGenerators/           one file per provider (BFL, Ideogram, Recraft, GPT-Image-1/2, Gemini, Imagen 4)
   Describers/                image-to-text (Claude, OpenAI, Gemini, local InternVL, local Qwen)
   promptTransformation/      Claude rewrite, randomizer, stylizer, manual edits
   promptGenerators/          prompt sources (from file, from code, scenes-from-story, etc.)

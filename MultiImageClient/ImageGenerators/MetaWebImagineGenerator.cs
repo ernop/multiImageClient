@@ -1,7 +1,7 @@
 #nullable enable
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,39 +9,32 @@ using System.Threading.Tasks;
 namespace MultiImageClient
 {
     /// IImageGenerator adapter for Meta AI's consumer web app (Muse Image),
-    /// driven by browser cookies through MetaWebClient. The web-app sibling of
-    /// the api.x.ai vs grok.com split: there is no official Muse Image API yet,
-    /// so this is the only way to reach the model programmatically, and it is
-    /// best-effort (see MetaWebClient for the doc_id/DGW caveats).
+    /// driven through the Playwright-based MetaWebClient. The web-app sibling
+    /// of the grok-api vs grok-web split: there is no official Muse Image API,
+    /// so the browser is the only programmatic path, and it is best-effort.
+    ///
+    /// Deliberately unclaimed (unconfirmed on the current browser/DGW path):
+    /// orientation control and exact image-count control. Meta decides how many
+    /// images a prompt yields; we save whatever comes back.
     public class MetaWebImagineGenerator : IImageGenerator
     {
         private readonly MetaWebClient _client;
         private readonly SemaphoreSlim _semaphore;
         private readonly MultiClientRunStats _stats;
-        private readonly string _orientation;
-        private readonly int _numImages;
-        private readonly TimeSpan _timeout;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.MetaWebImagine;
 
         public MetaWebImagineGenerator(
             MetaWebClient client,
             int maxConcurrency,
-            MultiClientRunStats stats,
-            string orientation = "SQUARE",
-            int numImages = 1,
-            int timeoutMinutes = 8)
+            MultiClientRunStats stats)
         {
             _client = client;
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _stats = stats;
-            _orientation = string.IsNullOrWhiteSpace(orientation) ? "SQUARE" : orientation.Trim().ToUpperInvariant();
-            _numImages = Math.Max(1, numImages);
-            _timeout = TimeSpan.FromMinutes(timeoutMinutes);
         }
 
-        public string GetFilenamePart(PromptDetails pd)
-            => $"metaweb_{_orientation.ToLowerInvariant()}";
+        public string GetFilenamePart(PromptDetails pd) => "metaweb";
 
         public List<string> GetRightParts()
         {
@@ -49,13 +42,12 @@ namespace MultiImageClient
             {
                 "Meta Web Imagine",
                 "Muse Image",
-                "meta.ai (cookie session)",
-                $"orientation {_orientation}",
+                "meta.ai (browser session)",
             };
         }
 
         public string GetGeneratorSpecPart()
-            => $"Meta Web Imagine (Muse Image)  {_orientation}";
+            => "Meta Web Imagine (Muse Image)";
 
         public decimal GetCost() => 0m;
 
@@ -69,15 +61,15 @@ namespace MultiImageClient
                 var prompt = promptDetails.Prompt ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(prompt))
                 {
-                    Logger.Log($"\t-> Meta Web Imagine orientation={_orientation}: WARNING empty prompt text");
+                    Logger.Log($"\t-> Meta Web Imagine: WARNING empty prompt text");
                 }
                 else
                 {
                     var head = prompt.Length <= 120 ? prompt : prompt[..117] + "...";
-                    Logger.Log($"\t-> Meta Web Imagine orientation={_orientation} [{prompt.Length} chars]: {head}");
+                    Logger.Log($"\t-> Meta Web Imagine [{prompt.Length} chars]: {head}");
                 }
 
-                var result = await _client.GenerateImageAsync(prompt, _orientation, _numImages, _timeout);
+                var result = await _client.GenerateImageAsync(prompt);
                 sw.Stop();
 
                 if (result.Images.Count == 0)

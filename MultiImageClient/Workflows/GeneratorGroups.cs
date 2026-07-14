@@ -176,7 +176,7 @@ namespace MultiImageClient
         /// a cookie client and per-run flags, so ShowcaseWorkflow builds them
         /// itself. They are listed for help/validation completeness only.
         public static readonly string[] ShortNames =
-            { "gpt2", "grok-api", "grok-api-pro", "grok-web", "meta-web", "dalle3", "ideogram", "recraft", "bfl", "google", "googlepro", "local-klein", "local-zimage" };
+            { "gpt2", "grok-api", "grok-api-pro", "grok-web", "meta-web", "ideogram", "recraft", "bfl", "google", "googlepro", "local-klein", "local-zimage" };
 
         public IImageGenerator BuildByShortName(string name)
         {
@@ -185,7 +185,6 @@ namespace MultiImageClient
                 case "gpt2": return GptImage2RandomMinimalSafety();
                 case "grok-api": case "grok": return GrokImagine_Square();
                 case "grok-api-pro": case "grokpro": return GrokImaginePro_Square();
-                case "dalle3": return Dalle3Square();
                 case "ideogram": return IdeogramV4_Square();
                 case "recraft": return RecraftV41AnyStyle();
                 case "bfl": return BFLFlux2ProPreview_Square();
@@ -217,15 +216,9 @@ namespace MultiImageClient
             };
         }
 
-        // ---------- OpenAI: DALL·E 3 ----------
-
-        private Dalle3Generator Dalle3Square() =>
-            new Dalle3Generator(_settings.OpenAIApiKey, _concurrency,
-                GeneratedImageQuality.High, GeneratedImageSize.W1024xH1024, _stats, "");
-
-        private Dalle3Generator Dalle3Wide() =>
-            new Dalle3Generator(_settings.OpenAIApiKey, _concurrency,
-                GeneratedImageQuality.High, GeneratedImageSize.W1792xH1024, _stats, "");
+        // DALL·E 3: RETIRED. OpenAI shut down dall-e-2/dall-e-3 on the API
+        // 2026-05-12 (model_not_found ever since); Dalle3Generator was removed.
+        // gpt-image-* is the replacement family.
 
         // ---------- OpenAI: gpt-image-1 / gpt-image-1-mini ----------
 

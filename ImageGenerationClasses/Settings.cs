@@ -35,19 +35,34 @@ namespace MultiImageClient
         /// Required for --grok-web consumer-session generators.
         public string GrokWebCookiePath { get; set; } = "";
 
-        /// Netscape cookies.txt or raw Cookie-header export for meta.ai.
-        /// Required for --meta-web (reverse-engineered Muse Image). Needs the
-        /// HttpOnly `datr` + session cookie (`abra_sess`/`ecto_1_sess`).
+        /// Optional Netscape cookies.txt or raw Cookie-header export for
+        /// meta.ai, injected into the --meta-web browser session as an
+        /// alternative to the one-time interactive login. Needs the HttpOnly
+        /// `datr` + session cookie (`ecto_1_sess`; `abra_sess` optional) —
+        /// ideally the complete meta.ai jar.
         public string MetaWebCookiePath { get; set; } = "";
 
-        /// Optional overrides for meta.ai's reverse-engineered persisted-query
-        /// GraphQL surface. Meta rotates the doc_id and mutates the schema
-        /// frequently; when --meta-web starts failing with a validation error,
-        /// capture the current TEXT_TO_IMAGE doc_id from DevTools > Network and
-        /// drop it here (or pass --meta-web-doc-id). Blank = built-in defaults.
-        public string MetaWebImageDocId { get; set; } = "";
-        public string MetaWebPollMediaDocId { get; set; } = "";
-        public string MetaWebGraphqlEndpoint { get; set; } = "";
+        /// --meta-web drives the real meta.ai web app with Playwright (Meta
+        /// moved generation to an integrity-checked WebSocket transport
+        /// ("DGW"), so plain HTTP GraphQL calls no longer work). This
+        /// persistent Chromium profile keeps the logged-in session between
+        /// runs; log in once with --meta-web-headed. Blank =
+        /// ~/.config/multi-image-client/meta-ai-profile.
+        public string MetaWebBrowserProfilePath { get; set; } = "";
+
+        /// Optional path to an existing Chrome/Chromium binary for --meta-web.
+        /// Blank = Playwright's own Chromium (one-time --playwright-install).
+        public string MetaWebBrowserExecutablePath { get; set; } = "";
+
+        /// Show the meta-web browser window (also forced by --meta-web-headed).
+        public bool MetaWebHeaded { get; set; }
+
+        /// Per-prompt generation timeout for --meta-web.
+        public int MetaWebTimeoutSeconds { get; set; } = 480;
+
+        /// Opt-in meta-web diagnostics: events.jsonl + failure screenshots
+        /// under saves/<day>/meta-web-capture/. Never contains cookie values.
+        public bool MetaWebCaptureSessions { get; set; }
         public string XAIBaseUrl { get; set; } = "";
         public string GoogleGeminiApiKey { get; set; }
         public string GoogleCloudLocation { get; set; }
@@ -85,6 +100,13 @@ namespace MultiImageClient
         /// newlines in the typed prompt are collapsed to spaces so the file
         /// is always one-prompt-per-line.
         public string TypedPromptsAppendFile { get; set; } = "";
+
+        /// Master switch for the local ComfyUI generators (local-klein, local-zimage).
+        /// Default false: they are treated as NOT INSTALLED — shown disabled in the
+        /// web UI and skipped by showcase/batch runs, regardless of the ComfyUI*
+        /// settings below. Nothing installs them automatically; flip this to true
+        /// only after setting up ComfyUI + models + workflows yourself.
+        public bool EnableLocalGenerators { get; set; } = false;
 
         /// Local ComfyUI server used by local/open-weight image generators.
         /// Example: http://127.0.0.1:8188
@@ -207,6 +229,8 @@ namespace MultiImageClient
             ComfyUIZImageWorkflowPath = ExpandPath(ComfyUIZImageWorkflowPath);
             GrokWebCookiePath = ExpandPath(GrokWebCookiePath);
             MetaWebCookiePath = ExpandPath(MetaWebCookiePath);
+            MetaWebBrowserProfilePath = ExpandPath(MetaWebBrowserProfilePath);
+            MetaWebBrowserExecutablePath = ExpandPath(MetaWebBrowserExecutablePath);
 
             if (PromptFiles != null)
             {

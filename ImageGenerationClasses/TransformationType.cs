@@ -18,6 +18,7 @@
         BFLRewrite = 70,
         LLAmARewrite = 80,
 
+        // Retired with dall-e-3 (API shutdown 2026-05-12); kept for old logs.
         Dalle3Rewrite = 90,
 
         Randomizer = 100,

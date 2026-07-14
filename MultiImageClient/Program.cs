@@ -27,6 +27,13 @@ namespace MultiImageClient
         {
             var options = RunOptions.Parse(args);
 
+            if (options.PlaywrightInstall)
+            {
+                // One-time browser download for --meta-web. Exits with the
+                // installer's own status; no settings.json needed.
+                Environment.Exit(Microsoft.Playwright.Program.Main(new[] { "install", "chromium" }));
+            }
+
             // Global headless-by-default gate: nothing is popped open in the
             // system default viewer unless --open-images was passed (or implied
             // by --quick-test). Every viewer launch funnels through
