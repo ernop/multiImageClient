@@ -553,15 +553,14 @@ namespace MultiImageClient
         public static string BuildComposerText(string prompt)
         {
             var trimmed = (prompt ?? string.Empty).TrimStart();
-            foreach (var lead in new[] { "imagine", "generate", "create", "draw" })
-            {
-                if (trimmed.StartsWith(lead, StringComparison.OrdinalIgnoreCase))
-                {
-                    return prompt!;
-                }
-            }
+            var leadsWithImageVerb = new[] { "imagine", "generate", "create", "draw" }
+                .Any(lead => trimmed.StartsWith(lead, StringComparison.OrdinalIgnoreCase));
+            var core = leadsWithImageVerb ? (prompt ?? string.Empty) : "Generate an image: " + prompt;
 
-            return "Generate an image: " + prompt;
+            // meta.ai is a chat product and will answer abstract/hypothetical
+            // prompts with prose. An explicit trailing directive nudges it back to
+            // image output even when the prompt itself reads as a discussion topic.
+            return core + "\n\nPlease produce an image in response, not a text reply.";
         }
 
         private sealed record PageImage(string Url, int W, int H, bool IsCandidate);
@@ -719,9 +718,18 @@ namespace MultiImageClient
                         if (textStablePolls >= TextAnswerStablePolls)
                         {
                             capture?.Event("text-answer", new { textLength = text.Length, tail });
+                            var responseTail = Tail(text, 300);
+                            var lower = responseTail.ToLowerInvariant();
+                            var looksRefused = lower.Contains("can't") || lower.Contains("cannot")
+                                || lower.Contains("won't") || lower.Contains("i'm not able")
+                                || lower.Contains("i am not able") || lower.Contains("unable to")
+                                || (lower.Contains("against") && (lower.Contains("policy") || lower.Contains("guideline")));
+                            var lead = looksRefused
+                                ? "Meta web: Meta declined to generate an image (the reply reads as a refusal)."
+                                : "Meta web: Meta replied with text instead of an image — it likely treated the prompt as a "
+                                    + "chat/thought-experiment rather than an image request.";
                             throw new MetaWebException(
-                                "Meta web: Meta answered with text and produced no image — most likely the prompt was "
-                                + $"refused. End of Meta's response: \"{Tail(text, 300)}\"");
+                                $"{lead} End of Meta's response: \"{responseTail}\"");
                         }
                     }
                     else

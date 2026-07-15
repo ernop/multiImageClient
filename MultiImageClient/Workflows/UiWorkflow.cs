@@ -65,8 +65,8 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise." },
                     new { key = UiJobRunner.KeyGpt1, label = "gpt-image-1", detail = "OpenAI image generation. Text-to-image in this UI." },
                     new { key = UiJobRunner.KeyGpt1Mini, label = "gpt-image-1-mini", detail = "OpenAI lower-cost image generation. Text-to-image in this UI." },
-                    new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0 DEFAULT 2048x2048 preset." },
-                    new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1 any-style 1024x1024 preset." },
+                    new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0 DEFAULT 2048x2048 preset. A pasted image routes to V3 and is used as a style reference/guide." },
+                    new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1 any-style 1024x1024 preset. A pasted image becomes a custom style (reference/guide)." },
                     new { key = UiJobRunner.KeyBfl, label = "FLUX.2 Pro Preview", detail = "Black Forest Labs current FLUX.2 Pro preview preset. A pasted image is used as a reference/guide (input_image conditioning)." },
                     new { key = UiJobRunner.KeyGoogle, label = "Nano Banana 2", detail = "Google gemini-3.1-flash-image, 2K square preset. A pasted image is used as a reference/guide." },
                     new { key = UiJobRunner.KeyGooglePro, label = "Nano Banana Pro", detail = "Google gemini-3-pro-image, 2K square preset. A pasted image is used as a reference/guide." },
@@ -182,6 +182,8 @@ namespace MultiImageClient
                         UiJobRunner.KeyGoogle,
                         UiJobRunner.KeyGooglePro,
                         UiJobRunner.KeyBfl,
+                        UiJobRunner.KeyIdeogram,
+                        UiJobRunner.KeyRecraft,
                     };
                     var incompatible = genKeys
                         .Where(key => !imageCapable.Contains(key, StringComparer.OrdinalIgnoreCase))

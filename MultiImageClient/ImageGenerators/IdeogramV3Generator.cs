@@ -2,6 +2,7 @@ using MultiImageClient;
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
@@ -21,9 +22,12 @@ namespace IdeogramAPIClient
         private readonly IdeogramRenderingSpeed _renderingSpeed;
         private readonly string _negativePrompt;
         private readonly string _name;
-        
+        private readonly string _inputImagePath;
+
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.IdeogramV3;
 
+        /// inputImagePath: when set, the image is sent as a style_reference_images
+        ///   part — Ideogram uses it as a style/subject guide, not a literal edit.
         public IdeogramV3Generator(
             string apiKey,
             int maxConcurrency,
@@ -33,7 +37,8 @@ namespace IdeogramAPIClient
             IdeogramRenderingSpeed renderingSpeed,
             string negativePrompt,
             MultiClientRunStats stats,
-            string name)
+            string name,
+            string inputImagePath = null)
         {
             _client = new IdeogramClient(apiKey);
             _semaphore = new SemaphoreSlim(maxConcurrency);
@@ -45,6 +50,7 @@ namespace IdeogramAPIClient
             _renderingSpeed = renderingSpeed;
             _negativePrompt = negativePrompt ?? string.Empty;
             _name = string.IsNullOrEmpty(name) ? "" : name;
+            _inputImagePath = inputImagePath;
         }
 
         
@@ -108,6 +114,12 @@ namespace IdeogramAPIClient
                     MagicPrompt = _magicPromptOption,
                     NegativePrompt = string.IsNullOrWhiteSpace(_negativePrompt) ? null : _negativePrompt
                 };
+                if (!string.IsNullOrEmpty(_inputImagePath))
+                {
+                    var refBytes = File.ReadAllBytes(_inputImagePath);
+                    request.StyleReferenceImages.Add(new IdeogramFile(
+                        refBytes, Path.GetFileName(_inputImagePath), "image/png"));
+                }
 
                 var response = await _client.GenerateImageV3Async(request);
 

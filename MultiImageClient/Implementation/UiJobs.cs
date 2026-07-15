@@ -10,6 +10,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
+using IdeogramAPIClient;
+using RecraftAPIClient;
+
 namespace MultiImageClient
 {
     /// One web-UI generation job: (optional input image, prompt, generator
@@ -663,7 +666,39 @@ namespace MultiImageClient
                 }
 
                 case KeyIdeogram:
+                {
+                    if (!job.HasInputImage)
+                    {
+                        return _generatorGroups.BuildByShortName(key);
+                    }
+                    // Reference/guide: route to V3 (V4 is JSON-only, no reference
+                    // images) and pass the pasted image as a style reference.
+                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
+                    return new IdeogramV3Generator(
+                        _settings.IdeogramApiKey, maxConcurrency: 1,
+                        IdeogramV3StyleType.AUTO, IdeogramMagicPromptOption.ON,
+                        IdeogramAspectRatio.ASPECT_1_1, IdeogramRenderingSpeed.QUALITY,
+                        "", _stats, "ideogram ui",
+                        inputImagePath: job.InputImagePath);
+                }
+
                 case KeyRecraft:
+                {
+                    if (!job.HasInputImage)
+                    {
+                        return _generatorGroups.BuildByShortName(key);
+                    }
+                    // Reference/guide: RecraftGenerator turns the pasted image into
+                    // a custom style (POST /styles) and generates with its style_id.
+                    RequireKey(_settings.RecraftApiKey, "RecraftApiKey", key);
+                    return new RecraftGenerator(
+                        _settings.RecraftApiKey, maxConcurrency: 1,
+                        RecraftImageSize._1024x1024, RecraftStyle.any,
+                        null, null, null, _stats, "recraft ui",
+                        model: RecraftModel.recraftv4_1,
+                        inputImagePath: job.InputImagePath);
+                }
+
                 case KeyLocalKlein:
                 case KeyLocalZImage:
                 {

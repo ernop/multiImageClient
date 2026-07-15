@@ -78,7 +78,7 @@ namespace IdeogramAPIClient
                 //    }
                 //}
 
-                //AddFileParts(formData, "style_reference_images", request.StyleReferenceImages);
+                AddFileParts(formData, "style_reference_images", request.StyleReferenceImages);
                 //AddFileParts(formData, "character_reference_images", request.CharacterReferenceImages);
                 //AddFileParts(formData, "character_reference_images_mask", request.CharacterReferenceImageMasks);
 

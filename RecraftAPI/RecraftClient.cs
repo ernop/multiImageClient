@@ -17,12 +17,25 @@ namespace RecraftAPIClient
         }
 
 
-        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, RecraftImageSize size, RecraftModel model = RecraftModel.recraftv3)
+        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, RecraftImageSize size, RecraftModel model = RecraftModel.recraftv3, string styleId = null)
         {
             string serialized = "";
             var modelString = model.ToString();
 
-            if (style == "any") {
+            if (!string.IsNullOrEmpty(styleId))
+            {
+                // Custom style built from a reference image (see CreateStyleAsync):
+                // style_id replaces style/substyle entirely.
+                serialized = JsonConvert.SerializeObject(new
+                {
+                    prompt,
+                    model = modelString,
+                    style_id = styleId,
+                    size = size.ToString().TrimStart('_'),
+                    response_format = "url"
+                });
+            }
+            else if (style == "any") {
                 serialized = JsonConvert.SerializeObject(new
                 {
                     prompt,

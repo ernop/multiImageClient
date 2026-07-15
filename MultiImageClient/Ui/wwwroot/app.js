@@ -77,7 +77,7 @@ async function loadConfig() {
 }
 
 function updateGeneratorCompatibility() {
-  const imageCapable = new Set(["gpt2", "grok-api", "grok-api-pro", "google", "googlepro", "bfl"]);
+  const imageCapable = new Set(["gpt2", "grok-api", "grok-api-pro", "google", "googlepro", "bfl", "ideogram", "recraft"]);
   for (const cb of gensRow.querySelectorAll("input")) {
     const providerAvailable = cb.dataset.available === "true";
     const incompatible = !!inputImageFile && !imageCapable.has(cb.value);

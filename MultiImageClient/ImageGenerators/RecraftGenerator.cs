@@ -8,6 +8,7 @@ using SixLabors.ImageSharp;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
@@ -34,6 +35,7 @@ namespace MultiImageClient
         private ImageGeneratorApiType _apiType;
         private string _artistic_level;
         private string _name;
+        private string _inputImagePath;
 
         public ImageGeneratorApiType ApiType => _apiType;
 
@@ -85,8 +87,9 @@ namespace MultiImageClient
             }
         }
 
-        public RecraftGenerator(string apiKey, int maxConcurrency, RecraftImageSize size, RecraftStyle style, RecraftVectorIllustrationSubstyle? substyleVector, RecraftDigitalIllustrationSubstyle? substyleDigital, RecraftRealisticImageSubstyle? substyleRealistic, MultiClientRunStats stats, string name, string artistic_level = "", RecraftModel model = RecraftModel.recraftv3)
+        public RecraftGenerator(string apiKey, int maxConcurrency, RecraftImageSize size, RecraftStyle style, RecraftVectorIllustrationSubstyle? substyleVector, RecraftDigitalIllustrationSubstyle? substyleDigital, RecraftRealisticImageSubstyle? substyleRealistic, MultiClientRunStats stats, string name, string artistic_level = "", RecraftModel model = RecraftModel.recraftv3, string inputImagePath = null)
         {
+            _inputImagePath = inputImagePath;
             _recraftClient = new RecraftClient(apiKey);
             _recraftSemaphore = new SemaphoreSlim(maxConcurrency);
             _httpClient = new HttpClient();
@@ -208,7 +211,21 @@ namespace MultiImageClient
                 }
 
                 usingSubstyle = Regex.Replace(usingSubstyle, @"^_([\d])", "$1");
-                var generationResult = await _recraftClient.GenerateImageAsync(usingPrompt, _artistic_level, usingSubstyle, _style.ToString(), _imageSize, _model);
+
+                // Reference/guide: turn the pasted image into a Recraft custom
+                // style (POST /styles), then generate with its style_id. "any" is
+                // not a valid base for style creation, so fall back to realistic.
+                string styleId = null;
+                if (!string.IsNullOrEmpty(_inputImagePath))
+                {
+                    var refBytes = File.ReadAllBytes(_inputImagePath);
+                    var baseStyle = _style == RecraftStyle.any ? RecraftStyle.realistic_image : _style;
+                    var styleResponse = await _recraftClient.CreateStyleAsync(refBytes, baseStyle);
+                    styleId = styleResponse.Id;
+                    Logger.Log($"\tRecraft custom style from reference image: {styleId}");
+                }
+
+                var generationResult = await _recraftClient.GenerateImageAsync(usingPrompt, _artistic_level, usingSubstyle, _style.ToString(), _imageSize, _model, styleId);
                 Logger.Log($"\tFrom Recraft: {promptDetails.Show()} '{generationResult.Created}'");
                 _stats.RecraftImageGenerationSuccessCount++;
                 var theUrl = generationResult.Data[0].Url;
