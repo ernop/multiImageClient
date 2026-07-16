@@ -281,6 +281,33 @@ namespace MultiImageClient
                     }
                 }
 
+                // A blocked request comes back 200 with promptFeedback.blockReason
+                // set and no candidates — translate that into something readable
+                // instead of dumping the raw JSON.
+                var blockReason = responseData?.promptFeedback?.blockReason;
+                var finishReason = responseData?.candidates?
+                    .Select(c => c?.finishReason)
+                    .FirstOrDefault(r => !string.IsNullOrEmpty(r) && r != "STOP");
+                if (!string.IsNullOrEmpty(blockReason) || !string.IsNullOrEmpty(finishReason))
+                {
+                    var reason = !string.IsNullOrEmpty(blockReason)
+                        ? $"blockReason={blockReason}"
+                        : $"finishReason={finishReason}";
+                    var hint = blockReason == "OTHER"
+                        ? " \"OTHER\" usually means the input image tripped a filter (recognizable real people/celebrities are the most common trigger, also children or watermarked content); rewording the prompt or using a different input image usually clears it."
+                        : " The prompt and/or input image was refused by Gemini's safety filters; reword or swap the image and retry.";
+                    var blockedMessage = $"Google {ModelFor(_apiType)} refused this request before generating anything ({reason}).{hint}";
+                    Logger.Log(blockedMessage);
+                    return new TaskProcessResult
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = blockedMessage,
+                        PromptDetails = promptDetails,
+                        ImageGenerator = GetImageGeneratorType(),
+                        ImageGeneratorDescription = generator.GetGeneratorSpecPart()
+                    };
+                }
+
                 var diagnostic = responseContent.Length > 700 ? responseContent[..700] + "..." : responseContent;
                 Logger.Log($"Gemini image model {ModelFor(_apiType)} returned no image data. Response: {diagnostic}");
                 return new TaskProcessResult

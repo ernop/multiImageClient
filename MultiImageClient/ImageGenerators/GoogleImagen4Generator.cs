@@ -270,11 +270,23 @@ namespace MultiImageClient
     public class GeminiGenerateContentResponse
     {
         public GeminiCandidate[] candidates { get; set; }
+        public GeminiPromptFeedback promptFeedback { get; set; }
+    }
+
+    // Present when the request was refused before generation. blockReason
+    // values seen in the wild: SAFETY, PROHIBITED_CONTENT, IMAGE_SAFETY,
+    // BLOCKLIST, and the catch-all OTHER (which in practice usually means the
+    // input image tripped a filter — recognizable real people are the most
+    // common trigger).
+    public class GeminiPromptFeedback
+    {
+        public string blockReason { get; set; }
     }
 
     public class GeminiCandidate
     {
         public GeminiContent content { get; set; }
+        public string finishReason { get; set; }
     }
 
     public class GeminiContent

@@ -426,7 +426,11 @@ namespace MultiImageClient
                 }
 
                 copy = pd.Copy();
-                Logger.Log($"[ui #{job.Id}]   -> {generator.GetGeneratorSpecPart()}");
+                // Estimated cost for this call (per-image estimate x n, from
+                // each generator's GetCost). Estimates, not bills — but good
+                // enough for calibrating which providers are worth their price.
+                var costEstimate = generator.GetCost();
+                Logger.Log($"[ui #{job.Id}]   -> {generator.GetGeneratorSpecPart()} (~${costEstimate:0.###})");
                 var result = await generator.ProcessPromptAsync(generator, copy);
                 await _imageManager.ProcessAndSaveAsync(result, generator);
 
@@ -459,15 +463,18 @@ namespace MultiImageClient
                 {
                     label = string.IsNullOrEmpty(label) ? actualSize : $"{label} · {actualSize}";
                 }
+                var ok = result.IsSuccess && urls.Count > 0;
                 job.Emit(new
                 {
                     type = "gen-result",
                     gen = key,
-                    ok = result.IsSuccess && urls.Count > 0,
+                    ok,
                     error = result.IsSuccess ? "" : (result.ErrorMessage ?? "unknown error"),
                     ms = elapsed,
                     images = urls,
                     label,
+                    // Failed calls generally aren't billed, so report 0 for them.
+                    cost = ok ? costEstimate : 0m,
                 });
                 Logger.Log($"[ui #{job.Id}]   <- {(result.IsSuccess ? "OK" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms");
                 return result;

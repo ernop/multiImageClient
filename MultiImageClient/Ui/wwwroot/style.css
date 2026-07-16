@@ -169,6 +169,19 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 .job-connection { font-weight: 700; color: var(--ok); }
 .job-connection.err { color: var(--err); }
+.job-cost { font-weight: 700; color: var(--accent-dark); }
+
+/* Running session spend, rebuilt from the job cards on every result. */
+#cost-summary {
+  margin-top: 16px;
+  padding: 10px 16px;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-dark);
+}
 
 .job-cells {
   display: grid;
@@ -188,6 +201,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 .cell-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; }
 .cell-name { font-weight: 700; }
+.cell-cost { margin-left: auto; font-size: 12px; color: var(--accent-dark); font-weight: 700; white-space: nowrap; }
 .cell-time { font-size: 12px; color: var(--ok); font-weight: 600; }
 .cell-time.err { color: var(--err); }
 .cell-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--accent-dark); }

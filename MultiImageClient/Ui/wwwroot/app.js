@@ -230,6 +230,49 @@ promptBox.addEventListener("keydown", (e) => {
 
 const genLabel = (key) => (generators.find((g) => g.key === key) || { label: key }).label;
 
+// "~$0.25", "~$0.02", "~$1.5" — trailing zeros trimmed. Empty for 0/absent.
+function formatCost(v) {
+  if (!(v > 0)) return "";
+  return "~$" + v.toFixed(v < 0.01 ? 4 : 3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+// Recompute per-job and session cost totals from the DOM (each cell stores
+// its own cost in data attributes), so SSE replays / reconnects can never
+// double-count. Estimates from each generator's GetCost(), not bills.
+function updateCostTotals() {
+  const perGen = new Map(); // gen key -> { cost, images }
+  let grand = 0;
+  let grandImages = 0;
+  for (const card of jobsSection.querySelectorAll(".job")) {
+    let jobTotal = 0;
+    for (const cell of card.querySelectorAll(".cell")) {
+      const images = Number(cell.dataset.imgCount || 0);
+      if (images === 0) continue;
+      const cost = Number(cell.dataset.cost || 0);
+      jobTotal += cost;
+      grand += cost;
+      grandImages += images;
+      const agg = perGen.get(cell.dataset.gen) || { cost: 0, images: 0 };
+      agg.cost += cost;
+      agg.images += images;
+      perGen.set(cell.dataset.gen, agg);
+    }
+    card.querySelector(".job-cost").textContent = jobTotal > 0 ? `est. ${formatCost(jobTotal)}` : "";
+  }
+
+  const bar = el("cost-summary");
+  if (grandImages === 0) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  const breakdown = [...perGen.entries()]
+    .sort((a, b) => b[1].cost - a[1].cost)
+    .map(([key, v]) => `${genLabel(key)} ${v.cost > 0 ? formatCost(v.cost) : "free"} (${v.images})`)
+    .join(" \u00b7 ");
+  bar.textContent = `Session est. spend ${grand > 0 ? formatCost(grand) : "$0"} for ${grandImages} image${grandImages === 1 ? "" : "s"}: ${breakdown}`;
+}
+
 function formatElapsed(ms) {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -292,6 +335,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
     <span class="job-created"></span>
     <span class="job-progress">0/${gens.length} finished</span>
     <span class="job-elapsed">elapsed 0s</span>
+    <span class="job-cost"></span>
     <span class="job-connection">connecting…</span>`;
   meta.querySelector(".job-created").textContent = createdAt || new Date().toLocaleTimeString();
   head.appendChild(meta);
@@ -307,6 +351,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
     cell.innerHTML = `
       <div class="cell-head">
         <span class="cell-name"></span>
+        <span class="cell-cost"></span>
         <span class="cell-time"></span>
       </div>
       <div class="cell-status"><div class="spinner"></div><span>queued</span></div>
@@ -376,6 +421,9 @@ function watchJob(id) {
       if (evt.ok) {
         cell.dataset.state = "done";
         if (evt.label) cell.querySelector(".cell-name").textContent = evt.label;
+        cell.dataset.cost = String(evt.cost || 0);
+        cell.dataset.imgCount = String(evt.images.length);
+        cell.querySelector(".cell-cost").textContent = formatCost(evt.cost);
         status.textContent = "";
         for (const url of evt.images) {
           const a = document.createElement("a");
@@ -396,6 +444,7 @@ function watchJob(id) {
         status.textContent = evt.error || "failed";
       }
       updateJobProgress(card);
+      updateCostTotals();
     } else if (evt.type === "grid") {
       let link = card.querySelector(".grid-link");
       if (!link) {
