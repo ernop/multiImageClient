@@ -1,6 +1,6 @@
 ﻿{
   "PromptFiles": [
-    "REQUIRED: absolute path to a prompts .txt file (one prompt per line). You can list more than one file.",
+    "REQUIRED: path to a prompts .txt file (one prompt per line). Portable across machines: use a path relative to the repo root (e.g. \"2023-prompts.txt\"), a leading ~ for home, or %VAR% env vars. You can list more than one file.",
     "Example second file — or remove this array entry."
   ],
   "LoadPromptsFrom": "",
@@ -27,8 +27,8 @@
   "GoogleCloudLocation": "REQUIRED for Imagen 4: Google Cloud region, e.g. us-central1. See https://cloud.google.com/vertex-ai/docs/general/locations",
   "GoogleCloudProjectId": "REQUIRED for Imagen 4: Google Cloud project id from https://console.cloud.google.com/",
   "GoogleServiceAccountKeyPath": "REQUIRED for Imagen 4: absolute path to a service-account JSON key file (IAM & Admin > Service Accounts > Keys).",
-  "ImageDownloadBaseFolder": "D:\\proj\\IdeogramAPI\\ideogramSaves",
-  "LogFilePath": "D:\\proj\\IdeogramAPI\\ideogram.log",
+  "ImageDownloadBaseFolder": "saves",
+  "LogFilePath": "logs/ideogram.log",
   "SaveJsonLog": true,
   "EnableGenerationArchive": true,
   "GenerationArchiveDbPath": "Optional: local SQLite audit database path. Leave blank to use ImageDownloadBaseFolder/generation-history.sqlite3.",
