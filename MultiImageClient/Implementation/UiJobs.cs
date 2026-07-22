@@ -18,19 +18,23 @@ namespace MultiImageClient
     /// One web-UI generation job: (optional input image, prompt, generator
     /// set, options). Holds an append-only event log that SSE subscribers
     /// replay from any index (so a page refresh mid-job still sees the full
-    /// history), plus an in-memory store of result image bytes so the browser
-    /// can display results without touching the saves/ folder layout.
+    /// history), plus a live byte cache and durable references to saved result
+    /// files so completed cards survive a server restart.
     public class UiJob
     {
-        public string Id { get; } = Guid.NewGuid().ToString("N")[..12];
+        public string Id { get; init; } = Guid.NewGuid().ToString("N")[..12];
         public required string Prompt { get; init; }
         public string InputImagePath { get; init; } = "";
         public IReadOnlyList<string> GeneratorKeys { get; init; } = Array.Empty<string>();
-        public DateTime CreatedAt { get; } = DateTime.Now;
+        public DateTime CreatedAt { get; init; } = DateTime.Now;
+        public string SourceJobId { get; init; } = "";
+        public string SourceGenerator { get; init; } = "";
+        public int? SourceIndex { get; init; }
 
         private readonly object _lock = new();
         private readonly List<string> _events = new();
         private bool _done;
+        private UiJobStorage? _storage;
 
         public bool IsDone
         {
@@ -44,12 +48,17 @@ namespace MultiImageClient
         public void Emit(object evt)
         {
             var json = JsonSerializer.Serialize(evt);
-            lock (_lock) _events.Add(json);
+            lock (_lock)
+            {
+                _events.Add(json);
+                _storage?.AppendEvent(json);
+            }
         }
 
         public void MarkDone()
         {
             lock (_lock) _done = true;
+            _storage?.SaveMetadata(this);
         }
 
         /// Snapshot events from `fromIndex` onward plus the done flag, for the
@@ -65,20 +74,288 @@ namespace MultiImageClient
             }
         }
 
-        public void StoreImage(string genKey, int n, byte[] bytes, string contentType)
-            => _images[$"{genKey}/{n}"] = (bytes, contentType);
+        public void StoreImage(
+            string genKey,
+            int n,
+            byte[] bytes,
+            string contentType,
+            string durablePath = "")
+        {
+            var key = $"{genKey}/{n}";
+            _images[key] = (bytes, contentType);
+            if (!string.IsNullOrWhiteSpace(durablePath))
+            {
+                _storage?.SaveImageReference(key, durablePath, contentType);
+            }
+        }
 
         public bool TryGetImage(string genKey, int n, out byte[] bytes, out string contentType)
         {
-            if (_images.TryGetValue($"{genKey}/{n}", out var v))
+            var key = $"{genKey}/{n}";
+            if (_images.TryGetValue(key, out var v))
             {
                 bytes = v.Bytes;
                 contentType = v.ContentType;
                 return true;
             }
+            if (_storage?.TryReadImage(key, out bytes, out contentType) == true)
+            {
+                return true;
+            }
             bytes = Array.Empty<byte>();
             contentType = "";
             return false;
+        }
+
+        internal void AttachStorage(UiJobStorage storage) => _storage = storage;
+
+        internal void RestoreEvent(string json)
+        {
+            lock (_lock) _events.Add(json);
+        }
+
+        internal void RestoreDone()
+        {
+            lock (_lock) _done = true;
+        }
+    }
+
+    internal sealed class UiJobStorage
+    {
+        private static readonly JsonSerializerOptions JsonOptions = new()
+        {
+            WriteIndented = true,
+        };
+
+        private readonly object _writeLock = new();
+        private readonly string _folder;
+        private readonly string _metadataPath;
+        private readonly string _eventsPath;
+        private readonly string _imagesPath;
+        private Dictionary<string, UiPersistedImage> _images = new();
+
+        public UiJobStorage(string root, string jobId)
+        {
+            _folder = Path.Combine(root, jobId);
+            _metadataPath = Path.Combine(_folder, "job.json");
+            _eventsPath = Path.Combine(_folder, "events.jsonl");
+            _imagesPath = Path.Combine(_folder, "images.json");
+        }
+
+        public void Initialize(UiJob job)
+        {
+            Directory.CreateDirectory(_folder);
+            job.AttachStorage(this);
+            SaveMetadata(job);
+        }
+
+        public void SaveMetadata(UiJob job)
+        {
+            try
+            {
+                var metadata = new UiPersistedJob
+                {
+                    Id = job.Id,
+                    Prompt = job.Prompt,
+                    InputImagePath = job.InputImagePath,
+                    GeneratorKeys = job.GeneratorKeys.ToList(),
+                    CreatedAt = job.CreatedAt,
+                    SourceJobId = job.SourceJobId,
+                    SourceGenerator = job.SourceGenerator,
+                    SourceIndex = job.SourceIndex,
+                    Done = job.IsDone,
+                };
+                WriteJsonAtomically(_metadataPath, metadata);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not save job {job.Id}: {ex.Message}");
+            }
+        }
+
+        public void AppendEvent(string json)
+        {
+            try
+            {
+                lock (_writeLock)
+                {
+                    Directory.CreateDirectory(_folder);
+                    File.AppendAllText(_eventsPath, json + Environment.NewLine);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not append event: {ex.Message}");
+            }
+        }
+
+        public void SaveImageReference(string key, string path, string contentType)
+        {
+            try
+            {
+                var fullPath = Path.GetFullPath(path);
+                if (!File.Exists(fullPath))
+                {
+                    return;
+                }
+                lock (_writeLock)
+                {
+                    _images[key] = new UiPersistedImage
+                    {
+                        Path = fullPath,
+                        ContentType = contentType,
+                    };
+                    WriteJsonAtomically(_imagesPath, _images);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not save image reference: {ex.Message}");
+            }
+        }
+
+        public bool TryReadImage(string key, out byte[] bytes, out string contentType)
+        {
+            UiPersistedImage? image;
+            lock (_writeLock)
+            {
+                _images.TryGetValue(key, out image);
+            }
+            if (image == null || string.IsNullOrWhiteSpace(image.Path) || !File.Exists(image.Path))
+            {
+                bytes = Array.Empty<byte>();
+                contentType = "";
+                return false;
+            }
+            try
+            {
+                bytes = File.ReadAllBytes(image.Path);
+                contentType = image.ContentType;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not read {image.Path}: {ex.Message}");
+                bytes = Array.Empty<byte>();
+                contentType = "";
+                return false;
+            }
+        }
+
+        public static List<UiJob> LoadAll(string root)
+        {
+            var jobs = new List<UiJob>();
+            if (!Directory.Exists(root))
+            {
+                return jobs;
+            }
+
+            foreach (var folder in Directory.EnumerateDirectories(root))
+            {
+                var metadataPath = Path.Combine(folder, "job.json");
+                if (!File.Exists(metadataPath))
+                {
+                    continue;
+                }
+                try
+                {
+                    var metadata = JsonSerializer.Deserialize<UiPersistedJob>(
+                        File.ReadAllText(metadataPath), JsonOptions);
+                    if (metadata == null
+                        || string.IsNullOrWhiteSpace(metadata.Id)
+                        || string.IsNullOrWhiteSpace(metadata.Prompt))
+                    {
+                        continue;
+                    }
+
+                    var storage = new UiJobStorage(root, Path.GetFileName(folder));
+                    if (File.Exists(storage._imagesPath))
+                    {
+                        storage._images = JsonSerializer.Deserialize<Dictionary<string, UiPersistedImage>>(
+                            File.ReadAllText(storage._imagesPath), JsonOptions)
+                            ?? new Dictionary<string, UiPersistedImage>();
+                    }
+
+                    var job = new UiJob
+                    {
+                        Id = metadata.Id,
+                        Prompt = metadata.Prompt,
+                        InputImagePath = metadata.InputImagePath,
+                        GeneratorKeys = metadata.GeneratorKeys,
+                        CreatedAt = metadata.CreatedAt,
+                        SourceJobId = metadata.SourceJobId,
+                        SourceGenerator = metadata.SourceGenerator,
+                        SourceIndex = metadata.SourceIndex,
+                    };
+                    job.AttachStorage(storage);
+
+                    if (File.Exists(storage._eventsPath))
+                    {
+                        foreach (var line in File.ReadLines(storage._eventsPath))
+                        {
+                            if (string.IsNullOrWhiteSpace(line)) continue;
+                            try
+                            {
+                                using var _ = JsonDocument.Parse(line);
+                                job.RestoreEvent(line);
+                            }
+                            catch (JsonException)
+                            {
+                                Logger.Log($"UI history: skipped malformed event for job {job.Id}.");
+                            }
+                        }
+                    }
+
+                    if (metadata.Done)
+                    {
+                        job.RestoreDone();
+                    }
+                    else
+                    {
+                        // A process restart cannot resume a provider request. Keep
+                        // completed cells, close the replay stream, and let the UI
+                        // mark any unfinished cells as having no result.
+                        job.Emit(new { type = "job-done", interrupted = true });
+                        job.MarkDone();
+                    }
+                    jobs.Add(job);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"UI history: skipped {folder}: {ex.Message}");
+                }
+            }
+            return jobs;
+        }
+
+        private void WriteJsonAtomically<T>(string path, T value)
+        {
+            lock (_writeLock)
+            {
+                Directory.CreateDirectory(_folder);
+                var tempPath = path + ".tmp";
+                File.WriteAllText(tempPath, JsonSerializer.Serialize(value, JsonOptions));
+                File.Move(tempPath, path, true);
+            }
+        }
+
+        private sealed class UiPersistedJob
+        {
+            public string Id { get; set; } = "";
+            public string Prompt { get; set; } = "";
+            public string InputImagePath { get; set; } = "";
+            public List<string> GeneratorKeys { get; set; } = new();
+            public DateTime CreatedAt { get; set; }
+            public string SourceJobId { get; set; } = "";
+            public string SourceGenerator { get; set; } = "";
+            public int? SourceIndex { get; set; }
+            public bool Done { get; set; }
+        }
+
+        private sealed class UiPersistedImage
+        {
+            public string Path { get; set; } = "";
+            public string ContentType { get; set; } = "application/octet-stream";
         }
     }
 
@@ -87,9 +364,30 @@ namespace MultiImageClient
         private readonly ConcurrentDictionary<string, UiJob> _jobs = new();
         private readonly object _orderLock = new();
         private readonly List<UiJob> _ordered = new();
+        private readonly string _historyRoot;
+
+        public UiJobRegistry(Settings settings)
+        {
+            _historyRoot = Path.Combine(settings.ImageDownloadBaseFolder, "UiHistory");
+            foreach (var job in UiJobStorage.LoadAll(_historyRoot).OrderBy(j => j.CreatedAt))
+            {
+                if (job.IsDone)
+                {
+                    GenerationArchive.MarkExternalJobInterrupted(job.Id);
+                }
+                _jobs[job.Id] = job;
+                _ordered.Add(job);
+            }
+            if (_ordered.Count > 0)
+            {
+                Logger.Log($"UI history: restored {_ordered.Count} job(s) from disk.");
+            }
+        }
 
         public void Add(UiJob job)
         {
+            var storage = new UiJobStorage(_historyRoot, job.Id);
+            storage.Initialize(job);
             _jobs[job.Id] = job;
             lock (_orderLock) _ordered.Add(job);
         }
@@ -121,6 +419,10 @@ namespace MultiImageClient
         /// Output detail tier: standard (~1K) | high (~2K) | max (~4K-ish,
         /// capped by each backend's envelope).
         public string Detail { get; init; } = "standard";
+        public string VideoMode { get; init; } = "normal";
+        public int VideoDurationSeconds { get; init; } = 10;
+        public string VideoResolution { get; init; } = "480p";
+        public string VideoAspectRatio { get; init; } = "source";
     }
 
     /// Maps the intent-level (shape, detail) pair onto each backend's actual
@@ -190,6 +492,76 @@ namespace MultiImageClient
         public static string GrokResolution(string detail)
             => Norm(detail, Details) == "standard" ? "1k" : "2k";
 
+        /// Ideogram v4 resolution string. v4 is 2K-native — detail has no
+        /// effect, only shape. Empty = API default (2048x2048).
+        public static string IdeogramV4Resolution(string shape)
+        {
+            return Norm(shape, Shapes) switch
+            {
+                "square" => "2048x2048",
+                "landscape" => "2496x1664",
+                "portrait" => "1664x2496",
+                "wide" => "2560x1440",
+                "tall" => "1440x2560",
+                _ => "",
+            };
+        }
+
+        /// Ideogram v3 aspect enum (image-reference jobs route to v3).
+        public static IdeogramAPIClient.IdeogramAspectRatio IdeogramV3Aspect(string shape)
+        {
+            return Norm(shape, Shapes) switch
+            {
+                "landscape" => IdeogramAPIClient.IdeogramAspectRatio.ASPECT_3_2,
+                "portrait" => IdeogramAPIClient.IdeogramAspectRatio.ASPECT_2_3,
+                "wide" => IdeogramAPIClient.IdeogramAspectRatio.ASPECT_16_9,
+                "tall" => IdeogramAPIClient.IdeogramAspectRatio.ASPECT_9_16,
+                _ => IdeogramAPIClient.IdeogramAspectRatio.ASPECT_1_1,
+            };
+        }
+
+        /// BFL FLUX.2 width/height. Multiples of 32, total pixels kept under
+        /// FLUX.2's ~4 MP output ceiling, so "max" == "high".
+        public static (int Width, int Height) BflSize(string shape, string detail)
+        {
+            var big = Norm(detail, Details) != "standard";
+            return Norm(shape, Shapes) switch
+            {
+                "landscape" => big ? (2304, 1536) : (1248, 832),
+                "portrait" => big ? (1536, 2304) : (832, 1248),
+                "wide" => big ? (2560, 1440) : (1344, 768),
+                "tall" => big ? (1440, 2560) : (768, 1344),
+                _ => big ? (1920, 1920) : (1024, 1024),
+            };
+        }
+
+        /// Gemini imageConfig.aspectRatio; empty (shape=auto) omits the field
+        /// so the model decides.
+        public static string GoogleAspect(string shape)
+        {
+            return Norm(shape, Shapes) switch
+            {
+                "square" => "1:1",
+                "landscape" => "3:2",
+                "portrait" => "2:3",
+                "wide" => "16:9",
+                "tall" => "9:16",
+                _ => "",
+            };
+        }
+
+        /// Gemini imageConfig.imageSize ("K" must be uppercase). 1K and 2K
+        /// cost the same tokens; 4K is pricier.
+        public static string GoogleImageSize(string detail)
+        {
+            return Norm(detail, Details) switch
+            {
+                "high" => "2K",
+                "max" => "4K",
+                _ => "1K",
+            };
+        }
+
         private static string Norm(string value, string[] known)
         {
             var v = (value ?? "").Trim().ToLowerInvariant();
@@ -216,6 +588,7 @@ namespace MultiImageClient
         public const string KeyLocalKlein = "local-klein";
         public const string KeyLocalZImage = "local-zimage";
         public const string KeyGrokWeb = "grok-web";
+        public const string KeyGrokWebVideo = "grok-web-video";
         public const string KeyGrokApi = "grok-api";
         public const string KeyGrokApiPro = "grok-api-pro";
         public const string KeyMetaWeb = "meta-web";
@@ -225,6 +598,8 @@ namespace MultiImageClient
         private readonly RunOptions _options;
         private readonly ImageManager _imageManager;
         private readonly GeneratorGroups _generatorGroups;
+        private readonly GrokWebBrowserClient? _grokWebBrowserClient;
+        private readonly string? _grokWebBrowserStartupProblem;
         private readonly MetaWebClientOptions _metaWebOptions;
         private readonly MetaWebClient? _metaWebClient;
         private readonly string? _metaWebStartupProblem;
@@ -243,6 +618,25 @@ namespace MultiImageClient
             _options = options;
             _imageManager = new ImageManager(settings, stats);
             _generatorGroups = new GeneratorGroups(settings, concurrency: 1, stats);
+            var grokWebCookiePath = ResolveGrokWebCookiePath();
+            if (grokWebCookiePath != null)
+            {
+                try
+                {
+                    // Video app-chat calls share one real browser for the UI
+                    // lifetime and serialize inside GrokWebBrowserClient.
+                    _grokWebBrowserClient = new GrokWebBrowserClient(
+                        GrokWebBrowserClient.BuildOptions(
+                            settings,
+                            grokWebCookiePath,
+                            headedOverride: options.GrokWebHeaded));
+                }
+                catch (Exception ex)
+                {
+                    _grokWebBrowserStartupProblem = ex.Message;
+                    Logger.Log($"Grok web video unavailable: {ex.Message}");
+                }
+            }
             _metaWebOptions = MetaWebClient.BuildOptions(
                 settings,
                 cookieOverride: options.MetaWebCookies,
@@ -293,6 +687,9 @@ namespace MultiImageClient
             KeyGrokWeb => ResolveGrokWebCookiePath() == null
                 ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
                 : null,
+            KeyGrokWebVideo => ResolveGrokWebCookiePath() == null
+                ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
+                : _grokWebBrowserStartupProblem,
             KeyGrokApi or KeyGrokApiPro
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GrokImagine, _settings),
             KeyMetaWeb => _metaWebStartupProblem ?? MetaWebClient.DescribeAvailabilityProblem(_metaWebOptions),
@@ -368,7 +765,7 @@ namespace MultiImageClient
                     if (!string.IsNullOrEmpty(combined) && File.Exists(combined))
                     {
                         var bytes = await File.ReadAllBytesAsync(combined);
-                        job.StoreImage("grid", 0, bytes, "image/png");
+                        job.StoreImage("grid", 0, bytes, "image/png", combined);
                         job.Emit(new { type = "grid", url = $"/api/jobs/{job.Id}/images/grid/0", path = combined });
                     }
                     Logger.Log($"[ui #{job.Id}] grid saved: {combined}");
@@ -401,12 +798,19 @@ namespace MultiImageClient
             try
             {
                 IImageGenerator generator;
-                if (key == KeyGrokWeb)
+                if (key is KeyGrokWeb or KeyGrokWebVideo)
                 {
                     var cookiePath = ResolveGrokWebCookiePath()
                         ?? throw new InvalidOperationException("grok-web cookie file not found (settings.json GrokWebCookiePath or --grok-web-cookies)");
-                    grokWebClient = GrokWebClient.FromCookieFile(cookiePath);
-                    generator = await BuildGrokWebAsync(grokWebClient, job, spec);
+                    var appChatBrowser = key == KeyGrokWebVideo
+                        ? _grokWebBrowserClient ?? throw new InvalidOperationException(
+                            DescribeAvailabilityProblem(KeyGrokWebVideo)
+                            ?? "grok-web video browser client is unavailable")
+                        : null;
+                    grokWebClient = GrokWebClient.FromCookieFile(cookiePath, appChatBrowser);
+                    generator = key == KeyGrokWebVideo
+                        ? await BuildGrokWebVideoAsync(grokWebClient, job, spec)
+                        : await BuildGrokWebAsync(grokWebClient, job, spec);
                 }
                 else if (key == KeyMetaWeb)
                 {
@@ -426,23 +830,57 @@ namespace MultiImageClient
                 }
 
                 copy = pd.Copy();
+                if (key == KeyGrokWebVideo && !string.IsNullOrWhiteSpace(job.SourceGenerator))
+                {
+                    copy.RuntimeMeta["sourceJobId"] = job.SourceJobId;
+                    copy.RuntimeMeta["sourceGenerator"] = job.SourceGenerator;
+                    copy.RuntimeMeta["sourceIndex"] = job.SourceIndex?.ToString() ?? "";
+                }
                 // Estimated cost for this call (per-image estimate x n, from
                 // each generator's GetCost). Estimates, not bills — but good
                 // enough for calibrating which providers are worth their price.
                 var costEstimate = generator.GetCost();
                 Logger.Log($"[ui #{job.Id}]   -> {generator.GetGeneratorSpecPart()} (~${costEstimate:0.###})");
-                var result = await generator.ProcessPromptAsync(generator, copy);
-                await _imageManager.ProcessAndSaveAsync(result, generator);
+                var result = await GenerationArchive.ExecuteAndSaveAsync(
+                    generator,
+                    copy,
+                    _imageManager,
+                    new GenerationArchiveContext
+                    {
+                        Source = "ui",
+                        ExternalJobId = job.Id,
+                        GeneratorKey = key,
+                    });
 
                 var urls = new List<string>();
+                var mediaType = "";
                 byte[] firstImageBytes = null;
-                int i = 0;
-                foreach (var bytes in result.GetAllImages)
+                if (result.IsSuccess
+                    && !string.IsNullOrEmpty(result.GeneratedMediaPath)
+                    && File.Exists(result.GeneratedMediaPath))
                 {
-                    firstImageBytes ??= bytes;
-                    job.StoreImage(key, i, bytes, result.ContentType ?? "image/png");
-                    urls.Add($"/api/jobs/{job.Id}/images/{key}/{i}");
-                    i++;
+                    var mediaBytes = await File.ReadAllBytesAsync(result.GeneratedMediaPath);
+                    mediaType = string.IsNullOrWhiteSpace(result.GeneratedMediaContentType)
+                        ? "application/octet-stream"
+                        : result.GeneratedMediaContentType;
+                    job.StoreImage(key, 0, mediaBytes, mediaType, result.GeneratedMediaPath);
+                    urls.Add($"/api/jobs/{job.Id}/images/{key}/0");
+                }
+                else
+                {
+                    int i = 0;
+                    foreach (var bytes in result.GetAllImages)
+                    {
+                        firstImageBytes ??= bytes;
+                        job.StoreImage(
+                            key,
+                            i,
+                            bytes,
+                            result.ContentType ?? "image/png",
+                            result.GetSavedRawImagePath(i));
+                        urls.Add($"/api/jobs/{job.Id}/images/{key}/{i}");
+                        i++;
+                    }
                 }
 
                 var elapsed = result.CreateTotalMs + result.DownloadTotalMs;
@@ -464,19 +902,32 @@ namespace MultiImageClient
                     label = string.IsNullOrEmpty(label) ? actualSize : $"{label} · {actualSize}";
                 }
                 var ok = result.IsSuccess && urls.Count > 0;
+                if (result.IsSuccess && !ok)
+                {
+                    result.IsSuccess = false;
+                    result.ErrorMessage = "Generation completed without returning usable image or video media.";
+                }
+                var errorMessage = ok ? "" : (result.ErrorMessage ?? "unknown error");
                 job.Emit(new
                 {
                     type = "gen-result",
                     gen = key,
                     ok,
-                    error = result.IsSuccess ? "" : (result.ErrorMessage ?? "unknown error"),
+                    error = errorMessage,
                     ms = elapsed,
                     images = urls,
+                    mediaType,
                     label,
+                    videoMode = key == KeyGrokWebVideo ? spec.VideoMode : null,
+                    videoDurationSeconds = key == KeyGrokWebVideo
+                        ? spec.VideoDurationSeconds
+                        : (int?)null,
+                    videoResolution = key == KeyGrokWebVideo ? spec.VideoResolution : null,
+                    videoAspectRatio = key == KeyGrokWebVideo ? spec.VideoAspectRatio : null,
                     // Failed calls generally aren't billed, so report 0 for them.
                     cost = ok ? costEstimate : 0m,
                 });
-                Logger.Log($"[ui #{job.Id}]   <- {(result.IsSuccess ? "OK" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms");
+                Logger.Log($"[ui #{job.Id}]   <- {(ok ? "OK" : $"FAIL ({errorMessage})")} from {key} in {elapsed} ms");
                 return result;
             }
             catch (Exception ex)
@@ -523,13 +974,23 @@ namespace MultiImageClient
         {
             if (job.HasInputImage)
             {
-                // grok-web edit has no AR knob; output follows the source image.
+                // Edit rides the same imagine WebSocket as text-to-image (source
+                // image passed as properties.image_uri), sidestepping the
+                // anti-bot-blocked /rest/app-chat endpoint. Empty AR = inherit
+                // the source image's shape.
+                var editAspect = UiShapeMapping.GrokAspect(spec.Shape);
                 return await GrokWebImagineEditGenerator.CreateAsync(
                     client, job.InputImagePath, maxConcurrency: 1, _stats,
-                    enableSideBySide: _options.GrokWebSideBySide);
+                    pro: _options.GrokWebPro,
+                    aspectRatio: editAspect,
+                    enableSideBySide: _options.GrokWebSideBySide,
+                    settings: _settings);
             }
             var mapped = UiShapeMapping.GrokAspect(spec.Shape);
-            var ar = mapped == "" ? _options.GrokWebAspectRatio : mapped;
+            // "auto" tells GrokWebClient to omit aspect_ratio. Unlike the
+            // official API, the consumer transport has no working prompt-aware
+            // auto mode; its current native default is portrait 2:3.
+            var ar = mapped == "" ? "auto" : mapped;
             return new GrokWebImagineGenerator(
                 client, maxConcurrency: 1, _stats,
                 pro: _options.GrokWebPro,
@@ -537,6 +998,31 @@ namespace MultiImageClient
                 enableSideBySide: _options.GrokWebSideBySide,
                 settings: _settings,
                 captureSessions: false);
+        }
+
+        private async Task<IImageGenerator> BuildGrokWebVideoAsync(
+            GrokWebClient client,
+            UiJob job,
+            UiJobSpec spec)
+        {
+            if (!job.HasInputImage)
+            {
+                throw new InvalidOperationException("grok-web image-to-video requires a source image");
+            }
+            var aspectRatio = spec.VideoAspectRatio == "source"
+                ? GrokWebImagineEditGenerator.DeriveAspectRatio(job.InputImagePath)
+                : spec.VideoAspectRatio;
+            return await GrokWebImagineVideoGenerator.CreateFromImageAsync(
+                client,
+                _settings,
+                _stats,
+                job.InputImagePath,
+                maxConcurrency: 1,
+                aspectRatio: aspectRatio,
+                resolution: spec.VideoResolution,
+                durationSeconds: spec.VideoDurationSeconds,
+                enableSideBySide: false,
+                videoMode: spec.VideoMode);
         }
 
         private IImageGenerator BuildGenerator(string key, UiJobSpec spec, UiJob job)
@@ -577,15 +1063,17 @@ namespace MultiImageClient
                         partialImageCallback: (partialIndex, imageIndex, bytes) =>
                         {
                             var outputIndex = Math.Max(0, imageIndex);
-                            var partialKey = $"{key}-partial";
-                            job.StoreImage(partialKey, outputIndex, bytes, "image/png");
+                            // Preview and final bytes deliberately share one stable
+                            // URL. Each partial replaces the previous bytes, then
+                            // RunOneAsync replaces them with the completed image.
+                            job.StoreImage(key, outputIndex, bytes, "image/png");
                             job.Emit(new
                             {
                                 type = "gen-partial",
                                 gen = key,
                                 partialIndex,
                                 imageIndex = outputIndex,
-                                url = $"/api/jobs/{job.Id}/images/{partialKey}/{outputIndex}",
+                                url = $"/api/jobs/{job.Id}/images/{key}/{outputIndex}",
                                 at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                             });
                         });
@@ -610,7 +1098,8 @@ namespace MultiImageClient
                         quality,
                         apiType: key == KeyGpt1 ? ImageGeneratorApiType.GptImage1 : ImageGeneratorApiType.GptImage1Mini,
                         _stats,
-                        name: $"{key} ui");
+                        name: $"{key} ui",
+                        imageCount: spec.ImageCount);
                 }
 
                 case KeyGrokApi:
@@ -630,80 +1119,89 @@ namespace MultiImageClient
                         _settings.XAIGrokApiKey, 1,
                         pro ? ImageGeneratorApiType.GrokImaginePro : ImageGeneratorApiType.GrokImagine,
                         _stats, "ui",
-                        aspectRatio: mappedAr == "" ? "1:1" : mappedAr,
+                        aspectRatio: mappedAr == "" ? "auto" : mappedAr,
                         quality: "high",
                         resolution: UiShapeMapping.GrokResolution(spec.Detail),
-                        settings: _settings);
+                        settings: _settings,
+                        imageCount: spec.ImageCount);
                 }
 
                 case KeyGoogle:
                 case KeyGooglePro:
                 {
-                    if (!job.HasInputImage)
-                    {
-                        return _generatorGroups.BuildByShortName(key);
-                    }
-                    // Reference/guide: Gemini is natively multimodal, so the pasted
-                    // image rides along as a reference part. Mirror the text preset
-                    // (1:1 2K) used by GeneratorGroups.GeminiNanoBanana[Pro].
+                    // Gemini honors aspectRatio + imageSize; a pasted image rides
+                    // along as a reference part (Gemini is natively multimodal).
+                    // No n equivalent — Gemini returns what it returns.
                     RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
                     var googleApiType = key == KeyGooglePro
                         ? ImageGeneratorApiType.GoogleNanoBananaPro
                         : ImageGeneratorApiType.GoogleNanoBanana;
+                    var googleAspect = UiShapeMapping.GoogleAspect(spec.Shape);
                     return new GoogleGenerator(
                         googleApiType, _settings.GoogleGeminiApiKey, maxConcurrency: 2,
                         _stats, name: $"{key} ui",
-                        aspectRatio: "1:1", imageSize: "2K",
-                        inputImagePath: job.InputImagePath);
+                        aspectRatio: googleAspect == "" ? null : googleAspect,
+                        imageSize: UiShapeMapping.GoogleImageSize(spec.Detail),
+                        inputImagePath: job.HasInputImage ? job.InputImagePath : null);
                 }
 
                 case KeyBfl:
                 {
-                    if (!job.HasInputImage)
-                    {
-                        return _generatorGroups.BuildByShortName(key);
-                    }
-                    // Reference/guide: FLUX.2 takes the pasted image as input_image
-                    // conditioning. Mirror the pro-preview 1:1 1024 preset.
+                    // FLUX.2 takes explicit width/height (shape+detail mapped, ~4 MP
+                    // ceiling) and optional input_image conditioning for a pasted
+                    // image. No n parameter exists on the BFL API — n is ignored.
                     RequireKey(_settings.BFLApiKey, "BFLApiKey", key);
+                    var (bflWidth, bflHeight) = UiShapeMapping.BflSize(spec.Shape, spec.Detail);
                     return new BFLGenerator(
                         ImageGeneratorApiType.BFLFlux2ProPreview, _settings.BFLApiKey,
-                        maxConcurrency: 2, "1:1", false, 1024, 1024, _stats, "bfl ui",
-                        inputImagePath: job.InputImagePath);
+                        maxConcurrency: 2, "1:1", false, bflWidth, bflHeight, _stats, "bfl ui",
+                        inputImagePath: job.HasInputImage ? job.InputImagePath : null);
                 }
 
                 case KeyIdeogram:
                 {
+                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
+                    var ideogramN = Math.Clamp(spec.ImageCount, 1, 8);
                     if (!job.HasInputImage)
                     {
-                        return _generatorGroups.BuildByShortName(key);
+                        // v4 is 2K-native: shape maps to a documented resolution
+                        // (detail has no effect), num_images up to 8.
+                        return new IdeogramV4Generator(
+                            _settings.IdeogramApiKey, maxConcurrency: 1,
+                            UiShapeMapping.IdeogramV4Resolution(spec.Shape),
+                            IdeogramRenderingSpeed.DEFAULT,
+                            _stats, "ideogram ui",
+                            imageCount: ideogramN);
                     }
                     // Reference/guide: route to V3 (V4 is JSON-only, no reference
                     // images) and pass the pasted image as a style reference.
-                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
                     return new IdeogramV3Generator(
                         _settings.IdeogramApiKey, maxConcurrency: 1,
                         IdeogramV3StyleType.AUTO, IdeogramMagicPromptOption.ON,
-                        IdeogramAspectRatio.ASPECT_1_1, IdeogramRenderingSpeed.QUALITY,
+                        UiShapeMapping.IdeogramV3Aspect(spec.Shape), IdeogramRenderingSpeed.QUALITY,
                         "", _stats, "ideogram ui",
-                        inputImagePath: job.InputImagePath);
+                        inputImagePath: job.InputImagePath,
+                        imageCount: ideogramN);
                 }
 
                 case KeyRecraft:
                 {
-                    if (!job.HasInputImage)
-                    {
-                        return _generatorGroups.BuildByShortName(key);
-                    }
-                    // Reference/guide: RecraftGenerator turns the pasted image into
-                    // a custom style (POST /styles) and generates with its style_id.
                     RequireKey(_settings.RecraftApiKey, "RecraftApiKey", key);
+                    // Recraft accepts the same "w:h" aspect strings as grok;
+                    // "" (shape=auto) omits size so Recraft picks one from the
+                    // prompt (or, with an input image, follows the source).
+                    var recraftAspect = UiShapeMapping.GrokAspect(spec.Shape);
+                    var recraftN = Math.Clamp(spec.ImageCount, 1, 6);
+                    // With an input image, RecraftGenerator runs image-to-image
+                    // (V4.1-native reference path; output size follows the source).
                     return new RecraftGenerator(
                         _settings.RecraftApiKey, maxConcurrency: 1,
                         RecraftImageSize._1024x1024, RecraftStyle.any,
                         null, null, null, _stats, "recraft ui",
                         model: RecraftModel.recraftv4_1,
-                        inputImagePath: job.InputImagePath);
+                        inputImagePath: job.HasInputImage ? job.InputImagePath : null,
+                        sizeOverride: recraftAspect,
+                        imageCount: recraftN);
                 }
 
                 case KeyLocalKlein:
@@ -771,6 +1269,10 @@ namespace MultiImageClient
 
         public async ValueTask DisposeAsync()
         {
+            if (_grokWebBrowserClient != null)
+            {
+                await _grokWebBrowserClient.DisposeAsync();
+            }
             if (_metaWebClient != null)
             {
                 await _metaWebClient.DisposeAsync();

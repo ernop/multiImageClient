@@ -4,13 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260720-inline-pixels">
 </head>
 <body>
 <header>
   <h1>MultiImageClient</h1>
   <span class="tagline">paste an image, write a prompt, fan out</span>
+  <button id="logs-toggle" type="button" aria-expanded="false" aria-controls="logs-panel">logs</button>
 </header>
+
+<section id="logs-panel" hidden aria-label="Live application logs">
+  <div id="logs-head">
+    <strong>current process log</strong>
+    <span id="logs-connection">connecting…</span>
+  </div>
+  <div id="logs-columns" aria-hidden="true">
+    <span>time</span><span>source</span><span>event</span><span>message</span>
+  </div>
+  <div id="logs-lines" role="log" aria-live="off"></div>
+</section>
 
 <main>
   <section id="composer">
@@ -50,7 +62,7 @@
             <option selected>low</option><option>auto</option>
           </select>
         </label>
-        <span class="opts-note">shape/detail map to gpt-image and Grok targets; other providers use their named preset &middot; quality/n/moderation &rarr; OpenAI image models &middot; only gpt-image-2 and Grok targets currently accept input images</span>
+        <span class="opts-help" tabindex="0" title="Which options apply where (unsupported options are simply ignored — the target still generates with its own defaults):&#10;&#10;&#8226; shape maps to each provider's native size/aspect controls: exact WxH for gpt-image and BFL, aspect ratios for Grok, Recraft, Ideogram, and Google. grok-api auto is truly prompt-aware. grok-web auto omits the ratio field but its consumer endpoint currently defaults to 2:3 regardless of prompt, so choose an explicit shape when ratio matters. Grok edits with auto inherit the source image's shape.&#10;&#8226; detail sets the resolution tier where one exists: gpt-image-2, grok-api (1k/2k), BFL (~1/~4 MP), Google (1K/2K/4K). Ideogram is always 2K-native; Recraft and gpt-image-1 are ~1K.&#10;&#8226; quality and moderation: OpenAI image models only.&#10;&#8226; n: OpenAI models and grok-api up to 10, Recraft up to 6, Ideogram up to 8 on the V3 image path (the v4 text endpoint currently ignores it). BFL/Google return one; grok-web requests up to 4 in side-by-side mode; meta-web decides itself.&#10;&#8226; Input images: gpt-image-2 and grok-api do true edits; Recraft runs image-to-image; Ideogram, BFL, and Google use the pasted image as a style/reference guide; grok-web edit works via the imagine WebSocket. Targets that can't take an image disable when one is attached.">?</span>
       </div>
 
       <div id="send-row">
@@ -65,6 +77,57 @@
   <section id="jobs"></section>
 </main>
 
-<script src="app.js"></script>
+<dialog id="video-dialog">
+  <form method="dialog" id="video-form">
+    <div class="video-dialog-head">
+      <h2>Make video from this image</h2>
+      <button id="video-cancel" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div class="video-dialog-body">
+      <img id="video-source-preview" alt="Selected source image">
+      <div class="video-fields">
+        <label>Motion prompt (optional)
+          <textarea id="video-prompt" rows="5" placeholder="Optional — describe what should move or happen…"></textarea>
+        </label>
+        <div class="video-options">
+          <label>method
+            <select id="video-mode" required>
+              <option value="normal" selected>Normal</option>
+              <option value="fun">Funny</option>
+              <option value="custom">Custom</option>
+              <option value="extremely-spicy-or-crazy">Spicy</option>
+            </select>
+          </label>
+          <label>aspect
+            <select id="video-aspect">
+              <option value="source" selected>source image</option>
+              <option value="1:1">square 1:1</option>
+              <option value="3:2">landscape 3:2</option>
+              <option value="2:3">portrait 2:3</option>
+              <option value="16:9">wide 16:9</option>
+              <option value="9:16">tall 9:16</option>
+            </select>
+          </label>
+          <label>length
+            <input id="video-duration" type="number" min="1" max="15" value="10">
+            <span>seconds</span>
+          </label>
+          <label>quality
+            <select id="video-resolution">
+              <option value="480p" selected>480p</option>
+              <option value="720p">720p</option>
+            </select>
+          </label>
+        </div>
+        <div id="video-error"></div>
+      </div>
+    </div>
+    <div class="video-dialog-actions">
+      <button id="video-submit" type="submit">Make video</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js?v=20260720-video-player-defaults"></script>
 </body>
 </html>

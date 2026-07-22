@@ -4,6 +4,8 @@
 
 let inputImageFile = null;   // File/Blob for the attached image
 let generators = [];         // from /api/config
+let videoSource = null;       // { jobId, generator, index, url }
+let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
 
 const el = (id) => document.getElementById(id);
 const pasteZone = el("paste-zone");
@@ -17,6 +19,127 @@ const gensCount = el("gens-count");
 const sendBtn = el("send");
 const sendError = el("send-error");
 const jobsSection = el("jobs");
+const videoDialog = el("video-dialog");
+const logsToggle = el("logs-toggle");
+const logsPanel = el("logs-panel");
+const logsLines = el("logs-lines");
+const logsConnection = el("logs-connection");
+let logsEventSource = null;
+let lastLogSequence = 0;
+
+// ---------- live process log ----------
+
+function parseLogLine(line) {
+  const timestampMatch = String(line).match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s*([\s\S]*)$/);
+  let time = "";
+  let message = String(line);
+  if (timestampMatch) {
+    time = timestampMatch[2];
+    message = timestampMatch[3];
+  }
+
+  let source = "system";
+  let event = "·";
+  const scopeMatch = message.match(/^\s*\[([^\]]+)\]\s*([\s\S]*)$/);
+  if (scopeMatch) {
+    source = scopeMatch[1];
+    message = scopeMatch[2];
+  }
+
+  const arrowMatch = message.match(/^\s*(->|<-)\s*([\s\S]*)$/);
+  if (arrowMatch) {
+    event = arrowMatch[1] === "->" ? "→" : "←";
+    message = arrowMatch[2];
+  }
+
+  if (source === "system") {
+    const knownSources = [
+      [/^Grok web/i, "grok-web"],
+      [/^Grok Web/i, "grok-web"],
+      [/^xAI Grok/i, "grok-api"],
+      [/^\[?gpt-image/i, "gpt-image"],
+      [/^From Recraft/i, "recraft"],
+      [/^Downloading image/i, "download"],
+      [/^Combined image/i, "grid"],
+      [/^UI /i, "ui"],
+    ];
+    const known = knownSources.find(([pattern]) => pattern.test(message));
+    if (known) source = known[1];
+  }
+
+  let tone = "";
+  if (/\b(FAIL|ERROR|failed|exception|timed out|rejected|canceled)\b/i.test(message)) {
+    tone = "error";
+    if (event === "·") event = "!";
+  } else if (/\b(OK|DONE|completed|saved)\b/i.test(message)) {
+    tone = "success";
+  } else if (event === "→" || /\bSTART\b/.test(message)) {
+    tone = "start";
+  }
+
+  return { time, source, event, message, tone };
+}
+
+function appendLogLine(entry) {
+  if (!(entry.sequence > lastLogSequence)) return;
+  lastLogSequence = entry.sequence;
+
+  const stayAtBottom = logsLines.scrollHeight - logsLines.scrollTop - logsLines.clientHeight < 48;
+  const parsed = parseLogLine(entry.line);
+  const row = document.createElement("div");
+  row.className = `log-row${parsed.tone ? ` ${parsed.tone}` : ""}`;
+  for (const [className, value] of [
+    ["log-time", parsed.time],
+    ["log-source", parsed.source],
+    ["log-event", parsed.event],
+    ["log-message", parsed.message],
+  ]) {
+    const field = document.createElement("span");
+    field.className = className;
+    field.textContent = value;
+    row.appendChild(field);
+  }
+  logsLines.appendChild(row);
+
+  while (logsLines.childElementCount > 2000) {
+    logsLines.firstElementChild.remove();
+  }
+  if (stayAtBottom) logsLines.scrollTop = logsLines.scrollHeight;
+}
+
+function ensureLogStream() {
+  if (logsEventSource) return;
+  logsEventSource = new EventSource("/api/logs/events");
+  logsEventSource.onopen = () => {
+    logsConnection.textContent = "live";
+    logsConnection.className = "live";
+  };
+  logsEventSource.onmessage = (msg) => {
+    appendLogLine(JSON.parse(msg.data));
+  };
+  logsEventSource.onerror = () => {
+    logsConnection.textContent = "server disconnected — retrying";
+    logsConnection.className = "error";
+  };
+}
+
+function setLogsOpen(open) {
+  logsPanel.hidden = !open;
+  logsToggle.setAttribute("aria-expanded", String(open));
+  logsToggle.classList.toggle("open", open);
+  document.body.classList.toggle("logs-open", open);
+  if (open) {
+    ensureLogStream();
+    requestAnimationFrame(() => {
+      logsLines.scrollTop = logsLines.scrollHeight;
+    });
+  }
+}
+
+logsToggle.addEventListener("click", () => setLogsOpen(logsPanel.hidden));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !logsPanel.hidden) setLogsOpen(false);
+});
 
 // ---------- config / generator toggles ----------
 
@@ -30,6 +153,7 @@ async function loadConfig() {
   }
   const cfg = await resp.json();
   generators = cfg.generators;
+  videoGeneration = cfg.videoGeneration || videoGeneration;
 
   const fillSelect = (selectEl, entries) => {
     selectEl.innerHTML = "";
@@ -61,6 +185,7 @@ async function loadConfig() {
     cb.type = "checkbox";
     cb.value = g.key;
     cb.dataset.available = String(g.available);
+    cb.dataset.imageCapable = String(!!g.imageCapable);
     cb.disabled = !g.available;
     cb.checked = g.available && g.defaultOn;
     cb.addEventListener("change", () => {
@@ -77,10 +202,11 @@ async function loadConfig() {
 }
 
 function updateGeneratorCompatibility() {
-  const imageCapable = new Set(["gpt2", "grok-api", "grok-api-pro", "google", "googlepro", "bfl", "ideogram", "recraft"]);
+  // imageCapable comes from /api/config so the server stays the single
+  // source of truth for which targets accept an input image.
   for (const cb of gensRow.querySelectorAll("input")) {
     const providerAvailable = cb.dataset.available === "true";
-    const incompatible = !!inputImageFile && !imageCapable.has(cb.value);
+    const incompatible = !!inputImageFile && cb.dataset.imageCapable !== "true";
     cb.disabled = !providerAvailable || incompatible;
     if (incompatible)
     {
@@ -228,7 +354,255 @@ promptBox.addEventListener("keydown", (e) => {
 
 // ---------- job cards + live events ----------
 
-const genLabel = (key) => (generators.find((g) => g.key === key) || { label: key }).label;
+const genLabel = (key) => key === "grok-web-video"
+  ? "grok-web video"
+  : (generators.find((g) => g.key === key) || { label: key }).label;
+
+function openVideoDialog(jobId, generator, index, url, sourcePrompt, videoOptions = {}) {
+  videoSource = { jobId, generator, index, url };
+  el("video-source-preview").src = url;
+  el("video-prompt").value = sourcePrompt || "";
+  el("video-mode").value = videoOptions.mode || "normal";
+  el("video-duration").value = String(videoOptions.durationSeconds || 10);
+  el("video-resolution").value = videoOptions.resolution || "480p";
+  el("video-aspect").value = videoOptions.aspectRatio || "source";
+  el("video-error").textContent = "";
+  videoDialog.showModal();
+  el("video-prompt").focus();
+}
+
+el("video-cancel").addEventListener("click", () => videoDialog.close());
+videoDialog.addEventListener("click", (e) => {
+  if (e.target === videoDialog) videoDialog.close();
+});
+el("video-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!videoSource) return;
+
+  const submitButton = el("video-submit");
+  const error = el("video-error");
+  const prompt = el("video-prompt").value.trim();
+  const form = new FormData();
+  form.append("sourceJobId", videoSource.jobId);
+  form.append("sourceGenerator", videoSource.generator);
+  form.append("sourceIndex", String(videoSource.index));
+  form.append("prompt", prompt);
+  form.append("mode", el("video-mode").value);
+  form.append("duration", el("video-duration").value);
+  form.append("resolution", el("video-resolution").value);
+  form.append("aspectRatio", el("video-aspect").value);
+
+  submitButton.disabled = true;
+  error.textContent = "";
+  try {
+    const resp = await fetch("/api/video-jobs", { method: "POST", body: form });
+    const body = await resp.json();
+    if (!resp.ok) {
+      error.textContent = body.error || `HTTP ${resp.status}`;
+      return;
+    }
+    videoDialog.close();
+    addJobCard(body.id, prompt, ["grok-web-video"], true, null, Date.now());
+    watchJob(body.id);
+  } catch (err) {
+    error.textContent = String(err);
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
+// ---------- custom video player ----------
+
+function formatMediaTime(value) {
+  if (!Number.isFinite(value)) return "0:00";
+  const seconds = Math.max(0, Math.floor(value));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function setExactPixelMode(player, enabled = !player.classList.contains("exact-pixels")) {
+  const video = player.video;
+  if (enabled && (!video.videoWidth || !video.videoHeight)) {
+    video.addEventListener("loadedmetadata", () => setExactPixelMode(player, true), { once: true });
+    video.load();
+    return;
+  }
+
+  // CSS pixels are logical pixels. Dividing by devicePixelRatio maps each
+  // source video pixel to one physical monitor pixel.
+  const pixelRatio = Math.max(1, window.devicePixelRatio || 1);
+  player.classList.toggle("exact-pixels", enabled);
+  if (enabled) {
+    player.style.width = `${video.videoWidth / pixelRatio}px`;
+    video.style.width = `${video.videoWidth / pixelRatio}px`;
+    video.style.height = `${video.videoHeight / pixelRatio}px`;
+  } else {
+    player.style.removeProperty("width");
+    video.style.removeProperty("width");
+    video.style.removeProperty("height");
+  }
+
+  const exactButton = player.querySelector(".video-exact");
+  exactButton.textContent = enabled ? "Fit cell" : "1:1 pixels";
+  exactButton.setAttribute(
+    "aria-label",
+    enabled ? "Fit video back into its result cell" : "Expand video to exact physical pixel size");
+
+  const cell = player.closest(".cell");
+  if (cell) {
+    cell.classList.toggle("exact-video-cell", !!cell.querySelector(".custom-video-player.exact-pixels"));
+  }
+  if (enabled) player.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function createVideoPlayer(url) {
+  const player = document.createElement("div");
+  player.className = "custom-video-player";
+  player.tabIndex = 0;
+
+  const video = document.createElement("video");
+  video.src = url;
+  video.preload = "metadata";
+  video.playsInline = true;
+  video.volume = 0.5;
+  video.setAttribute("aria-label", "Generated video");
+  player.video = video;
+
+  const controls = document.createElement("div");
+  controls.className = "video-player-controls";
+
+  const play = document.createElement("button");
+  play.type = "button";
+  play.className = "video-play";
+  play.textContent = "Play";
+  play.setAttribute("aria-label", "Play video");
+
+  const seek = document.createElement("input");
+  seek.type = "range";
+  seek.className = "video-seek";
+  seek.min = "0";
+  seek.max = "1000";
+  seek.step = "1";
+  seek.value = "0";
+  seek.setAttribute("aria-label", "Video position");
+
+  const time = document.createElement("span");
+  time.className = "video-time";
+  time.textContent = "0:00 / 0:00";
+
+  const mute = document.createElement("button");
+  mute.type = "button";
+  mute.className = "video-mute";
+  mute.textContent = "Mute";
+  mute.setAttribute("aria-label", "Mute video");
+
+  const volume = document.createElement("input");
+  volume.type = "range";
+  volume.className = "video-volume";
+  volume.min = "0";
+  volume.max = "1";
+  volume.step = "0.05";
+  volume.value = "0.5";
+  volume.setAttribute("aria-label", "Video volume");
+
+  const resolution = document.createElement("span");
+  resolution.className = "video-resolution";
+  resolution.textContent = "loading…";
+
+  controls.append(play, seek, time, mute, volume, resolution);
+
+  const exact = document.createElement("button");
+  exact.type = "button";
+  exact.className = "video-exact";
+  exact.textContent = "1:1 pixels";
+  exact.setAttribute("aria-label", "Expand video to exact physical pixel size");
+  exact.addEventListener("click", () => setExactPixelMode(player));
+  controls.appendChild(exact);
+
+  const fullscreen = document.createElement("button");
+  fullscreen.type = "button";
+  fullscreen.className = "video-fullscreen";
+  fullscreen.textContent = "Fullscreen";
+  fullscreen.setAttribute("aria-label", "Toggle fullscreen video");
+  fullscreen.addEventListener("click", async () => {
+    if (document.fullscreenElement === player) await document.exitFullscreen();
+    else await player.requestFullscreen();
+  });
+  controls.appendChild(fullscreen);
+
+  const syncPlayState = () => {
+    const paused = video.paused;
+    play.textContent = paused ? "Play" : "Pause";
+    play.setAttribute("aria-label", paused ? "Play video" : "Pause video");
+  };
+  const togglePlay = () => {
+    if (video.paused) video.play().catch(() => {});
+    else video.pause();
+  };
+  const syncPosition = () => {
+    seek.value = video.duration > 0
+      ? String(Math.round(video.currentTime / video.duration * 1000))
+      : "0";
+    time.textContent = `${formatMediaTime(video.currentTime)} / ${formatMediaTime(video.duration)}`;
+  };
+  const syncMute = () => {
+    mute.textContent = video.muted || video.volume === 0 ? "Unmute" : "Mute";
+    mute.setAttribute("aria-label", mute.textContent + " video");
+  };
+
+  play.addEventListener("click", togglePlay);
+  video.addEventListener("click", togglePlay);
+  video.addEventListener("dblclick", () => fullscreen.click());
+  video.addEventListener("play", syncPlayState);
+  video.addEventListener("pause", syncPlayState);
+  video.addEventListener("ended", syncPlayState);
+  video.addEventListener("timeupdate", syncPosition);
+  video.addEventListener("durationchange", syncPosition);
+  video.addEventListener("loadedmetadata", () => {
+    resolution.textContent = `${video.videoWidth}×${video.videoHeight}`;
+    syncPosition();
+    if (player.classList.contains("exact-pixels")) setExactPixelMode(player, true);
+  });
+  seek.addEventListener("input", () => {
+    if (video.duration > 0) video.currentTime = Number(seek.value) / 1000 * video.duration;
+  });
+  mute.addEventListener("click", () => {
+    video.muted = !video.muted;
+    syncMute();
+  });
+  volume.addEventListener("input", () => {
+    video.volume = Number(volume.value);
+    video.muted = video.volume === 0;
+    syncMute();
+  });
+  player.addEventListener("keydown", (event) => {
+    if (event.target.matches("input, button")) return;
+    if (event.key === " " || event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      togglePlay();
+    } else if (event.key === "ArrowLeft") {
+      video.currentTime = Math.max(0, video.currentTime - 5);
+    } else if (event.key === "ArrowRight") {
+      video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
+    } else if (event.key.toLowerCase() === "m") {
+      mute.click();
+    } else if (event.key.toLowerCase() === "f") {
+      fullscreen.click();
+    } else if (event.key === "1") {
+      setExactPixelMode(player);
+    }
+  });
+
+  player.append(video, controls);
+  setExactPixelMode(player, true);
+  return player;
+}
+
+window.addEventListener("resize", () => {
+  for (const player of document.querySelectorAll(".custom-video-player.exact-pixels")) {
+    setExactPixelMode(player, true);
+  }
+});
 
 // "~$0.25", "~$0.02", "~$1.5" — trailing zeros trimmed. Empty for 0/absent.
 function formatCost(v) {
@@ -315,7 +689,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
   const head = document.createElement("div");
   head.className = "job-head";
   if (hasImage) {
-    // Served from the job's in-memory store, so it survives page reloads.
+    // Served through the job store; completed jobs also survive server restarts.
     const thumbLink = document.createElement("a");
     thumbLink.href = `/api/jobs/${id}/images/input/0`;
     thumbLink.target = "_blank";
@@ -425,7 +799,37 @@ function watchJob(id) {
         cell.dataset.imgCount = String(evt.images.length);
         cell.querySelector(".cell-cost").textContent = formatCost(evt.cost);
         status.textContent = "";
-        for (const url of evt.images) {
+        for (const [imageIndex, url] of evt.images.entries()) {
+          if (evt.mediaType && evt.mediaType.startsWith("video/")) {
+            const result = document.createElement("div");
+            result.className = "media-result";
+            result.appendChild(createVideoPlayer(url));
+
+            const redo = document.createElement("button");
+            redo.type = "button";
+            redo.className = "make-video";
+            redo.textContent = "Redo Grok video";
+            redo.disabled = !videoGeneration.available;
+            if (!videoGeneration.available) {
+              redo.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
+            }
+            redo.addEventListener("click", () => {
+              const priorPrompt = card.querySelector(".job-prompt").textContent;
+              const sourceUrl = `/api/jobs/${encodeURIComponent(id)}/images/input/0`;
+              openVideoDialog(id, "input", 0, sourceUrl, priorPrompt, {
+                mode: evt.videoMode,
+                durationSeconds: evt.videoDurationSeconds,
+                resolution: evt.videoResolution,
+                aspectRatio: evt.videoAspectRatio,
+              });
+            });
+            result.appendChild(redo);
+            images.appendChild(result);
+            continue;
+          }
+
+          const result = document.createElement("div");
+          result.className = "media-result";
           const a = document.createElement("a");
           a.href = url;
           a.target = "_blank";
@@ -433,7 +837,21 @@ function watchJob(id) {
           img.src = url;
           img.loading = "lazy";
           a.appendChild(img);
-          images.appendChild(a);
+          result.appendChild(a);
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "make-video";
+          button.textContent = "Make Grok video";
+          button.disabled = !videoGeneration.available;
+          if (!videoGeneration.available) {
+            button.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
+          }
+          button.addEventListener("click", () => {
+            const sourcePrompt = card.querySelector(".job-prompt").textContent;
+            openVideoDialog(id, evt.gen, imageIndex, url, sourcePrompt);
+          });
+          result.appendChild(button);
+          images.appendChild(result);
         }
       } else {
         cell.dataset.state = "error";
@@ -492,19 +910,15 @@ setInterval(() => {
       const startedAt = Number(cell.dataset.startedAt || now);
       const elapsed = now - startedAt;
       cell.querySelector(".cell-time").textContent = formatElapsed(elapsed);
-      if (elapsed >= 120000 && !cell.querySelector(".cell-status").textContent.includes("partial")) {
-        setCellStatus(cell, "still waiting for the provider…", true);
-      }
     }
   }
 }, 1000);
 
 // ---------- boot ----------
 
-// Jobs live on the server for the life of the process; every window is just
-// a view. On load, hydrate all existing jobs (the SSE stream replays each
-// job's full event history, so finished jobs render completely and running
-// ones resume live).
+// Every window is a view over durable server-side job history. On load,
+// hydrate all jobs (the SSE stream replays each job's full event history, so
+// finished jobs render completely and running ones resume live).
 async function hydrateJobs() {
   const resp = await fetch("/api/jobs");
   const body = await resp.json();
