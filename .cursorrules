@@ -28,6 +28,13 @@
 - Only create shared utilities when there's genuine reuse across different functional areas
 - Branding text and similar elements that appear throughout the app are good candidates for centralization
 
+## Fail Closed — No Fallbacks
+- Do not recover from an upstream failure by guessing, substituting, selecting the "latest" resource, fuzzy-matching another result, changing formats, or silently using a default.
+- Missing, malformed, ambiguous, or uncorrelated provider data is a hard error. Preserve exact request/resource identity and surface a clear failure.
+- Fix the upstream contract or parser instead of adding a fallback around it.
+- A fallback is allowed only when the user has explicitly specified that exact behavior as a product requirement. Document it at the call site and validate that it cannot select unrelated data.
+- Declared input defaults chosen before an operation starts are not failure fallbacks. Once an operation starts, never replace failed output with different output.
+
 ## Universal Image Prompt Defaults
 - When writing or rewriting image-generation prompts, default to clear, bright, full normal daytime lighting unless the user explicitly asks for dark, night, low-key, gloomy, or murky output.
 - Explicitly avoid dim, murky, grimy, muddy, gloomy, shadow-choked, underexposed, dusk-like, night-like, or dark results.

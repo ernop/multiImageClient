@@ -332,8 +332,9 @@ Remaining / nice-to-have:
 
 - **Coverage beyond "liked":** only `MEDIA_POST_SOURCE_LIKED` returns our own posts via this
   endpoint, so ~1,887 locally-downloaded videos that were never liked appear as orphan
-  single-node clusters (no authoritative parent). Options: like-all then re-harvest, find a
-  separate "my generations" endpoint, or fall back to the S3 perceptual heuristics for orphans.
+  single-node clusters (no authoritative parent). Keep them explicitly orphaned until an
+  authoritative relationship is available: like-all then re-harvest or find a separate
+  "my generations" endpoint. Never infer parentage from perceptual similarity.
 - **HD media:** `hdMediaUrl` is recorded but we still play the public-share mp4s we already
   downloaded; optionally re-pull HD for favorites.
 - **Last-frame chaining UI:** `lastFrameThumbnailImageUrl` is captured but not yet surfaced in

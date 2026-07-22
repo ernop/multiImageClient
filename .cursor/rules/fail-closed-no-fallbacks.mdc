@@ -1,0 +1,15 @@
+---
+description: Fail closed instead of guessing or substituting data
+alwaysApply: true
+---
+
+# Fail Closed — No Fallbacks
+
+- Fallbacks are prohibited unless the user explicitly requires that exact fallback as product behavior.
+- Missing, malformed, ambiguous, rejected, or uncorrelated data must produce a clear hard failure.
+- Never guess identifiers, fuzzy-match results, choose the latest resource, reuse older output, change formats, or silently substitute defaults after an operation fails.
+- Preserve exact identity and correlation across request ids, jobs, generators, indexes, assets, posts, hashes, and provider responses.
+- Fix the upstream operation, contract, parser, or validation instead of hiding the defect downstream.
+- Exceptions and provider errors must remain failures through logs, archives, APIs, and UI state.
+- If an explicitly required fallback exists, document it at the call site and independently prove it cannot select unrelated data.
+- Defaults chosen before an operation starts are configuration. They must never be used to replace failed or missing output after execution begins.
