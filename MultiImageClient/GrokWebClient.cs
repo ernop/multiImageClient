@@ -42,7 +42,6 @@ namespace MultiImageClient
         public int Height { get; init; }
         public string? Mode { get; init; }
         public string? CaptureDirectory { get; init; }
-        public bool UsedPreviewFallback { get; init; }
     }
 
     public sealed class GrokWebAppChatResult
@@ -50,22 +49,30 @@ namespace MultiImageClient
         public required List<string> GeneratedImageUrls { get; init; }
         public required List<string> GeneratedVideoUrls { get; init; }
         public string? ModelMessage { get; init; }
+        public string? ErrorMessage { get; init; }
         public string? RequestTraceId { get; init; }
+    }
+
+    public sealed class GrokWebVideoPollResult
+    {
+        public string? VideoUrl { get; init; }
+        public string? ErrorMessage { get; init; }
+        public bool IsTerminal => !string.IsNullOrWhiteSpace(VideoUrl)
+                                  || !string.IsNullOrWhiteSpace(ErrorMessage);
     }
 
     public sealed class GrokWebClient : IDisposable
     {
         public const string Origin = "https://grok.com";
         public const string ImagineListenWebSocket = "wss://grok.com/ws/imagine/listen";
-
-        private static readonly Regex UuidRegex = new(
-            @"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-            RegexOptions.Compiled);
+        private static readonly TimeSpan FirstImageEventTimeout = TimeSpan.FromSeconds(60);
+        private static readonly TimeSpan ImageEventInactivityTimeout = TimeSpan.FromSeconds(60);
 
         private readonly HttpClient _http;
         private readonly string _cookieHeader;
+        private readonly GrokWebBrowserClient? _appChatBrowser;
 
-        public GrokWebClient(string cookieHeader)
+        public GrokWebClient(string cookieHeader, GrokWebBrowserClient? appChatBrowser = null)
         {
             if (string.IsNullOrWhiteSpace(cookieHeader))
             {
@@ -73,6 +80,7 @@ namespace MultiImageClient
             }
 
             _cookieHeader = cookieHeader.Trim();
+            _appChatBrowser = appChatBrowser;
             _http = new HttpClient
             {
                 BaseAddress = new Uri(Origin),
@@ -85,8 +93,10 @@ namespace MultiImageClient
             _http.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", _cookieHeader);
         }
 
-        public static GrokWebClient FromCookieFile(string cookieFilePath)
-            => new(GrokWebCookieLoader.LoadCookieHeader(cookieFilePath));
+        public static GrokWebClient FromCookieFile(
+            string cookieFilePath,
+            GrokWebBrowserClient? appChatBrowser = null)
+            => new(GrokWebCookieLoader.LoadCookieHeader(cookieFilePath), appChatBrowser);
 
         public async Task<GrokWebImageGenerationResult> GenerateImageAsync(
             string prompt,
@@ -95,6 +105,7 @@ namespace MultiImageClient
             bool enableSideBySide,
             TimeSpan timeout,
             string? captureBaseFolder = null,
+            string? imageReferenceUrl = null,
             CancellationToken cancellationToken = default)
         {
             using var ws = new ClientWebSocket();
@@ -114,54 +125,20 @@ namespace MultiImageClient
                 ExpectedJobs = enableSideBySide ? 4 : 1,
             };
             var exitReason = "unknown";
-
-            await ws.ConnectAsync(new Uri(ImagineListenWebSocket), cancellationToken);
-
-            var resetPayload = new
+            var startedAtUtc = DateTime.UtcNow;
+            object traceRequest = new
             {
-                type = "conversation.item.create",
-                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                item = new
+                requestId,
+                prompt,
+                properties = new
                 {
-                    type = "message",
-                    content = new object[] { new { type = "reset" } },
+                    aspectRatio,
+                    enablePro,
+                    enableSideBySide,
+                    imageReferenceUrl,
                 },
+                timeoutSeconds = timeout.TotalSeconds,
             };
-            capture?.LogOutbound(resetPayload);
-            await SendJsonAsync(ws, resetPayload, cancellationToken);
-
-            var generatePayload = new
-            {
-                type = "conversation.item.create",
-                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                item = new
-                {
-                    type = "message",
-                    content = new object[]
-                    {
-                        new
-                        {
-                            requestId,
-                            text = prompt,
-                            type = "input_text",
-                            properties = new
-                            {
-                                section_count = 0,
-                                is_kids_mode = false,
-                                enable_nsfw = true,
-                                skip_upsampler = false,
-                                enable_side_by_side = enableSideBySide,
-                                is_initial = false,
-                                aspect_ratio = aspectRatio,
-                                enable_pro = enablePro,
-                            },
-                        },
-                    },
-                },
-            };
-            capture?.LogOutbound(generatePayload);
-            await SendJsonAsync(ws, generatePayload, cancellationToken);
-
             var finalImages = new List<byte[]>();
             var previewFrames = new List<byte[]>();
             string? modelName = null;
@@ -170,215 +147,370 @@ namespace MultiImageClient
             var height = 0;
             var completedJobs = new HashSet<string>(StringComparer.Ordinal);
             var expectedJobs = enableSideBySide ? 4 : 1;
-            summary.ExpectedJobs = expectedJobs;
             var skippedPartialFrames = 0;
             var lastProgressLogAt = 0;
             DateTime? allJobsCompletedUtc = null;
             var postJobGrace = TimeSpan.FromSeconds(45);
-            var usedPreviewFallback = false;
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(timeout);
+            var receivedAnyPayload = false;
 
             try
             {
-            while (!timeoutCts.IsCancellationRequested)
-            {
-                if (ShouldFinishAfterPostJobGrace(finalImages.Count, completedJobs.Count, expectedJobs, allJobsCompletedUtc, postJobGrace))
+                await ws.ConnectAsync(new Uri(ImagineListenWebSocket), cancellationToken);
+
+                var resetPayload = new
                 {
-                    exitReason = "post_job_grace_elapsed";
-                    break;
+                    type = "conversation.item.create",
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    item = new
+                    {
+                        type = "message",
+                        content = new object[] { new { type = "reset" } },
+                    },
+                };
+                capture?.LogOutbound(resetPayload);
+                await SendJsonAsync(ws, resetPayload, cancellationToken);
+
+                // Image edit rides the same imagine WebSocket as text-to-image: the
+                // uploaded asset's media URL goes in properties.image_uri and the
+                // model edits that image instead of generating from scratch. This
+                // sidesteps /rest/app-chat/conversations/new, which 403s with
+                // "Request rejected by anti-bot rules" for non-browser callers.
+                var properties = new Dictionary<string, object>
+                {
+                    ["section_count"] = 0,
+                    ["is_kids_mode"] = false,
+                    ["enable_nsfw"] = true,
+                    ["skip_upsampler"] = false,
+                    ["enable_side_by_side"] = enableSideBySide,
+                    ["is_initial"] = false,
+                    ["enable_pro"] = enablePro,
+                };
+                // The consumer transport has no working prompt-aware auto enum.
+                // Omitting the field selects its native default (observed as 2:3).
+                if (!string.Equals(aspectRatio, "auto", StringComparison.OrdinalIgnoreCase))
+                {
+                    properties["aspect_ratio"] = aspectRatio;
+                }
+                if (!string.IsNullOrWhiteSpace(imageReferenceUrl))
+                {
+                    properties["image_uri"] = imageReferenceUrl;
                 }
 
-                string? payload;
-                if (allJobsCompletedUtc.HasValue && finalImages.Count < expectedJobs)
+                var generatePayload = new
                 {
-                    var remaining = postJobGrace - (DateTime.UtcNow - allJobsCompletedUtc.Value);
-                    if (remaining <= TimeSpan.Zero)
+                    type = "conversation.item.create",
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    item = new
                     {
-                        exitReason = "post_job_grace_elapsed_before_receive";
+                        type = "message",
+                        content = new object[]
+                        {
+                        new
+                        {
+                            requestId,
+                            text = prompt,
+                            type = "input_text",
+                            properties,
+                        },
+                        },
+                    },
+                };
+            traceRequest = new
+            {
+                reset = resetPayload,
+                generate = generatePayload,
+                timeoutSeconds = timeout.TotalSeconds,
+            };
+                capture?.LogOutbound(generatePayload);
+                await SendJsonAsync(ws, generatePayload, cancellationToken);
+
+                summary.ExpectedJobs = expectedJobs;
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutCts.CancelAfter(timeout);
+
+                while (!timeoutCts.IsCancellationRequested)
+                {
+                    if (ShouldFinishAfterPostJobGrace(finalImages.Count, completedJobs.Count, expectedJobs, allJobsCompletedUtc, postJobGrace))
+                    {
+                        exitReason = "post_job_grace_elapsed";
                         break;
                     }
 
-                    using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token);
-                    graceCts.CancelAfter(remaining);
+                    var waitingForPostJobGrace = allJobsCompletedUtc.HasValue && finalImages.Count < expectedJobs;
+                    TimeSpan receiveWindow;
+                    if (waitingForPostJobGrace)
+                    {
+                        var remaining = postJobGrace - (DateTime.UtcNow - allJobsCompletedUtc.GetValueOrDefault());
+                        if (remaining <= TimeSpan.Zero)
+                        {
+                            exitReason = "post_job_grace_elapsed_before_receive";
+                            break;
+                        }
+
+                        receiveWindow = remaining;
+                    }
+                    else
+                    {
+                        receiveWindow = receivedAnyPayload
+                            ? ImageEventInactivityTimeout
+                            : FirstImageEventTimeout;
+                    }
+
+                    string? payload;
+                    using var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token);
+                    receiveCts.CancelAfter(receiveWindow);
                     try
                     {
-                        payload = await ReceiveTextAsync(ws, graceCts.Token);
+                        payload = await ReceiveTextAsync(ws, receiveCts.Token);
                     }
-                    catch (OperationCanceledException) when (!timeoutCts.IsCancellationRequested)
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                     {
-                        exitReason = "post_job_grace_receive_timeout";
+                        if (timeoutCts.IsCancellationRequested)
+                        {
+                            exitReason = "timeout";
+                            if (finalImages.Count > 0 || previewFrames.Count > 0)
+                            {
+                                Logger.Log($"\t   Grok web overall timeout reached; returning {finalImages.Count} final and {previewFrames.Count} preview frame(s).");
+                                break;
+                            }
+
+                            summary.ErrorMessage = $"Grok web image generation timed out after {timeout.TotalMinutes:0.#} minutes with no image frames.";
+                            throw new GrokWebException(summary.ErrorMessage);
+                        }
+
+                        if (waitingForPostJobGrace)
+                        {
+                            exitReason = "post_job_grace_receive_timeout";
+                            break;
+                        }
+
+                        exitReason = receivedAnyPayload ? "event_inactivity_timeout" : "first_event_timeout";
+                        if (finalImages.Count > 0 || previewFrames.Count > 0)
+                        {
+                            Logger.Log($"\t   Grok web stopped sending events for {receiveWindow.TotalSeconds:0}s; returning {finalImages.Count} final and {previewFrames.Count} preview frame(s).");
+                            break;
+                        }
+
+                        var eventDescription = receivedAnyPayload ? "stopped sending events" : "returned no events";
+                        summary.ErrorMessage =
+                            $"Grok web {eventDescription} for {receiveWindow.TotalSeconds:0} seconds before returning an image. "
+                            + "The provider likely rejected or stalled the request.";
+                        throw new GrokWebException(summary.ErrorMessage);
+                    }
+                    catch (WebSocketException ex) when (finalImages.Count > 0 || previewFrames.Count > 0)
+                    {
+                        exitReason = "websocket_closed_with_frames";
+                        Logger.Log($"\t   Grok web WebSocket closed after receiving frames ({ex.Message}); returning {finalImages.Count} final and {previewFrames.Count} preview frame(s).");
                         break;
                     }
-                }
-                else
-                {
-                    payload = await ReceiveTextAsync(ws, timeoutCts.Token);
-                }
 
-                if (payload == null)
-                {
-                    exitReason = "websocket_closed";
-                    break;
-                }
-
-                capture?.LogInbound(payload);
-
-                using var doc = JsonDocument.Parse(payload);
-                var root = doc.RootElement;
-                var type = root.TryGetProperty("type", out var typeEl) ? typeEl.GetString() : null;
-
-                if (type == "error")
-                {
-                    var errCode = root.TryGetProperty("err_code", out var errCodeEl) ? errCodeEl.GetString() : null;
-                    var errMsg = root.TryGetProperty("err_msg", out var errMsgEl) ? errMsgEl.GetString() : null;
-                    exitReason = string.IsNullOrWhiteSpace(errCode) ? "error" : errCode;
-                    var message = !string.IsNullOrWhiteSpace(errMsg) ? errMsg : "Grok web returned an error.";
-                    if (!string.IsNullOrWhiteSpace(errCode))
+                    if (payload == null)
                     {
-                        message = $"{message} ({errCode})";
+                        exitReason = "websocket_closed";
+                        break;
                     }
 
-                    Logger.Log($"\t   Grok web error: {message}");
-                    throw new GrokWebException(message);
-                }
+                    receivedAnyPayload = true;
+                    capture?.LogInbound(payload);
 
-                if (type == "image" && root.TryGetProperty("blob", out var blobEl))
-                {
-                    var blob = blobEl.GetString();
-                    if (!string.IsNullOrEmpty(blob))
+                    using var doc = JsonDocument.Parse(payload);
+                    var root = doc.RootElement;
+                    var type = root.TryGetProperty("type", out var typeEl) ? typeEl.GetString() : null;
+
+                    if (type == "error")
                     {
-                        var bytes = Convert.FromBase64String(blob);
-                        if (IsFinalGrokWebImage(bytes, blob))
+                        var errCode = root.TryGetProperty("err_code", out var errCodeEl) ? errCodeEl.GetString() : null;
+                        var errMsg = root.TryGetProperty("err_msg", out var errMsgEl) ? errMsgEl.GetString() : null;
+                        exitReason = string.IsNullOrWhiteSpace(errCode) ? "error" : errCode;
+                        var message = !string.IsNullOrWhiteSpace(errMsg) ? errMsg : "Grok web returned an error.";
+                        if (!string.IsNullOrWhiteSpace(errCode))
                         {
-                            finalImages.Add(bytes);
-                            Logger.Log($"\t   Grok web final frame {finalImages.Count}/{expectedJobs} ({bytes.Length / 1024} KB).");
+                            message = $"{message} ({errCode})";
                         }
-                        else
+
+                        Logger.Log($"\t   Grok web error: {message}");
+                        throw new GrokWebException(message);
+                    }
+
+                    if (type == "image" && root.TryGetProperty("blob", out var blobEl))
+                    {
+                        var blob = blobEl.GetString();
+                        if (!string.IsNullOrEmpty(blob))
                         {
-                            previewFrames.Add(bytes);
-                            skippedPartialFrames++;
-                            if (skippedPartialFrames - lastProgressLogAt >= 10)
+                            var bytes = Convert.FromBase64String(blob);
+                            if (IsFinalGrokWebImage(bytes, blob))
                             {
-                                lastProgressLogAt = skippedPartialFrames;
-                                Logger.Log($"\t   Grok web generating… {skippedPartialFrames} preview frame(s), {finalImages.Count} final(s), {completedJobs.Count} job(s) completed.");
+                                finalImages.Add(bytes);
+                                Logger.Log($"\t   Grok web final frame {finalImages.Count}/{expectedJobs} ({bytes.Length / 1024} KB).");
+                            }
+                            else
+                            {
+                                previewFrames.Add(bytes);
+                                skippedPartialFrames++;
+                                if (skippedPartialFrames - lastProgressLogAt >= 10)
+                                {
+                                    lastProgressLogAt = skippedPartialFrames;
+                                    Logger.Log($"\t   Grok web generating… {skippedPartialFrames} preview frame(s), {finalImages.Count} final(s), {completedJobs.Count} job(s) completed.");
+                                }
+                            }
+                        }
+
+                        if (ShouldFinishGrokWebImageStream(finalImages.Count, completedJobs.Count, expectedJobs))
+                        {
+                            exitReason = "enough_final_frames";
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    if (type != "json")
+                    {
+                        continue;
+                    }
+
+                    if (root.TryGetProperty("moderated", out var moderatedEl)
+                        && moderatedEl.ValueKind == JsonValueKind.True)
+                    {
+                        exitReason = "moderated";
+                        throw new GrokWebException("Grok web rejected or moderated this prompt.");
+                    }
+
+                    if (root.TryGetProperty("model_name", out var modelEl))
+                    {
+                        modelName = modelEl.GetString();
+                    }
+                    if (root.TryGetProperty("mode", out var modeEl))
+                    {
+                        mode = modeEl.GetString();
+                    }
+                    if (root.TryGetProperty("width", out var widthEl) && widthEl.TryGetInt32(out var w))
+                    {
+                        width = w;
+                    }
+                    if (root.TryGetProperty("height", out var heightEl) && heightEl.TryGetInt32(out var h))
+                    {
+                        height = h;
+                    }
+
+                    var status = root.TryGetProperty("current_status", out var statusEl) ? statusEl.GetString() : null;
+                    var jobId = root.TryGetProperty("job_id", out var jobEl) ? jobEl.GetString() : null;
+                    if (status == "completed" && !string.IsNullOrEmpty(jobId))
+                    {
+                        completedJobs.Add(jobId);
+                        Logger.Log($"\t   Grok web job completed ({completedJobs.Count}/{expectedJobs}).");
+                        if (completedJobs.Count >= expectedJobs && allJobsCompletedUtc == null)
+                        {
+                            allJobsCompletedUtc = DateTime.UtcNow;
+                            if (finalImages.Count == 0)
+                            {
+                                Logger.Log($"\t   Grok web all jobs done with 0 final frames; waiting up to {postJobGrace.TotalSeconds:0}s for upscaled frames.");
                             }
                         }
                     }
 
                     if (ShouldFinishGrokWebImageStream(finalImages.Count, completedJobs.Count, expectedJobs))
                     {
-                        exitReason = "enough_final_frames";
+                        exitReason = "jobs_complete_with_finals";
                         break;
                     }
-
-                    continue;
                 }
 
-                if (type != "json")
+                if (timeoutCts.IsCancellationRequested && exitReason == "unknown")
                 {
-                    continue;
+                    exitReason = "timeout";
                 }
 
-                if (root.TryGetProperty("moderated", out var moderatedEl)
-                    && moderatedEl.ValueKind == JsonValueKind.True)
+                var images = SelectFinalGrokWebImages(finalImages, expectedJobs);
+
+                if (images.Count == 0)
                 {
-                    exitReason = "moderated";
-                    throw new GrokWebException("Grok web rejected or moderated this prompt.");
+                    var previewHint = skippedPartialFrames > 0
+                        ? $" ({skippedPartialFrames} intermediate preview frame(s) rejected as non-final)"
+                        : "";
+                    summary.ErrorMessage = $"Grok web image generation returned no usable image frames{previewHint}.";
+                    throw new GrokWebException(summary.ErrorMessage);
                 }
 
-                if (root.TryGetProperty("model_name", out var modelEl))
+                if (skippedPartialFrames > 0)
                 {
-                    modelName = modelEl.GetString();
-                }
-                if (root.TryGetProperty("mode", out var modeEl))
-                {
-                    mode = modeEl.GetString();
-                }
-                if (root.TryGetProperty("width", out var widthEl) && widthEl.TryGetInt32(out var w))
-                {
-                    width = w;
-                }
-                if (root.TryGetProperty("height", out var heightEl) && heightEl.TryGetInt32(out var h))
-                {
-                    height = h;
+                    Logger.Log($"\t   Grok web selected {images.Count} final frame(s); {skippedPartialFrames} preview frame(s) captured separately.");
                 }
 
-                var status = root.TryGetProperty("current_status", out var statusEl) ? statusEl.GetString() : null;
-                var jobId = root.TryGetProperty("job_id", out var jobEl) ? jobEl.GetString() : null;
-                if (status == "completed" && !string.IsNullOrEmpty(jobId))
-                {
-                    completedJobs.Add(jobId);
-                    Logger.Log($"\t   Grok web job completed ({completedJobs.Count}/{expectedJobs}).");
-                    if (completedJobs.Count >= expectedJobs && allJobsCompletedUtc == null)
+                summary.ExitReason = exitReason;
+                summary.FinalFrameCount = finalImages.Count;
+                summary.PreviewFrameCount = previewFrames.Count;
+                summary.CompletedJobCount = completedJobs.Count;
+                summary.CompletedJobIds = completedJobs.ToList();
+                summary.SelectedOutputCount = images.Count;
+                summary.ModelName = modelName;
+                summary.Mode = mode;
+                summary.Width = width;
+                summary.Height = height;
+
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "websocket",
+                    "GENERATE",
+                    ImagineListenWebSocket,
+                    startedAtUtc,
+                    request: traceRequest,
+                    response: new
                     {
-                        allJobsCompletedUtc = DateTime.UtcNow;
-                        if (finalImages.Count == 0)
+                        exitReason,
+                        modelName,
+                        mode,
+                        width,
+                        height,
+                        expectedJobs,
+                        completedJobCount = completedJobs.Count,
+                        completedJobIds = completedJobs,
+                        finalFrameCount = finalImages.Count,
+                        previewFrameCount = previewFrames.Count,
+                        selectedImages = images.Select((bytes, index) => new
                         {
-                            Logger.Log($"\t   Grok web all jobs done with 0 final frames; waiting up to {postJobGrace.TotalSeconds:0}s for upscaled frames.");
-                        }
-                    }
-                }
-
-                if (ShouldFinishGrokWebImageStream(finalImages.Count, completedJobs.Count, expectedJobs))
+                            index,
+                            byteLength = bytes.LongLength,
+                            format = GuessImageFormat(bytes),
+                        }).ToList(),
+                    },
+                    metadata: new { requestId, operation = "image-generation" });
+                return new GrokWebImageGenerationResult
                 {
-                    exitReason = "jobs_complete_with_finals";
-                    break;
-                }
-            }
-
-            if (timeoutCts.IsCancellationRequested && exitReason == "unknown")
-            {
-                exitReason = "timeout";
-            }
-
-            var images = SelectFinalGrokWebImages(finalImages, previewFrames, expectedJobs, out usedPreviewFallback);
-
-            if (images.Count == 0)
-            {
-                var previewHint = skippedPartialFrames > 0
-                    ? $" ({skippedPartialFrames} intermediate preview frame(s) captured)"
-                    : "";
-                summary.ErrorMessage = $"Grok web image generation returned no usable image frames{previewHint}.";
-                throw new GrokWebException(summary.ErrorMessage);
-            }
-
-            if (usedPreviewFallback)
-            {
-                Logger.Log($"\t   Grok web using {images.Count} preview frame(s) for output (no signed finals detected).");
-            }
-            else if (skippedPartialFrames > 0)
-            {
-                Logger.Log($"\t   Grok web selected {images.Count} final frame(s); {skippedPartialFrames} preview frame(s) captured separately.");
-            }
-
-            summary.ExitReason = exitReason;
-            summary.FinalFrameCount = finalImages.Count;
-            summary.PreviewFrameCount = previewFrames.Count;
-            summary.CompletedJobCount = completedJobs.Count;
-            summary.CompletedJobIds = completedJobs.ToList();
-            summary.SelectedOutputCount = images.Count;
-            summary.ModelName = modelName;
-            summary.Mode = mode;
-            summary.Width = width;
-            summary.Height = height;
-            summary.UsedPreviewFallback = usedPreviewFallback;
-
-            return new GrokWebImageGenerationResult
-            {
-                Images = images,
-                ModelName = modelName,
-                Width = width,
-                Height = height,
-                Mode = mode,
-                CaptureDirectory = capture?.SessionDirectory,
-                UsedPreviewFallback = usedPreviewFallback,
-            };
+                    Images = images,
+                    ModelName = modelName,
+                    Width = width,
+                    Height = height,
+                    Mode = mode,
+                    CaptureDirectory = capture?.SessionDirectory,
+                };
             }
             catch (Exception ex)
             {
                 summary.ExitReason = exitReason == "unknown" ? "exception" : exitReason;
                 summary.ErrorMessage = ex.Message;
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "websocket",
+                    "GENERATE",
+                    ImagineListenWebSocket,
+                    startedAtUtc,
+                    request: traceRequest,
+                    response: new
+                    {
+                        exitReason = summary.ExitReason,
+                        modelName,
+                        mode,
+                        width,
+                        height,
+                        expectedJobs,
+                        completedJobCount = completedJobs.Count,
+                        completedJobIds = completedJobs,
+                        finalFrameCount = finalImages.Count,
+                        previewFrameCount = previewFrames.Count,
+                    },
+                    error: ex,
+                    metadata: new { requestId, operation = "image-generation" });
                 throw;
             }
             finally
@@ -524,12 +656,8 @@ namespace MultiImageClient
 
         private static List<byte[]> SelectFinalGrokWebImages(
             List<byte[]> finalImages,
-            List<byte[]> previewFrames,
-            int expectedJobs,
-            out bool usedPreviewFallback)
+            int expectedJobs)
         {
-            usedPreviewFallback = false;
-
             if (finalImages.Count >= expectedJobs)
             {
                 return finalImages.TakeLast(expectedJobs).ToList();
@@ -538,18 +666,6 @@ namespace MultiImageClient
             if (finalImages.Count > 0)
             {
                 return finalImages;
-            }
-
-            if (previewFrames.Count >= expectedJobs)
-            {
-                usedPreviewFallback = true;
-                return previewFrames.TakeLast(expectedJobs).ToList();
-            }
-
-            if (previewFrames.Count > 0)
-            {
-                usedPreviewFallback = true;
-                return previewFrames;
             }
 
             return new List<byte[]>();
@@ -564,50 +680,119 @@ namespace MultiImageClient
 
             var bytes = await File.ReadAllBytesAsync(localPath, cancellationToken);
             var fileName = Path.GetFileName(localPath);
-            var contentType = GuessContentType(fileName);
+            var contentType = DetectImageContentType(bytes)
+                ?? throw new GrokWebException(
+                    $"Grok web upload source is not a supported PNG, JPEG, WEBP, or GIF image: {fileName}");
 
             using var form = new MultipartFormDataContent();
             var fileContent = new ByteArrayContent(bytes);
             fileContent.Headers.ContentType = new MediaTypeHeaderValue(contentType);
             form.Add(fileContent, "file", fileName);
 
-            using var response = await _http.PostAsync("/http/upload-file-v2/direct", form, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            const string path = "/http/upload-file-v2/direct";
+            var startedAtUtc = DateTime.UtcNow;
+            var traceRequest = new
             {
-                throw new GrokWebException(
-                    $"Grok web upload failed ({(int)response.StatusCode}).",
-                    (int)response.StatusCode,
-                    body);
-            }
-            // grok.com's upload response shape drifts; keep the raw body in the
-            // log so id-extraction failures are diagnosable after the fact.
-            Logger.Log($"\t(grok-web) upload-file-v2 response: {Truncate(body, 800)}");
-
-            var assetId = TryExtractAssetId(body);
-            if (string.IsNullOrEmpty(assetId))
+                file = new
+                {
+                    fileName,
+                    contentType,
+                    byteLength = bytes.LongLength,
+                },
+            };
+            HttpResponseMessage? response = null;
+            string? body = null;
+            try
             {
-                assetId = await FindLatestUploadedAssetIdAsync(cancellationToken);
+                response = await _http.PostAsync(path, form, cancellationToken);
+                body = await response.Content.ReadAsStringAsync(cancellationToken);
             }
-
-            if (string.IsNullOrEmpty(assetId))
+            catch (Exception ex)
             {
-                throw new GrokWebException($"Grok web upload succeeded but no asset id was found. body={Truncate(body, 500)}");
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http",
+                    "POST",
+                    AbsoluteEndpoint(path),
+                    startedAtUtc,
+                    request: traceRequest,
+                    response: body,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: ex,
+                    metadata: new { operation = "upload-image" });
+                response?.Dispose();
+                throw;
             }
 
-            var asset = await GetAssetAsync(assetId, cancellationToken);
-            return asset;
+            using (response)
+            {
+                var assetId = response.IsSuccessStatusCode
+                    ? TryExtractAssetId(body)
+                    : null;
+                var logicalError = response.IsSuccessStatusCode
+                    ? ReadProviderErrorFromBody(body)
+                    : null;
+                GrokWebException? providerError = null;
+                if (!response.IsSuccessStatusCode)
+                {
+                    providerError = new GrokWebException(
+                        $"Grok web upload failed ({(int)response.StatusCode}).",
+                        (int)response.StatusCode,
+                        body);
+                }
+                else if (!string.IsNullOrWhiteSpace(logicalError))
+                {
+                    providerError = new GrokWebException(
+                        $"Grok web upload returned an error: {logicalError}",
+                        (int)response.StatusCode,
+                        body);
+                }
+                else if (string.IsNullOrWhiteSpace(assetId))
+                {
+                    providerError = new GrokWebException(
+                        "Grok web upload returned HTTP 200 but no asset id for this upload.",
+                        (int)response.StatusCode,
+                        body);
+                }
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http",
+                    "POST",
+                    AbsoluteEndpoint(path),
+                    startedAtUtc,
+                    request: traceRequest,
+                    response: body,
+                    statusCode: (int)response.StatusCode,
+                    error: providerError,
+                    metadata: new { operation = "upload-image" });
+                if (providerError != null)
+                {
+                    throw providerError;
+                }
+                // grok.com's upload response shape drifts; keep the raw body in the
+                // log so id-extraction failures are diagnosable after the fact.
+                Logger.Log($"\t(grok-web) upload-file-v2 response: {Truncate(body, 800)}");
+
+                var asset = await GetAssetAsync(assetId!, cancellationToken);
+                return asset;
+            }
         }
 
         public async Task<GrokWebAsset> CreateImagePostAsync(string mediaUrl, CancellationToken cancellationToken = default)
         {
-            using var response = await PostJsonAsync("/rest/media/post/create", new
+            var payload = new
             {
                 mediaType = "MEDIA_POST_TYPE_IMAGE",
                 mediaUrl,
-            }, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            EnsureSuccess(response, body);
+            };
+            var call = await PostJsonForTextAsync(
+                "/rest/media/post/create",
+                payload,
+                cancellationToken,
+                detectLogicalError: true);
+            using var response = call.Response;
+            var body = call.Body;
+            EnsureSuccess(response, body, detectLogicalError: true);
 
             using var doc = JsonDocument.Parse(body);
             var post = doc.RootElement.GetProperty("post");
@@ -622,13 +807,19 @@ namespace MultiImageClient
 
         public async Task<string> CreateVideoPostPlaceholderAsync(string prompt, CancellationToken cancellationToken = default)
         {
-            using var response = await PostJsonAsync("/rest/media/post/create", new
+            var payload = new
             {
                 mediaType = "MEDIA_POST_TYPE_VIDEO",
                 prompt,
-            }, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            EnsureSuccess(response, body);
+            };
+            var call = await PostJsonForTextAsync(
+                "/rest/media/post/create",
+                payload,
+                cancellationToken,
+                detectLogicalError: true);
+            using var response = call.Response;
+            var body = call.Body;
+            EnsureSuccess(response, body, detectLogicalError: true);
 
             using var doc = JsonDocument.Parse(body);
             return doc.RootElement.GetProperty("post").GetProperty("id").GetString()
@@ -643,16 +834,22 @@ namespace MultiImageClient
             string resolutionName,
             GrokWebAsset? sourceAsset,
             bool enableSideBySide,
+            string videoMode = "normal",
             CancellationToken cancellationToken = default)
         {
+            videoMode = NormalizeVideoMode(videoMode);
             object payload;
             if (sourceAsset != null)
             {
+                var motionPrompt = (prompt ?? string.Empty).Trim();
+                var message = motionPrompt.Length == 0
+                    ? $"{sourceAsset.MediaUrl}  --mode={videoMode}"
+                    : $"{sourceAsset.MediaUrl}  {motionPrompt} --mode={videoMode}";
                 payload = new
                 {
                     temporary = true,
                     modelName = "imagine-video-gen",
-                    message = $"{sourceAsset.MediaUrl}  {prompt} --mode=custom",
+                    message,
                     fileAttachments = new[] { sourceAsset.AssetId },
                     enableSideBySide = enableSideBySide,
                     responseMetadata = new
@@ -667,7 +864,6 @@ namespace MultiImageClient
                                     parentPostId = sourceAsset.PostId ?? sourceAsset.AssetId,
                                     aspectRatio,
                                     videoLength = videoLengthSeconds,
-                                    isVideoEdit = false,
                                     resolutionName,
                                 },
                             },
@@ -677,81 +873,58 @@ namespace MultiImageClient
             }
             else
             {
+                var videoPrompt = (prompt ?? string.Empty).Trim();
                 payload = new
                 {
-                    temporary = true,
                     modelName = "imagine-video-gen",
-                    message = $"{prompt} --mode=custom",
+                    message = $"{videoPrompt} --mode={videoMode}".Trim(),
+                    mediaGenInput = new
+                    {
+                        textToVideo = new
+                        {
+                            prompt = videoPrompt,
+                            aspectRatio,
+                            duration = videoLengthSeconds,
+                            resolutionName,
+                        },
+                    },
+                    sendFinalMetadata = true,
                     enableSideBySide = enableSideBySide,
                     responseMetadata = new
                     {
                         experiments = Array.Empty<object>(),
                         modelConfigOverride = new
                         {
-                            modelMap = new
-                            {
-                                videoGenModelConfig = new
-                                {
-                                    parentPostId,
-                                    aspectRatio,
-                                    videoLength = videoLengthSeconds,
-                                    resolutionName,
-                                },
-                            },
+                            modelMap = new { },
                         },
                     },
                 };
             }
 
-            return await RunAppChatAsync(payload, cancellationToken);
+            return await RunAppChatAsync(payload, parentPostId, cancellationToken);
         }
 
-        public async Task<GrokWebAppChatResult> RunImageEditAsync(
-            string prompt,
-            GrokWebAsset sourceAsset,
-            bool enableSideBySide,
-            CancellationToken cancellationToken = default)
+        public static string NormalizeVideoMode(string? mode)
         {
-            var payload = new
+            var normalized = (mode ?? "").Trim().ToLowerInvariant() switch
             {
-                temporary = true,
-                modelName = "imagine-image-edit",
-                message = prompt,
-                enableImageGeneration = true,
-                returnImageBytes = false,
-                returnRawGrokInXaiRequest = false,
-                enableImageStreaming = true,
-                imageGenerationCount = enableSideBySide ? 2 : 1,
-                forceConcise = false,
-                enableSideBySide = enableSideBySide,
-                sendFinalMetadata = true,
-                isReasoning = false,
-                disableTextFollowUps = true,
-                responseMetadata = new
-                {
-                    modelConfigOverride = new
-                    {
-                        modelMap = new
-                        {
-                            imageEditModelConfig = new
-                            {
-                                imageReferences = new[] { sourceAsset.MediaUrl },
-                                parentPostId = sourceAsset.PostId ?? sourceAsset.AssetId,
-                            },
-                            imageEditModel = "imagine",
-                        },
-                    },
-                },
-                disableMemory = false,
-                forceSideBySide = false,
+                "normal" => "normal",
+                "fun" or "funny" => "fun",
+                "custom" => "custom",
+                "spicy" or "extremely-spicy-or-crazy" => "extremely-spicy-or-crazy",
+                _ => "",
             };
-
-            return await RunAppChatAsync(payload, cancellationToken);
+            if (normalized.Length == 0)
+            {
+                throw new ArgumentException(
+                    "Video mode must be normal, fun, custom, or spicy.",
+                    nameof(mode));
+            }
+            return normalized;
         }
 
-        public async Task<string?> PollForVideoUrlAsync(
+        public async Task<GrokWebVideoPollResult> PollForVideoResultAsync(
             string postId,
-            string promptHint,
             TimeSpan pollInterval,
             TimeSpan timeout,
             CancellationToken cancellationToken = default)
@@ -760,16 +933,24 @@ namespace MultiImageClient
             while (DateTime.UtcNow < deadline)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var url = await FindVideoUrlInRecentPostsAsync(postId, promptHint, cancellationToken);
-                if (!string.IsNullOrEmpty(url))
+                var result = await FindVideoResultInRecentPostsAsync(
+                    postId,
+                    cancellationToken);
+                if (result.IsTerminal)
                 {
-                    return url;
+                    return result;
                 }
 
                 await Task.Delay(pollInterval, cancellationToken);
             }
 
-            return null;
+            return new GrokWebVideoPollResult
+            {
+                ErrorMessage =
+                    $"Grok accepted the video request but did not publish a video for source post {postId} "
+                    + $"within {timeout.TotalSeconds:0} seconds. The provider likely moderated, rejected, "
+                    + "or stalled the image-to-video job without returning a terminal error.",
+            };
         }
 
         public async Task<List<string>> PollForImageUrlsAsync(
@@ -799,33 +980,108 @@ namespace MultiImageClient
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.TryAddWithoutValidation("Cookie", _cookieHeader);
             request.Headers.TryAddWithoutValidation("Referer", Origin + "/imagine");
-            using var response = await _http.SendAsync(request, cancellationToken);
-            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            byte[]? bytes = null;
+            try
             {
-                throw new GrokWebException(
-                    $"Grok web download failed ({(int)response.StatusCode}) for {url}.",
-                    (int)response.StatusCode,
-                    Encoding.UTF8.GetString(bytes));
+                response = await _http.SendAsync(request, cancellationToken);
+                bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http",
+                    "GET",
+                    url,
+                    startedAtUtc,
+                    request: new { mediaUrl = url },
+                    response: bytes == null ? null : BinaryMetadata(response, bytes),
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: ex,
+                    metadata: new { operation = "download-media" });
+                response?.Dispose();
+                throw;
             }
 
-            return bytes;
+            using (response)
+            {
+                var contentType = response.Content.Headers.ContentType?.MediaType;
+                var errorBody = response.IsSuccessStatusCode || !CanTraceAsText(contentType)
+                    ? null
+                    : Encoding.UTF8.GetString(bytes);
+                GrokWebException? providerError = null;
+                if (!response.IsSuccessStatusCode)
+                {
+                    providerError = new GrokWebException(
+                        $"Grok web download failed ({(int)response.StatusCode}) for {url}.",
+                        (int)response.StatusCode,
+                        errorBody ?? "[binary response]");
+                }
+                else if (!IsMp4(bytes))
+                {
+                    var bodyHint = CanTraceAsText(contentType)
+                        ? Truncate(Encoding.UTF8.GetString(bytes), 500)
+                        : "[non-MP4 binary response]";
+                    providerError = new GrokWebException(
+                        $"Grok web video download returned HTTP 200 but was not an MP4 "
+                        + $"(content-type {contentType ?? "missing"}, {bytes.Length} bytes).",
+                        (int)response.StatusCode,
+                        bodyHint);
+                }
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http",
+                    "GET",
+                    url,
+                    startedAtUtc,
+                    request: new { mediaUrl = url },
+                    response: new
+                    {
+                        binary = BinaryMetadata(response, bytes),
+                        errorBody,
+                    },
+                    statusCode: (int)response.StatusCode,
+                    error: providerError,
+                    metadata: new { operation = "download-media" });
+                if (providerError != null)
+                {
+                    throw providerError;
+                }
+
+                return bytes;
+            }
         }
 
         public void Dispose() => _http.Dispose();
 
         private async Task<GrokWebAsset> GetAssetAsync(string assetId, CancellationToken cancellationToken)
         {
-            using var response = await _http.GetAsync($"/rest/assets/{assetId}", cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            EnsureSuccess(response, body);
+            var path = $"/rest/assets/{assetId}";
+            var call = await GetTextWithTraceAsync(
+                path,
+                new { assetId },
+                cancellationToken,
+                detectLogicalError: true);
+            using var response = call.Response;
+            var body = call.Body;
+            EnsureSuccess(response, body, detectLogicalError: true);
 
             using var doc = JsonDocument.Parse(body);
             var root = doc.RootElement;
-            var key = root.TryGetProperty("key", out var keyEl) ? keyEl.GetString() : null;
-            var mediaUrl = !string.IsNullOrEmpty(key)
-                ? $"https://assets.grok.com/{key.TrimStart('/')}"
-                : $"https://assets.grok.com/users/unknown/{assetId}/content";
+            var key = root.TryGetProperty("key", out var keyEl)
+                && keyEl.ValueKind == JsonValueKind.String
+                    ? keyEl.GetString()
+                    : null;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                throw new GrokWebException(
+                    $"Grok web asset lookup returned no media key for asset {assetId}.",
+                    (int)response.StatusCode,
+                    body);
+            }
+            var mediaUrl = $"https://assets.grok.com/{key.TrimStart('/')}";
 
             return new GrokWebAsset
             {
@@ -834,32 +1090,17 @@ namespace MultiImageClient
             };
         }
 
-        private async Task<string?> FindLatestUploadedAssetIdAsync(CancellationToken cancellationToken)
+        private async Task<GrokWebAppChatResult> RunAppChatAsync(
+            object payload,
+            string? triggerPostId,
+            CancellationToken cancellationToken)
         {
-            var url = "/rest/assets?pageSize=1&orderBy=ORDER_BY_LAST_USE_TIME&source=SOURCE_UPLOADED&includeImagineFiles=true";
-            using var response = await _http.GetAsync(url, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
-            EnsureSuccess(response, body);
-
-            using var doc = JsonDocument.Parse(body);
-            if (!doc.RootElement.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+            if (_appChatBrowser != null)
             {
-                return null;
+                return await RunAppChatInBrowserAsync(payload, triggerPostId, cancellationToken);
             }
 
-            foreach (var asset in assets.EnumerateArray())
-            {
-                if (asset.TryGetProperty("assetId", out var idEl))
-                {
-                    return idEl.GetString();
-                }
-            }
-
-            return null;
-        }
-
-        private async Task<GrokWebAppChatResult> RunAppChatAsync(object payload, CancellationToken cancellationToken)
-        {
+            const string path = "/rest/app-chat/conversations/new";
             using var request = new HttpRequestMessage(HttpMethod.Post, "/rest/app-chat/conversations/new")
             {
                 Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
@@ -877,40 +1118,246 @@ namespace MultiImageClient
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
 
-            using var response = await _http.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            try
             {
-                var err = await response.Content.ReadAsStringAsync(cancellationToken);
-                throw new GrokWebException(
-                    $"Grok web app-chat failed ({(int)response.StatusCode}).",
-                    (int)response.StatusCode,
-                    err);
+                response = await _http.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http-stream",
+                    "POST",
+                    AbsoluteEndpoint(path),
+                    startedAtUtc,
+                    request: payload,
+                    error: ex,
+                    metadata: new { operation = "video-generation" });
+                throw;
             }
 
+            using (response)
+            {
+                if (!response.IsSuccessStatusCode)
+                {
+                    string? err = null;
+                    try
+                    {
+                        err = await response.Content.ReadAsStringAsync(cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        GenerationTrace.RecordProviderCall(
+                            "grok-web",
+                            "http-stream",
+                            "POST",
+                            AbsoluteEndpoint(path),
+                            startedAtUtc,
+                            request: payload,
+                            statusCode: (int)response.StatusCode,
+                            error: ex,
+                            metadata: new { operation = "video-generation" });
+                        throw;
+                    }
+
+                    var error = new GrokWebException(
+                        $"Grok web app-chat failed ({(int)response.StatusCode}).",
+                        (int)response.StatusCode,
+                        err);
+                    GenerationTrace.RecordProviderCall(
+                        "grok-web",
+                        "http-stream",
+                        "POST",
+                        AbsoluteEndpoint(path),
+                        startedAtUtc,
+                        request: payload,
+                        response: err,
+                        statusCode: (int)response.StatusCode,
+                        error: error,
+                        metadata: new { operation = "video-generation" });
+                    throw error;
+                }
+
+                var imageUrls = new HashSet<string>(StringComparer.Ordinal);
+                var videoUrls = new HashSet<string>(StringComparer.Ordinal);
+                string? modelMessage = null;
+                string? errorMessage = null;
+                string? traceId = null;
+
+                try
+                {
+                    await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    while (true)
+                    {
+                        var line = await reader.ReadLineAsync(cancellationToken);
+                        if (line == null)
+                        {
+                            break;
+                        }
+
+                        if (string.IsNullOrWhiteSpace(line))
+                        {
+                            continue;
+                        }
+
+                        CollectMediaUrlsFromJsonLine(
+                            line,
+                            imageUrls,
+                            videoUrls,
+                            ref modelMessage,
+                            ref errorMessage,
+                            ref traceId);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    GenerationTrace.RecordProviderCall(
+                        "grok-web",
+                        "http-stream",
+                        "POST",
+                        AbsoluteEndpoint(path),
+                        startedAtUtc,
+                        request: payload,
+                        response: new
+                        {
+                            generatedImageUrls = imageUrls,
+                            generatedVideoUrls = videoUrls,
+                            modelMessage,
+                            errorMessage,
+                            requestTraceId = traceId,
+                        },
+                        statusCode: (int)response.StatusCode,
+                        error: ex,
+                        metadata: new { operation = "video-generation" });
+                    throw;
+                }
+
+                var result = new GrokWebAppChatResult
+                {
+                    GeneratedImageUrls = imageUrls.ToList(),
+                    GeneratedVideoUrls = videoUrls.ToList(),
+                    ModelMessage = modelMessage,
+                    ErrorMessage = errorMessage,
+                    RequestTraceId = traceId,
+                };
+                var logicalError = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? null
+                    : new GrokWebException($"Grok web video generation failed: {result.ErrorMessage}");
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http-stream",
+                    "POST",
+                    AbsoluteEndpoint(path),
+                    startedAtUtc,
+                    request: payload,
+                    response: new
+                    {
+                        generatedImageUrls = result.GeneratedImageUrls,
+                        generatedVideoUrls = result.GeneratedVideoUrls,
+                        result.ModelMessage,
+                        result.ErrorMessage,
+                        result.RequestTraceId,
+                    },
+                    statusCode: (int)response.StatusCode,
+                    error: logicalError,
+                    metadata: new { operation = "video-generation" });
+                return result;
+            }
+        }
+
+        private async Task<GrokWebAppChatResult> RunAppChatInBrowserAsync(
+            object payload,
+            string? triggerPostId,
+            CancellationToken cancellationToken)
+        {
+            const string path = "/rest/app-chat/conversations/new";
+            var startedAtUtc = DateTime.UtcNow;
+            GrokWebBrowserResponse? response = null;
+            try
+            {
+                response = await _appChatBrowser!.PostAppChatAsync(
+                    payload,
+                    triggerPostId,
+                    cancellationToken);
+                if (response.StatusCode < 200 || response.StatusCode >= 300)
+                {
+                    throw new GrokWebException(
+                        $"Grok web browser app-chat failed ({response.StatusCode}).",
+                        response.StatusCode,
+                        response.Body);
+                }
+
+                var result = ParseAppChatBody(response.Body);
+                var logicalError = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? null
+                    : new GrokWebException($"Grok web video generation failed: {result.ErrorMessage}");
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "playwright-fetch",
+                    "POST",
+                    response.Url,
+                    startedAtUtc,
+                    request: payload,
+                    response: new
+                    {
+                        generatedImageUrls = result.GeneratedImageUrls,
+                        generatedVideoUrls = result.GeneratedVideoUrls,
+                        result.ModelMessage,
+                        result.ErrorMessage,
+                        result.RequestTraceId,
+                    },
+                    statusCode: response.StatusCode,
+                    error: logicalError,
+                    metadata: new { operation = "video-generation" });
+                return result;
+            }
+            catch (Exception ex)
+            {
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "playwright-fetch",
+                    "POST",
+                    response?.Url ?? AbsoluteEndpoint(path),
+                    startedAtUtc,
+                    request: payload,
+                    response: response == null ? null : new
+                    {
+                        response.StatusCode,
+                        responseBody = Truncate(response.Body, 2000),
+                    },
+                    statusCode: response?.StatusCode,
+                    error: ex,
+                    metadata: new { operation = "video-generation" });
+                throw;
+            }
+        }
+
+        private static GrokWebAppChatResult ParseAppChatBody(string body)
+        {
             var imageUrls = new HashSet<string>(StringComparer.Ordinal);
             var videoUrls = new HashSet<string>(StringComparer.Ordinal);
             string? modelMessage = null;
+            string? errorMessage = null;
             string? traceId = null;
-
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-            while (true)
+            using var reader = new StringReader(body ?? string.Empty);
+            while (reader.ReadLine() is { } line)
             {
-                var line = await reader.ReadLineAsync(cancellationToken);
-                if (line == null)
+                if (!string.IsNullOrWhiteSpace(line))
                 {
-                    break;
+                    CollectMediaUrlsFromJsonLine(
+                        line,
+                        imageUrls,
+                        videoUrls,
+                        ref modelMessage,
+                        ref errorMessage,
+                        ref traceId);
                 }
-
-                if (string.IsNullOrWhiteSpace(line))
-                {
-                    continue;
-                }
-
-                CollectMediaUrlsFromJsonLine(line, imageUrls, videoUrls, ref modelMessage, ref traceId);
             }
 
             return new GrokWebAppChatResult
@@ -918,49 +1365,53 @@ namespace MultiImageClient
                 GeneratedImageUrls = imageUrls.ToList(),
                 GeneratedVideoUrls = videoUrls.ToList(),
                 ModelMessage = modelMessage,
+                ErrorMessage = errorMessage,
                 RequestTraceId = traceId,
             };
         }
 
-        private async Task<string?> FindVideoUrlInRecentPostsAsync(
+        private async Task<GrokWebVideoPollResult> FindVideoResultInRecentPostsAsync(
             string postId,
-            string promptHint,
             CancellationToken cancellationToken)
         {
-            using var response = await PostJsonAsync("/rest/media/post/list", new
+            var payload = new
             {
                 limit = 40,
                 filter = new { source = "MEDIA_POST_SOURCE_LIKED", safeForWork = false },
-            }, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            };
+            var call = await PostJsonForTextAsync("/rest/media/post/list", payload, cancellationToken);
+            using var response = call.Response;
+            var body = call.Body;
             EnsureSuccess(response, body);
 
             using var doc = JsonDocument.Parse(body);
             if (!doc.RootElement.TryGetProperty("posts", out var posts) || posts.ValueKind != JsonValueKind.Array)
             {
-                return null;
+                return new GrokWebVideoPollResult();
             }
 
             foreach (var post in posts.EnumerateArray())
             {
-                var url = FindVideoUrlInPost(post, postId, promptHint);
-                if (!string.IsNullOrEmpty(url))
+                var result = FindVideoResultInPost(post, postId);
+                if (result.IsTerminal)
                 {
-                    return url;
+                    return result;
                 }
             }
 
-            return null;
+            return new GrokWebVideoPollResult();
         }
 
         private async Task<List<string>> FindImageUrlsInRecentPostsAsync(string parentPostId, CancellationToken cancellationToken)
         {
-            using var response = await PostJsonAsync("/rest/media/post/list", new
+            var payload = new
             {
                 limit = 40,
                 filter = new { source = "MEDIA_POST_SOURCE_LIKED", safeForWork = false },
-            }, cancellationToken);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            };
+            var call = await PostJsonForTextAsync("/rest/media/post/list", payload, cancellationToken);
+            using var response = call.Response;
+            var body = call.Body;
             EnsureSuccess(response, body);
 
             var urls = new HashSet<string>(StringComparer.Ordinal);
@@ -978,26 +1429,34 @@ namespace MultiImageClient
             return urls.ToList();
         }
 
-        private static string? FindVideoUrlInPost(JsonElement post, string postId, string promptHint)
+        private static GrokWebVideoPollResult FindVideoResultInPost(
+            JsonElement post,
+            string postId)
         {
             var id = post.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
-            var prompt = post.TryGetProperty("prompt", out var promptEl) ? promptEl.GetString() : null;
+            var originalPostId = post.TryGetProperty("originalPostId", out var originalEl)
+                ? originalEl.GetString()
+                : null;
             var matches = string.Equals(id, postId, StringComparison.OrdinalIgnoreCase)
-                          || (!string.IsNullOrWhiteSpace(promptHint)
-                              && !string.IsNullOrWhiteSpace(prompt)
-                              && prompt.Contains(promptHint, StringComparison.OrdinalIgnoreCase));
+                          || string.Equals(originalPostId, postId, StringComparison.OrdinalIgnoreCase);
 
             if (!matches)
             {
                 foreach (var child in EnumerateChildPosts(post))
                 {
-                    var childUrl = FindVideoUrlInPost(child, postId, promptHint);
-                    if (!string.IsNullOrEmpty(childUrl))
+                    var childResult = FindVideoResultInPost(child, postId);
+                    if (childResult.IsTerminal)
                     {
-                        return childUrl;
+                        return childResult;
                     }
                 }
-                return null;
+                return new GrokWebVideoPollResult();
+            }
+
+            var error = ReadProviderError(post);
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                return new GrokWebVideoPollResult { ErrorMessage = error };
             }
 
             foreach (var candidate in EnumerateMediaUrls(post))
@@ -1005,7 +1464,7 @@ namespace MultiImageClient
                 if (candidate.Contains("generated_video.mp4", StringComparison.OrdinalIgnoreCase)
                     || candidate.Contains(".mp4", StringComparison.OrdinalIgnoreCase))
                 {
-                    return candidate;
+                    return new GrokWebVideoPollResult { VideoUrl = candidate };
                 }
             }
 
@@ -1015,12 +1474,12 @@ namespace MultiImageClient
                 {
                     if (candidate.Contains(".mp4", StringComparison.OrdinalIgnoreCase))
                     {
-                        return candidate;
+                        return new GrokWebVideoPollResult { VideoUrl = candidate };
                     }
                 }
             }
 
-            return null;
+            return new GrokWebVideoPollResult();
         }
 
         private static void CollectImageUrlsFromPost(JsonElement post, string parentPostId, HashSet<string> urls)
@@ -1095,38 +1554,56 @@ namespace MultiImageClient
             HashSet<string> imageUrls,
             HashSet<string> videoUrls,
             ref string? modelMessage,
+            ref string? errorMessage,
             ref string? traceId)
         {
             try
             {
                 using var doc = JsonDocument.Parse(line);
                 var root = doc.RootElement;
+                errorMessage ??= ReadProviderError(root);
                 if (root.TryGetProperty("result", out var result)
                     && result.TryGetProperty("response", out var response)
-                    && response.TryGetProperty("modelResponse", out var modelResponse))
+                    && response.ValueKind == JsonValueKind.Object)
                 {
-                    if (modelResponse.TryGetProperty("message", out var msgEl))
+                    if (response.TryGetProperty("streamingVideoGenerationResponse", out var streamingVideo)
+                        && streamingVideo.ValueKind == JsonValueKind.Object
+                        && streamingVideo.TryGetProperty("videoUrl", out var videoUrlEl))
                     {
-                        modelMessage = msgEl.GetString();
-                    }
-
-                    if (modelResponse.TryGetProperty("generatedImageUrls", out var genImages)
-                        && genImages.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var item in genImages.EnumerateArray())
+                        var videoUrl = NormalizeAssetUrl(videoUrlEl.GetString());
+                        if (!string.IsNullOrWhiteSpace(videoUrl))
                         {
-                            var url = item.GetString();
-                            if (!string.IsNullOrWhiteSpace(url))
-                            {
-                                imageUrls.Add(url);
-                            }
+                            videoUrls.Add(videoUrl);
                         }
                     }
 
-                    if (modelResponse.TryGetProperty("metadata", out var metadata)
-                        && metadata.TryGetProperty("request_trace_id", out var traceEl))
+                    if (response.TryGetProperty("modelResponse", out var modelResponse)
+                        && modelResponse.ValueKind == JsonValueKind.Object)
                     {
-                        traceId = traceEl.GetString();
+                        errorMessage ??= ReadProviderError(modelResponse);
+                        if (modelResponse.TryGetProperty("message", out var msgEl))
+                        {
+                            modelMessage = msgEl.GetString();
+                        }
+
+                        if (modelResponse.TryGetProperty("generatedImageUrls", out var genImages)
+                            && genImages.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var item in genImages.EnumerateArray())
+                            {
+                                var url = item.GetString();
+                                if (!string.IsNullOrWhiteSpace(url))
+                                {
+                                    imageUrls.Add(url);
+                                }
+                            }
+                        }
+
+                        if (modelResponse.TryGetProperty("metadata", out var metadata)
+                            && metadata.TryGetProperty("request_trace_id", out var traceEl))
+                        {
+                            traceId = traceEl.GetString();
+                        }
                     }
                 }
 
@@ -1149,23 +1626,304 @@ namespace MultiImageClient
             }
         }
 
-        private async Task<HttpResponseMessage> PostJsonAsync(string path, object payload, CancellationToken cancellationToken)
+        private static string? ReadProviderError(JsonElement element)
+            => ReadProviderError(element, 0);
+
+        private static string? ReadProviderErrorFromBody(string? body)
         {
-            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-            return await _http.PostAsync(path, content, cancellationToken);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return null;
+            }
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                return ReadProviderError(document.RootElement);
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
         }
 
-        private static void EnsureSuccess(HttpResponseMessage response, string body)
+        private static string? ReadProviderError(JsonElement element, int depth)
         {
-            if (response.IsSuccessStatusCode)
+            if (depth > 12)
             {
-                return;
+                return null;
             }
 
-            throw new GrokWebException(
-                $"Grok web request failed ({(int)response.StatusCode}).",
-                (int)response.StatusCode,
-                body);
+            if (element.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in element.EnumerateArray())
+                {
+                    var nestedError = ReadProviderError(item, depth + 1);
+                    if (!string.IsNullOrWhiteSpace(nestedError))
+                    {
+                        return nestedError;
+                    }
+                }
+                return null;
+            }
+            if (element.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                var name = property.Name.ToLowerInvariant();
+                var value = property.Value;
+                if (name is "error" or "errormessage" or "error_message"
+                    or "errors" or "streamerrors" or "stream_errors"
+                    or "failure" or "failuremessage" or "failure_message"
+                    or "failurereason" or "failure_reason"
+                    or "blockreason" or "block_reason"
+                    or "moderationreason" or "moderation_reason"
+                    or "statusreason" or "status_reason")
+                {
+                    var message = ReadErrorValue(value);
+                    if (!string.IsNullOrWhiteSpace(message))
+                    {
+                        return message;
+                    }
+                    if (value.ValueKind == JsonValueKind.True)
+                    {
+                        return $"Grok returned terminal error flag '{property.Name}'.";
+                    }
+                }
+                if ((name is "moderated" or "ismoderated"
+                    or "blocked" or "isblocked"
+                    or "rejected" or "isrejected")
+                    && value.ValueKind is JsonValueKind.True)
+                {
+                    return $"Grok marked the video job as {name}.";
+                }
+                if ((name is "status" or "state"
+                    or "moderationstatus" or "moderation_status")
+                    && value.ValueKind == JsonValueKind.String)
+                {
+                    var status = value.GetString()?.Trim();
+                    if (status is not null
+                        && status.ToLowerInvariant() is (
+                            "failed" or "error" or "rejected" or "blocked"
+                            or "moderated" or "cancelled" or "canceled"))
+                    {
+                        return $"Grok video job entered terminal state '{status}'.";
+                    }
+                }
+            }
+
+            foreach (var property in element.EnumerateObject())
+            {
+                var nestedError = ReadProviderError(property.Value, depth + 1);
+                if (!string.IsNullOrWhiteSpace(nestedError))
+                {
+                    return nestedError;
+                }
+            }
+
+            return null;
+        }
+
+        private static string? ReadErrorValue(JsonElement value)
+        {
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                return value.GetString();
+            }
+            if (value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in value.EnumerateArray())
+                {
+                    var message = ReadErrorValue(item);
+                    if (!string.IsNullOrWhiteSpace(message))
+                    {
+                        return message;
+                    }
+                }
+            }
+            if (value.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var name in new[] { "message", "detail", "reason", "code" })
+                {
+                    if (value.TryGetProperty(name, out var nested))
+                    {
+                        var message = ReadErrorValue(nested);
+                        if (!string.IsNullOrWhiteSpace(message))
+                        {
+                            return message;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        private static string? NormalizeAssetUrl(string? url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return null;
+            }
+
+            return Uri.TryCreate(url, UriKind.Absolute, out _)
+                ? url
+                : $"https://assets.grok.com/{url.TrimStart('/')}";
+        }
+
+        private async Task<(HttpResponseMessage Response, string Body)> PostJsonForTextAsync(
+            string path,
+            object payload,
+            CancellationToken cancellationToken,
+            bool detectLogicalError = false)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            string? body = null;
+            try
+            {
+                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                response = await _http.PostAsync(path, content, cancellationToken);
+                body = await response.Content.ReadAsStringAsync(cancellationToken);
+                GrokWebException? error = null;
+                if (!response.IsSuccessStatusCode)
+                {
+                    error = new GrokWebException(
+                        $"Grok web request failed ({(int)response.StatusCode}).",
+                        (int)response.StatusCode,
+                        body);
+                }
+                else if (detectLogicalError
+                    && ReadProviderErrorFromBody(body) is { } logicalError)
+                {
+                    error = new GrokWebException(
+                        $"Grok web request returned an error: {logicalError}",
+                        (int)response.StatusCode,
+                        body);
+                }
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http",
+                    "POST",
+                    AbsoluteEndpoint(path),
+                    startedAtUtc,
+                    request: payload,
+                    response: body,
+                    statusCode: (int)response.StatusCode,
+                    error: error,
+                    metadata: new { operation = path });
+                return (response, body);
+            }
+            catch (Exception ex)
+            {
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http",
+                    "POST",
+                    AbsoluteEndpoint(path),
+                    startedAtUtc,
+                    request: payload,
+                    response: body,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: ex,
+                    metadata: new { operation = path });
+                response?.Dispose();
+                throw;
+            }
+        }
+
+        private async Task<(HttpResponseMessage Response, string Body)> GetTextWithTraceAsync(
+            string path,
+            object request,
+            CancellationToken cancellationToken,
+            bool detectLogicalError = false)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            string? body = null;
+            try
+            {
+                response = await _http.GetAsync(path, cancellationToken);
+                body = await response.Content.ReadAsStringAsync(cancellationToken);
+                GrokWebException? error = null;
+                if (!response.IsSuccessStatusCode)
+                {
+                    error = new GrokWebException(
+                        $"Grok web request failed ({(int)response.StatusCode}).",
+                        (int)response.StatusCode,
+                        body);
+                }
+                else if (detectLogicalError
+                    && ReadProviderErrorFromBody(body) is { } logicalError)
+                {
+                    error = new GrokWebException(
+                        $"Grok web request returned an error: {logicalError}",
+                        (int)response.StatusCode,
+                        body);
+                }
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http",
+                    "GET",
+                    AbsoluteEndpoint(path),
+                    startedAtUtc,
+                    request: request,
+                    response: body,
+                    statusCode: (int)response.StatusCode,
+                    error: error,
+                    metadata: new { operation = path.Split('?', 2)[0] });
+                return (response, body);
+            }
+            catch (Exception ex)
+            {
+                GenerationTrace.RecordProviderCall(
+                    "grok-web",
+                    "http",
+                    "GET",
+                    AbsoluteEndpoint(path),
+                    startedAtUtc,
+                    request: request,
+                    response: body,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: ex,
+                    metadata: new { operation = path.Split('?', 2)[0] });
+                response?.Dispose();
+                throw;
+            }
+        }
+
+        private static string AbsoluteEndpoint(string path)
+        {
+            if (Uri.TryCreate(path, UriKind.Absolute, out var absolute)
+                && absolute.Scheme is "http" or "https")
+            {
+                return absolute.ToString();
+            }
+            return new Uri(new Uri(Origin), path).ToString();
+        }
+
+        private static void EnsureSuccess(
+            HttpResponseMessage response,
+            string body,
+            bool detectLogicalError = false)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new GrokWebException(
+                    $"Grok web request failed ({(int)response.StatusCode}).",
+                    (int)response.StatusCode,
+                    body);
+            }
+
+            if (detectLogicalError
+                && ReadProviderErrorFromBody(body) is { } logicalError)
+            {
+                throw new GrokWebException(
+                    $"Grok web request returned an error: {logicalError}",
+                    (int)response.StatusCode,
+                    body);
+            }
         }
 
         private static string? TryExtractAssetId(string body)
@@ -1182,8 +1940,7 @@ namespace MultiImageClient
                 // Current (2026-07) upload-file-v2 shape nests the asset id:
                 // { "uploadId": ..., "fileMetadata": { "fileMetadataId": ... } }.
                 // uploadId is NOT an asset id — /rest/assets/{uploadId} 404s —
-                // so the nested lookup must run before any top-level/regex
-                // fallback can grab the wrong UUID.
+                // so the nested lookup must run before top-level alternatives.
                 if (doc.RootElement.TryGetProperty("fileMetadata", out var meta)
                     && meta.ValueKind == JsonValueKind.Object)
                 {
@@ -1191,7 +1948,9 @@ namespace MultiImageClient
                     {
                         if (meta.TryGetProperty(name, out var nested))
                         {
-                            var value = nested.GetString();
+                            var value = nested.ValueKind == JsonValueKind.String
+                                ? nested.GetString()
+                                : null;
                             if (!string.IsNullOrWhiteSpace(value))
                             {
                                 return value;
@@ -1204,7 +1963,9 @@ namespace MultiImageClient
                 {
                     if (doc.RootElement.TryGetProperty(name, out var el))
                     {
-                        var value = el.GetString();
+                        var value = el.ValueKind == JsonValueKind.String
+                            ? el.GetString()
+                            : null;
                         if (!string.IsNullOrWhiteSpace(value))
                         {
                             return value;
@@ -1214,23 +1975,80 @@ namespace MultiImageClient
             }
             catch (JsonException)
             {
-                // fall through to regex
+                return null;
             }
 
-            var match = UuidRegex.Match(body);
-            return match.Success ? match.Value : null;
+            return null;
         }
 
-        private static string GuessContentType(string fileName)
+        private static string? DetectImageContentType(byte[] bytes)
         {
-            var ext = Path.GetExtension(fileName).ToLowerInvariant();
-            return ext switch
+            if (bytes.Length >= 8
+                && bytes[0] == 0x89 && bytes[1] == (byte)'P'
+                && bytes[2] == (byte)'N' && bytes[3] == (byte)'G'
+                && bytes[4] == 0x0D && bytes[5] == 0x0A
+                && bytes[6] == 0x1A && bytes[7] == 0x0A)
             {
-                ".jpg" or ".jpeg" => "image/jpeg",
-                ".webp" => "image/webp",
-                ".gif" => "image/gif",
-                _ => "image/png",
+                return "image/png";
+            }
+            if (bytes.Length >= 3
+                && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            {
+                return "image/jpeg";
+            }
+            if (bytes.Length >= 12
+                && bytes[0] == (byte)'R' && bytes[1] == (byte)'I'
+                && bytes[2] == (byte)'F' && bytes[3] == (byte)'F'
+                && bytes[8] == (byte)'W' && bytes[9] == (byte)'E'
+                && bytes[10] == (byte)'B' && bytes[11] == (byte)'P')
+            {
+                return "image/webp";
+            }
+            if (bytes.Length >= 6
+                && bytes[0] == (byte)'G' && bytes[1] == (byte)'I'
+                && bytes[2] == (byte)'F' && bytes[3] == (byte)'8'
+                && bytes[4] is (byte)'7' or (byte)'9'
+                && bytes[5] == (byte)'a')
+            {
+                return "image/gif";
+            }
+            return null;
+        }
+
+        private static bool IsMp4(byte[] bytes)
+            => bytes.Length >= 12
+               && bytes[4] == (byte)'f' && bytes[5] == (byte)'t'
+               && bytes[6] == (byte)'y' && bytes[7] == (byte)'p';
+
+        private static object BinaryMetadata(HttpResponseMessage? response, byte[] bytes)
+        {
+            return new
+            {
+                contentType = response?.Content.Headers.ContentType?.MediaType,
+                byteLength = bytes.LongLength,
+                format = GuessMediaFormat(bytes),
             };
+        }
+
+        private static bool CanTraceAsText(string? mediaType)
+            => string.IsNullOrWhiteSpace(mediaType)
+                || mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+                || mediaType.Contains("json", StringComparison.OrdinalIgnoreCase);
+
+        private static string GuessMediaFormat(byte[] bytes)
+        {
+            var imageFormat = GuessImageFormat(bytes);
+            if (imageFormat != "bin")
+            {
+                return imageFormat;
+            }
+            if (bytes.Length >= 12
+                && bytes[4] == (byte)'f' && bytes[5] == (byte)'t'
+                && bytes[6] == (byte)'y' && bytes[7] == (byte)'p')
+            {
+                return "mp4";
+            }
+            return "unknown";
         }
 
         private static async Task SendJsonAsync(ClientWebSocket ws, object payload, CancellationToken cancellationToken)

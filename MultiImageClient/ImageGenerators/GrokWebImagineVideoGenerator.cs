@@ -23,6 +23,7 @@ namespace MultiImageClient
         private readonly string _resolution;
         private readonly int _durationSeconds;
         private readonly bool _enableSideBySide;
+        private readonly string _videoMode;
         private readonly TimeSpan _pollInterval;
         private readonly TimeSpan _pollTimeout;
 
@@ -36,10 +37,11 @@ namespace MultiImageClient
             GrokWebAsset? sourceAsset,
             string aspectRatio = "2:3",
             string resolution = "480p",
-            int durationSeconds = 6,
+            int durationSeconds = 10,
             bool enableSideBySide = true,
+            string videoMode = "normal",
             int pollSeconds = 5,
-            int timeoutMinutes = 15)
+            int pollTimeoutSeconds = 0)
         {
             _client = client;
             _settings = settings;
@@ -50,8 +52,12 @@ namespace MultiImageClient
             _resolution = resolution;
             _durationSeconds = durationSeconds;
             _enableSideBySide = enableSideBySide;
+            _videoMode = GrokWebClient.NormalizeVideoMode(videoMode);
             _pollInterval = TimeSpan.FromSeconds(pollSeconds);
-            _pollTimeout = TimeSpan.FromMinutes(timeoutMinutes);
+            _pollTimeout = TimeSpan.FromSeconds(
+                pollTimeoutSeconds > 0
+                    ? pollTimeoutSeconds
+                    : Math.Max(30, settings.GrokWebVideoPollTimeoutSeconds));
         }
 
         public static async Task<GrokWebImagineVideoGenerator> CreateFromImageAsync(
@@ -63,7 +69,8 @@ namespace MultiImageClient
             string aspectRatio,
             string resolution,
             int durationSeconds,
-            bool enableSideBySide)
+            bool enableSideBySide,
+            string videoMode = "normal")
         {
             var uploaded = await client.UploadImageAsync(inputImagePath);
             var post = await client.CreateImagePostAsync(uploaded.MediaUrl);
@@ -75,7 +82,7 @@ namespace MultiImageClient
             };
             return new GrokWebImagineVideoGenerator(
                 client, settings, stats, maxConcurrency, asset,
-                aspectRatio, resolution, durationSeconds, enableSideBySide);
+                aspectRatio, resolution, durationSeconds, enableSideBySide, videoMode);
         }
 
         public string GetFilenamePart(PromptDetails pd)
@@ -90,15 +97,16 @@ namespace MultiImageClient
             {
                 "Grok Web Imagine Video",
                 "imagine-video-gen",
-                "grok.com/rest/app-chat/conversations/new",
+                "grok.com browser app-chat",
                 $"AR {_aspectRatio}",
                 _resolution,
                 $"{_durationSeconds}s",
+                $"mode {_videoMode}",
             };
         }
 
         public string GetGeneratorSpecPart()
-            => $"Grok Web Imagine Video  {_aspectRatio}  {_resolution}  {_durationSeconds}s";
+            => $"Grok Web Imagine Video  {_aspectRatio}  {_resolution}  {_durationSeconds}s  {_videoMode}";
 
         public decimal GetCost() => 0m;
 
@@ -110,7 +118,7 @@ namespace MultiImageClient
             {
                 _stats.GrokVideoGenerationRequestCount++;
                 var prompt = promptDetails.Prompt ?? string.Empty;
-                Logger.Log($"\t-> Grok Web Video AR={_aspectRatio} res={_resolution} dur={_durationSeconds}s: {prompt}");
+                Logger.Log($"\t-> Grok Web Video AR={_aspectRatio} res={_resolution} dur={_durationSeconds}s method={_videoMode}: {prompt}");
 
                 string parentPostId;
                 if (_sourceAsset != null)
@@ -129,12 +137,36 @@ namespace MultiImageClient
                     _durationSeconds,
                     _resolution,
                     _sourceAsset,
-                    _enableSideBySide);
+                    _enableSideBySide,
+                    _videoMode);
 
                 var videoUrl = chat.GeneratedVideoUrls.Count > 0 ? chat.GeneratedVideoUrls[0] : null;
+                if (!string.IsNullOrWhiteSpace(chat.ErrorMessage))
+                {
+                    _stats.GrokVideoGenerationErrorCount++;
+                    return Fail(
+                        $"Grok web video generation failed: {chat.ErrorMessage}",
+                        promptDetails,
+                        generator,
+                        sw.ElapsedMilliseconds);
+                }
                 if (string.IsNullOrEmpty(videoUrl))
                 {
-                    videoUrl = await _client.PollForVideoUrlAsync(parentPostId, prompt, _pollInterval, _pollTimeout);
+                    var pollResult = await _client.PollForVideoResultAsync(
+                        parentPostId,
+                        _pollInterval,
+                        _pollTimeout);
+                    videoUrl = pollResult.VideoUrl;
+                    if (string.IsNullOrEmpty(videoUrl)
+                        && !string.IsNullOrWhiteSpace(pollResult.ErrorMessage))
+                    {
+                        _stats.GrokVideoGenerationErrorCount++;
+                        return Fail(
+                            pollResult.ErrorMessage,
+                            promptDetails,
+                            generator,
+                            sw.ElapsedMilliseconds);
+                    }
                 }
 
                 if (string.IsNullOrEmpty(videoUrl))
@@ -161,6 +193,8 @@ namespace MultiImageClient
                     ImageGenerator = ApiType,
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
                     CreateTotalMs = sw.ElapsedMilliseconds,
+                    GeneratedMediaPath = mp4Path,
+                    GeneratedMediaContentType = "video/mp4",
                 };
                 processResult.SetImageBytes(0, card);
                 return processResult;
@@ -213,7 +247,7 @@ namespace MultiImageClient
                 ctx.ApplyStandardGraphicsOptions();
                 ctx.DrawTextWithBackground(new RectangleF(0, 0, width, 70),
                     "VIDEO — Grok Web Imagine", titleFont, UIConstants.Black, UIConstants.Gold);
-                var facts = $"imagine-video-gen   {_aspectRatio}   {_resolution}   {durationSeconds}s   {sizeBytes / 1024} KB";
+                var facts = $"imagine-video-gen   {_aspectRatio}   {_resolution}   {durationSeconds}s   {_videoMode}   {sizeBytes / 1024} KB";
                 ctx.DrawTextWithBackground(new RectangleF(0, 90, width, 50),
                     facts, bodyFont, UIConstants.Black, UIConstants.White);
                 ctx.DrawTextWithBackground(new RectangleF(0, 160, width, 230),

@@ -170,10 +170,16 @@ namespace MultiImageClient
         public string GrokWebAspectRatio { get; set; } = "2:3";
 
         /// Video length in seconds for --grok-web video modes.
-        public int GrokWebVideoLength { get; set; } = 6;
+        public int GrokWebVideoLength { get; set; } = 10;
 
         /// 480p or 720p for --grok-web video modes.
         public string GrokWebVideoResolution { get; set; } = "480p";
+
+        /// Overall motion method for --grok-web video modes.
+        public string GrokWebVideoMode { get; set; } = "normal";
+
+        /// Show the Playwright browser used by grok-web video app-chat.
+        public bool GrokWebHeaded { get; set; }
 
         /// When true, request side-by-side variants on grok.com web endpoints.
         public bool GrokWebSideBySide { get; set; } = true;
@@ -193,8 +199,8 @@ namespace MultiImageClient
         public bool MetaWebHeaded { get; set; }
 
         /// If true, run Playwright's browser installer (chromium) and exit.
-        /// One-time setup for --meta-web when no MetaWebBrowserExecutablePath
-        /// is configured.
+        /// One-time setup for --meta-web and grok-web video when no configured
+        /// browser executable is available.
         public bool PlaywrightInstall { get; set; }
 
         /// If true, run GrokArchive.SyncAsync and exit: back-read the entire
@@ -408,6 +414,12 @@ namespace MultiImageClient
                     case "--grok-web-resolution":
                         o.GrokWebVideoResolution = args[++i];
                         break;
+                    case "--grok-web-video-method":
+                        o.GrokWebVideoMode = args[++i];
+                        break;
+                    case "--grok-web-headed":
+                        o.GrokWebHeaded = true;
+                        break;
                     case "--grok-web-no-side-by-side":
                         o.GrokWebSideBySide = false;
                         break;
@@ -515,14 +527,16 @@ namespace MultiImageClient
             Console.WriteLine("  --grok-web-cookies fp Override settings.json GrokWebCookiePath with a Netscape cookies.txt or raw Cookie header export.");
             Console.WriteLine("  --grok-web-mode M     image (default) | video | video-from-image | edit");
             Console.WriteLine("  --grok-web-aspect-ratio AR  Aspect ratio for grok-web image/video (default 2:3).");
-            Console.WriteLine("  --grok-web-length N   Video length seconds for grok-web video modes (default 6).");
+            Console.WriteLine("  --grok-web-length N   Video length seconds for grok-web video modes (default 10).");
             Console.WriteLine("  --grok-web-resolution R  480p (default) or 720p for grok-web video modes.");
+            Console.WriteLine("  --grok-web-video-method M  Required video method: normal (default), fun, custom, or spicy. The motion prompt may be empty for video-from-image.");
+            Console.WriteLine("  --grok-web-headed     Show the Playwright browser used for grok-web video requests (troubleshooting only).");
             Console.WriteLine("  --grok-web-no-side-by-side  Request a single variant instead of side-by-side on grok-web.");
             Console.WriteLine("  --grok-web-no-capture  Disable full WebSocket session capture (on by default under saves/.../grok-web-capture/).");
             Console.WriteLine("  --meta-web            Batch prompts through the meta.ai consumer web app (Muse Image) by driving a real Playwright browser session. Best-effort/unofficial; text-to-image only; Meta decides the image count. Uses --prompt-file or PromptFiles.");
             Console.WriteLine("  --meta-web-headed     Show the meta-web browser window. Run this once to log in to meta.ai; the persistent profile (MetaWebBrowserProfilePath) keeps the session for headless runs.");
             Console.WriteLine("  --meta-web-cookies fp Override settings.json MetaWebCookiePath with a Netscape cookies.txt or raw Cookie header export from https://www.meta.ai (needs datr + ecto_1_sess; full jar preferred). Alternative to the headed login.");
-            Console.WriteLine("  --playwright-install  One-time setup: download Playwright's Chromium for --meta-web, then exit. Not needed if MetaWebBrowserExecutablePath points at an existing Chrome/Chromium.");
+            Console.WriteLine("  --playwright-install  One-time setup: download Playwright's Chromium for --meta-web and grok-web video, then exit. Not needed when the corresponding BrowserExecutablePath points at Chrome/Chromium.");
             Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low (pops open only with --open-images).");
             Console.WriteLine("  --provider-sample-file fp   Pair with --provider-sample-showcase to reuse a saved numbered/plain people-fixture prompt list.");
             Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok-api,recraft (grok-api-pro adds the pro tier).");

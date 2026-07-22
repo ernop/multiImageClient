@@ -43,11 +43,19 @@ namespace MultiImageClient
                 return null;
             }
 
-            var prompts = promptSource.Prompts
+            var promptValues = promptSource.Prompts
                 .Select(p => p.Prompt)
-                .Where(p => !string.IsNullOrWhiteSpace(p))
                 .Take(options.Limit == int.MaxValue ? int.MaxValue : options.Limit)
                 .ToList();
+            var prompts = mode == "video-from-image"
+                ? promptValues.Select(p => p ?? string.Empty).ToList()
+                : promptValues.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+            if (mode == "video-from-image" && prompts.Count == 0)
+            {
+                // Image-to-video needs a source and a method; Grok's web app
+                // explicitly accepts an empty motion prompt.
+                prompts.Add(string.Empty);
+            }
 
             if (prompts.Count == 0)
             {
@@ -55,7 +63,14 @@ namespace MultiImageClient
                 return null;
             }
 
-            using var client = GrokWebClient.FromCookieFile(cookiePath);
+            var isVideoMode = mode is "video" or "video-from-image";
+            await using var browserClient = isVideoMode
+                ? new GrokWebBrowserClient(GrokWebBrowserClient.BuildOptions(
+                    settings,
+                    cookiePath,
+                    headedOverride: options.GrokWebHeaded))
+                : null;
+            using var client = GrokWebClient.FromCookieFile(cookiePath, browserClient);
             IImageGenerator generator;
             string sheetHeader;
 
@@ -88,7 +103,8 @@ namespace MultiImageClient
                         aspectRatio: options.GrokWebAspectRatio,
                         resolution: options.GrokWebVideoResolution,
                         durationSeconds: options.GrokWebVideoLength,
-                        enableSideBySide: options.GrokWebSideBySide);
+                        enableSideBySide: options.GrokWebSideBySide,
+                        videoMode: options.GrokWebVideoMode);
                     sheetHeader = "Grok Web Imagine Video";
                     break;
                 }
@@ -103,7 +119,8 @@ namespace MultiImageClient
                         aspectRatio: options.GrokWebAspectRatio,
                         resolution: options.GrokWebVideoResolution,
                         durationSeconds: options.GrokWebVideoLength,
-                        enableSideBySide: options.GrokWebSideBySide);
+                        enableSideBySide: options.GrokWebSideBySide,
+                        videoMode: options.GrokWebVideoMode);
                     sheetHeader = "Grok Web Imagine Video (from image)";
                     break;
                 }
@@ -114,7 +131,11 @@ namespace MultiImageClient
                         options.InputImagePath,
                         maxConcurrency: 1,
                         stats,
-                        enableSideBySide: options.GrokWebSideBySide);
+                        pro: options.GrokWebPro,
+                        aspectRatio: options.GrokWebAspectRatio,
+                        enableSideBySide: options.GrokWebSideBySide,
+                        settings: settings,
+                        captureSessions: options.GrokWebCapture);
                     sheetHeader = "Grok Web Imagine Edit";
                     break;
                 }

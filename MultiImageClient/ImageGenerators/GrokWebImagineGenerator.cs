@@ -109,8 +109,7 @@ namespace MultiImageClient
                 }
 
                 _stats.GrokImageGenerationSuccessCount++;
-                var fallbackNote = result.UsedPreviewFallback ? " preview-fallback" : "";
-                Logger.Log($"\t<- Grok Web Imagine OK in {sw.ElapsedMilliseconds} ms; {result.Images.Count} image(s){fallbackNote} model={result.ModelName ?? "?"} mode={result.Mode ?? "?"}");
+                Logger.Log($"\t<- Grok Web Imagine OK in {sw.ElapsedMilliseconds} ms; {result.Images.Count} image(s) model={result.ModelName ?? "?"} mode={result.Mode ?? "?"}");
                 if (!string.IsNullOrWhiteSpace(result.CaptureDirectory))
                 {
                     Logger.Log($"\t   capture: {result.CaptureDirectory}");

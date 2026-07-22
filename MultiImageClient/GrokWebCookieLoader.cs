@@ -12,6 +12,12 @@ namespace MultiImageClient
         private static readonly string[] RequiredCookieNames = { "sso", "sso-rw" };
 
         public static string LoadCookieHeader(string path)
+            => string.Join("; ", LoadCookiePairs(path).Select(kvp => $"{kvp.Key}={kvp.Value}"));
+
+        // Playwright requires discrete cookie records rather than one Cookie
+        // header string. Keep parsing and auth validation identical for both
+        // the HTTP/WebSocket client and the browser-backed video transport.
+        public static Dictionary<string, string> LoadCookiePairs(string path)
         {
             if (string.IsNullOrWhiteSpace(path))
             {
@@ -33,8 +39,9 @@ namespace MultiImageClient
             // Raw Cookie header pasted from Network tab: sso=...; sso-rw=...; cf_clearance=...
             if (!text.Contains('\n') && text.Contains('=') && text.Contains(';'))
             {
-                ValidateRequiredCookies(ParseHeaderPairs(text));
-                return text.Trim();
+                var headerPairs = ParseHeaderPairs(text);
+                ValidateRequiredCookies(headerPairs);
+                return headerPairs;
             }
 
             var pairs = ParseCookieFile(text);
@@ -45,7 +52,7 @@ namespace MultiImageClient
             }
 
             ValidateRequiredCookies(pairs);
-            return string.Join("; ", pairs.Select(kvp => $"{kvp.Key}={kvp.Value}"));
+            return pairs;
         }
 
         private static Dictionary<string, string> ParseCookieFile(string text)
