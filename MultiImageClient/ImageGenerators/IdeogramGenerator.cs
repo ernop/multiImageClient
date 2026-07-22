@@ -176,8 +176,7 @@ namespace MultiImageClient
                             //Ideogram replaced the prompt.
                             promptDetails.ReplacePrompt(returnedPrompt, returnedPrompt, TransformationType.IdeogramRewrite);
                         }
-                        var headResponse = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, imageObject.Url));
-                        var contentType = headResponse.Content.Headers.ContentType?.MediaType;
+                        var contentType = await ProbeContentTypeAsync(imageObject.Url);
                         return new TaskProcessResult { IsSuccess = true, Url = imageObject.Url, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
                     }
                     throw new Exception("No images returned");
@@ -212,6 +211,46 @@ namespace MultiImageClient
             finally
             {
                 _ideogramSemaphore.Release();
+            }
+        }
+
+        private async Task<string> ProbeContentTypeAsync(string url)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage response = null;
+            Exception traceError = null;
+            try
+            {
+                response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, url));
+                if (!response.IsSuccessStatusCode)
+                {
+                    traceError = new HttpRequestException(
+                        $"Ideogram image content-type probe returned HTTP {(int)response.StatusCode}.");
+                }
+                return response.Content.Headers.ContentType?.MediaType;
+            }
+            catch (Exception ex)
+            {
+                traceError = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "ideogram",
+                    "http",
+                    "HEAD",
+                    url,
+                    startedAtUtc,
+                    response: new
+                    {
+                        contentType = response?.Content.Headers.ContentType?.MediaType,
+                        contentLength = response?.Content.Headers.ContentLength,
+                    },
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError,
+                    metadata: new { operation = "content-type-probe" });
+                response?.Dispose();
             }
         }
     }

@@ -36,6 +36,7 @@ namespace MultiImageClient
     public class GptImage2Generator : IImageGenerator
     {
         private const string ModelId = "gpt-image-2";
+        private const string GenerationsUrl = "https://api.openai.com/v1/images/generations";
 
         private readonly SemaphoreSlim _semaphore;
         // Typical gpt-image-2 latency is 10-60s, but OpenAI's own docs warn
@@ -196,6 +197,14 @@ namespace MultiImageClient
                 ? $"{ModelId}  {chosenQuality}  {arKeyword}"
                 : $"{ModelId} {_name}  {chosenQuality}  {arKeyword}";
             var genTag = richLabel;
+            object traceRequest = null;
+            object traceResponse = null;
+            DateTime? callStartedAtUtc = null;
+            int? traceStatusCode = null;
+            bool traceRecorded = false;
+            var traceEvents = new List<object>();
+            var traceEventTypes = new Dictionary<string, int>(StringComparer.Ordinal);
+            int traceDoneCount = 0;
 
             if (promptDetails != null)
             {
@@ -222,11 +231,12 @@ namespace MultiImageClient
                 {
                     bodyDict["moderation"] = _moderation;
                 }
+                traceRequest = bodyDict;
 
                 var bodyJson = JsonSerializer.Serialize(bodyDict);
                 Logger.Log($"    [{genTag}] POST /v1/images/generations body: {bodyJson}");
 
-                using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/images/generations");
+                using var req = new HttpRequestMessage(HttpMethod.Post, GenerationsUrl);
                 req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
                 req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
 
@@ -235,13 +245,30 @@ namespace MultiImageClient
 
                 try
                 {
+                    callStartedAtUtc = DateTime.UtcNow;
                     using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                    traceStatusCode = (int)resp.StatusCode;
                     Logger.Log($"    [{genTag}] HTTP {(int)resp.StatusCode} {resp.ReasonPhrase} (HTTP/{resp.Version})");
 
                     if (!resp.IsSuccessStatusCode)
                     {
                         _stats.GptImage2RefusedCount++;
                         var errBody = await resp.Content.ReadAsStringAsync();
+                        traceResponse = errBody;
+                        var providerError = new HttpRequestException(
+                            $"OpenAI API error: {(int)resp.StatusCode} {resp.ReasonPhrase}");
+                        GenerationTrace.RecordProviderCall(
+                            "openai",
+                            "http-sse",
+                            "POST",
+                            GenerationsUrl,
+                            callStartedAtUtc.Value,
+                            traceRequest,
+                            traceResponse,
+                            traceStatusCode,
+                            providerError,
+                            new { model = ModelId, operation = "generate-image-stream" });
+                        traceRecorded = true;
                         string errorMessage;
                         try
                         {
@@ -273,10 +300,10 @@ namespace MultiImageClient
                     // which of the N images it belongs to. Collect completed
                     // images into a SortedDictionary keyed by that index so
                     // the final list comes back in a stable 0..N-1 order.
-                    // When no index is present (n=1 or older event shape),
-                    // we assign sequentially so insertion order wins.
+                    // With n=1 an omitted index is unambiguous and means 0.
+                    // With n>1 a missing, duplicate, or out-of-range index is
+                    // a protocol failure; never guess which image it belongs to.
                     var finalImages = new SortedDictionary<int, (string b64, string revisedPrompt)>();
-                    int nextFallbackIdx = 0;
                     string streamErrorMessage = null;
                     long lastEventMs = 0;
 
@@ -290,11 +317,20 @@ namespace MultiImageClient
                         if (line.Length == 0) continue;                         // event boundary
                         if (!line.StartsWith("data:")) continue;                // ignore `event:` / comment lines
                         var payload = line.Substring(5).TrimStart();
-                        if (payload == "[DONE]") break;
+                        if (payload == "[DONE]")
+                        {
+                            traceDoneCount++;
+                            break;
+                        }
 
                         using var evt = JsonDocument.Parse(payload);
                         var root = evt.RootElement;
                         var type = root.TryGetProperty("type", out var tEl) ? tEl.GetString() : "(no type)";
+                        var traceType = string.IsNullOrEmpty(type) ? "(no type)" : type;
+                        traceEvents.Add(SummarizeSseValue(root));
+                        traceEventTypes[traceType] = traceEventTypes.TryGetValue(traceType, out var typeCount)
+                            ? typeCount + 1
+                            : 1;
                         var nowMs = sw.ElapsedMilliseconds;
                         var sinceLast = nowMs - lastEventMs;
                         lastEventMs = nowMs;
@@ -318,8 +354,25 @@ namespace MultiImageClient
                             case "image_generation.completed":
                             {
                                 var imgIdx = ExtractImageIndex(root);
-                                if (imgIdx < 0) imgIdx = nextFallbackIdx;
-                                nextFallbackIdx = Math.Max(nextFallbackIdx, imgIdx + 1);
+                                if (imgIdx < 0 && _imageCount == 1)
+                                {
+                                    imgIdx = 0;
+                                }
+                                if (imgIdx < 0 || imgIdx >= _imageCount)
+                                {
+                                    streamErrorMessage =
+                                        $"gpt-image-2 completed event had invalid image index {imgIdx} "
+                                        + $"for requested n={_imageCount}";
+                                    Logger.Log($"    [{genTag}] ERROR: {streamErrorMessage}");
+                                    break;
+                                }
+                                if (finalImages.ContainsKey(imgIdx))
+                                {
+                                    streamErrorMessage =
+                                        $"gpt-image-2 returned duplicate completed image index {imgIdx}";
+                                    Logger.Log($"    [{genTag}] ERROR: {streamErrorMessage}");
+                                    break;
+                                }
 
                                 string b64 = root.TryGetProperty("b64_json", out var bEl) ? bEl.GetString() : null;
                                 string revisedPrompt = root.TryGetProperty("revised_prompt", out var rpEl) ? rpEl.GetString() : null;
@@ -354,10 +407,31 @@ namespace MultiImageClient
                         }
                     }
 
-                    if (finalImages.Count == 0)
+                    if (!string.IsNullOrWhiteSpace(streamErrorMessage)
+                        || finalImages.Count != _imageCount)
                     {
                         _stats.GptImage2RefusedCount++;
-                        var msg = streamErrorMessage ?? "stream ended without an image_generation.completed event";
+                        var msg = streamErrorMessage
+                            ?? $"gpt-image-2 returned {finalImages.Count} completed image(s) for requested n={_imageCount}";
+                        var traceError = new InvalidOperationException(msg);
+                        traceResponse = BuildSseTraceResponse(
+                            traceEvents,
+                            traceEventTypes,
+                            traceDoneCount,
+                            finalImages.Count,
+                            streamErrorMessage);
+                        GenerationTrace.RecordProviderCall(
+                            "openai",
+                            "http-sse",
+                            "POST",
+                            GenerationsUrl,
+                            callStartedAtUtc.Value,
+                            traceRequest,
+                            traceResponse,
+                            traceStatusCode,
+                            traceError,
+                            new { model = ModelId, operation = "generate-image-stream" });
+                        traceRecorded = true;
                         Logger.Log($"    [{genTag}] {msg} after {sw.ElapsedMilliseconds} ms");
                         return new TaskProcessResult
                         {
@@ -370,18 +444,27 @@ namespace MultiImageClient
                         };
                     }
 
-                    if (finalImages.Count < _imageCount)
-                    {
-                        // Partial success — we asked for N but only got M<N back.
-                        // Surface the shortfall in logs but still save what we
-                        // have; a partial batch is usually more useful than
-                        // nothing, and the user can re-roll.
-                        Logger.Log($"    [{genTag}] WARNING: requested n={_imageCount} but only {finalImages.Count} image(s) completed");
-                    }
-
                     var b64s = finalImages.Values
                         .Select(v => new CreatedBase64Image { bytesBase64 = v.b64, newPrompt = v.revisedPrompt ?? "" })
                         .ToList();
+
+                    traceResponse = BuildSseTraceResponse(
+                        traceEvents,
+                        traceEventTypes,
+                        traceDoneCount,
+                        finalImages.Count,
+                        streamErrorMessage);
+                    GenerationTrace.RecordProviderCall(
+                        "openai",
+                        "http-sse",
+                        "POST",
+                        GenerationsUrl,
+                        callStartedAtUtc.Value,
+                        traceRequest,
+                        traceResponse,
+                        traceStatusCode,
+                        metadata: new { model = ModelId, operation = "generate-image-stream" });
+                    traceRecorded = true;
 
                     return new TaskProcessResult
                     {
@@ -403,6 +486,26 @@ namespace MultiImageClient
             }
             catch (Exception ex)
             {
+                if (callStartedAtUtc.HasValue && !traceRecorded)
+                {
+                    traceResponse ??= BuildSseTraceResponse(
+                        traceEvents,
+                        traceEventTypes,
+                        traceDoneCount,
+                        completedImageCount: null,
+                        streamError: null);
+                    GenerationTrace.RecordProviderCall(
+                        "openai",
+                        "http-sse",
+                        "POST",
+                        GenerationsUrl,
+                        callStartedAtUtc.Value,
+                        traceRequest,
+                        traceResponse,
+                        traceStatusCode,
+                        ex,
+                        new { model = ModelId, operation = "generate-image-stream" });
+                }
                 Logger.Log($"    [{genTag}] EXCEPTION after {sw.ElapsedMilliseconds} ms: {ex.Message}");
                 return new TaskProcessResult
                 {
@@ -418,6 +521,78 @@ namespace MultiImageClient
             {
                 _semaphore.Release();
             }
+        }
+
+        private static object BuildSseTraceResponse(
+            IReadOnlyList<object> events,
+            IReadOnlyDictionary<string, int> eventTypes,
+            int doneCount,
+            int? completedImageCount,
+            string streamError)
+        {
+            return new
+            {
+                eventCount = events.Count,
+                doneCount,
+                eventTypes,
+                events,
+                completedImageCount,
+                streamError,
+            };
+        }
+
+        private static object SummarizeSseValue(JsonElement value, string propertyName = null)
+        {
+            if (IsBinarySseField(propertyName) && value.ValueKind == JsonValueKind.String)
+            {
+                var encodedValue = value.GetString() ?? "";
+                return new
+                {
+                    omitted = true,
+                    encodedLength = encodedValue.Length,
+                };
+            }
+
+            switch (value.ValueKind)
+            {
+                case JsonValueKind.Object:
+                {
+                    var result = new Dictionary<string, object>();
+                    foreach (var property in value.EnumerateObject())
+                    {
+                        result[property.Name] = SummarizeSseValue(property.Value, property.Name);
+                    }
+                    return result;
+                }
+                case JsonValueKind.Array:
+                    return value.EnumerateArray().Select(item => SummarizeSseValue(item)).ToList();
+                case JsonValueKind.String:
+                    return value.GetString();
+                case JsonValueKind.Number:
+                    if (value.TryGetInt64(out var integer)) return integer;
+                    if (value.TryGetDecimal(out var decimalValue)) return decimalValue;
+                    return value.GetDouble();
+                case JsonValueKind.True:
+                    return true;
+                case JsonValueKind.False:
+                    return false;
+                case JsonValueKind.Null:
+                case JsonValueKind.Undefined:
+                default:
+                    return null;
+            }
+        }
+
+        private static bool IsBinarySseField(string propertyName)
+        {
+            if (string.IsNullOrEmpty(propertyName))
+            {
+                return false;
+            }
+            var normalized = propertyName.Replace("_", "").Replace("-", "").ToLowerInvariant();
+            return normalized.Contains("base64")
+                || normalized.Contains("b64")
+                || normalized.Contains("bytes");
         }
 
         // When n>1 the server distinguishes per-image events by one of a

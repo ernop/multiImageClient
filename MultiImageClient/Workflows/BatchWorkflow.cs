@@ -69,8 +69,11 @@ namespace MultiImageClient
                     {
                         theCopy = promptString.Copy();
                         Logger.Log($"  -> SENDING to {generator.GetGeneratorSpecPart()} : {theCopy.Prompt}");
-                        var result = await generator.ProcessPromptAsync(generator, theCopy);
-                        await imageManager.ProcessAndSaveAsync(result, generator);
+                        var result = await GenerationArchive.ExecuteAndSaveAsync(
+                            generator,
+                            theCopy,
+                            imageManager,
+                            new GenerationArchiveContext { Source = "batch" });
                         var status = result.IsSuccess ? "OK" : $"FAIL ({result.ErrorMessage})";
                         Logger.Log($"  <- {status} from {generator.GetGeneratorSpecPart()} in {result.CreateTotalMs + result.DownloadTotalMs} ms");
                         return result;

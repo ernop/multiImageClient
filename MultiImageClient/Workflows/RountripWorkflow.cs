@@ -141,8 +141,11 @@ namespace MultiImageClient
 
                     try
                     {
-                        var result = await generator.ProcessPromptAsync(generator, theCopy);
-                        await _imageManager!.ProcessAndSaveAsync(result, generator);
+                        var result = await GenerationArchive.ExecuteAndSaveAsync(
+                            generator,
+                            theCopy,
+                            _imageManager!,
+                            new GenerationArchiveContext { Source = "roundtrip" });
                         Logger.Log($"Finished {generator.GetType().Name} in {result.CreateTotalMs + result.DownloadTotalMs} ms, {result.PromptDetails.Show()}");
 
                         return result;

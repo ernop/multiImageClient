@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -107,6 +108,11 @@ namespace MultiImageClient
             var genTag = string.IsNullOrEmpty(_name)
                 ? $"{ModelId} edit  {_quality}  {_size}"
                 : $"{ModelId} edit {_name}  {_quality}  {_size}";
+            object? traceRequest = null;
+            object? traceResponse = null;
+            DateTime? callStartedAtUtc = null;
+            int? traceStatusCode = null;
+            bool traceRecorded = false;
 
             if (promptDetails != null)
             {
@@ -126,13 +132,33 @@ namespace MultiImageClient
                 form.Add(new StringContent(_quality.ToString()), "quality");
                 form.Add(new StringContent(_imageCount.ToString()), "n");
 
+                var traceFiles = new List<object>();
                 foreach (var path in _inputImagePaths)
                 {
                     var bytes = await File.ReadAllBytesAsync(path);
+                    var contentType = ContentTypeForFile(path);
                     var part = new ByteArrayContent(bytes);
-                    part.Headers.ContentType = new MediaTypeHeaderValue(ContentTypeForFile(path));
+                    part.Headers.ContentType = new MediaTypeHeaderValue(contentType);
                     form.Add(part, "image[]", Path.GetFileName(path));
+                    traceFiles.Add(new
+                    {
+                        fieldName = "image[]",
+                        filename = Path.GetFileName(path),
+                        path,
+                        contentType,
+                        byteLength = bytes.LongLength,
+                        sha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+                    });
                 }
+                traceRequest = new
+                {
+                    model = ModelId,
+                    prompt = promptDetails.Prompt ?? "",
+                    size = _size,
+                    quality = _quality.ToString(),
+                    n = _imageCount,
+                    files = traceFiles,
+                };
 
                 Logger.Log($"    [{genTag}] POST /v1/images/edits ({_inputImagePaths.Count} input image(s), n={_imageCount})");
 
@@ -140,11 +166,28 @@ namespace MultiImageClient
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
                 req.Content = form;
 
+                callStartedAtUtc = DateTime.UtcNow;
                 using var resp = await _http.SendAsync(req);
+                traceStatusCode = (int)resp.StatusCode;
                 var body = await resp.Content.ReadAsStringAsync();
+                traceResponse = body;
 
                 if (!resp.IsSuccessStatusCode)
                 {
+                    var providerError = new HttpRequestException(
+                        $"OpenAI API error: {(int)resp.StatusCode} {resp.ReasonPhrase}");
+                    GenerationTrace.RecordProviderCall(
+                        "openai",
+                        "http-multipart",
+                        "POST",
+                        EditsUrl,
+                        callStartedAtUtc.Value,
+                        traceRequest,
+                        traceResponse,
+                        traceStatusCode,
+                        providerError,
+                        new { model = ModelId, operation = "edit-image" });
+                    traceRecorded = true;
                     _stats.GptImage2RefusedCount++;
                     string errorMessage;
                     try
@@ -183,9 +226,33 @@ namespace MultiImageClient
                 if (images.Count == 0)
                 {
                     _stats.GptImage2RefusedCount++;
-                    return Fail("edits response contained no images", promptDetails, sw.ElapsedMilliseconds, genTag);
+                    const string message = "edits response contained no images";
+                    GenerationTrace.RecordProviderCall(
+                        "openai",
+                        "http-multipart",
+                        "POST",
+                        EditsUrl,
+                        callStartedAtUtc.Value,
+                        traceRequest,
+                        traceResponse,
+                        traceStatusCode,
+                        new InvalidOperationException(message),
+                        new { model = ModelId, operation = "edit-image" });
+                    traceRecorded = true;
+                    return Fail(message, promptDetails, sw.ElapsedMilliseconds, genTag);
                 }
 
+                GenerationTrace.RecordProviderCall(
+                    "openai",
+                    "http-multipart",
+                    "POST",
+                    EditsUrl,
+                    callStartedAtUtc.Value,
+                    traceRequest,
+                    traceResponse,
+                    traceStatusCode,
+                    metadata: new { model = ModelId, operation = "edit-image" });
+                traceRecorded = true;
                 sw.Stop();
                 Logger.Log($"    [{genTag}] OK in {sw.ElapsedMilliseconds} ms; {images.Count} image(s)");
                 return new TaskProcessResult
@@ -201,6 +268,20 @@ namespace MultiImageClient
             }
             catch (Exception ex)
             {
+                if (callStartedAtUtc.HasValue && !traceRecorded)
+                {
+                    GenerationTrace.RecordProviderCall(
+                        "openai",
+                        "http-multipart",
+                        "POST",
+                        EditsUrl,
+                        callStartedAtUtc.Value,
+                        traceRequest,
+                        traceResponse,
+                        traceStatusCode,
+                        ex,
+                        new { model = ModelId, operation = "edit-image" });
+                }
                 Logger.Log($"    [{genTag}] EXCEPTION after {sw.ElapsedMilliseconds} ms: {ex.Message}");
                 return Fail(ex.Message, promptDetails, sw.ElapsedMilliseconds, genTag);
             }

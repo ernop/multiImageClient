@@ -15,6 +15,7 @@ namespace IdeogramAPIClient
     {
         private readonly SemaphoreSlim _semaphore;
         private readonly IdeogramClient _client;
+        private readonly HttpClient _httpClient = new HttpClient();
         private readonly MultiClientRunStats _stats;
         private readonly IdeogramV3StyleType _styleType;
         private readonly IdeogramMagicPromptOption? _magicPromptOption;
@@ -23,11 +24,14 @@ namespace IdeogramAPIClient
         private readonly string _negativePrompt;
         private readonly string _name;
         private readonly string _inputImagePath;
+        private readonly int _imageCount;
+        private readonly int? _seed;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.IdeogramV3;
 
         /// inputImagePath: when set, the image is sent as a style_reference_images
         ///   part — Ideogram uses it as a style/subject guide, not a literal edit.
+        /// imageCount: num_images per call (API range 1-8).
         public IdeogramV3Generator(
             string apiKey,
             int maxConcurrency,
@@ -38,7 +42,9 @@ namespace IdeogramAPIClient
             string negativePrompt,
             MultiClientRunStats stats,
             string name,
-            string inputImagePath = null)
+            string inputImagePath = null,
+            int imageCount = 1,
+            int? seed = null)
         {
             _client = new IdeogramClient(apiKey);
             _semaphore = new SemaphoreSlim(maxConcurrency);
@@ -51,6 +57,8 @@ namespace IdeogramAPIClient
             _negativePrompt = negativePrompt ?? string.Empty;
             _name = string.IsNullOrEmpty(name) ? "" : name;
             _inputImagePath = inputImagePath;
+            _imageCount = Math.Clamp(imageCount, 1, 8);
+            _seed = seed;
         }
 
         
@@ -96,7 +104,7 @@ namespace IdeogramAPIClient
         public decimal GetCost()
         {
             // Pricing is not yet documented; leave a placeholder number until official rates available.
-            return 0.08m;
+            return 0.08m * _imageCount;
         }
 
         public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
@@ -112,7 +120,9 @@ namespace IdeogramAPIClient
                     RenderingSpeed = _renderingSpeed,
                     StyleType = _styleType,
                     MagicPrompt = _magicPromptOption,
-                    NegativePrompt = string.IsNullOrWhiteSpace(_negativePrompt) ? null : _negativePrompt
+                    NegativePrompt = string.IsNullOrWhiteSpace(_negativePrompt) ? null : _negativePrompt,
+                    NumImages = _imageCount > 1 ? _imageCount : (int?)null,
+                    Seed = _seed
                 };
                 if (!string.IsNullOrEmpty(_inputImagePath))
                 {
@@ -136,19 +146,6 @@ namespace IdeogramAPIClient
                     };
                 }
 
-                if (response.Data.Count > 1)
-                {
-                    return new TaskProcessResult
-                    {
-                        IsSuccess = false,
-                        ErrorMessage = "Multiple images returned and the client is not configured for batches",
-                        PromptDetails = promptDetails,
-                        ImageGenerator = ImageGeneratorApiType.IdeogramV3,
-                        GenericImageErrorType = GenericImageGenerationErrorType.Unknown,
-                        ImageGeneratorDescription = generator.GetGeneratorSpecPart()
-                    };
-                }
-
                 var imageObject = response.Data[0];
                 if (!string.IsNullOrWhiteSpace(imageObject.Prompt) &&
                     !string.Equals(imageObject.Prompt, promptDetails.Prompt, StringComparison.OrdinalIgnoreCase))
@@ -156,10 +153,37 @@ namespace IdeogramAPIClient
                     promptDetails.ReplacePrompt(imageObject.Prompt, imageObject.Prompt, TransformationType.IdeogramRewrite);
                 }
 
+                if (response.Data.Count == 1)
+                {
+                    return new TaskProcessResult
+                    {
+                        IsSuccess = true,
+                        Url = imageObject.Url,
+                        PromptDetails = promptDetails,
+                        ImageGenerator = ImageGeneratorApiType.IdeogramV3,
+                        ImageGeneratorDescription = generator.GetGeneratorSpecPart()
+                    };
+                }
+
+                // num_images > 1: ImageManager's Url path only saves one image,
+                // so download them all here and return base64 entries.
+                var images = new List<CreatedBase64Image>();
+                string contentType = null;
+                foreach (var item in response.Data)
+                {
+                    if (string.IsNullOrEmpty(item.Url)) continue;
+                    var download = await DownloadImageAsync(item.Url);
+                    contentType ??= download.ContentType;
+                    var bytes = download.Bytes;
+                    images.Add(new CreatedBase64Image { bytesBase64 = Convert.ToBase64String(bytes), newPrompt = "" });
+                }
+
                 return new TaskProcessResult
                 {
-                    IsSuccess = true,
-                    Url = imageObject.Url,
+                    IsSuccess = images.Count > 0,
+                    ErrorMessage = images.Count > 0 ? null : "No downloadable image URLs in multi-image response",
+                    Base64ImageDatas = images,
+                    ContentType = contentType,
                     PromptDetails = promptDetails,
                     ImageGenerator = ImageGeneratorApiType.IdeogramV3,
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart()
@@ -195,6 +219,51 @@ namespace IdeogramAPIClient
                 _semaphore.Release();
             }
         }
+
+        private async Task<(byte[] Bytes, string ContentType)> DownloadImageAsync(string url)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage response = null;
+            byte[] bytes = null;
+            Exception traceError = null;
+            try
+            {
+                response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+                bytes = await response.Content.ReadAsByteArrayAsync();
+                return (bytes, response.Content.Headers.ContentType?.MediaType);
+            }
+            catch (Exception ex)
+            {
+                traceError = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "ideogram",
+                    "http",
+                    "GET",
+                    url,
+                    startedAtUtc,
+                    response: BinaryResponseMetadata(response, bytes),
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError,
+                    metadata: new { operation = "image-download" });
+                response?.Dispose();
+            }
+        }
+
+        private static object BinaryResponseMetadata(HttpResponseMessage response, byte[] bytes)
+            => new
+            {
+                contentType = response?.Content.Headers.ContentType?.MediaType,
+                contentLength = response?.Content.Headers.ContentLength,
+                byteLength = bytes?.LongLength ?? 0,
+                sha256 = bytes == null
+                    ? ""
+                    : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(),
+            };
     }
 }
 

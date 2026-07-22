@@ -169,8 +169,68 @@ namespace MultiImageClient
                 var parameters = new Google.Protobuf.WellKnownTypes.Value(); // No parameters needed for now.
 
                 var endpoint = EndpointName.FromProjectLocationPublisherModel(_projectId, _location, "google", "imagen-4.0-generate-001");
-                
-                var response = await client.PredictAsync(endpoint, instances, parameters);
+                var traceRequest = new
+                {
+                    endpoint = endpoint.ToString(),
+                    instances = new[]
+                    {
+                        new
+                        {
+                            prompt = promptDetails.Prompt,
+                            numberOfImages = 1,
+                            aspectRatio = _aspectRatio,
+                            enhancePrompt = false,
+                            includeRaiReason = true,
+                            safetyFilterLevel = _safetyFilterLevel,
+                            safetySetting = "block_only_high",
+                            personGeneration = "ALLOW_ALL",
+                            addWatermark = false,
+                        },
+                    },
+                    parameters = new { },
+                };
+                var startedAtUtc = DateTime.UtcNow;
+                PredictResponse response;
+                try
+                {
+                    response = await client.PredictAsync(endpoint, instances, parameters);
+                }
+                catch (Exception ex)
+                {
+                    GenerationTrace.RecordProviderCall(
+                        "google-imagen4",
+                        "grpc",
+                        "Predict",
+                        apiUrl,
+                        startedAtUtc,
+                        request: traceRequest,
+                        error: ex,
+                        metadata: new
+                        {
+                            model = "imagen-4.0-generate-001",
+                            location = _location,
+                        });
+                    throw;
+                }
+
+                GenerationTrace.RecordProviderCall(
+                    "google-imagen4",
+                    "grpc",
+                    "Predict",
+                    apiUrl,
+                    startedAtUtc,
+                    request: traceRequest,
+                    response: new
+                    {
+                        predictions = response?.Predictions?
+                            .Select(prediction => TraceProtobufValue(prediction, ""))
+                            .ToList(),
+                    },
+                    metadata: new
+                    {
+                        model = "imagen-4.0-generate-001",
+                        location = _location,
+                    });
                 
                 var base64Images = new List<CreatedBase64Image>();
                 string commonMimeType = "image/png"; // Default or first detected mime type
@@ -247,6 +307,41 @@ namespace MultiImageClient
                 _googleSemaphore.Release();
             }
         }
+
+        private static object TraceProtobufValue(Google.Protobuf.WellKnownTypes.Value value, string fieldName)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            return value.KindCase switch
+            {
+                Google.Protobuf.WellKnownTypes.Value.KindOneofCase.NullValue => null,
+                Google.Protobuf.WellKnownTypes.Value.KindOneofCase.NumberValue => value.NumberValue,
+                Google.Protobuf.WellKnownTypes.Value.KindOneofCase.StringValue
+                    when IsBinaryField(fieldName) => new
+                    {
+                        _redacted = "binary",
+                        encoding = "base64",
+                        encodedLength = value.StringValue.Length,
+                        approximateByteLength = value.StringValue.Length * 3L / 4L,
+                    },
+                Google.Protobuf.WellKnownTypes.Value.KindOneofCase.StringValue => value.StringValue,
+                Google.Protobuf.WellKnownTypes.Value.KindOneofCase.BoolValue => value.BoolValue,
+                Google.Protobuf.WellKnownTypes.Value.KindOneofCase.StructValue =>
+                    value.StructValue.Fields.ToDictionary(
+                        pair => pair.Key,
+                        pair => TraceProtobufValue(pair.Value, pair.Key)),
+                Google.Protobuf.WellKnownTypes.Value.KindOneofCase.ListValue =>
+                    value.ListValue.Values.Select(item => TraceProtobufValue(item, fieldName)).ToList(),
+                _ => null,
+            };
+        }
+
+        private static bool IsBinaryField(string name)
+            => name.Contains("base64", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("bytesBase64Encoded", StringComparison.OrdinalIgnoreCase);
 
         public void Dispose()
         {

@@ -598,8 +598,15 @@ namespace MultiImageClient
                     {
                         copy = pd.Copy();
                         Logger.Log($"[#{id}]   -> {g.GetGeneratorSpecPart()}");
-                        var r = await g.ProcessPromptAsync(g, copy);
-                        await _imageManager.ProcessAndSaveAsync(r, g);
+                        var r = await GenerationArchive.ExecuteAndSaveAsync(
+                            g,
+                            copy,
+                            _imageManager,
+                            new GenerationArchiveContext
+                            {
+                                Source = "repl",
+                                ExternalJobId = id.ToString(),
+                            });
                         var status = r.IsSuccess ? "OK" : $"FAIL ({r.ErrorMessage})";
                         Logger.Log($"[#{id}]   <- {status} from {g.GetGeneratorSpecPart()} in {r.CreateTotalMs + r.DownloadTotalMs} ms");
                         return r;

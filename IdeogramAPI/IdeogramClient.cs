@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http.Headers;
+using MultiImageClient;
 
 namespace IdeogramAPIClient
 {
@@ -31,22 +32,46 @@ namespace IdeogramAPIClient
             });
 
             var httpContent = new StringContent(jsonRequest, System.Text.Encoding.UTF8, "application/json");
-
-            var response = await _httpClient.PostAsync("/generate", httpContent);
-            
-            if (!response.IsSuccessStatusCode)
+            const string endpoint = "/generate";
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            string? responseContent = null;
+            Exception? error = null;
+            try
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {errorContent}");
-            }
+                response = await _httpClient.PostAsync(endpoint, httpContent);
+                responseContent = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {responseContent}");
+                }
 
-            var content = await response.Content.ReadAsStringAsync();
-            var generateResponse = JsonConvert.DeserializeObject<GenerateResponse>(content);
-            if (generateResponse == null)
-            {
-                throw new InvalidDataException("Failed to deserialize Ideogram generate response.");
+                var generateResponse = JsonConvert.DeserializeObject<GenerateResponse>(responseContent);
+                if (generateResponse == null)
+                {
+                    throw new InvalidDataException("Failed to deserialize Ideogram generate response.");
+                }
+                return generateResponse;
             }
-            return generateResponse;
+            catch (Exception ex)
+            {
+                error = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "ideogram",
+                    "http",
+                    "POST",
+                    BaseUrl + endpoint,
+                    startedAtUtc,
+                    request: jsonRequest,
+                    response: responseContent,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: error,
+                    metadata: new { operation = "generate-image", apiVersion = "legacy" });
+            }
         }        
 
         public async Task<IdeogramV3GenerateResponse> GenerateImageV3Async(IdeogramV3GenerateRequest request)
@@ -67,8 +92,8 @@ namespace IdeogramAPIClient
                 AddStringPart(formData, "style_type", request.StyleType.ToString());
                 //AddStringPart(formData, "style_preset", request.StylePreset);
                 //AddStringPart(formData, "negative_prompt", request.NegativePrompt);
-                //AddIntPart(formData, "num_images", request.NumImages);
-                //AddIntPart(formData, "seed", request.Seed);
+                AddIntPart(formData, "num_images", request.NumImages);
+                AddIntPart(formData, "seed", request.Seed);
 
                 //if (request.StyleCodes != null)
                 //{
@@ -81,23 +106,68 @@ namespace IdeogramAPIClient
                 AddFileParts(formData, "style_reference_images", request.StyleReferenceImages);
                 //AddFileParts(formData, "character_reference_images", request.CharacterReferenceImages);
                 //AddFileParts(formData, "character_reference_images_mask", request.CharacterReferenceImageMasks);
-
-                var response = await _httpClient.PostAsync("/v1/ideogram-v3/generate", formData);
-
-                if (!response.IsSuccessStatusCode)
+                const string endpoint = "/v1/ideogram-v3/generate";
+                var traceRequest = new Dictionary<string, object>
                 {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {errorContent}");
-                }
-
-                var content = await response.Content.ReadAsStringAsync();
-                var generateResponse = JsonConvert.DeserializeObject<IdeogramV3GenerateResponse>(content);
-                if (generateResponse == null)
+                    ["prompt"] = request.Prompt,
+                };
+                AddTraceString(traceRequest, "aspect_ratio", request.AspectRatio.ToString());
+                AddTraceString(traceRequest, "rendering_speed", request.RenderingSpeed.ToString());
+                AddTraceString(traceRequest, "magic_prompt", request.MagicPrompt.ToString());
+                AddTraceString(traceRequest, "style_type", request.StyleType.ToString());
+                if (request.NumImages.HasValue)
                 {
-                    throw new InvalidDataException("Failed to deserialize Ideogram v3 response.");
+                    traceRequest["num_images"] = request.NumImages.Value;
                 }
+                if (request.Seed.HasValue)
+                {
+                    traceRequest["seed"] = request.Seed.Value;
+                }
+                var styleReferenceImages = DescribeFiles(request.StyleReferenceImages);
+                if (styleReferenceImages.Length > 0)
+                {
+                    traceRequest["style_reference_images"] = styleReferenceImages;
+                }
+                var startedAtUtc = DateTime.UtcNow;
+                HttpResponseMessage? response = null;
+                string? responseContent = null;
+                Exception? error = null;
+                try
+                {
+                    response = await _httpClient.PostAsync(endpoint, formData);
+                    responseContent = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {responseContent}");
+                    }
 
-                return generateResponse;
+                    var generateResponse = JsonConvert.DeserializeObject<IdeogramV3GenerateResponse>(responseContent);
+                    if (generateResponse == null)
+                    {
+                        throw new InvalidDataException("Failed to deserialize Ideogram v3 response.");
+                    }
+
+                    return generateResponse;
+                }
+                catch (Exception ex)
+                {
+                    error = ex;
+                    throw;
+                }
+                finally
+                {
+                    GenerationTrace.RecordProviderCall(
+                        "ideogram",
+                        "http-multipart",
+                        "POST",
+                        BaseUrl + endpoint,
+                        startedAtUtc,
+                        request: traceRequest,
+                        response: responseContent,
+                        statusCode: response == null ? null : (int)response.StatusCode,
+                        error: error,
+                        metadata: new { operation = "generate-image", apiVersion = "v3" });
+                }
             }
         }
 
@@ -116,23 +186,47 @@ namespace IdeogramAPIClient
                 NullValueHandling = NullValueHandling.Ignore,
             });
             var httpContent = new StringContent(jsonRequest, System.Text.Encoding.UTF8, "application/json");
-
-            var response = await _httpClient.PostAsync("/v1/ideogram-v4/generate", httpContent);
-
-            if (!response.IsSuccessStatusCode)
+            const string endpoint = "/v1/ideogram-v4/generate";
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            string? responseContent = null;
+            Exception? error = null;
+            try
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {errorContent}");
-            }
+                response = await _httpClient.PostAsync(endpoint, httpContent);
+                responseContent = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {responseContent}");
+                }
 
-            var content = await response.Content.ReadAsStringAsync();
-            var generateResponse = JsonConvert.DeserializeObject<IdeogramV4GenerateResponse>(content);
-            if (generateResponse == null)
+                var generateResponse = JsonConvert.DeserializeObject<IdeogramV4GenerateResponse>(responseContent);
+                if (generateResponse == null)
+                {
+                    throw new InvalidDataException("Failed to deserialize Ideogram v4 response.");
+                }
+
+                return generateResponse;
+            }
+            catch (Exception ex)
             {
-                throw new InvalidDataException("Failed to deserialize Ideogram v4 response.");
+                error = ex;
+                throw;
             }
-
-            return generateResponse;
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "ideogram",
+                    "http",
+                    "POST",
+                    BaseUrl + endpoint,
+                    startedAtUtc,
+                    request: jsonRequest,
+                    response: responseContent,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: error,
+                    metadata: new { operation = "generate-image", apiVersion = "v4" });
+            }
         }
 
         public async Task<IdeogramDescribeResponse> DescribeImageAsync(IdeogramDescribeRequest request)
@@ -147,21 +241,60 @@ namespace IdeogramAPIClient
                     formData.Add(new StringContent(request.DescribeModelVersion), "describe_model_version");
                 }
 
-                var response = await _httpClient.PostAsync("/describe", formData);
-
-                if (!response.IsSuccessStatusCode)
+                const string endpoint = "/describe";
+                var traceRequest = new Dictionary<string, object>
                 {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {errorContent}");
-                }
-
-                var content = await response.Content.ReadAsStringAsync();
-                var describeResponse = JsonConvert.DeserializeObject<IdeogramDescribeResponse>(content);
-                if (describeResponse == null)
+                    ["image_file"] = new
+                    {
+                        name = "image.png",
+                        size = request.ImageFile?.LongLength ?? 0,
+                        content_type = imageContent.Headers.ContentType?.ToString(),
+                        source = "memory",
+                    },
+                };
+                if (!string.IsNullOrEmpty(request.DescribeModelVersion))
                 {
-                    throw new InvalidDataException("Failed to deserialize Ideogram describe response.");
+                    traceRequest["describe_model_version"] = request.DescribeModelVersion;
                 }
-                return describeResponse;
+                var startedAtUtc = DateTime.UtcNow;
+                HttpResponseMessage? response = null;
+                string? responseContent = null;
+                Exception? error = null;
+                try
+                {
+                    response = await _httpClient.PostAsync(endpoint, formData);
+                    responseContent = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        throw new HttpRequestException($"API request failed with status code {response.StatusCode}. Response: {responseContent}");
+                    }
+
+                    var describeResponse = JsonConvert.DeserializeObject<IdeogramDescribeResponse>(responseContent);
+                    if (describeResponse == null)
+                    {
+                        throw new InvalidDataException("Failed to deserialize Ideogram describe response.");
+                    }
+                    return describeResponse;
+                }
+                catch (Exception ex)
+                {
+                    error = ex;
+                    throw;
+                }
+                finally
+                {
+                    GenerationTrace.RecordProviderCall(
+                        "ideogram",
+                        "http-multipart",
+                        "POST",
+                        BaseUrl + endpoint,
+                        startedAtUtc,
+                        request: traceRequest,
+                        response: responseContent,
+                        statusCode: response == null ? null : (int)response.StatusCode,
+                        error: error,
+                        metadata: new { operation = "describe-image" });
+                }
             }
         }
 
@@ -178,6 +311,14 @@ namespace IdeogramAPIClient
             if (value.HasValue)
             {
                 formData.Add(new StringContent(value.Value.ToString()), name);
+            }
+        }
+
+        private static void AddTraceString(Dictionary<string, object> request, string name, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                request[name] = value;
             }
         }
 
@@ -203,6 +344,21 @@ namespace IdeogramAPIClient
                 fileContent.Headers.ContentType = new MediaTypeHeaderValue(file.ContentType);
                 formData.Add(fileContent, fieldName, file.FileName);
             }
+        }
+
+        private static object[] DescribeFiles(IEnumerable<IdeogramFile> files)
+        {
+            return files?
+                .Where(file => file?.Content != null && file.Content.Length > 0)
+                .Select(file => (object)new
+                {
+                    name = file.FileName,
+                    size = file.Content.LongLength,
+                    content_type = file.ContentType,
+                    source = "memory",
+                })
+                .ToArray()
+                ?? Array.Empty<object>();
         }
     }
 }

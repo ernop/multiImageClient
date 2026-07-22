@@ -159,7 +159,7 @@ namespace MultiImageClient
                 // With storage_options set we may instead (or also) get a durable
                 // Files API copy; prefer the temp URL, fall back to the file.
                 var mp4Bytes = hasUrl
-                    ? await _httpClient.GetByteArrayAsync(result.Video!.Url)
+                    ? await DownloadVideoAsync(result.Video!.Url!)
                     : await _client.DownloadFileContentAsync(result.Video!.FileOutput!.FileId);
                 var mp4Path = SaveVideo(mp4Bytes, prompt);
                 DlMirror.Copy(mp4Path, _settings.FlatImageMirrorPath);
@@ -215,6 +215,48 @@ namespace MultiImageClient
             finally
             {
                 _semaphore.Release();
+            }
+        }
+
+        private async Task<byte[]> DownloadVideoAsync(string url)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            byte[]? bytes = null;
+            Exception? traceError = null;
+            try
+            {
+                response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+                bytes = await response.Content.ReadAsByteArrayAsync();
+                return bytes;
+            }
+            catch (Exception ex)
+            {
+                traceError = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "xai-grok-api",
+                    "http",
+                    "GET",
+                    url,
+                    startedAtUtc,
+                    response: new
+                    {
+                        contentType = response?.Content.Headers.ContentType?.MediaType,
+                        contentLength = response?.Content.Headers.ContentLength,
+                        byteLength = bytes?.LongLength ?? 0,
+                        sha256 = bytes == null
+                            ? ""
+                            : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(),
+                    },
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError,
+                    metadata: new { operation = "video-download" });
+                response?.Dispose();
             }
         }
 

@@ -29,6 +29,12 @@ namespace MultiImageClient
         public TextGeneratorApiType TextGenerator { get; set; }
         public long CreateTotalMs { get; set; } = 0;
         public long DownloadTotalMs { get; set; } = 0;
+        public string GeneratedMediaPath { get; set; }
+        public string GeneratedMediaContentType { get; set; }
+        public string GenerationAttemptId { get; set; } = "";
+        private readonly Dictionary<int, Dictionary<SaveType, string>> _savedImagePaths =
+            new Dictionary<int, Dictionary<SaveType, string>>();
+        private readonly Dictionary<int, string> _savedRawImagePaths = new Dictionary<int, string>();
         private Dictionary<int, byte[]> _ImageBytes { get; set; } = new Dictionary<int, byte[]>();
         public IEnumerable<byte[]> GetAllImages
         {
@@ -50,7 +56,30 @@ namespace MultiImageClient
             }
 
             _ImageBytes[n] = imageBytes;
-        }   
+        }
+
+        public void SetSavedRawImagePath(int n, string path)
+        {
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                _savedRawImagePaths[n] = path;
+            }
+        }
+
+        public string GetSavedRawImagePath(int n)
+            => _savedRawImagePaths.TryGetValue(n, out var path) ? path : "";
+
+        public void SetSavedImagePaths(int n, Dictionary<SaveType, string> paths)
+        {
+            _savedImagePaths[n] = new Dictionary<SaveType, string>(paths);
+            if (paths.TryGetValue(SaveType.Raw, out var rawPath))
+            {
+                SetSavedRawImagePath(n, rawPath);
+            }
+        }
+
+        public IReadOnlyDictionary<int, Dictionary<SaveType, string>> GetSavedImagePaths()
+            => _savedImagePaths;
 
 
         public override string ToString()

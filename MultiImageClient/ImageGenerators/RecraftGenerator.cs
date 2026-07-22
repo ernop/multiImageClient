@@ -36,6 +36,10 @@ namespace MultiImageClient
         private string _artistic_level;
         private string _name;
         private string _inputImagePath;
+        private string _sizeOverride;
+        private int _imageCount;
+        private int? _randomSeed;
+        private float _imageStrength;
 
         public ImageGeneratorApiType ApiType => _apiType;
 
@@ -87,9 +91,23 @@ namespace MultiImageClient
             }
         }
 
-        public RecraftGenerator(string apiKey, int maxConcurrency, RecraftImageSize size, RecraftStyle style, RecraftVectorIllustrationSubstyle? substyleVector, RecraftDigitalIllustrationSubstyle? substyleDigital, RecraftRealisticImageSubstyle? substyleRealistic, MultiClientRunStats stats, string name, string artistic_level = "", RecraftModel model = RecraftModel.recraftv3, string inputImagePath = null)
+        // sizeOverride: raw size string sent to the API instead of the enum —
+        //   either "WxH" or an aspect ratio like "16:9"; "" (empty, non-null)
+        //   omits size entirely so Recraft auto-selects from the prompt.
+        // imageCount: n per call, 1-6. imageStrength: imageToImage strength in
+        //   [0,1] when inputImagePath is set (0 = near-identical source). The
+        //   scale is VERY aggressive: observed 2026-07-20 with recraftv4_1,
+        //   both 0.35 and 0.2 discarded the source composition entirely;
+        //   only 0.1 preserved subject + layout while still applying the
+        //   prompt. Default 0.1 keeps the pasted image recognizable, which is
+        //   what "reference/guide" means in our UIs.
+        public RecraftGenerator(string apiKey, int maxConcurrency, RecraftImageSize size, RecraftStyle style, RecraftVectorIllustrationSubstyle? substyleVector, RecraftDigitalIllustrationSubstyle? substyleDigital, RecraftRealisticImageSubstyle? substyleRealistic, MultiClientRunStats stats, string name, string artistic_level = "", RecraftModel model = RecraftModel.recraftv3, string inputImagePath = null, string sizeOverride = null, int imageCount = 1, int? randomSeed = null, float imageStrength = 0.1f)
         {
             _inputImagePath = inputImagePath;
+            _sizeOverride = sizeOverride;
+            _imageCount = Math.Clamp(imageCount, 1, 6);
+            _randomSeed = randomSeed;
+            _imageStrength = Math.Clamp(imageStrength, 0f, 1f);
             _recraftClient = new RecraftClient(apiKey);
             _recraftSemaphore = new SemaphoreSlim(maxConcurrency);
             _httpClient = new HttpClient();
@@ -136,16 +154,17 @@ namespace MultiImageClient
             // V4.1 Pro is assumed to match V4 Pro until Recraft publishes a delta.
             if (_model == RecraftModel.recraftv4pro || _model == RecraftModel.recraftv4_1_pro)
             {
-                return _style == RecraftStyle.vector_illustration ? 0.30m : 0.25m;
+                return (_style == RecraftStyle.vector_illustration ? 0.30m : 0.25m) * _imageCount;
             }
 
             // V2 / V3 / V4 / V4.1 raster: $0.04 (V2: $0.022); vector: $0.08 (V2: $0.044).
             var isVector = _style == RecraftStyle.vector_illustration;
-            return _model switch
+            var perImage = _model switch
             {
                 RecraftModel.recraftv2 => isVector ? 0.044m : 0.022m,
                 _ => isVector ? 0.08m : 0.04m,
             };
+            return perImage * _imageCount;
         }
 
         public List<string> GetRightParts()
@@ -212,33 +231,62 @@ namespace MultiImageClient
 
                 usingSubstyle = Regex.Replace(usingSubstyle, @"^_([\d])", "$1");
 
-                // Reference/guide: turn the pasted image into a Recraft custom
-                // style (POST /styles), then generate with its style_id. "any" is
-                // not a valid base for style creation, so fall back to realistic.
-                string styleId = null;
+                GenerationResponse generationResult;
                 if (!string.IsNullOrEmpty(_inputImagePath))
                 {
+                    // Reference image → /images/imageToImage (works on V3 and
+                    // V4/V4.1; API-created custom styles are V3-only, so the old
+                    // create-style-then-style_id path silently broke on V4.x).
                     var refBytes = File.ReadAllBytes(_inputImagePath);
-                    var baseStyle = _style == RecraftStyle.any ? RecraftStyle.realistic_image : _style;
-                    var styleResponse = await _recraftClient.CreateStyleAsync(refBytes, baseStyle);
-                    styleId = styleResponse.Id;
-                    Logger.Log($"\tRecraft custom style from reference image: {styleId}");
+                    generationResult = await _recraftClient.ImageToImageAsync(
+                        refBytes, usingPrompt, _imageStrength, _model, _imageCount, _randomSeed);
                 }
-
-                var generationResult = await _recraftClient.GenerateImageAsync(usingPrompt, _artistic_level, usingSubstyle, _style.ToString(), _imageSize, _model, styleId);
+                else
+                {
+                    // null sizeOverride = use the enum; "" = omit size entirely
+                    // (Recraft auto-selects from the prompt).
+                    var size = _sizeOverride ?? _imageSize.ToString().TrimStart('_');
+                    generationResult = await _recraftClient.GenerateImageAsync(
+                        usingPrompt, _artistic_level, usingSubstyle, _style.ToString(),
+                        size, _model, styleId: null, n: _imageCount, randomSeed: _randomSeed);
+                }
                 Logger.Log($"\tFrom Recraft: {promptDetails.Show()} '{generationResult.Created}'");
                 _stats.RecraftImageGenerationSuccessCount++;
                 var theUrl = generationResult.Data[0].Url;
 
-                var headResponse = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, theUrl));
-                var contentType = headResponse.Content.Headers.ContentType?.MediaType;
+                if (generationResult.Data.Count == 1)
+                {
+                    var contentType = await ProbeContentTypeAsync(theUrl);
+
+                    return new TaskProcessResult
+                    {
+                        ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
+                        IsSuccess = true,
+                        Url = theUrl,
+                        ContentType = contentType,
+                        PromptDetails = promptDetails,
+                        ImageGenerator = _apiType
+                    };
+                }
+
+                // n > 1: ImageManager's Url path only handles one image, so
+                // download all of them here and hand back base64 entries.
+                var images = new List<CreatedBase64Image>();
+                string multiContentType = null;
+                foreach (var item in generationResult.Data)
+                {
+                    var download = await DownloadImageAsync(item.Url);
+                    multiContentType ??= download.ContentType;
+                    var bytes = download.Bytes;
+                    images.Add(new CreatedBase64Image { bytesBase64 = Convert.ToBase64String(bytes), newPrompt = "" });
+                }
 
                 return new TaskProcessResult
                 {
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
                     IsSuccess = true,
-                    Url = theUrl,
-                    ContentType = contentType,
+                    Base64ImageDatas = images,
+                    ContentType = multiContentType,
                     PromptDetails = promptDetails,
                     ImageGenerator = _apiType
                 };
@@ -257,6 +305,91 @@ namespace MultiImageClient
                 _recraftSemaphore.Release();
             }
         }
+
+        private async Task<string> ProbeContentTypeAsync(string url)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage response = null;
+            Exception traceError = null;
+            try
+            {
+                response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, url));
+                if (!response.IsSuccessStatusCode)
+                {
+                    traceError = new HttpRequestException(
+                        $"Recraft image content-type probe returned HTTP {(int)response.StatusCode}.");
+                }
+                return response.Content.Headers.ContentType?.MediaType;
+            }
+            catch (Exception ex)
+            {
+                traceError = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "recraft",
+                    "http",
+                    "HEAD",
+                    url,
+                    startedAtUtc,
+                    response: new
+                    {
+                        contentType = response?.Content.Headers.ContentType?.MediaType,
+                        contentLength = response?.Content.Headers.ContentLength,
+                    },
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError,
+                    metadata: new { operation = "content-type-probe" });
+                response?.Dispose();
+            }
+        }
+
+        private async Task<(byte[] Bytes, string ContentType)> DownloadImageAsync(string url)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage response = null;
+            byte[] bytes = null;
+            Exception traceError = null;
+            try
+            {
+                response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+                bytes = await response.Content.ReadAsByteArrayAsync();
+                return (bytes, response.Content.Headers.ContentType?.MediaType);
+            }
+            catch (Exception ex)
+            {
+                traceError = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "recraft",
+                    "http",
+                    "GET",
+                    url,
+                    startedAtUtc,
+                    response: BinaryResponseMetadata(response, bytes),
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError,
+                    metadata: new { operation = "image-download" });
+                response?.Dispose();
+            }
+        }
+
+        private static object BinaryResponseMetadata(HttpResponseMessage response, byte[] bytes)
+            => new
+            {
+                contentType = response?.Content.Headers.ContentType?.MediaType,
+                contentLength = response?.Content.Headers.ContentLength,
+                byteLength = bytes?.LongLength ?? 0,
+                sha256 = bytes == null
+                    ? ""
+                    : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(),
+            };
 
         public string GetFullStyleName(string style, string substyle)
         {

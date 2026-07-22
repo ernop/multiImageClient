@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using MultiImageClient;
 using System.Text;
 
 namespace RecraftAPIClient
@@ -17,63 +18,106 @@ namespace RecraftAPIClient
         }
 
 
-        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, RecraftImageSize size, RecraftModel model = RecraftModel.recraftv3, string styleId = null)
+        /// size: "WxH" (e.g. "1024x1024") or aspect "w:h" (e.g. "16:9"); null/empty
+        /// omits the field entirely and Recraft auto-selects a size from the prompt.
+        /// style/substyle/artistic_level are V2/V3-only concepts — V4/V4.1 models
+        /// reject or ignore them, so callers should pass "any"/empty for those.
+        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, string size, RecraftModel model = RecraftModel.recraftv3, string styleId = null, int n = 1, int? randomSeed = null)
         {
-            string serialized = "";
-            var modelString = model.ToString();
+            var body = new Dictionary<string, object>
+            {
+                ["prompt"] = prompt,
+                ["model"] = model.ToString(),
+                ["response_format"] = "url",
+            };
+            if (!string.IsNullOrEmpty(size))
+            {
+                body["size"] = size;
+            }
+            if (n > 1)
+            {
+                body["n"] = n;
+            }
+            if (randomSeed.HasValue)
+            {
+                body["random_seed"] = randomSeed.Value;
+            }
 
             if (!string.IsNullOrEmpty(styleId))
             {
                 // Custom style built from a reference image (see CreateStyleAsync):
-                // style_id replaces style/substyle entirely.
-                serialized = JsonConvert.SerializeObject(new
-                {
-                    prompt,
-                    model = modelString,
-                    style_id = styleId,
-                    size = size.ToString().TrimStart('_'),
-                    response_format = "url"
-                });
+                // style_id replaces style/substyle entirely. NOTE: API-created
+                // custom styles are only valid with V3 / V3 vector models.
+                body["style_id"] = styleId;
             }
-            else if (style == "any") {
-                serialized = JsonConvert.SerializeObject(new
-                {
-                    prompt,
-                    model = modelString,
-                    style = style,
-                    size = size.ToString().TrimStart('_'),
-                    response_format = "url"
-                });
+            else if (style == "any")
+            {
+                body["style"] = style;
             }
             else
             {
-                serialized = JsonConvert.SerializeObject(new
-                {
-                    prompt,
-                    model = modelString,
-                    artistic_level = artistic_level,
-                    style = style,
-                    substyle = substyle,
-                    size = size.ToString().TrimStart('_'),
-                    response_format = "url"
-                });
+                body["style"] = style;
+                body["substyle"] = substyle;
+                body["artistic_level"] = artistic_level;
             }
 
-
-
             var content = new StringContent(
-                serialized,
+                JsonConvert.SerializeObject(body),
                 Encoding.UTF8,
                 "application/json"
             );
+            return await PostTracedAsync<GenerationResponse>(
+                "/images/generations",
+                content,
+                body,
+                "generate-image",
+                "http");
+        }
 
-            var response = await _httpClient.PostAsync($"{_baseUrl}/images/generations", content);
-            //var response = await _httpClient.PostAsync($"{_baseUrl}", content);
-            await EnsureSuccessfulResponse(response);
-
-            var responseContent = await response.Content.ReadAsStringAsync();
-
-            return JsonConvert.DeserializeObject<GenerationResponse>(responseContent)!;
+        /// POST /images/imageToImage — generate variations of an input image
+        /// guided by a prompt. strength in [0,1]: 0 = almost identical to the
+        /// source, 1 = minimal similarity. Supported by V3 and V4/V4.1 models
+        /// (raster and vector); this is the correct reference-image path for
+        /// V4.x, where custom styles (style_id) are not supported.
+        /// The output size follows the input image; the endpoint takes no size.
+        public async Task<GenerationResponse> ImageToImageAsync(byte[] imageData, string prompt, float strength, RecraftModel model = RecraftModel.recraftv4_1, int n = 1, int? randomSeed = null)
+        {
+            using var content = new MultipartFormDataContent();
+            content.Add(new ByteArrayContent(imageData), "image", "image.png");
+            content.Add(new StringContent(prompt), "prompt");
+            content.Add(new StringContent(strength.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)), "strength");
+            content.Add(new StringContent(model.ToString()), "model");
+            content.Add(new StringContent("url"), "response_format");
+            if (n > 1)
+            {
+                content.Add(new StringContent(n.ToString()), "n");
+            }
+            if (randomSeed.HasValue)
+            {
+                content.Add(new StringContent(randomSeed.Value.ToString()), "random_seed");
+            }
+            var traceRequest = new Dictionary<string, object>
+            {
+                ["image"] = DescribeMemoryFile("image.png", imageData.LongLength),
+                ["prompt"] = prompt,
+                ["strength"] = strength.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture),
+                ["model"] = model.ToString(),
+                ["response_format"] = "url",
+            };
+            if (n > 1)
+            {
+                traceRequest["n"] = n;
+            }
+            if (randomSeed.HasValue)
+            {
+                traceRequest["random_seed"] = randomSeed.Value;
+            }
+            return await PostTracedAsync<GenerationResponse>(
+                "/images/imageToImage",
+                content,
+                traceRequest,
+                "image-to-image",
+                "http-multipart");
         }
 
         public async Task<StyleResponse> CreateStyleAsync(byte[] imageData, RecraftStyle style)
@@ -81,12 +125,17 @@ namespace RecraftAPIClient
             using var content = new MultipartFormDataContent();
             content.Add(new ByteArrayContent(imageData), "file", "image.png");
             content.Add(new StringContent(style.ToString().ToLower()), "style");
-
-            var response = await _httpClient.PostAsync($"{_baseUrl}/styles", content);
-            await EnsureSuccessfulResponse(response);
-
-            var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<StyleResponse>(responseContent)!;
+            var traceRequest = new
+            {
+                file = DescribeMemoryFile("image.png", imageData.LongLength),
+                style = style.ToString().ToLower(),
+            };
+            return await PostTracedAsync<StyleResponse>(
+                "/styles",
+                content,
+                traceRequest,
+                "create-style",
+                "http-multipart");
         }
 
         public async Task<ImageResponse> VectorizeImageAsync(byte[] imageData, string responseFormat = "url")
@@ -97,12 +146,12 @@ namespace RecraftAPIClient
             {
                 content.Add(new StringContent(responseFormat), "response_format");
             }
-
-            var response = await _httpClient.PostAsync($"{_baseUrl}/images/vectorize", content);
-            await EnsureSuccessfulResponse(response);
-
-            var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<ImageResponse>(responseContent)!;
+            return await PostTracedAsync<ImageResponse>(
+                "/images/vectorize",
+                content,
+                BuildFileRequest(imageData, responseFormat),
+                "vectorize-image",
+                "http-multipart");
         }
 
         public async Task<ImageResponse> RemoveBackgroundAsync(byte[] imageData, string responseFormat = "url")
@@ -113,12 +162,12 @@ namespace RecraftAPIClient
             {
                 content.Add(new StringContent(responseFormat), "response_format");
             }
-
-            var response = await _httpClient.PostAsync($"{_baseUrl}/images/removeBackground", content);
-            await EnsureSuccessfulResponse(response);
-
-            var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<ImageResponse>(responseContent)!;
+            return await PostTracedAsync<ImageResponse>(
+                "/images/removeBackground",
+                content,
+                BuildFileRequest(imageData, responseFormat),
+                "remove-background",
+                "http-multipart");
         }
 
         public async Task<ImageResponse> ClarityUpscaleAsync(byte[] imageData, string responseFormat = "url")
@@ -129,12 +178,12 @@ namespace RecraftAPIClient
             {
                 content.Add(new StringContent(responseFormat), "response_format");
             }
-
-            var response = await _httpClient.PostAsync($"{_baseUrl}/images/clarityUpscale", content);
-            await EnsureSuccessfulResponse(response);
-
-            var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<ImageResponse>(responseContent)!;
+            return await PostTracedAsync<ImageResponse>(
+                "/images/clarityUpscale",
+                content,
+                BuildFileRequest(imageData, responseFormat),
+                "clarity-upscale",
+                "http-multipart");
         }
 
         public async Task<ImageResponse> GenerativeUpscaleAsync(byte[] imageData, string responseFormat = "url")
@@ -145,22 +194,77 @@ namespace RecraftAPIClient
             {
                 content.Add(new StringContent(responseFormat), "response_format");
             }
-
-            var response = await _httpClient.PostAsync($"{_baseUrl}/images/generativeUpscale", content);
-            await EnsureSuccessfulResponse(response);
-
-            var responseContent = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<ImageResponse>(responseContent)!;
+            return await PostTracedAsync<ImageResponse>(
+                "/images/generativeUpscale",
+                content,
+                BuildFileRequest(imageData, responseFormat),
+                "generative-upscale",
+                "http-multipart");
         }
 
-        private async Task EnsureSuccessfulResponse(HttpResponseMessage response)
+        private async Task<TResponse> PostTracedAsync<TResponse>(
+            string path,
+            HttpContent content,
+            object request,
+            string operation,
+            string transport)
         {
-            if (!response.IsSuccessStatusCode)
+            var endpoint = _baseUrl + path;
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            string? responseContent = null;
+            Exception? error = null;
+            try
             {
-                var error = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"API request failed: {response.StatusCode} - {error}");
+                response = await _httpClient.PostAsync(endpoint, content);
+                responseContent = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException($"API request failed: {response.StatusCode} - {responseContent}");
+                }
+                return JsonConvert.DeserializeObject<TResponse>(responseContent)!;
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "recraft",
+                    transport,
+                    "POST",
+                    endpoint,
+                    startedAtUtc,
+                    request: request,
+                    response: responseContent,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: error,
+                    metadata: new { operation });
             }
         }
+
+        private static Dictionary<string, object> BuildFileRequest(byte[] imageData, string responseFormat)
+        {
+            var request = new Dictionary<string, object>
+            {
+                ["file"] = DescribeMemoryFile("image.png", imageData.LongLength),
+            };
+            if (responseFormat != "url")
+            {
+                request["response_format"] = responseFormat;
+            }
+            return request;
+        }
+
+        private static object DescribeMemoryFile(string name, long size)
+            => new
+            {
+                name,
+                size,
+                source = "memory",
+            };
     }
 
     public class GenerationResponse

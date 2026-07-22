@@ -1,5 +1,7 @@
 ﻿using Newtonsoft.Json;
 
+using MultiImageClient;
+
 using System;
 using System.Net.Http;
 using System.Threading;
@@ -37,11 +39,36 @@ namespace BFLAPIClient
             var url = !string.IsNullOrEmpty(pollingUrl)
                 ? pollingUrl
                 : $"{BaseUrl}/v1/get_result?id={id}";
-
-            var response = await _httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
-            var content = await response.Content.ReadAsStringAsync();
-            return JsonConvert.DeserializeObject<GenerationResponse>(content);
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage response = null;
+            string responseContent = null;
+            Exception error = null;
+            try
+            {
+                response = await _httpClient.GetAsync(url);
+                responseContent = await response.Content.ReadAsStringAsync();
+                response.EnsureSuccessStatusCode();
+                return JsonConvert.DeserializeObject<GenerationResponse>(responseContent);
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "bfl",
+                    "http",
+                    "GET",
+                    url,
+                    startedAtUtc,
+                    request: new { id },
+                    response: responseContent,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: error,
+                    metadata: new { operation = "poll-generation" });
+            }
         }
 
         private async Task<GenerationResponse> GenerateAndWaitForResultAsync<TRequest>(string endpoint, TRequest request)
@@ -88,23 +115,47 @@ namespace BFLAPIClient
                 NullValueHandling = NullValueHandling.Ignore
             });
             var content = new StringContent(serialized, System.Text.Encoding.UTF8, "application/json");
-            var response = await _httpClient.PostAsync($"{BaseUrl}/v1/{endpoint}", content);
-
-            if (response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+            var url = $"{BaseUrl}/v1/{endpoint}";
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage response = null;
+            string responseContent = null;
+            Exception error = null;
+            try
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"422 Unprocessable Entity: {errorContent}", null, System.Net.HttpStatusCode.UnprocessableEntity);
-            }
-            if (response.StatusCode == System.Net.HttpStatusCode.PaymentRequired)
-            {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                throw new HttpRequestException($"402 Payment Required: {errorContent}", null, System.Net.HttpStatusCode.PaymentRequired);
-            }
+                response = await _httpClient.PostAsync(url, content);
+                responseContent = await response.Content.ReadAsStringAsync();
 
-            response.EnsureSuccessStatusCode();
-            var responseContent = await response.Content.ReadAsStringAsync();
-            var parsed = JsonConvert.DeserializeObject<GenerationResponse>(responseContent);
-            return parsed;
+                if (response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
+                {
+                    throw new HttpRequestException($"422 Unprocessable Entity: {responseContent}", null, System.Net.HttpStatusCode.UnprocessableEntity);
+                }
+                if (response.StatusCode == System.Net.HttpStatusCode.PaymentRequired)
+                {
+                    throw new HttpRequestException($"402 Payment Required: {responseContent}", null, System.Net.HttpStatusCode.PaymentRequired);
+                }
+
+                response.EnsureSuccessStatusCode();
+                return JsonConvert.DeserializeObject<GenerationResponse>(responseContent);
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "bfl",
+                    "http",
+                    "POST",
+                    url,
+                    startedAtUtc,
+                    request: serialized,
+                    response: responseContent,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: error,
+                    metadata: new { operation = "submit-generation", modelEndpoint = endpoint });
+            }
         }
 
         // ---------- FLUX 1.1 (legacy but still supported) ----------

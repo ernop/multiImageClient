@@ -402,10 +402,47 @@ namespace MultiImageClient
                 ["client_id"] = Guid.NewGuid().ToString("N"),
             };
 
-            var response = await _httpClient.PostAsync(
-                $"{_baseUrl}/prompt",
-                new StringContent(body.ToString(Formatting.None), Encoding.UTF8, "application/json"));
-            var responseText = await response.Content.ReadAsStringAsync();
+            var endpoint = $"{_baseUrl}/prompt";
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            string? responseText = null;
+            try
+            {
+                response = await _httpClient.PostAsync(
+                    endpoint,
+                    new StringContent(body.ToString(Formatting.None), Encoding.UTF8, "application/json"));
+                responseText = await response.Content.ReadAsStringAsync();
+            }
+            catch (Exception ex)
+            {
+                GenerationTrace.RecordProviderCall(
+                    "comfyui",
+                    "http",
+                    "POST",
+                    endpoint,
+                    startedAtUtc,
+                    request: body,
+                    response: responseText,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: ex,
+                    metadata: new { model = _modelName, operation = "queue" });
+                throw;
+            }
+
+            var providerError = response.IsSuccessStatusCode
+                ? null
+                : new HttpRequestException($"ComfyUI /prompt failed ({(int)response.StatusCode}): {responseText}");
+            GenerationTrace.RecordProviderCall(
+                "comfyui",
+                "http",
+                "POST",
+                endpoint,
+                startedAtUtc,
+                request: body,
+                response: responseText,
+                statusCode: (int)response.StatusCode,
+                error: providerError,
+                metadata: new { model = _modelName, operation = "queue" });
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"ComfyUI /prompt failed ({(int)response.StatusCode}): {responseText}");
@@ -445,8 +482,45 @@ namespace MultiImageClient
 
         private async Task<JObject> GetHistoryAsync(string promptId)
         {
-            var response = await _httpClient.GetAsync($"{_baseUrl}/history/{Uri.EscapeDataString(promptId)}");
-            var text = await response.Content.ReadAsStringAsync();
+            var endpoint = $"{_baseUrl}/history/{Uri.EscapeDataString(promptId)}";
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            string? text = null;
+            try
+            {
+                response = await _httpClient.GetAsync(endpoint);
+                text = await response.Content.ReadAsStringAsync();
+            }
+            catch (Exception ex)
+            {
+                GenerationTrace.RecordProviderCall(
+                    "comfyui",
+                    "http",
+                    "GET",
+                    endpoint,
+                    startedAtUtc,
+                    request: new { promptId },
+                    response: text,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: ex,
+                    metadata: new { model = _modelName, operation = "history" });
+                throw;
+            }
+
+            var providerError = response.IsSuccessStatusCode
+                ? null
+                : new HttpRequestException($"ComfyUI /history/{promptId} failed ({(int)response.StatusCode}): {text}");
+            GenerationTrace.RecordProviderCall(
+                "comfyui",
+                "http",
+                "GET",
+                endpoint,
+                startedAtUtc,
+                request: new { promptId },
+                response: text,
+                statusCode: (int)response.StatusCode,
+                error: providerError,
+                metadata: new { model = _modelName, operation = "history" });
             if (!response.IsSuccessStatusCode)
             {
                 throw new HttpRequestException($"ComfyUI /history/{promptId} failed ({(int)response.StatusCode}): {text}");
@@ -504,8 +578,52 @@ namespace MultiImageClient
             var url = $"{_baseUrl}/view?filename={Uri.EscapeDataString(filename)}"
                 + $"&subfolder={Uri.EscapeDataString(subfolder)}"
                 + $"&type={Uri.EscapeDataString(type)}";
-            var response = await _httpClient.GetAsync(url);
-            var bytes = await response.Content.ReadAsByteArrayAsync();
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            byte[]? bytes = null;
+            try
+            {
+                response = await _httpClient.GetAsync(url);
+                bytes = await response.Content.ReadAsByteArrayAsync();
+            }
+            catch (Exception ex)
+            {
+                GenerationTrace.RecordProviderCall(
+                    "comfyui",
+                    "http",
+                    "GET",
+                    url,
+                    startedAtUtc,
+                    request: new { filename, subfolder, type },
+                    response: bytes == null ? null : BinaryResponseMetadata(response, bytes),
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: ex,
+                    metadata: new { model = _modelName, operation = "view" });
+                throw;
+            }
+
+            var responseMetadata = BinaryResponseMetadata(response, bytes);
+            var errorText = response.IsSuccessStatusCode || !CanTraceAsText(response)
+                ? null
+                : Encoding.UTF8.GetString(bytes);
+            var providerError = response.IsSuccessStatusCode
+                ? null
+                : new HttpRequestException($"ComfyUI /view failed ({(int)response.StatusCode}): {errorText ?? "[binary response]"}");
+            GenerationTrace.RecordProviderCall(
+                "comfyui",
+                "http",
+                "GET",
+                url,
+                startedAtUtc,
+                request: new { filename, subfolder, type },
+                response: new
+                {
+                    binary = responseMetadata,
+                    errorBody = errorText,
+                },
+                statusCode: (int)response.StatusCode,
+                error: providerError,
+                metadata: new { model = _modelName, operation = "view" });
             if (!response.IsSuccessStatusCode)
             {
                 var text = Encoding.UTF8.GetString(bytes);
@@ -513,6 +631,44 @@ namespace MultiImageClient
             }
 
             return bytes;
+        }
+
+        private static object BinaryResponseMetadata(HttpResponseMessage? response, byte[] bytes)
+        {
+            return new
+            {
+                contentType = response?.Content.Headers.ContentType?.MediaType,
+                byteLength = bytes.LongLength,
+                format = GuessBinaryFormat(bytes),
+            };
+        }
+
+        private static bool CanTraceAsText(HttpResponseMessage response)
+        {
+            var mediaType = response.Content.Headers.ContentType?.MediaType;
+            return string.IsNullOrWhiteSpace(mediaType)
+                || mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+                || mediaType.Contains("json", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GuessBinaryFormat(byte[] bytes)
+        {
+            if (bytes.Length >= 4
+                && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+            {
+                return "png";
+            }
+            if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            {
+                return "jpeg";
+            }
+            if (bytes.Length >= 12
+                && bytes[0] == (byte)'R' && bytes[1] == (byte)'I' && bytes[2] == (byte)'F' && bytes[3] == (byte)'F'
+                && bytes[8] == (byte)'W' && bytes[9] == (byte)'E' && bytes[10] == (byte)'B' && bytes[11] == (byte)'P')
+            {
+                return "webp";
+            }
+            return "unknown";
         }
     }
 }

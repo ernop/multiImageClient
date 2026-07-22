@@ -42,31 +42,63 @@ namespace MultiImageClient
 
         public static async Task<byte[]> DownloadImageAsync(TaskProcessResult result)
         {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            byte[]? bytes = null;
+            Exception? traceError = null;
             try
             {
-                using var response = await httpClient.GetAsync(result.Url);
+                response = await httpClient.GetAsync(result.Url);
                 if (!response.IsSuccessStatusCode)
                 {
+                    traceError = new HttpRequestException(
+                        $"Asset download returned HTTP {(int)response.StatusCode}.");
                     Logger.Log($"Failed to download image: {response.StatusCode}");
                     return Array.Empty<byte>();
                 }
 
-                var res = await response.Content.ReadAsByteArrayAsync();
-                if (res.Length == 0)
+                bytes = await response.Content.ReadAsByteArrayAsync();
+                if (bytes.Length == 0)
                 {
                     Logger.Log($"Downloaded image is empty");
                     return Array.Empty<byte>();
                 }
 
-                Logger.Log($"\tDownloading image from: {result.Url}, bytes:{res.Length}");
-                return res;
+                Logger.Log($"\tDownloading image from: {result.Url}, bytes:{bytes.Length}");
+                return bytes;
             }
             catch (Exception ex)
             {
+                traceError = ex;
                 Logger.Log($"Failed to download image from {result.Url}: {ex.Message}");
                 return Array.Empty<byte>();
             }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "asset-download",
+                    "http",
+                    "GET",
+                    result.Url,
+                    startedAtUtc,
+                    request: new { result.ImageGenerator, result.ImageGeneratorDescription },
+                    response: BinaryResponseMetadata(response, bytes),
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError);
+                response?.Dispose();
+            }
         }
+
+        private static object BinaryResponseMetadata(HttpResponseMessage? response, byte[]? bytes)
+            => new
+            {
+                contentType = response?.Content.Headers.ContentType?.MediaType,
+                contentLength = response?.Content.Headers.ContentLength,
+                byteLength = bytes?.LongLength ?? 0,
+                sha256 = bytes == null || bytes.Length == 0
+                    ? ""
+                    : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(),
+            };
 
         public static async Task<string> SaveImageAsync(PromptDetails promptDetails, byte[] imageBytes, int imageCountN, string contentType, Settings settings, SaveType saveType, IImageGenerator generator)
         {

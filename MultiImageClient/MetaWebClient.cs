@@ -207,6 +207,12 @@ namespace MultiImageClient
             string prompt,
             CancellationToken cancellationToken = default)
         {
+            var startedAtUtc = DateTime.UtcNow;
+            var traceRequest = new
+            {
+                prompt,
+                composerText = BuildComposerText(prompt),
+            };
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(_options.Timeout);
             var ct = timeoutCts.Token;
@@ -253,6 +259,30 @@ namespace MultiImageClient
                 }
 
                 capture?.Complete("ok", keptUrls.Count);
+                GenerationTrace.RecordProviderCall(
+                    "meta-web",
+                    "playwright",
+                    "GENERATE",
+                    HomeUrl,
+                    startedAtUtc,
+                    request: traceRequest,
+                    response: new
+                    {
+                        imageUrls = keptUrls,
+                        conversationUrl = page.Url,
+                        images = images.Select((bytes, index) => new
+                        {
+                            index,
+                            byteLength = bytes.LongLength,
+                            format = GuessImageFormat(bytes),
+                        }).ToList(),
+                    },
+                    metadata: new
+                    {
+                        headed = _options.Headed,
+                        timeoutSeconds = _options.Timeout.TotalSeconds,
+                        captureEnabled = _options.CaptureSessions,
+                    });
                 return new MetaWebImageGenerationResult
                 {
                     Images = images,
@@ -263,21 +293,32 @@ namespace MultiImageClient
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 await CaptureFailureAsync(capture, "timeout");
-                throw new MetaWebException(
+                var error = new MetaWebException(
                     $"Meta web: generation timed out after {_options.Timeout.TotalSeconds:0}s with no new images. "
                     + "Most likely Meta answered with TEXT instead of generating an image (we prefix prompts with "
                     + "\"Imagine\" to prevent this, but it is not guaranteed), or the prompt was refused, or the "
                     + "page layout changed. Re-run with --meta-web-headed and MetaWebCaptureSessions=true to inspect.");
+                RecordLogicalGeneration(traceRequest, startedAtUtc, error);
+                throw error;
             }
-            catch (MetaWebException)
+            catch (MetaWebException ex)
             {
                 await CaptureFailureAsync(capture, "error");
+                RecordLogicalGeneration(traceRequest, startedAtUtc, ex);
                 throw;
             }
             catch (PlaywrightException ex)
             {
                 await CaptureFailureAsync(capture, "playwright-error");
-                throw new MetaWebException($"Meta web: browser automation failed: {ex.Message}");
+                var error = new MetaWebException($"Meta web: browser automation failed: {ex.Message}");
+                RecordLogicalGeneration(traceRequest, startedAtUtc, error);
+                throw error;
+            }
+            catch (Exception ex)
+            {
+                await CaptureFailureAsync(capture, "unexpected-error");
+                RecordLogicalGeneration(traceRequest, startedAtUtc, ex);
+                throw;
             }
             finally
             {
@@ -287,6 +328,25 @@ namespace MultiImageClient
                     _gate.Release();
                 }
             }
+        }
+
+        private void RecordLogicalGeneration(object request, DateTime startedAtUtc, Exception error)
+        {
+            GenerationTrace.RecordProviderCall(
+                "meta-web",
+                "playwright",
+                "GENERATE",
+                HomeUrl,
+                startedAtUtc,
+                request: request,
+                error: error,
+                metadata: new
+                {
+                    headed = _options.Headed,
+                    timeoutSeconds = _options.Timeout.TotalSeconds,
+                    captureEnabled = _options.CaptureSessions,
+                    pageUrl = _page?.Url,
+                });
         }
 
         private async Task EnsureStartedAsync(CancellationToken ct)
@@ -819,6 +879,31 @@ namespace MultiImageClient
             }
 
             return false;
+        }
+
+        private static string GuessImageFormat(byte[] bytes)
+        {
+            if (bytes.Length >= 4
+                && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+            {
+                return "png";
+            }
+            if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            {
+                return "jpeg";
+            }
+            if (bytes.Length >= 12
+                && bytes[0] == (byte)'R' && bytes[1] == (byte)'I' && bytes[2] == (byte)'F' && bytes[3] == (byte)'F'
+                && bytes[8] == (byte)'W' && bytes[9] == (byte)'E' && bytes[10] == (byte)'B' && bytes[11] == (byte)'P')
+            {
+                return "webp";
+            }
+            if (bytes.Length >= 4
+                && bytes[0] == (byte)'G' && bytes[1] == (byte)'I' && bytes[2] == (byte)'F' && bytes[3] == (byte)'8')
+            {
+                return "gif";
+            }
+            return "unknown";
         }
 
         private async Task CaptureFailureAsync(MetaWebSessionCapture? capture, string reason)

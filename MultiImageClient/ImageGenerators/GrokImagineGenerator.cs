@@ -32,6 +32,7 @@ namespace MultiImageClient
         private readonly string _responseFormat;
         private readonly string _name;
         private readonly string _baseUrl;
+        private readonly int _imageCount;
 
         public ImageGeneratorApiType ApiType => _apiType;
 
@@ -58,7 +59,8 @@ namespace MultiImageClient
             string resolution = "1k",
             string responseFormat = "url",
             Settings? settings = null,
-            string? baseUrl = null)
+            string? baseUrl = null,
+            int imageCount = 1)
         {
             _settings = settings;
             if (apiType != ImageGeneratorApiType.GrokImagine && apiType != ImageGeneratorApiType.GrokImaginePro)
@@ -82,6 +84,7 @@ namespace MultiImageClient
             _resolution = resolution;
             _responseFormat = responseFormat;
             _baseUrl = _client.BaseUrl;
+            _imageCount = Math.Clamp(imageCount, 1, 10);
         }
 
         /// Short human-readable tier label used in the combined-grid panel
@@ -178,7 +181,7 @@ namespace MultiImageClient
         }
 
         // https://docs.x.ai/developers/models — flat per-image pricing.
-        public decimal GetCost() => _apiType == ImageGeneratorApiType.GrokImaginePro ? 0.07m : 0.02m;
+        public decimal GetCost() => (_apiType == ImageGeneratorApiType.GrokImaginePro ? 0.07m : 0.02m) * _imageCount;
 
         public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {
@@ -198,7 +201,7 @@ namespace MultiImageClient
                     Quality = string.IsNullOrWhiteSpace(_quality) ? null : _quality,
                     Resolution = string.IsNullOrWhiteSpace(_resolution) ? null : _resolution,
                     ResponseFormat = string.IsNullOrWhiteSpace(_responseFormat) ? null : _responseFormat,
-                    N = 1,
+                    N = _imageCount,
                 };
 
                 var pxHint = EstimatePixelsLabel();
@@ -253,6 +256,53 @@ namespace MultiImageClient
                     Source = "live",
                 });
 
+                // n > 1: ImageManager's Url path only saves one image, so
+                // gather every entry (url or b64) into base64 entries.
+                if (response.Data.Count > 1)
+                {
+                    var multiImages = new List<CreatedBase64Image>();
+                    string multiContentType = null;
+                    foreach (var item in response.Data)
+                    {
+                        if (item.RespectModeration == false) continue;
+                        if (!string.IsNullOrEmpty(item.Base64Json))
+                        {
+                            multiImages.Add(new CreatedBase64Image { bytesBase64 = item.Base64Json, newPrompt = prompt });
+                            multiContentType ??= item.MimeType;
+                        }
+                        else if (!string.IsNullOrEmpty(item.Url))
+                        {
+                            var download = await DownloadImageAsync(item.Url);
+                            multiContentType ??= download.ContentType ?? item.MimeType;
+                            var bytes = download.Bytes;
+                            multiImages.Add(new CreatedBase64Image { bytesBase64 = Convert.ToBase64String(bytes), newPrompt = prompt });
+                        }
+                    }
+                    if (multiImages.Count == 0)
+                    {
+                        _stats.GrokImageGenerationErrorCount++;
+                        return new TaskProcessResult
+                        {
+                            IsSuccess = false,
+                            ErrorMessage = BuildModerationAwareMessage("Grok returned multiple entries but none were usable.", response, first),
+                            PromptDetails = promptDetails,
+                            ImageGenerator = _apiType,
+                            ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
+                            CreateTotalMs = sw.ElapsedMilliseconds,
+                        };
+                    }
+                    return new TaskProcessResult
+                    {
+                        IsSuccess = true,
+                        Base64ImageDatas = multiImages,
+                        ContentType = multiContentType ?? "image/png",
+                        PromptDetails = promptDetails,
+                        ImageGenerator = _apiType,
+                        ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
+                        CreateTotalMs = sw.ElapsedMilliseconds,
+                    };
+                }
+
                 // URL path — typical response. We HEAD it to capture content-type
                 // so downstream conversion logic (webp/jpg -> png) kicks in.
                 if (!string.IsNullOrEmpty(first.Url))
@@ -262,8 +312,7 @@ namespace MultiImageClient
                     {
                         try
                         {
-                            var head = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, first.Url));
-                            contentType = head.Content.Headers.ContentType?.MediaType;
+                            contentType = await ProbeContentTypeAsync(first.Url);
                         }
                         catch (Exception ex)
                         {
@@ -350,6 +399,91 @@ namespace MultiImageClient
                 _semaphore.Release();
             }
         }
+
+        private async Task<string?> ProbeContentTypeAsync(string url)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            Exception? traceError = null;
+            try
+            {
+                response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, url));
+                if (!response.IsSuccessStatusCode)
+                {
+                    traceError = new HttpRequestException(
+                        $"Grok image content-type probe returned HTTP {(int)response.StatusCode}.");
+                }
+                return response.Content.Headers.ContentType?.MediaType;
+            }
+            catch (Exception ex)
+            {
+                traceError = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "xai-grok-api",
+                    "http",
+                    "HEAD",
+                    url,
+                    startedAtUtc,
+                    response: new
+                    {
+                        contentType = response?.Content.Headers.ContentType?.MediaType,
+                        contentLength = response?.Content.Headers.ContentLength,
+                    },
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError,
+                    metadata: new { operation = "content-type-probe" });
+                response?.Dispose();
+            }
+        }
+
+        private async Task<(byte[] Bytes, string? ContentType)> DownloadImageAsync(string url)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            byte[]? bytes = null;
+            Exception? traceError = null;
+            try
+            {
+                response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+                bytes = await response.Content.ReadAsByteArrayAsync();
+                return (bytes, response.Content.Headers.ContentType?.MediaType);
+            }
+            catch (Exception ex)
+            {
+                traceError = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "xai-grok-api",
+                    "http",
+                    "GET",
+                    url,
+                    startedAtUtc,
+                    response: BinaryResponseMetadata(response, bytes),
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError,
+                    metadata: new { operation = "image-download" });
+                response?.Dispose();
+            }
+        }
+
+        private static object BinaryResponseMetadata(HttpResponseMessage? response, byte[]? bytes)
+            => new
+            {
+                contentType = response?.Content.Headers.ContentType?.MediaType,
+                contentLength = response?.Content.Headers.ContentLength,
+                byteLength = bytes?.LongLength ?? 0,
+                sha256 = bytes == null
+                    ? ""
+                    : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(),
+            };
 
         private static string Truncate(string s, int max)
         {

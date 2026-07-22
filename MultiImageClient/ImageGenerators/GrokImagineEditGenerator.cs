@@ -217,15 +217,42 @@ namespace MultiImageClient
             if (!string.IsNullOrEmpty(first.MimeType)) return first.MimeType;
             if (string.IsNullOrEmpty(first.Url)) return "image/png";
 
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            Exception? traceError = null;
             try
             {
-                var head = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, first.Url));
-                return head.Content.Headers.ContentType?.MediaType ?? "image/png";
+                response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, first.Url));
+                if (!response.IsSuccessStatusCode)
+                {
+                    traceError = new HttpRequestException(
+                        $"Grok edit image content-type probe returned HTTP {(int)response.StatusCode}.");
+                }
+                return response.Content.Headers.ContentType?.MediaType ?? "image/png";
             }
             catch (Exception ex)
             {
+                traceError = ex;
                 Logger.Log($"\t(Grok Edit) HEAD on image url failed ({ex.Message}); defaulting content-type to image/png.");
                 return "image/png";
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "xai-grok-api",
+                    "http",
+                    "HEAD",
+                    first.Url,
+                    startedAtUtc,
+                    response: new
+                    {
+                        contentType = response?.Content.Headers.ContentType?.MediaType,
+                        contentLength = response?.Content.Headers.ContentLength,
+                    },
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError,
+                    metadata: new { operation = "content-type-probe" });
+                response?.Dispose();
             }
         }
 

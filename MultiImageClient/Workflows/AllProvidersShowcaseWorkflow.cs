@@ -109,7 +109,7 @@ namespace MultiImageClient
                 if (keyProblem != null)
                 {
                     Logger.Log($"All-providers {promptLabel} :: {GeneratorContactSheetRunner.Flatten(generator.GetGeneratorSpecPart())} :: SKIPPED ({keyProblem})");
-                    return new TaskProcessResult
+                    var skipped = new TaskProcessResult
                     {
                         IsSuccess = false,
                         ErrorMessage = keyProblem,
@@ -117,12 +117,20 @@ namespace MultiImageClient
                         ImageGenerator = generator.ApiType,
                         ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
                     };
+                    GenerationArchive.RecordSyntheticResult(
+                        generator,
+                        skipped,
+                        new GenerationArchiveContext { Source = "all-providers-skip" });
+                    return skipped;
                 }
 
                 try
                 {
-                    var result = await generator.ProcessPromptAsync(generator, pd);
-                    await imageManager.ProcessAndSaveAsync(result, generator);
+                    var result = await GenerationArchive.ExecuteAndSaveAsync(
+                        generator,
+                        pd,
+                        imageManager,
+                        new GenerationArchiveContext { Source = "all-providers" });
                     var label = result.IsSuccess ? "OK" : $"FAIL ({GeneratorContactSheetRunner.Trim(result.ErrorMessage ?? "", 160)})";
                     Logger.Log($"All-providers {promptLabel} :: {GeneratorContactSheetRunner.Flatten(generator.GetGeneratorSpecPart())} :: {label}");
                     return result;

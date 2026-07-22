@@ -31,8 +31,15 @@ namespace MultiImageClient
 
                 try
                 {
-                    var result = await generator.ProcessPromptAsync(generator, pd);
-                    await imageManager.ProcessAndSaveAsync(result, generator);
+                    var result = await GenerationArchive.ExecuteAndSaveAsync(
+                        generator,
+                        pd,
+                        imageManager,
+                        new GenerationArchiveContext
+                        {
+                            Source = runLabel,
+                            ExternalJobId = $"{runLabel}:{promptNumber}:{attemptNumber}",
+                        });
                     var status = result.IsSuccess ? "OK" : $"FAIL ({Trim(result.ErrorMessage ?? "", 160)})";
                     Logger.Log($"{runLabel} {generatorLabel} prompt {promptNumber}/{prompts.Count} attempt {attemptNumber} :: {status}");
                     return result;
@@ -173,7 +180,7 @@ namespace MultiImageClient
         {
             var pd = new PromptDetails();
             pd.ReplacePrompt(promptText, promptText, TransformationType.InitialPrompt);
-            return new TaskProcessResult
+            var result = new TaskProcessResult
             {
                 IsSuccess = false,
                 ErrorMessage = reason,
@@ -181,6 +188,11 @@ namespace MultiImageClient
                 ImageGenerator = generator.ApiType,
                 ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
             };
+            GenerationArchive.RecordSyntheticResult(
+                generator,
+                result,
+                new GenerationArchiveContext { Source = "contact-sheet-skip" });
+            return result;
         }
     }
 }

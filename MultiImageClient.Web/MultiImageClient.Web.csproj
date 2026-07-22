@@ -4,6 +4,10 @@
     <ProjectReference Include="..\MultiImageClient\MultiImageClient.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="SQLitePCLRaw.provider.dynamic_cdecl" Version="3.0.4" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net9.0-windows</TargetFramework>
     <Nullable>enable</Nullable>

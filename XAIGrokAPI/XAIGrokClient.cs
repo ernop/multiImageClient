@@ -1,5 +1,7 @@
 using Newtonsoft.Json;
 
+using MultiImageClient;
+
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -150,17 +152,52 @@ namespace XAIGrokAPIClient
         {
             using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/files/{fileId}/content");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
-
-            using var res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            if (!res.IsSuccessStatusCode)
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? res = null;
+            object? traceResponse = null;
+            Exception? error = null;
+            try
             {
-                var text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                throw new XAIGrokException(
-                    $"xAI /files/{fileId}/content returned {(int)res.StatusCode} {res.StatusCode}: {text}",
-                    (int)res.StatusCode,
-                    text);
+                res = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                if (!res.IsSuccessStatusCode)
+                {
+                    var text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    traceResponse = text;
+                    throw new XAIGrokException(
+                        $"xAI /files/{fileId}/content returned {(int)res.StatusCode} {res.StatusCode}: {text}",
+                        (int)res.StatusCode,
+                        text);
+                }
+                var bytes = await res.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+                traceResponse = new
+                {
+                    name = res.Content.Headers.ContentDisposition?.FileNameStar
+                        ?? res.Content.Headers.ContentDisposition?.FileName,
+                    content_type = res.Content.Headers.ContentType?.ToString(),
+                    content_length = bytes.LongLength,
+                };
+                return bytes;
             }
-            return await res.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+            catch (Exception ex)
+            {
+                error = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "xai-grok-api",
+                    "http-binary-response",
+                    "GET",
+                    $"{_baseUrl}/files/{fileId}/content",
+                    startedAtUtc,
+                    request: new { file_id = fileId },
+                    response: traceResponse,
+                    statusCode: res == null ? null : (int)res.StatusCode,
+                    error: error,
+                    metadata: new { operation = "download-file-content" });
+                res?.Dispose();
+            }
         }
 
         private async Task<TRes> GetAsync<TRes>(string path, CancellationToken ct)
@@ -169,25 +206,56 @@ namespace XAIGrokAPIClient
             using var req = new HttpRequestMessage(HttpMethod.Get, _baseUrl + path);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
             req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-            using var res = await _httpClient.SendAsync(req, ct).ConfigureAwait(false);
-            var text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-
-            if (!res.IsSuccessStatusCode)
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? res = null;
+            string? text = null;
+            Exception? error = null;
+            try
             {
-                throw new XAIGrokException(
-                    $"xAI {path} returned {(int)res.StatusCode} {res.StatusCode}: {text}",
-                    (int)res.StatusCode,
-                    text);
-            }
+                res = await _httpClient.SendAsync(req, ct).ConfigureAwait(false);
+                text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
-            var parsed = JsonConvert.DeserializeObject<TRes>(text)
-                ?? throw new XAIGrokException(
-                    $"xAI {path} returned an empty/unparseable body.",
-                    (int)res.StatusCode,
-                    text);
-            parsed.RawBody = text;
-            return parsed;
+                if (!res.IsSuccessStatusCode)
+                {
+                    throw new XAIGrokException(
+                        $"xAI {path} returned {(int)res.StatusCode} {res.StatusCode}: {text}",
+                        (int)res.StatusCode,
+                        text);
+                }
+
+                var parsed = JsonConvert.DeserializeObject<TRes>(text)
+                    ?? throw new XAIGrokException(
+                        $"xAI {path} returned an empty/unparseable body.",
+                        (int)res.StatusCode,
+                        text);
+                parsed.RawBody = text;
+                return parsed;
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "xai-grok-api",
+                    "http",
+                    "GET",
+                    _baseUrl + path,
+                    startedAtUtc,
+                    request: new { path },
+                    response: text,
+                    statusCode: res == null ? null : (int)res.StatusCode,
+                    error: error,
+                    metadata: new
+                    {
+                        operation = path.StartsWith("/videos/", StringComparison.OrdinalIgnoreCase)
+                            ? "poll-video"
+                            : "get-resource",
+                    });
+                res?.Dispose();
+            }
         }
 
         /// Convenience wrapper that does the whole start -> poll loop and only
@@ -270,25 +338,63 @@ namespace XAIGrokAPIClient
             };
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
             req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-            using var res = await _httpClient.SendAsync(req, ct).ConfigureAwait(false);
-            var text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-
-            if (!res.IsSuccessStatusCode)
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? res = null;
+            string? text = null;
+            Exception? error = null;
+            try
             {
-                throw new XAIGrokException(
-                    $"xAI {path} returned {(int)res.StatusCode} {res.StatusCode}: {text}",
-                    (int)res.StatusCode,
-                    text);
-            }
+                res = await _httpClient.SendAsync(req, ct).ConfigureAwait(false);
+                text = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
-            var parsed = JsonConvert.DeserializeObject<TRes>(text)
-                ?? throw new XAIGrokException(
-                    $"xAI {path} returned an empty/unparseable body.",
-                    (int)res.StatusCode,
-                    text);
-            parsed.RawBody = text;
-            return parsed;
+                if (!res.IsSuccessStatusCode)
+                {
+                    throw new XAIGrokException(
+                        $"xAI {path} returned {(int)res.StatusCode} {res.StatusCode}: {text}",
+                        (int)res.StatusCode,
+                        text);
+                }
+
+                var parsed = JsonConvert.DeserializeObject<TRes>(text)
+                    ?? throw new XAIGrokException(
+                        $"xAI {path} returned an empty/unparseable body.",
+                        (int)res.StatusCode,
+                        text);
+                parsed.RawBody = text;
+                return parsed;
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "xai-grok-api",
+                    "http",
+                    "POST",
+                    _baseUrl + path,
+                    startedAtUtc,
+                    request: json,
+                    response: text,
+                    statusCode: res == null ? null : (int)res.StatusCode,
+                    error: error,
+                    metadata: new { operation = GetPostOperation(path) });
+                res?.Dispose();
+            }
+        }
+
+        private static string GetPostOperation(string path)
+        {
+            return path switch
+            {
+                "/images/generations" => "generate-image",
+                "/images/edits" => "edit-image",
+                "/videos/generations" => "start-video-generation",
+                "/videos/extensions" => "start-video-extension",
+                _ => "post-resource",
+            };
         }
     }
 

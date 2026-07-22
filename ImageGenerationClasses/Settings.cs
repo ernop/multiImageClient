@@ -35,6 +35,21 @@ namespace MultiImageClient
         /// Required for --grok-web consumer-session generators.
         public string GrokWebCookiePath { get; set; } = "";
 
+        /// Optional Chrome/Chromium binary used for grok-web video generation's
+        /// browser-backed app-chat POST. Blank = Playwright's bundled Chromium.
+        public string GrokWebBrowserExecutablePath { get; set; } = "";
+
+        /// Show the grok-web video browser window. Normally false; useful when
+        /// diagnosing an expired session or provider-side page change.
+        public bool GrokWebBrowserHeaded { get; set; }
+
+        /// Timeout for grok-web's browser-backed video request.
+        public int GrokWebVideoTimeoutSeconds { get; set; } = 900;
+
+        /// How long to poll for a video after app-chat accepted the request but
+        /// returned no URL. Grok sometimes silently drops moderated jobs.
+        public int GrokWebVideoPollTimeoutSeconds { get; set; } = 180;
+
         /// Optional Netscape cookies.txt or raw Cookie-header export for
         /// meta.ai, injected into the --meta-web browser session as an
         /// alternative to the one-time interactive login. Needs the HttpOnly
@@ -81,6 +96,16 @@ namespace MultiImageClient
         /// save just image.jpg or image.png etc.
 
         public string ImageDownloadBaseFolder { get; set; }
+
+        /// Local SQLite audit archive for generation attempts, provider calls,
+        /// nested request/response fields, errors, and saved-asset paths.
+        /// Blank uses ImageDownloadBaseFolder/generation-history.sqlite3.
+        public string GenerationArchiveDbPath { get; set; } = "";
+
+        /// Structured generation archiving is on by default. Image/video bytes
+        /// remain on disk; the database stores metadata, hashes, and paths.
+        public bool EnableGenerationArchive { get; set; } = true;
+
         /// unused yet we always do RIGHT
         public string AnnotationSide { get; set; } = "bottom";
 
@@ -220,6 +245,7 @@ namespace MultiImageClient
         {
             ImageDownloadBaseFolder = ExpandPath(ImageDownloadBaseFolder);
             LogFilePath = ExpandPath(LogFilePath);
+            GenerationArchiveDbPath = ExpandPath(GenerationArchiveDbPath);
             FlatImageMirrorPath = ExpandPath(FlatImageMirrorPath);
             TypedPromptsAppendFile = ExpandPath(TypedPromptsAppendFile);
             LoadPromptsFrom = ExpandPath(LoadPromptsFrom);
@@ -228,6 +254,7 @@ namespace MultiImageClient
             ComfyUIFlux2KleinWorkflowPath = ExpandPath(ComfyUIFlux2KleinWorkflowPath);
             ComfyUIZImageWorkflowPath = ExpandPath(ComfyUIZImageWorkflowPath);
             GrokWebCookiePath = ExpandPath(GrokWebCookiePath);
+            GrokWebBrowserExecutablePath = ExpandPath(GrokWebBrowserExecutablePath);
             MetaWebCookiePath = ExpandPath(MetaWebCookiePath);
             MetaWebBrowserProfilePath = ExpandPath(MetaWebBrowserProfilePath);
             MetaWebBrowserExecutablePath = ExpandPath(MetaWebBrowserExecutablePath);

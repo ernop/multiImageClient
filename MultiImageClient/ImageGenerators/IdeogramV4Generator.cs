@@ -20,23 +20,29 @@ namespace IdeogramAPIClient
     {
         private readonly SemaphoreSlim _semaphore;
         private readonly IdeogramClient _client;
+        private readonly HttpClient _httpClient = new HttpClient();
         private readonly MultiClientRunStats _stats;
         private readonly string _resolution;
         private readonly IdeogramRenderingSpeed _renderingSpeed;
         private readonly string _name;
+        private readonly int _imageCount;
+        private readonly int? _seed;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.IdeogramV4;
 
         /// resolution — one of the documented v4 2K strings ("2048x2048",
         ///   "2304x1728", "2560x1440", ...), or null/empty to let the API
         ///   default to 2048x2048.
+        /// imageCount — num_images per call (API range 1-8).
         public IdeogramV4Generator(
             string apiKey,
             int maxConcurrency,
             string resolution,
             IdeogramRenderingSpeed renderingSpeed,
             MultiClientRunStats stats,
-            string name)
+            string name,
+            int imageCount = 1,
+            int? seed = null)
         {
             _client = new IdeogramClient(apiKey);
             _semaphore = new SemaphoreSlim(maxConcurrency);
@@ -44,6 +50,8 @@ namespace IdeogramAPIClient
             _resolution = resolution ?? string.Empty;
             _renderingSpeed = renderingSpeed;
             _name = string.IsNullOrEmpty(name) ? "" : name;
+            _imageCount = Math.Clamp(imageCount, 1, 8);
+            _seed = seed;
         }
 
         public string GetFilenamePart(PromptDetails pd)
@@ -90,6 +98,10 @@ namespace IdeogramAPIClient
             // Per-image pricing varies by rendering_speed; Ideogram's pricing
             // page lists v4 DEFAULT around $0.08 with FLASH/TURBO cheaper and
             // QUALITY pricier. Rough estimates until we wire exact rates.
+            // NOT multiplied by _imageCount: as of 2026-07-20 the v4 endpoint
+            // silently ignores num_images (HTTP 200, one image back), so one
+            // image is what actually gets billed. The multi-image handling in
+            // ProcessPromptAsync is ready for when Ideogram turns it on.
             return _renderingSpeed switch
             {
                 IdeogramRenderingSpeed.FLASH => 0.025m,
@@ -110,6 +122,8 @@ namespace IdeogramAPIClient
                 {
                     Resolution = string.IsNullOrWhiteSpace(_resolution) ? null : _resolution,
                     RenderingSpeed = _renderingSpeed,
+                    NumImages = _imageCount > 1 ? _imageCount : null,
+                    Seed = _seed,
                 };
 
                 var response = await _client.GenerateImageV4Async(request);
@@ -143,10 +157,37 @@ namespace IdeogramAPIClient
                     promptDetails.AddStep(imageObject.Prompt, TransformationType.IdeogramRewrite);
                 }
 
+                if (response.Data.Count == 1)
+                {
+                    return new TaskProcessResult
+                    {
+                        IsSuccess = true,
+                        Url = imageObject.Url,
+                        PromptDetails = promptDetails,
+                        ImageGenerator = ImageGeneratorApiType.IdeogramV4,
+                        ImageGeneratorDescription = generator.GetGeneratorSpecPart()
+                    };
+                }
+
+                // num_images > 1: ImageManager's Url path only saves one image,
+                // so download them all here and return base64 entries.
+                var images = new List<CreatedBase64Image>();
+                string contentType = null;
+                foreach (var item in response.Data)
+                {
+                    if (string.IsNullOrEmpty(item.Url)) continue;
+                    var download = await DownloadImageAsync(item.Url);
+                    contentType ??= download.ContentType;
+                    var bytes = download.Bytes;
+                    images.Add(new CreatedBase64Image { bytesBase64 = Convert.ToBase64String(bytes), newPrompt = "" });
+                }
+
                 return new TaskProcessResult
                 {
-                    IsSuccess = true,
-                    Url = imageObject.Url,
+                    IsSuccess = images.Count > 0,
+                    ErrorMessage = images.Count > 0 ? null : "No downloadable image URLs in multi-image response",
+                    Base64ImageDatas = images,
+                    ContentType = contentType,
                     PromptDetails = promptDetails,
                     ImageGenerator = ImageGeneratorApiType.IdeogramV4,
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart()
@@ -182,5 +223,50 @@ namespace IdeogramAPIClient
                 _semaphore.Release();
             }
         }
+
+        private async Task<(byte[] Bytes, string ContentType)> DownloadImageAsync(string url)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage response = null;
+            byte[] bytes = null;
+            Exception traceError = null;
+            try
+            {
+                response = await _httpClient.GetAsync(url);
+                response.EnsureSuccessStatusCode();
+                bytes = await response.Content.ReadAsByteArrayAsync();
+                return (bytes, response.Content.Headers.ContentType?.MediaType);
+            }
+            catch (Exception ex)
+            {
+                traceError = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "ideogram",
+                    "http",
+                    "GET",
+                    url,
+                    startedAtUtc,
+                    response: BinaryResponseMetadata(response, bytes),
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: traceError,
+                    metadata: new { operation = "image-download" });
+                response?.Dispose();
+            }
+        }
+
+        private static object BinaryResponseMetadata(HttpResponseMessage response, byte[] bytes)
+            => new
+            {
+                contentType = response?.Content.Headers.ContentType?.MediaType,
+                contentLength = response?.Content.Headers.ContentLength,
+                byteLength = bytes?.LongLength ?? 0,
+                sha256 = bytes == null
+                    ? ""
+                    : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(),
+            };
     }
 }

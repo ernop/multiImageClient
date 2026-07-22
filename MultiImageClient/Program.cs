@@ -49,6 +49,7 @@ namespace MultiImageClient
             // path so the error message matches the old behavior.
             var settingsFilePath = ResolveSettingsPath();
             var settings = Settings.LoadFromFile(settingsFilePath);
+            GenerationArchive.Initialize(settings);
 
             if (options.BackfillDl)
             {

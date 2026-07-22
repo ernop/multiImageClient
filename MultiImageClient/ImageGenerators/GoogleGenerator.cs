@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -186,6 +187,7 @@ namespace MultiImageClient
 
                 var json = JsonSerializer.Serialize(requestBody);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var traceRequest = SanitizeGeminiJson(json);
 
                 // Set API key in header as required by Gemini API
                 var request = new HttpRequestMessage(HttpMethod.Post, apiUrl)
@@ -194,9 +196,55 @@ namespace MultiImageClient
                 };
                 request.Headers.Add("x-goog-api-key", _apiKey);
 
+                var startedAtUtc = DateTime.UtcNow;
+                HttpResponseMessage response = null;
+                string responseContent = null;
+                try
+                {
+                    response = await _httpClient.SendAsync(request);
+                    responseContent = await response.Content.ReadAsStringAsync();
+                }
+                catch (Exception ex)
+                {
+                    GenerationTrace.RecordProviderCall(
+                        "google-gemini",
+                        "http",
+                        "POST",
+                        apiUrl,
+                        startedAtUtc,
+                        request: traceRequest,
+                        response: responseContent == null ? null : SanitizeGeminiJson(responseContent),
+                        statusCode: response == null ? null : (int)response.StatusCode,
+                        error: ex,
+                        metadata: new
+                        {
+                            model = ModelFor(_apiType),
+                            apiType = _apiType.ToString(),
+                            hasReference,
+                        });
+                    throw;
+                }
 
-                var response = await _httpClient.SendAsync(request);
-                var responseContent = await response.Content.ReadAsStringAsync();
+                var providerError = response.IsSuccessStatusCode
+                    ? null
+                    : new HttpRequestException(
+                        $"Google Gemini API error: {response.StatusCode} - {responseContent}");
+                GenerationTrace.RecordProviderCall(
+                    "google-gemini",
+                    "http",
+                    "POST",
+                    apiUrl,
+                    startedAtUtc,
+                    request: traceRequest,
+                    response: SanitizeGeminiJson(responseContent),
+                    statusCode: (int)response.StatusCode,
+                    error: providerError,
+                    metadata: new
+                    {
+                        model = ModelFor(_apiType),
+                        apiType = _apiType.ToString(),
+                        hasReference,
+                    });
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -336,6 +384,65 @@ namespace MultiImageClient
                 _googleSemaphore.Release();
             }
         }
+
+        private static JsonNode SanitizeGeminiJson(string json)
+        {
+            JsonNode node;
+            try
+            {
+                node = JsonNode.Parse(json);
+            }
+            catch (JsonException)
+            {
+                return JsonValue.Create(json);
+            }
+
+            ReplaceBinaryValues(node);
+            return node;
+        }
+
+        private static void ReplaceBinaryValues(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                foreach (var property in obj.ToList())
+                {
+                    if (property.Value is JsonValue value
+                        && IsBinaryField(property.Key)
+                        && value.TryGetValue<string>(out var encoded))
+                    {
+                        obj[property.Key] = new JsonObject
+                        {
+                            ["_redacted"] = "binary",
+                            ["encoding"] = "base64",
+                            ["encodedLength"] = encoded.Length,
+                            ["approximateByteLength"] = encoded.Length * 3L / 4L,
+                        };
+                    }
+                    else if (property.Value != null)
+                    {
+                        ReplaceBinaryValues(property.Value);
+                    }
+                }
+                return;
+            }
+
+            if (node is JsonArray array)
+            {
+                foreach (var item in array)
+                {
+                    if (item != null)
+                    {
+                        ReplaceBinaryValues(item);
+                    }
+                }
+            }
+        }
+
+        private static bool IsBinaryField(string name)
+            => name.Equals("data", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("base64", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("bytesBase64Encoded", StringComparison.OrdinalIgnoreCase);
 
         private static string MimeFromPath(string path)
         {

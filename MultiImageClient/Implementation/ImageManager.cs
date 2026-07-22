@@ -22,6 +22,7 @@ namespace MultiImageClient
         {
             _settings = settings;
             _stats = stats;
+            GenerationArchive.Initialize(settings);
         }
 
         public async Task<Dictionary<SaveType, string>> DoSaveAsync(int n, PromptDetails pd, string contentType, byte[] imageBytes, IImageGenerator generator, Settings settings)
@@ -98,6 +99,7 @@ namespace MultiImageClient
                     result.SetImageBytes(0, imageBytes);
                     var pd = result.PromptDetails.Copy();
                     var downloadResults = await DoSaveAsync(0, pd, result.ContentType, imageBytes, generator, _settings);
+                    result.SetSavedImagePaths(0, downloadResults);
                     await SaveJsonLogAsync(result, downloadResults);
                     return result;
                 }
@@ -122,7 +124,8 @@ namespace MultiImageClient
                                 Console.WriteLine("s");
                             }
                         }
-                            var downloadResults = await DoSaveAsync(ii, pd, result.ContentType, imageBytes, generator, _settings);
+                        var downloadResults = await DoSaveAsync(ii, pd, result.ContentType, imageBytes, generator, _settings);
+                        result.SetSavedImagePaths(ii, downloadResults);
                         ii++;
                         await SaveJsonLogAsync(result, downloadResults);
                     }
@@ -135,6 +138,7 @@ namespace MultiImageClient
             catch (Exception ex)
             {
                 Logger.Log($"\tAn error occurred while processing a task: {ex.Message}");
+                result.IsSuccess = false;
                 result.ErrorMessage = ex.Message;
                 return result;
             }

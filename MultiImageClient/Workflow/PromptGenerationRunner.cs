@@ -15,6 +15,7 @@ namespace MultiImageClient
         public PromptGenerationRunner(Settings settings)
         {
             _settings = settings;
+            GenerationArchive.Initialize(settings);
         }
 
         public async Task<ProviderGenerationResult> GenerateAsync(ProviderPreset preset, string prompt)
@@ -23,7 +24,20 @@ namespace MultiImageClient
             var keyProblem = ProviderKeyValidator.DescribeKeyProblem(generator.ApiType, _settings);
             if (keyProblem != null)
             {
-                return ProviderGenerationResult.Failed(preset, generator, prompt, keyProblem);
+                var skipped = new TaskProcessResult
+                {
+                    IsSuccess = false,
+                    ErrorMessage = keyProblem,
+                    PromptDetails = new PromptDetails(),
+                    ImageGenerator = generator.ApiType,
+                    ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
+                };
+                skipped.PromptDetails.ReplacePrompt(prompt, prompt, TransformationType.InitialPrompt);
+                GenerationArchive.RecordSyntheticResult(
+                    generator,
+                    skipped,
+                    new GenerationArchiveContext { Source = "workflow-web-skip" });
+                return ProviderGenerationResult.Failed(preset, generator, prompt, keyProblem, skipped);
             }
 
             var promptDetails = new PromptDetails();
@@ -31,7 +45,10 @@ namespace MultiImageClient
 
             try
             {
-                var result = await generator.ProcessPromptAsync(generator, promptDetails);
+                var result = await GenerationArchive.ExecuteAsync(
+                    generator,
+                    promptDetails,
+                    new GenerationArchiveContext { Source = "workflow-web" });
                 if (!result.IsSuccess)
                 {
                     return ProviderGenerationResult.Failed(preset, generator, prompt, result.ErrorMessage ?? "Generation failed.", result);

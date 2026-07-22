@@ -20,6 +20,8 @@ namespace MultiImageClient
 
     public class GptImageOneGenerator : IImageGenerator
     {
+        private const string GenerationsUrl = "https://api.openai.com/v1/images/generations";
+
         private SemaphoreSlim _gptImageOneSemaphore;
         static readonly HttpClient http = new HttpClient();
         private MultiClientRunStats _stats;
@@ -28,6 +30,7 @@ namespace MultiImageClient
         private OpenAIGPTImageOneQuality _quality;
         private string _name;
         private ImageGeneratorApiType _apiType;
+        private int _imageCount = 1;
 
         public ImageGeneratorApiType ApiType => _apiType;
 
@@ -58,7 +61,7 @@ namespace MultiImageClient
             }
         }
 
-        public GptImageOneGenerator(string apiKey, int maxConcurrency, string size, string moderation, OpenAIGPTImageOneQuality quality, ImageGeneratorApiType apiType, MultiClientRunStats stats, string name)
+        public GptImageOneGenerator(string apiKey, int maxConcurrency, string size, string moderation, OpenAIGPTImageOneQuality quality, ImageGeneratorApiType apiType, MultiClientRunStats stats, string name, int imageCount = 1)
         {
             if (apiType == ImageGeneratorApiType.GptImage1 || apiType == ImageGeneratorApiType.GptImage1Mini)
             {
@@ -78,7 +81,7 @@ namespace MultiImageClient
             _quality = quality;
             _name = string.IsNullOrEmpty(name) ? "" : name;
             _stats = stats;
-
+            _imageCount = Math.Clamp(imageCount, 1, 10);
         }
 
         public string GetFilenamePart(PromptDetails pd)
@@ -100,7 +103,9 @@ namespace MultiImageClient
             var res = $"gpt-1_{_name}{modpt}{sizept}{qualitypt}";
             return res;
         }
-        public decimal GetCost()
+        public decimal GetCost() => PerImageCost() * _imageCount;
+
+        private decimal PerImageCost()
         {
             if (_apiType == ImageGeneratorApiType.GptImage1)
             {
@@ -235,6 +240,11 @@ namespace MultiImageClient
         {
             await _gptImageOneSemaphore.WaitAsync();
             var sw = Stopwatch.StartNew();
+            object traceRequest = null;
+            object traceResponse = null;
+            DateTime? callStartedAtUtc = null;
+            int? traceStatusCode = null;
+            bool traceRecorded = false;
             try
             {
                 _stats.GptImageOneRequestCount++;
@@ -244,32 +254,51 @@ namespace MultiImageClient
                     prompt = promptDetails.Prompt,
                     moderation = _moderation,
                     quality = _quality.ToString(),
-                    n = 1,
+                    n = _imageCount,
                     size = _size,
                 };
+                traceRequest = body;
 
                 using var content = new StringContent(
                     JsonSerializer.Serialize(body),
                     Encoding.UTF8,
                     "application/json");
 
+                callStartedAtUtc = DateTime.UtcNow;
                 using var resp = await http.PostAsync(
-                    "https://api.openai.com/v1/images/generations",
+                    GenerationsUrl,
                     content);
+                traceStatusCode = (int)resp.StatusCode;
+                var json = await resp.Content.ReadAsStringAsync();
+                traceResponse = json;
+                var providerError = resp.IsSuccessStatusCode
+                    ? null
+                    : new HttpRequestException($"OpenAI API error: {(int)resp.StatusCode} {resp.ReasonPhrase}");
+
+                GenerationTrace.RecordProviderCall(
+                    "openai",
+                    "http",
+                    "POST",
+                    GenerationsUrl,
+                    callStartedAtUtc.Value,
+                    traceRequest,
+                    traceResponse,
+                    traceStatusCode,
+                    providerError,
+                    new { model = ModelId, operation = "generate-image" });
+                traceRecorded = true;
 
                 if (!resp.IsSuccessStatusCode)
                 {
                     Console.WriteLine($"\t\tXXXXXXXXXXXXX == Fail: {promptDetails.Prompt}");
 
-                    var json2 = await resp.Content.ReadAsStringAsync();
-                    using JsonDocument doc2 = JsonDocument.Parse(json2);
+                    using JsonDocument doc2 = JsonDocument.Parse(json);
                     string errorMessage = doc2.RootElement.GetProperty("error").GetProperty("message").GetString();
                     Console.WriteLine("errorMessage");
                     var cleanedMessage = errorMessage.Split("If you believe").First().Trim();
                     return new TaskProcessResult { IsSuccess = false, ErrorMessage = cleanedMessage, PromptDetails = promptDetails, ImageGenerator = _apiType, CreateTotalMs = sw.ElapsedMilliseconds, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
                 }
                 resp.EnsureSuccessStatusCode();
-                var json = await resp.Content.ReadAsStringAsync();
 
                 //await File.WriteAllTextAsync("response.json", json);
                 using var doc = JsonDocument.Parse(json);
@@ -299,6 +328,20 @@ namespace MultiImageClient
             }
             catch (Exception ex)
             {
+                if (callStartedAtUtc.HasValue && !traceRecorded)
+                {
+                    GenerationTrace.RecordProviderCall(
+                        "openai",
+                        "http",
+                        "POST",
+                        GenerationsUrl,
+                        callStartedAtUtc.Value,
+                        traceRequest,
+                        traceResponse,
+                        traceStatusCode,
+                        ex,
+                        new { model = ModelId, operation = "generate-image" });
+                }
                 Console.WriteLine($"\t\t{promptDetails.Prompt} Error: {ex.Message}");
                 return new TaskProcessResult
                 {
