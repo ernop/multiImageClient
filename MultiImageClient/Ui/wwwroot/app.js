@@ -6,8 +6,18 @@ let inputImageFile = null;   // File/Blob for the attached image
 let generators = [];         // from /api/config
 let videoSource = null;       // { jobId, generator, index, url }
 let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
+let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
+let imageViewerRenderVersion = 0;
+const imageViewerCache = new Map();
+const ImageViewerPreloadRadius = 12;
 
 const el = (id) => document.getElementById(id);
+const startsAtDefaultView = window.location.search === "" && window.location.hash === "";
+if (startsAtDefaultView) {
+  history.scrollRestoration = "manual";
+  window.scrollTo(0, 0);
+  window.addEventListener("pageshow", () => window.scrollTo(0, 0), { once: true });
+}
 const pasteZone = el("paste-zone");
 const preview = el("input-preview");
 const pasteHint = el("paste-hint");
@@ -24,6 +34,12 @@ const logsToggle = el("logs-toggle");
 const logsPanel = el("logs-panel");
 const logsLines = el("logs-lines");
 const logsConnection = el("logs-connection");
+const imageViewer = el("image-viewer");
+const imageViewerWindow = el("image-viewer-window");
+const imageViewerImage = el("image-viewer-image");
+const imageViewerPrompt = el("image-viewer-prompt");
+const imageViewerPosition = el("image-viewer-position");
+const imageViewerDimensions = el("image-viewer-dimensions");
 let logsEventSource = null;
 let lastLogSequence = 0;
 
@@ -420,7 +436,10 @@ function formatMediaTime(value) {
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function setExactPixelMode(player, enabled = !player.classList.contains("exact-pixels")) {
+function setExactPixelMode(
+  player,
+  enabled = !player.classList.contains("exact-pixels"),
+  shouldScrollIntoView = false) {
   const video = player.video;
   if (enabled && (!video.videoWidth || !video.videoHeight)) {
     video.addEventListener("loadedmetadata", () => setExactPixelMode(player, true), { once: true });
@@ -452,7 +471,9 @@ function setExactPixelMode(player, enabled = !player.classList.contains("exact-p
   if (cell) {
     cell.classList.toggle("exact-video-cell", !!cell.querySelector(".custom-video-player.exact-pixels"));
   }
-  if (enabled) player.scrollIntoView({ block: "nearest", inline: "nearest" });
+  if (enabled && shouldScrollIntoView) {
+    player.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
 }
 
 function createVideoPlayer(url) {
@@ -516,7 +537,7 @@ function createVideoPlayer(url) {
   exact.className = "video-exact";
   exact.textContent = "1:1 pixels";
   exact.setAttribute("aria-label", "Expand video to exact physical pixel size");
-  exact.addEventListener("click", () => setExactPixelMode(player));
+  exact.addEventListener("click", () => setExactPixelMode(player, undefined, true));
   controls.appendChild(exact);
 
   const fullscreen = document.createElement("button");
@@ -603,6 +624,289 @@ window.addEventListener("resize", () => {
     setExactPixelMode(player, true);
   }
 });
+
+// ---------- generated-image viewer ----------
+
+function getImageViewerPrompts() {
+  const prompts = [];
+  for (const card of jobsSection.querySelectorAll(".job")) {
+    const items = [...card.querySelectorAll('a[data-viewer-image="true"]')].map((link) => ({
+      jobId: card.id.substring("job-".length),
+      generator: link.dataset.generator,
+      imageIndex: Number(link.dataset.imageIndex),
+      generatorCount: Number(link.dataset.generatorCount),
+      url: link.href,
+    }));
+    if (items.length === 0) continue;
+    prompts.push({
+      jobId: card.id.substring("job-".length),
+      prompt: card.querySelector(".job-prompt").textContent,
+      items,
+    });
+  }
+  return prompts;
+}
+
+function locateImageViewerState(prompts) {
+  if (!imageViewerState) return null;
+  const promptIndex = prompts.findIndex((prompt) => prompt.jobId === imageViewerState.jobId);
+  if (promptIndex < 0) return null;
+  const itemIndex = prompts[promptIndex].items.findIndex((item) =>
+    item.generator === imageViewerState.generator &&
+    item.imageIndex === imageViewerState.imageIndex);
+  if (itemIndex < 0) return null;
+  return { promptIndex, itemIndex, prompt: prompts[promptIndex], item: prompts[promptIndex].items[itemIndex] };
+}
+
+function discardImageViewerCacheEntry(url, entry) {
+  if (imageViewerCache.get(url) !== entry) return;
+  imageViewerCache.delete(url);
+  if (entry.blobUrl) {
+    URL.revokeObjectURL(entry.blobUrl);
+    return;
+  }
+  entry.promise
+    .then(() => {
+      if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
+    })
+    .catch(() => {});
+}
+
+function loadImageViewerEntry(url) {
+  const existing = imageViewerCache.get(url);
+  if (existing) return existing;
+
+  const entry = { promise: null, blobUrl: null, image: null };
+  entry.promise = (async () => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`image preload returned HTTP ${response.status}`);
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/")) {
+      throw new Error(`image preload returned ${blob.type || "an unknown content type"}`);
+    }
+
+    entry.blobUrl = URL.createObjectURL(blob);
+    entry.image = new Image();
+    entry.image.src = entry.blobUrl;
+    await entry.image.decode();
+    return entry;
+  })().catch((error) => {
+    if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
+    if (imageViewerCache.get(url) === entry) imageViewerCache.delete(url);
+    throw error;
+  });
+  imageViewerCache.set(url, entry);
+  return entry;
+}
+
+function prepareImageViewerWindow(prompts, current) {
+  const allItems = prompts.flatMap((prompt) => prompt.items);
+  const currentIndex = allItems.findIndex((item) =>
+    item.jobId === current.item.jobId &&
+    item.generator === current.item.generator &&
+    item.imageIndex === current.item.imageIndex);
+  const first = Math.max(0, currentIndex - ImageViewerPreloadRadius);
+  const last = Math.min(allItems.length, currentIndex + ImageViewerPreloadRadius + 1);
+  const wantedUrls = new Set(allItems.slice(first, last).map((item) => item.url));
+
+  for (const [url, entry] of imageViewerCache) {
+    if (!wantedUrls.has(url)) discardImageViewerCacheEntry(url, entry);
+  }
+  for (const url of wantedUrls) {
+    loadImageViewerEntry(url).promise.catch(() => {});
+  }
+  return loadImageViewerEntry(current.item.url).promise;
+}
+
+function setImageViewerIdentity(item) {
+  imageViewerState = {
+    jobId: item.jobId,
+    generator: item.generator,
+    imageIndex: item.imageIndex,
+  };
+  renderImageViewer();
+}
+
+async function renderImageViewer() {
+  if (imageViewer.hidden || !imageViewerState) return;
+  const prompts = getImageViewerPrompts();
+  const current = locateImageViewerState(prompts);
+  if (!current) {
+    imageViewerImage.removeAttribute("src");
+    imageViewerPrompt.textContent = "";
+    imageViewerPosition.textContent = "selected image is no longer available";
+    imageViewerDimensions.textContent = "";
+    return;
+  }
+
+  const version = ++imageViewerRenderVersion;
+  imageViewerImage.removeAttribute("src");
+  imageViewerPrompt.textContent = current.prompt.prompt;
+  imageViewerPrompt.title = current.prompt.prompt;
+  imageViewerPosition.textContent =
+    `${current.item.generator} ${current.item.imageIndex + 1}/${current.item.generatorCount}` +
+    ` · prompt ${current.promptIndex + 1}/${prompts.length}`;
+  imageViewerDimensions.textContent = "loading…";
+
+  el("image-viewer-previous").disabled = current.itemIndex === 0;
+  el("image-viewer-next").disabled = current.itemIndex === current.prompt.items.length - 1;
+  el("image-viewer-newer").disabled = current.promptIndex === 0;
+  el("image-viewer-older").disabled = current.promptIndex === prompts.length - 1;
+
+  try {
+    const entry = await prepareImageViewerWindow(prompts, current);
+    if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
+    const latest = locateImageViewerState(getImageViewerPrompts());
+    if (!latest ||
+        latest.item.jobId !== current.item.jobId ||
+        latest.item.generator !== current.item.generator ||
+        latest.item.imageIndex !== current.item.imageIndex) return;
+    imageViewerImage.src = entry.blobUrl;
+    imageViewerImage.alt =
+      `${current.item.generator} image ${current.item.imageIndex + 1} of ${current.item.generatorCount}`;
+    imageViewerDimensions.textContent = `${entry.image.naturalWidth}×${entry.image.naturalHeight}`;
+  } catch (error) {
+    if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
+    imageViewerImage.removeAttribute("src");
+    imageViewerDimensions.textContent = `load failed: ${error}`;
+  }
+}
+
+function navigateImageViewerImage(delta) {
+  const prompts = getImageViewerPrompts();
+  const current = locateImageViewerState(prompts);
+  if (!current) return;
+  const targetIndex = Math.max(0, Math.min(current.prompt.items.length - 1, current.itemIndex + delta));
+  setImageViewerIdentity(current.prompt.items[targetIndex]);
+}
+
+function navigateImageViewerPrompt(delta) {
+  const prompts = getImageViewerPrompts();
+  const current = locateImageViewerState(prompts);
+  if (!current) return;
+  const targetPrompt = prompts[current.promptIndex + delta];
+  // At either boundary, keep the current prompt and return to its first image.
+  // Prompt navigation never guesses a different destination.
+  setImageViewerIdentity((targetPrompt || current.prompt).items[0]);
+}
+
+function sizeImageViewerWindow() {
+  const margin = 16;
+  const width = Math.max(300, Math.min(1400, window.innerWidth - margin * 2));
+  const height = Math.max(260, Math.min(950, window.innerHeight - margin * 2));
+  imageViewerWindow.style.width = `${width}px`;
+  imageViewerWindow.style.height = `${height}px`;
+  imageViewerWindow.style.left = `${Math.max(margin, (window.innerWidth - width) / 2)}px`;
+  imageViewerWindow.style.top = `${Math.max(margin, (window.innerHeight - height) / 2)}px`;
+  imageViewerWindow.dataset.sized = "true";
+}
+
+function clampImageViewerWindow() {
+  if (imageViewer.hidden) return;
+  const margin = 8;
+  const rect = imageViewerWindow.getBoundingClientRect();
+  const width = Math.min(rect.width, window.innerWidth - margin * 2);
+  const height = Math.min(rect.height, window.innerHeight - margin * 2);
+  const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+  const top = Math.max(margin, Math.min(rect.top, window.innerHeight - height - margin));
+  imageViewerWindow.style.width = `${width}px`;
+  imageViewerWindow.style.height = `${height}px`;
+  imageViewerWindow.style.left = `${left}px`;
+  imageViewerWindow.style.top = `${top}px`;
+}
+
+function openImageViewer(link) {
+  imageViewerState = {
+    jobId: link.dataset.jobId,
+    generator: link.dataset.generator,
+    imageIndex: Number(link.dataset.imageIndex),
+  };
+  imageViewer.hidden = false;
+  document.body.classList.add("image-viewer-open");
+  if (!imageViewerWindow.dataset.sized) sizeImageViewerWindow();
+  else clampImageViewerWindow();
+  renderImageViewer();
+  el("image-viewer-close").focus({ preventScroll: true });
+}
+
+function closeImageViewer() {
+  imageViewer.hidden = true;
+  document.body.classList.remove("image-viewer-open");
+  imageViewerState = null;
+  imageViewerRenderVersion++;
+  imageViewerImage.removeAttribute("src");
+  for (const [url, entry] of imageViewerCache) discardImageViewerCacheEntry(url, entry);
+}
+
+jobsSection.addEventListener("click", (event) => {
+  const link = event.target.closest('a[data-viewer-image="true"]');
+  if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  openImageViewer(link);
+});
+
+el("image-viewer-previous").addEventListener("click", () => navigateImageViewerImage(-1));
+el("image-viewer-next").addEventListener("click", () => navigateImageViewerImage(1));
+el("image-viewer-newer").addEventListener("click", () => navigateImageViewerPrompt(-1));
+el("image-viewer-older").addEventListener("click", () => navigateImageViewerPrompt(1));
+el("image-viewer-close").addEventListener("click", closeImageViewer);
+
+document.addEventListener("keydown", (event) => {
+  if (imageViewer.hidden) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeImageViewer();
+  } else if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    if (event.ctrlKey || event.metaKey) navigateImageViewerPrompt(-1);
+    else navigateImageViewerImage(-1);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    if (event.ctrlKey || event.metaKey) navigateImageViewerPrompt(1);
+    else navigateImageViewerImage(1);
+  }
+});
+
+const imageViewerResize = el("image-viewer-resize");
+let imageViewerResizeStart = null;
+imageViewerResize.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  const rect = imageViewerWindow.getBoundingClientRect();
+  imageViewerResizeStart = {
+    pointerX: event.clientX,
+    pointerY: event.clientY,
+    width: rect.width,
+    height: rect.height,
+    left: rect.left,
+    top: rect.top,
+  };
+  imageViewerResize.setPointerCapture(event.pointerId);
+});
+imageViewerResize.addEventListener("pointermove", (event) => {
+  if (!imageViewerResizeStart || !imageViewerResize.hasPointerCapture(event.pointerId)) return;
+  const minimumWidth = window.innerWidth <= 700 ? 300 : 440;
+  const minimumHeight = window.innerWidth <= 700 ? 260 : 320;
+  const maximumWidth = window.innerWidth - imageViewerResizeStart.left - 8;
+  const maximumHeight = window.innerHeight - imageViewerResizeStart.top - 8;
+  const width = Math.max(
+    Math.min(minimumWidth, maximumWidth),
+    Math.min(maximumWidth, imageViewerResizeStart.width + event.clientX - imageViewerResizeStart.pointerX));
+  const height = Math.max(
+    Math.min(minimumHeight, maximumHeight),
+    Math.min(maximumHeight, imageViewerResizeStart.height + event.clientY - imageViewerResizeStart.pointerY));
+  imageViewerWindow.style.width = `${width}px`;
+  imageViewerWindow.style.height = `${height}px`;
+});
+imageViewerResize.addEventListener("pointerup", (event) => {
+  imageViewerResizeStart = null;
+  if (imageViewerResize.hasPointerCapture(event.pointerId)) {
+    imageViewerResize.releasePointerCapture(event.pointerId);
+  }
+});
+imageViewerResize.addEventListener("pointercancel", () => {
+  imageViewerResizeStart = null;
+});
+window.addEventListener("resize", clampImageViewerWindow);
 
 // "~$0.25", "~$0.02", "~$1.5" — trailing zeros trimmed. Empty for 0/absent.
 function formatCost(v) {
@@ -833,6 +1137,11 @@ function watchJob(id) {
           const a = document.createElement("a");
           a.href = url;
           a.target = "_blank";
+          a.dataset.viewerImage = "true";
+          a.dataset.jobId = id;
+          a.dataset.generator = evt.gen;
+          a.dataset.imageIndex = String(imageIndex);
+          a.dataset.generatorCount = String(evt.images.length);
           const img = document.createElement("img");
           img.src = url;
           img.loading = "lazy";
@@ -853,6 +1162,7 @@ function watchJob(id) {
           result.appendChild(button);
           images.appendChild(result);
         }
+        if (!imageViewer.hidden) renderImageViewer();
       } else {
         cell.dataset.state = "error";
         // Keep the short generator name on failure (the long spec label just

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260720-inline-pixels">
+<link rel="stylesheet" href="style.css?v=20260722-image-viewer">
 </head>
 <body>
 <header>
@@ -77,6 +77,29 @@
   <section id="jobs"></section>
 </main>
 
+<div id="image-viewer" hidden role="dialog" aria-modal="true" aria-label="Generated image viewer">
+  <div id="image-viewer-window">
+    <div id="image-viewer-stage">
+      <img id="image-viewer-image" alt="Generated image">
+    </div>
+    <div id="image-viewer-status">
+      <div class="image-viewer-buttons">
+        <button id="image-viewer-newer" type="button" title="First image of the newer prompt (Ctrl+Left)">newer prompt</button>
+        <button id="image-viewer-previous" type="button" title="Previous image (Left Arrow)">previous</button>
+        <button id="image-viewer-next" type="button" title="Next image (Right Arrow)">next</button>
+        <button id="image-viewer-older" type="button" title="First image of the older prompt (Ctrl+Right)">older prompt</button>
+      </div>
+      <div id="image-viewer-metadata">
+        <span id="image-viewer-prompt"></span>
+        <span id="image-viewer-position"></span>
+        <span id="image-viewer-dimensions"></span>
+      </div>
+      <button id="image-viewer-close" type="button" title="Close viewer (Escape)">close</button>
+    </div>
+    <div id="image-viewer-resize" role="separator" aria-label="Resize image viewer" title="Drag to resize"></div>
+  </div>
+</div>
+
 <dialog id="video-dialog">
   <form method="dialog" id="video-form">
     <div class="video-dialog-head">
@@ -128,6 +151,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20260720-video-player-defaults"></script>
+<script src="app.js?v=20260722-top-load"></script>
 </body>
 </html>

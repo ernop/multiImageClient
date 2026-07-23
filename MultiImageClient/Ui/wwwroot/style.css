@@ -432,6 +432,118 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .grid-link { font-size: 12px; margin-top: 10px; }
 .grid-link a { color: var(--accent-dark); font-weight: 600; }
 
+/* ---------- generated-image viewer ---------- */
+
+body.image-viewer-open { overflow: hidden; }
+#image-viewer {
+  position: fixed;
+  z-index: 2000;
+  inset: 0;
+  background: rgba(20, 22, 31, 0.72);
+}
+#image-viewer[hidden] { display: none; }
+#image-viewer-window {
+  position: absolute;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 440px;
+  min-height: 320px;
+  overflow: hidden;
+  background: var(--card);
+  border: 2px solid var(--accent);
+  border-radius: 9px;
+  box-shadow: 0 12px 42px rgba(20, 22, 31, 0.42);
+}
+#image-viewer-stage {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #fff;
+}
+#image-viewer-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+#image-viewer-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 45px;
+  padding: 7px 24px 7px 9px;
+  color: #fff;
+  background: var(--accent-dark);
+  border-top: 1px solid var(--accent);
+}
+.image-viewer-buttons {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+#image-viewer-status button {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  color: var(--accent-dark);
+  background: #fff;
+  border: 1px solid #fff;
+  border-radius: 5px;
+  font: 700 11px/1.25 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+#image-viewer-status button:hover,
+#image-viewer-status button:focus-visible {
+  color: #fff;
+  background: var(--accent);
+  outline: 1px solid #fff;
+}
+#image-viewer-status button:disabled {
+  color: var(--ink);
+  background: #eef0fa;
+  border-color: #eef0fa;
+  cursor: default;
+  opacity: 0.62;
+}
+#image-viewer-metadata {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
+  color: #fff;
+  font-size: 12px;
+}
+#image-viewer-prompt {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#image-viewer-position,
+#image-viewer-dimensions {
+  flex: 0 0 auto;
+  color: #fff;
+  font: 700 11px/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: nowrap;
+}
+#image-viewer-close { margin-left: auto; }
+#image-viewer-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
 /* ---------- image-to-video dialog ---------- */
 
 #video-dialog {
@@ -530,4 +642,10 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   #video-source-preview { max-height: 260px; }
   .video-resolution { display: none; }
   .video-volume { flex-basis: 55px; width: 55px; }
+  #image-viewer-window { min-width: 300px; min-height: 260px; }
+  #image-viewer-status { align-items: stretch; flex-wrap: wrap; gap: 6px; }
+  .image-viewer-buttons { order: 2; }
+  #image-viewer-metadata { flex-basis: calc(100% - 58px); }
+  #image-viewer-prompt { display: none; }
+  #image-viewer-close { order: 1; }
 }
