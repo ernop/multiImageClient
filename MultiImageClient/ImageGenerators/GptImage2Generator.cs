@@ -57,10 +57,9 @@ namespace MultiImageClient
         private readonly string[] _sizePool;
         private readonly OpenAIGPTImageOneQuality[] _qualityPool;
 
-        // How many images to request per call (`n` in the request body). 1 is
-        // the common case; >1 is useful for logo/variant exploration (cookbook
-        // 4.5) where a single round-trip returns multiple candidates. The
-        // streaming handler collects all N images and returns them as separate
+        // How many images to request per call (`n` in the request body). The
+        // API only permits streaming with n=1, so n=1 uses SSE partials while
+        // n>1 uses the normal JSON response. Both paths return separate
         // CreatedBase64Image entries so ImageManager's per-index save path
         // ("...img0", "...img1", ...) produces distinct files automatically.
         private readonly int _imageCount;
@@ -205,6 +204,9 @@ namespace MultiImageClient
             var traceEvents = new List<object>();
             var traceEventTypes = new Dictionary<string, int>(StringComparer.Ordinal);
             int traceDoneCount = 0;
+            var useStreaming = _imageCount == 1;
+            var traceTransport = useStreaming ? "http-sse" : "http";
+            var traceOperation = useStreaming ? "generate-image-stream" : "generate-image";
 
             if (promptDetails != null)
             {
@@ -224,9 +226,12 @@ namespace MultiImageClient
                     ["quality"] = chosenQuality.ToString(),
                     ["n"] = _imageCount,
                     ["size"] = chosenSize,
-                    ["stream"] = true,
-                    ["partial_images"] = PartialImageCount,
                 };
+                if (useStreaming)
+                {
+                    bodyDict["stream"] = true;
+                    bodyDict["partial_images"] = PartialImageCount;
+                }
                 if (!string.IsNullOrEmpty(_moderation))
                 {
                     bodyDict["moderation"] = _moderation;
@@ -238,7 +243,8 @@ namespace MultiImageClient
 
                 using var req = new HttpRequestMessage(HttpMethod.Post, GenerationsUrl);
                 req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
-                req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+                req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(
+                    useStreaming ? "text/event-stream" : "application/json"));
 
                 using var heartbeatCts = new CancellationTokenSource();
                 var heartbeatTask = RunHeartbeatAsync(genTag, sw, heartbeatCts.Token);
@@ -246,7 +252,11 @@ namespace MultiImageClient
                 try
                 {
                     callStartedAtUtc = DateTime.UtcNow;
-                    using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                    using var resp = await _http.SendAsync(
+                        req,
+                        useStreaming
+                            ? HttpCompletionOption.ResponseHeadersRead
+                            : HttpCompletionOption.ResponseContentRead);
                     traceStatusCode = (int)resp.StatusCode;
                     Logger.Log($"    [{genTag}] HTTP {(int)resp.StatusCode} {resp.ReasonPhrase} (HTTP/{resp.Version})");
 
@@ -259,7 +269,7 @@ namespace MultiImageClient
                             $"OpenAI API error: {(int)resp.StatusCode} {resp.ReasonPhrase}");
                         GenerationTrace.RecordProviderCall(
                             "openai",
-                            "http-sse",
+                            traceTransport,
                             "POST",
                             GenerationsUrl,
                             callStartedAtUtc.Value,
@@ -267,7 +277,7 @@ namespace MultiImageClient
                             traceResponse,
                             traceStatusCode,
                             providerError,
-                            new { model = ModelId, operation = "generate-image-stream" });
+                            new { model = ModelId, operation = traceOperation });
                         traceRecorded = true;
                         string errorMessage;
                         try
@@ -292,17 +302,116 @@ namespace MultiImageClient
                         };
                     }
 
+                    if (!useStreaming)
+                    {
+                        var responseBody = await resp.Content.ReadAsStringAsync();
+                        traceResponse = new { encodedLength = responseBody.Length };
+                        var images = new List<CreatedBase64Image>();
+                        string validationError = null;
+
+                        using (var responseDocument = JsonDocument.Parse(responseBody))
+                        {
+                            var root = responseDocument.RootElement;
+                            traceResponse = SummarizeSseValue(root);
+                            if (!root.TryGetProperty("data", out var data)
+                                || data.ValueKind != JsonValueKind.Array)
+                            {
+                                validationError = "gpt-image-2 response did not contain a data array";
+                            }
+                            else if (data.GetArrayLength() != _imageCount)
+                            {
+                                validationError =
+                                    $"gpt-image-2 returned {data.GetArrayLength()} image(s) for requested n={_imageCount}";
+                            }
+                            else
+                            {
+                                int imageIndex = 0;
+                                foreach (var item in data.EnumerateArray())
+                                {
+                                    var b64 = item.TryGetProperty("b64_json", out var b64Element)
+                                        && b64Element.ValueKind == JsonValueKind.String
+                                            ? b64Element.GetString()
+                                            : null;
+                                    if (string.IsNullOrEmpty(b64))
+                                    {
+                                        validationError =
+                                            $"gpt-image-2 response image {imageIndex} did not contain b64_json";
+                                        break;
+                                    }
+                                    var revisedPrompt = item.TryGetProperty("revised_prompt", out var revisedElement)
+                                        && revisedElement.ValueKind == JsonValueKind.String
+                                            ? revisedElement.GetString()
+                                            : null;
+                                    images.Add(new CreatedBase64Image
+                                    {
+                                        bytesBase64 = b64,
+                                        newPrompt = revisedPrompt ?? "",
+                                    });
+                                    imageIndex++;
+                                }
+                            }
+                        }
+
+                        if (!string.IsNullOrEmpty(validationError))
+                        {
+                            _stats.GptImage2RefusedCount++;
+                            var validationException = new InvalidOperationException(validationError);
+                            GenerationTrace.RecordProviderCall(
+                                "openai",
+                                traceTransport,
+                                "POST",
+                                GenerationsUrl,
+                                callStartedAtUtc.Value,
+                                traceRequest,
+                                traceResponse,
+                                traceStatusCode,
+                                validationException,
+                                new { model = ModelId, operation = traceOperation });
+                            traceRecorded = true;
+                            Logger.Log($"    [{genTag}] {validationError} after {sw.ElapsedMilliseconds} ms");
+                            return new TaskProcessResult
+                            {
+                                IsSuccess = false,
+                                ErrorMessage = validationError,
+                                PromptDetails = promptDetails,
+                                ImageGenerator = ImageGeneratorApiType.GptImage2,
+                                CreateTotalMs = sw.ElapsedMilliseconds,
+                                ImageGeneratorDescription = genTag,
+                            };
+                        }
+
+                        GenerationTrace.RecordProviderCall(
+                            "openai",
+                            traceTransport,
+                            "POST",
+                            GenerationsUrl,
+                            callStartedAtUtc.Value,
+                            traceRequest,
+                            traceResponse,
+                            traceStatusCode,
+                            metadata: new { model = ModelId, operation = traceOperation });
+                        traceRecorded = true;
+                        Logger.Log(
+                            $"    [{genTag}] completed non-streaming n={_imageCount} "
+                            + $"at {sw.ElapsedMilliseconds} ms");
+                        return new TaskProcessResult
+                        {
+                            IsSuccess = true,
+                            Base64ImageDatas = images,
+                            ContentType = "image/png",
+                            Url = "",
+                            ErrorMessage = "",
+                            PromptDetails = promptDetails,
+                            ImageGeneratorDescription = genTag,
+                            ImageGenerator = ImageGeneratorApiType.GptImage2,
+                            CreateTotalMs = sw.ElapsedMilliseconds,
+                        };
+                    }
+
                     Logger.Log($"    [{genTag}] connected, streaming (partial_images={PartialImageCount}, n={_imageCount})");
 
-                    // When n>1 the server streams events for each image in
-                    // parallel; each event can carry an `image_index` (or
-                    // `output_index` on some event shapes) distinguishing
-                    // which of the N images it belongs to. Collect completed
-                    // images into a SortedDictionary keyed by that index so
-                    // the final list comes back in a stable 0..N-1 order.
-                    // With n=1 an omitted index is unambiguous and means 0.
-                    // With n>1 a missing, duplicate, or out-of-range index is
-                    // a protocol failure; never guess which image it belongs to.
+                    // Streaming is restricted to n=1, where an omitted image
+                    // index is unambiguous and maps to output zero.
                     var finalImages = new SortedDictionary<int, (string b64, string revisedPrompt)>();
                     string streamErrorMessage = null;
                     long lastEventMs = 0;
@@ -422,7 +531,7 @@ namespace MultiImageClient
                             streamErrorMessage);
                         GenerationTrace.RecordProviderCall(
                             "openai",
-                            "http-sse",
+                            traceTransport,
                             "POST",
                             GenerationsUrl,
                             callStartedAtUtc.Value,
@@ -430,7 +539,7 @@ namespace MultiImageClient
                             traceResponse,
                             traceStatusCode,
                             traceError,
-                            new { model = ModelId, operation = "generate-image-stream" });
+                            new { model = ModelId, operation = traceOperation });
                         traceRecorded = true;
                         Logger.Log($"    [{genTag}] {msg} after {sw.ElapsedMilliseconds} ms");
                         return new TaskProcessResult
@@ -456,14 +565,14 @@ namespace MultiImageClient
                         streamErrorMessage);
                     GenerationTrace.RecordProviderCall(
                         "openai",
-                        "http-sse",
+                        traceTransport,
                         "POST",
                         GenerationsUrl,
                         callStartedAtUtc.Value,
                         traceRequest,
                         traceResponse,
                         traceStatusCode,
-                        metadata: new { model = ModelId, operation = "generate-image-stream" });
+                        metadata: new { model = ModelId, operation = traceOperation });
                     traceRecorded = true;
 
                     return new TaskProcessResult
@@ -488,15 +597,17 @@ namespace MultiImageClient
             {
                 if (callStartedAtUtc.HasValue && !traceRecorded)
                 {
-                    traceResponse ??= BuildSseTraceResponse(
-                        traceEvents,
-                        traceEventTypes,
-                        traceDoneCount,
-                        completedImageCount: null,
-                        streamError: null);
+                    traceResponse ??= useStreaming
+                        ? BuildSseTraceResponse(
+                            traceEvents,
+                            traceEventTypes,
+                            traceDoneCount,
+                            completedImageCount: null,
+                            streamError: null)
+                        : new { responseParsingFailed = true };
                     GenerationTrace.RecordProviderCall(
                         "openai",
-                        "http-sse",
+                        traceTransport,
                         "POST",
                         GenerationsUrl,
                         callStartedAtUtc.Value,
@@ -504,7 +615,7 @@ namespace MultiImageClient
                         traceResponse,
                         traceStatusCode,
                         ex,
-                        new { model = ModelId, operation = "generate-image-stream" });
+                        new { model = ModelId, operation = traceOperation });
                 }
                 Logger.Log($"    [{genTag}] EXCEPTION after {sw.ElapsedMilliseconds} ms: {ex.Message}");
                 return new TaskProcessResult
@@ -595,11 +706,9 @@ namespace MultiImageClient
                 || normalized.Contains("bytes");
         }
 
-        // When n>1 the server distinguishes per-image events by one of a
-        // couple possible fields. Try the documented "image_index" first,
-        // then fall back to "output_index" which some streaming builds emit
-        // instead. Returns -1 when neither is present (n=1 case; caller
-        // assigns insertion order).
+        // Streaming events may identify their output with "image_index" or
+        // "output_index". Streaming is currently n=1 only, so -1 means the
+        // provider omitted the unambiguous index and the caller maps it to 0.
         private static int ExtractImageIndex(JsonElement root)
         {
             if (root.TryGetProperty("image_index", out var ii) && ii.ValueKind == JsonValueKind.Number)
@@ -805,9 +914,8 @@ namespace MultiImageClient
         // a partial save failure never interrupts the generation.
         //
         // `partialIdx` is the partial-within-image index (0..PartialImageCount-1,
-        // from the `partial_image_index` event field). `imageIdx` is which of
-        // the N images this partial belongs to when n>1; pass -1 when n=1 and
-        // the server didn't send an image index.
+        // from the `partial_image_index` event field). `imageIdx` is the
+        // provider's output index when present, or -1 when omitted.
         private void TryPublishPartial(string b64, int partialIdx, int imageIdx, PromptDetails pd, string genTag)
         {
             try
@@ -826,13 +934,11 @@ namespace MultiImageClient
                 var promptPart = FilenameGenerator.TruncatePrompt(pd?.Prompt ?? "partial", 60);
                 // Zero-padded timestamp keeps files sorted by arrival order
                 // across runs; partial index disambiguates within a single call.
-                // When n>1, image index distinguishes per-output streams.
                 var ts = DateTime.Now.ToString("HHmmss_fff");
-                var imgPart = imageIdx >= 0 && _imageCount > 1 ? $"_img{imageIdx}" : "";
-                var file = $"{ts}_partial{Math.Max(0, partialIdx):D2}{imgPart}_{promptPart}.png";
+                var file = $"{ts}_partial{Math.Max(0, partialIdx):D2}_{promptPart}.png";
                 var full = Path.Combine(folder, file);
                 File.WriteAllBytes(full, bytes);
-                Logger.Log($"    [{genTag}] saved partial #{partialIdx}{imgPart} -> {full}");
+                Logger.Log($"    [{genTag}] saved partial #{partialIdx} -> {full}");
 
                 if (_popUpPartials)
                 {
