@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260722-image-viewer">
+<link rel="stylesheet" href="style.css?v=20260726-viewer-commands">
 </head>
 <body>
 <header>
@@ -49,7 +49,7 @@
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
 
       <div id="opts-row">
-        <label>shape <select id="opt-shape"></select></label>
+        <label>output AR <select id="opt-shape"></select></label>
         <label>detail <select id="opt-detail"></select></label>
         <label>quality
           <select id="opt-quality">
@@ -62,7 +62,7 @@
             <option selected>low</option><option>auto</option>
           </select>
         </label>
-        <span class="opts-help" tabindex="0" title="Which options apply where (unsupported options are simply ignored — the target still generates with its own defaults):&#10;&#10;&#8226; shape maps to each provider's native size/aspect controls: exact WxH for gpt-image and BFL, aspect ratios for Grok, Recraft, Ideogram, and Google. grok-api auto is truly prompt-aware. grok-web auto omits the ratio field but its consumer endpoint currently defaults to 2:3 regardless of prompt, so choose an explicit shape when ratio matters. Grok edits with auto inherit the source image's shape.&#10;&#8226; detail sets the resolution tier where one exists: gpt-image-2, grok-api (1k/2k), BFL (~1/~4 MP), Google (1K/2K/4K). Ideogram is always 2K-native; Recraft and gpt-image-1 are ~1K.&#10;&#8226; quality and moderation: OpenAI image models only.&#10;&#8226; n: OpenAI models and grok-api up to 10, Recraft up to 6, Ideogram up to 8 on the V3 image path (the v4 text endpoint currently ignores it). BFL/Google return one; grok-web requests up to 4 in side-by-side mode; meta-web decides itself.&#10;&#8226; Input images: gpt-image-2 and grok-api do true edits; Recraft runs image-to-image; Ideogram, BFL, and Google use the pasted image as a style/reference guide; grok-web edit works via the imagine WebSocket. Targets that can't take an image disable when one is attached.">?</span>
+        <span class="opts-help" tabindex="0" title="Which options apply where:&#10;&#10;&#8226; output AR: without an input image, auto lets the model choose. Attach an image and that same default becomes match input image. gpt-image-2 and BFL derive source-matching dimensions; Grok, Ideogram, and Google choose the closest ratio their APIs accept. Any explicit dropdown choice overrides matching where the endpoint supports an AR control. Recraft image-to-image inherently follows the source and exposes no size override, so Recraft disables for image jobs when an explicit AR is selected.&#10;&#8226; detail sets the resolution tier where one exists: gpt-image-2, grok-api (1k/2k), BFL (~1/~4 MP), Google (1K/2K/4K). Ideogram is always 2K-native; Recraft and gpt-image-1 are ~1K.&#10;&#8226; quality and moderation: OpenAI image models only.&#10;&#8226; n: OpenAI models and grok-api up to 10, Recraft up to 6, Ideogram up to 8 on the V3 image path (the v4 text endpoint currently ignores it). BFL/Google return one; grok-web requests up to 4 in side-by-side mode; meta-web decides itself.&#10;&#8226; Input images: gpt-image-2 and grok-api do true edits; Recraft runs image-to-image; Ideogram, BFL, and Google use the pasted image as a style/reference guide; grok-web edit works via the imagine WebSocket. Targets that can't honor the attached image or explicit AR disable before submission.">?</span>
       </div>
 
       <div id="send-row">
@@ -81,13 +81,21 @@
   <div id="image-viewer-window">
     <div id="image-viewer-stage">
       <img id="image-viewer-image" alt="Generated image">
+      <div id="image-viewer-help" hidden>
+        <div id="image-viewer-help-panel">
+          <h2>Keyboard shortcuts</h2>
+          <ul id="image-viewer-help-list"></ul>
+          <p>Any key dismisses this list.</p>
+        </div>
+      </div>
     </div>
     <div id="image-viewer-status">
       <div class="image-viewer-buttons">
         <button id="image-viewer-newer" type="button" title="First image of the newer prompt (Ctrl+Left)">newer prompt</button>
-        <button id="image-viewer-previous" type="button" title="Previous image (Left Arrow)">previous</button>
-        <button id="image-viewer-next" type="button" title="Next image (Right Arrow)">next</button>
+        <button id="image-viewer-previous" type="button" title="Previous image across gallery (Left)">previous</button>
+        <button id="image-viewer-next" type="button" title="Next image across gallery (Right)">next</button>
         <button id="image-viewer-older" type="button" title="First image of the older prompt (Ctrl+Right)">older prompt</button>
+        <button id="image-viewer-help-toggle" type="button" title="Keyboard shortcuts (?)">?</button>
       </div>
       <div id="image-viewer-metadata">
         <span id="image-viewer-prompt"></span>
@@ -151,6 +159,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20260722-top-load"></script>
+<script src="app.js?v=20260726-match-input-ar"></script>
 </body>
 </html>

@@ -8,8 +8,17 @@ let videoSource = null;       // { jobId, generator, index, url }
 let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
 let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
 let imageViewerRenderVersion = 0;
+let imageViewerHelpOpen = false;
+let imageViewerFocusBeforeOpen = null;
+let imageViewerWheelAccumulator = 0;
+let imageViewerWheelResetTimer = null;
+let imageViewerPreloadActive = 0;
+const imageViewerPreloadWaiters = [];
 const imageViewerCache = new Map();
 const ImageViewerPreloadRadius = 12;
+const ImageViewerPreloadConcurrency = 4;
+const ImageViewerPageJumpSize = 5;
+const ImageViewerWheelThreshold = 80;
 
 const el = (id) => document.getElementById(id);
 const startsAtDefaultView = window.location.search === "" && window.location.hash === "";
@@ -37,6 +46,8 @@ const logsConnection = el("logs-connection");
 const imageViewer = el("image-viewer");
 const imageViewerWindow = el("image-viewer-window");
 const imageViewerImage = el("image-viewer-image");
+const imageViewerHelp = el("image-viewer-help");
+const imageViewerHelpList = el("image-viewer-help-list");
 const imageViewerPrompt = el("image-viewer-prompt");
 const imageViewerPosition = el("image-viewer-position");
 const imageViewerDimensions = el("image-viewer-dimensions");
@@ -177,6 +188,8 @@ async function loadConfig() {
       const opt = document.createElement("option");
       opt.value = e.key;
       opt.textContent = e.label;
+      opt.dataset.defaultLabel = e.label;
+      if (e.inputLabel) opt.dataset.inputLabel = e.inputLabel;
       selectEl.appendChild(opt);
     }
   };
@@ -188,6 +201,7 @@ async function loadConfig() {
   el("opt-quality").value = cfg.defaults.quality;
   el("opt-moderation").value = cfg.defaults.moderation;
   el("opt-n").value = cfg.defaults.n;
+  updateShapeOptionLabel();
 
   gensRow.innerHTML = "";
   for (const g of generators) {
@@ -202,6 +216,7 @@ async function loadConfig() {
     cb.value = g.key;
     cb.dataset.available = String(g.available);
     cb.dataset.imageCapable = String(!!g.imageCapable);
+    cb.dataset.imageAspectOverride = String(!!g.imageAspectOverride);
     cb.disabled = !g.available;
     cb.checked = g.available && g.defaultOn;
     cb.addEventListener("change", () => {
@@ -222,7 +237,12 @@ function updateGeneratorCompatibility() {
   // source of truth for which targets accept an input image.
   for (const cb of gensRow.querySelectorAll("input")) {
     const providerAvailable = cb.dataset.available === "true";
-    const incompatible = !!inputImageFile && cb.dataset.imageCapable !== "true";
+    const imageIncompatible = !!inputImageFile && cb.dataset.imageCapable !== "true";
+    const aspectIncompatible =
+      !!inputImageFile &&
+      el("opt-shape").value !== "auto" &&
+      cb.dataset.imageAspectOverride !== "true";
+    const incompatible = imageIncompatible || aspectIncompatible;
     cb.disabled = !providerAvailable || incompatible;
     if (incompatible)
     {
@@ -231,9 +251,13 @@ function updateGeneratorCompatibility() {
     const label = cb.closest(".gen-toggle");
     label.classList.toggle("unavailable", cb.disabled);
     label.classList.toggle("checked", cb.checked);
-    if (incompatible)
+    if (imageIncompatible)
     {
       label.title = `${genLabel(cb.value)} is text-to-image only; remove the input image to use it`;
+    }
+    else if (aspectIncompatible)
+    {
+      label.title = `${genLabel(cb.value)} cannot override output AR with an input image; choose match input image to use it`;
     }
     else
     {
@@ -244,6 +268,18 @@ function updateGeneratorCompatibility() {
     }
   }
   updateGeneratorCount();
+}
+
+function updateShapeOptionLabel() {
+  const shapeSelect = el("opt-shape");
+  const autoOption = shapeSelect.querySelector('option[value="auto"]');
+  if (!autoOption) return;
+  autoOption.textContent = inputImageFile && autoOption.dataset.inputLabel
+    ? autoOption.dataset.inputLabel
+    : autoOption.dataset.defaultLabel;
+  shapeSelect.title = inputImageFile
+    ? "Default: match the attached image's aspect ratio using each model's closest supported output geometry. Choose another option to override it."
+    : "Default: let each model choose its output aspect ratio.";
 }
 
 function updateGeneratorCount() {
@@ -263,6 +299,7 @@ function setAllGenerators(mode) {
 el("gens-enable-all").addEventListener("click", () => setAllGenerators("enable"));
 el("gens-disable-all").addEventListener("click", () => setAllGenerators("disable"));
 el("gens-toggle-all").addEventListener("click", () => setAllGenerators("toggle"));
+el("opt-shape").addEventListener("change", updateGeneratorCompatibility);
 
 // ---------- image attach: paste / drop / browse ----------
 
@@ -274,6 +311,7 @@ function setImage(fileOrBlob) {
   clearBtn.hidden = false;
   pasteHint.hidden = true;
   pasteZone.classList.add("has-image");
+  updateShapeOptionLabel();
   updateGeneratorCompatibility();
 }
 
@@ -285,6 +323,7 @@ function clearImage() {
   clearBtn.hidden = true;
   pasteHint.hidden = false;
   pasteZone.classList.remove("has-image");
+  updateShapeOptionLabel();
   updateGeneratorCompatibility();
 }
 
@@ -647,6 +686,10 @@ function getImageViewerPrompts() {
   return prompts;
 }
 
+function getImageViewerFlatItems() {
+  return getImageViewerPrompts().flatMap((prompt) => prompt.items);
+}
+
 function locateImageViewerState(prompts) {
   if (!imageViewerState) return null;
   const promptIndex = prompts.findIndex((prompt) => prompt.jobId === imageViewerState.jobId);
@@ -658,9 +701,27 @@ function locateImageViewerState(prompts) {
   return { promptIndex, itemIndex, prompt: prompts[promptIndex], item: prompts[promptIndex].items[itemIndex] };
 }
 
+function acquireImageViewerPreloadSlot() {
+  if (imageViewerPreloadActive < ImageViewerPreloadConcurrency) {
+    imageViewerPreloadActive++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => imageViewerPreloadWaiters.push(resolve));
+}
+
+function releaseImageViewerPreloadSlot() {
+  const next = imageViewerPreloadWaiters.shift();
+  if (next) {
+    next();
+    return;
+  }
+  imageViewerPreloadActive = Math.max(0, imageViewerPreloadActive - 1);
+}
+
 function discardImageViewerCacheEntry(url, entry) {
   if (imageViewerCache.get(url) !== entry) return;
   imageViewerCache.delete(url);
+  if (entry.controller) entry.controller.abort();
   if (entry.blobUrl) {
     URL.revokeObjectURL(entry.blobUrl);
     return;
@@ -676,20 +737,29 @@ function loadImageViewerEntry(url) {
   const existing = imageViewerCache.get(url);
   if (existing) return existing;
 
-  const entry = { promise: null, blobUrl: null, image: null };
+  const controller = new AbortController();
+  const entry = { promise: null, blobUrl: null, image: null, controller };
   entry.promise = (async () => {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`image preload returned HTTP ${response.status}`);
-    const blob = await response.blob();
-    if (!blob.type.startsWith("image/")) {
-      throw new Error(`image preload returned ${blob.type || "an unknown content type"}`);
-    }
+    await acquireImageViewerPreloadSlot();
+    try {
+      if (controller.signal.aborted) {
+        throw new DOMException("Image preload aborted", "AbortError");
+      }
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) throw new Error(`image preload returned HTTP ${response.status}`);
+      const blob = await response.blob();
+      if (!blob.type.startsWith("image/")) {
+        throw new Error(`image preload returned ${blob.type || "an unknown content type"}`);
+      }
 
-    entry.blobUrl = URL.createObjectURL(blob);
-    entry.image = new Image();
-    entry.image.src = entry.blobUrl;
-    await entry.image.decode();
-    return entry;
+      entry.blobUrl = URL.createObjectURL(blob);
+      entry.image = new Image();
+      entry.image.src = entry.blobUrl;
+      await entry.image.decode();
+      return entry;
+    } finally {
+      releaseImageViewerPreloadSlot();
+    }
   })().catch((error) => {
     if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
     if (imageViewerCache.get(url) === entry) imageViewerCache.delete(url);
@@ -712,10 +782,17 @@ function prepareImageViewerWindow(prompts, current) {
   for (const [url, entry] of imageViewerCache) {
     if (!wantedUrls.has(url)) discardImageViewerCacheEntry(url, entry);
   }
-  for (const url of wantedUrls) {
-    loadImageViewerEntry(url).promise.catch(() => {});
+
+  // Current image first, then fan outward by distance so Left/Right neighbors
+  // beat the far edge of the preload window for decoder slots.
+  const currentEntry = loadImageViewerEntry(current.item.url);
+  for (let distance = 1; distance <= ImageViewerPreloadRadius; distance++) {
+    for (const index of [currentIndex + distance, currentIndex - distance]) {
+      if (index < first || index >= last) continue;
+      loadImageViewerEntry(allItems[index].url).promise.catch(() => {});
+    }
   }
-  return loadImageViewerEntry(current.item.url).promise;
+  return currentEntry.promise;
 }
 
 function setImageViewerIdentity(item) {
@@ -748,8 +825,11 @@ async function renderImageViewer() {
     ` · prompt ${current.promptIndex + 1}/${prompts.length}`;
   imageViewerDimensions.textContent = "loading…";
 
-  el("image-viewer-previous").disabled = current.itemIndex === 0;
-  el("image-viewer-next").disabled = current.itemIndex === current.prompt.items.length - 1;
+  el("image-viewer-previous").disabled =
+    current.promptIndex === 0 && current.itemIndex === 0;
+  el("image-viewer-next").disabled =
+    current.promptIndex === prompts.length - 1 &&
+    current.itemIndex === current.prompt.items.length - 1;
   el("image-viewer-newer").disabled = current.promptIndex === 0;
   el("image-viewer-older").disabled = current.promptIndex === prompts.length - 1;
 
@@ -767,17 +847,33 @@ async function renderImageViewer() {
     imageViewerDimensions.textContent = `${entry.image.naturalWidth}×${entry.image.naturalHeight}`;
   } catch (error) {
     if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
+    if (error && error.name === "AbortError") return;
     imageViewerImage.removeAttribute("src");
     imageViewerDimensions.textContent = `load failed: ${error}`;
   }
 }
 
 function navigateImageViewerImage(delta) {
+  const allItems = getImageViewerFlatItems();
   const prompts = getImageViewerPrompts();
   const current = locateImageViewerState(prompts);
   if (!current) return;
-  const targetIndex = Math.max(0, Math.min(current.prompt.items.length - 1, current.itemIndex + delta));
-  setImageViewerIdentity(current.prompt.items[targetIndex]);
+  const currentIndex = allItems.findIndex((item) =>
+    item.jobId === current.item.jobId &&
+    item.generator === current.item.generator &&
+    item.imageIndex === current.item.imageIndex);
+  if (currentIndex < 0) return;
+  const targetIndex = currentIndex + delta;
+  if (targetIndex < 0 || targetIndex >= allItems.length) return;
+  setImageViewerIdentity(allItems[targetIndex]);
+}
+
+function navigateImageViewerAbsolute(index) {
+  const allItems = getImageViewerFlatItems();
+  if (allItems.length === 0) return;
+  const targetIndex = index < 0 ? allItems.length - 1 : index;
+  if (targetIndex < 0 || targetIndex >= allItems.length) return;
+  setImageViewerIdentity(allItems[targetIndex]);
 }
 
 function navigateImageViewerPrompt(delta) {
@@ -789,6 +885,117 @@ function navigateImageViewerPrompt(delta) {
   // Prompt navigation never guesses a different destination.
   setImageViewerIdentity((targetPrompt || current.prompt).items[0]);
 }
+
+function hideImageViewerHelp() {
+  imageViewerHelpOpen = false;
+  imageViewerHelp.hidden = true;
+}
+
+function showImageViewerHelp() {
+  imageViewerHelpList.textContent = "";
+  for (const command of ImageViewerCommands) {
+    if (!command.help) continue;
+    const item = document.createElement("li");
+    const keys = document.createElement("kbd");
+    keys.textContent = command.keys.join(" / ");
+    const label = document.createElement("span");
+    label.textContent = command.help;
+    item.appendChild(keys);
+    item.appendChild(label);
+    imageViewerHelpList.appendChild(item);
+  }
+  imageViewerHelpOpen = true;
+  imageViewerHelp.hidden = false;
+}
+
+function toggleImageViewerHelp() {
+  if (imageViewerHelpOpen) hideImageViewerHelp();
+  else showImageViewerHelp();
+}
+
+const ImageViewerCommands = [
+  {
+    id: "previous",
+    keys: ["Left", "Up"],
+    match: (event) =>
+      !event.ctrlKey && !event.metaKey &&
+      (event.key === "ArrowLeft" || event.key === "ArrowUp"),
+    help: "Previous image (crosses prompts)",
+    run: () => navigateImageViewerImage(-1),
+  },
+  {
+    id: "next",
+    keys: ["Right", "Down"],
+    match: (event) =>
+      !event.ctrlKey && !event.metaKey &&
+      (event.key === "ArrowRight" || event.key === "ArrowDown"),
+    help: "Next image (crosses prompts)",
+    run: () => navigateImageViewerImage(1),
+  },
+  {
+    id: "newerPrompt",
+    keys: ["Ctrl+Left"],
+    match: (event) =>
+      (event.ctrlKey || event.metaKey) && event.key === "ArrowLeft",
+    help: "First image of newer prompt",
+    run: () => navigateImageViewerPrompt(-1),
+  },
+  {
+    id: "olderPrompt",
+    keys: ["Ctrl+Right"],
+    match: (event) =>
+      (event.ctrlKey || event.metaKey) && event.key === "ArrowRight",
+    help: "First image of older prompt",
+    run: () => navigateImageViewerPrompt(1),
+  },
+  {
+    id: "pageBack",
+    keys: ["PageUp"],
+    match: (event) => !event.ctrlKey && !event.metaKey && event.key === "PageUp",
+    help: `Jump ${ImageViewerPageJumpSize} images back`,
+    run: () => navigateImageViewerImage(-ImageViewerPageJumpSize),
+  },
+  {
+    id: "pageForward",
+    keys: ["PageDown"],
+    match: (event) => !event.ctrlKey && !event.metaKey && event.key === "PageDown",
+    help: `Jump ${ImageViewerPageJumpSize} images forward`,
+    run: () => navigateImageViewerImage(ImageViewerPageJumpSize),
+  },
+  {
+    id: "first",
+    keys: ["Home"],
+    match: (event) => !event.ctrlKey && !event.metaKey && event.key === "Home",
+    help: "First image in gallery",
+    run: () => navigateImageViewerAbsolute(0),
+  },
+  {
+    id: "last",
+    keys: ["End"],
+    match: (event) => !event.ctrlKey && !event.metaKey && event.key === "End",
+    help: "Last image in gallery",
+    run: () => navigateImageViewerAbsolute(-1),
+  },
+  {
+    id: "help",
+    keys: ["?", "/"],
+    match: (event) =>
+      !event.ctrlKey && !event.metaKey && !event.altKey &&
+      (event.key === "?" || event.key === "/"),
+    help: "Toggle this shortcut list",
+    run: () => toggleImageViewerHelp(),
+  },
+  {
+    id: "close",
+    keys: ["Escape"],
+    match: (event) => event.key === "Escape",
+    help: "Close shortcut list, then viewer",
+    run: () => {
+      if (imageViewerHelpOpen) hideImageViewerHelp();
+      else closeImageViewer();
+    },
+  },
+];
 
 function sizeImageViewerWindow() {
   const margin = 16;
@@ -815,12 +1022,22 @@ function clampImageViewerWindow() {
   imageViewerWindow.style.top = `${top}px`;
 }
 
+function getImageViewerFocusables() {
+  return [...imageViewerWindow.querySelectorAll(
+    'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+  )].filter((node) => !node.closest("[hidden]") && node.offsetParent !== null);
+}
+
 function openImageViewer(link) {
+  imageViewerFocusBeforeOpen =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null;
   imageViewerState = {
     jobId: link.dataset.jobId,
     generator: link.dataset.generator,
     imageIndex: Number(link.dataset.imageIndex),
   };
+  hideImageViewerHelp();
+  imageViewerWheelAccumulator = 0;
   imageViewer.hidden = false;
   document.body.classList.add("image-viewer-open");
   if (!imageViewerWindow.dataset.sized) sizeImageViewerWindow();
@@ -830,12 +1047,19 @@ function openImageViewer(link) {
 }
 
 function closeImageViewer() {
+  hideImageViewerHelp();
   imageViewer.hidden = true;
   document.body.classList.remove("image-viewer-open");
   imageViewerState = null;
   imageViewerRenderVersion++;
+  imageViewerWheelAccumulator = 0;
   imageViewerImage.removeAttribute("src");
   for (const [url, entry] of imageViewerCache) discardImageViewerCacheEntry(url, entry);
+  const restore = imageViewerFocusBeforeOpen;
+  imageViewerFocusBeforeOpen = null;
+  if (restore && document.contains(restore) && typeof restore.focus === "function") {
+    restore.focus({ preventScroll: true });
+  }
 }
 
 jobsSection.addEventListener("click", (event) => {
@@ -849,22 +1073,71 @@ el("image-viewer-previous").addEventListener("click", () => navigateImageViewerI
 el("image-viewer-next").addEventListener("click", () => navigateImageViewerImage(1));
 el("image-viewer-newer").addEventListener("click", () => navigateImageViewerPrompt(-1));
 el("image-viewer-older").addEventListener("click", () => navigateImageViewerPrompt(1));
+el("image-viewer-help-toggle").addEventListener("click", () => toggleImageViewerHelp());
 el("image-viewer-close").addEventListener("click", closeImageViewer);
+
+imageViewer.addEventListener("click", (event) => {
+  if (event.target === imageViewer) {
+    closeImageViewer();
+    return;
+  }
+  if (imageViewerHelpOpen && event.target === imageViewerHelp) {
+    hideImageViewerHelp();
+  }
+});
+
+imageViewer.addEventListener("wheel", (event) => {
+  if (imageViewer.hidden) return;
+  event.preventDefault();
+  if (imageViewerHelpOpen) hideImageViewerHelp();
+  imageViewerWheelAccumulator += event.deltaY;
+  if (imageViewerWheelResetTimer) clearTimeout(imageViewerWheelResetTimer);
+  imageViewerWheelResetTimer = setTimeout(() => {
+    imageViewerWheelAccumulator = 0;
+    imageViewerWheelResetTimer = null;
+  }, 280);
+  if (Math.abs(imageViewerWheelAccumulator) < ImageViewerWheelThreshold) return;
+  const direction = imageViewerWheelAccumulator > 0 ? 1 : -1;
+  imageViewerWheelAccumulator = 0;
+  navigateImageViewerImage(direction);
+}, { passive: false });
 
 document.addEventListener("keydown", (event) => {
   if (imageViewer.hidden) return;
-  if (event.key === "Escape") {
+
+  if (event.key === "Tab") {
+    const focusables = getImageViewerFocusables();
+    if (focusables.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const active = document.activeElement;
+    const index = focusables.indexOf(active);
     event.preventDefault();
-    closeImageViewer();
-  } else if (event.key === "ArrowLeft") {
-    event.preventDefault();
-    if (event.ctrlKey || event.metaKey) navigateImageViewerPrompt(-1);
-    else navigateImageViewerImage(-1);
-  } else if (event.key === "ArrowRight") {
-    event.preventDefault();
-    if (event.ctrlKey || event.metaKey) navigateImageViewerPrompt(1);
-    else navigateImageViewerImage(1);
+    if (event.shiftKey) {
+      const prev = index <= 0 ? focusables[focusables.length - 1] : focusables[index - 1];
+      prev.focus({ preventScroll: true });
+    } else {
+      const next = index < 0 || index >= focusables.length - 1 ? focusables[0] : focusables[index + 1];
+      next.focus({ preventScroll: true });
+    }
+    return;
   }
+
+  const command = ImageViewerCommands.find((entry) => entry.match(event));
+  if (!command) {
+    if (imageViewerHelpOpen) {
+      event.preventDefault();
+      hideImageViewerHelp();
+    }
+    return;
+  }
+
+  event.preventDefault();
+  if (imageViewerHelpOpen && command.id !== "help" && command.id !== "close") {
+    hideImageViewerHelp();
+  }
+  command.run();
 });
 
 const imageViewerResize = el("image-viewer-resize");
@@ -1111,8 +1384,12 @@ function watchJob(id) {
 
             const redo = document.createElement("button");
             redo.type = "button";
-            redo.className = "make-video";
-            redo.textContent = "Redo Grok video";
+            redo.className = "make-video make-video-redo";
+            redo.setAttribute("aria-label", "Redo Grok video");
+            redo.title = "Redo Grok video";
+            redo.innerHTML =
+              '<span class="make-video-symbol" aria-hidden="true">↻</span>' +
+              '<span class="make-video-brand" aria-hidden="true">grok</span>';
             redo.disabled = !videoGeneration.available;
             if (!videoGeneration.available) {
               redo.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
@@ -1149,8 +1426,12 @@ function watchJob(id) {
           result.appendChild(a);
           const button = document.createElement("button");
           button.type = "button";
-          button.className = "make-video";
-          button.textContent = "Make Grok video";
+          button.className = "make-video make-video-add";
+          button.setAttribute("aria-label", "Make Grok video");
+          button.title = "Make Grok video";
+          button.innerHTML =
+            '<span class="make-video-symbol" aria-hidden="true">+</span>' +
+            '<span class="make-video-brand" aria-hidden="true">grok</span>';
           button.disabled = !videoGeneration.available;
           if (!videoGeneration.available) {
             button.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";

@@ -4,6 +4,7 @@ using SixLabors.ImageSharp;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -176,38 +177,18 @@ namespace MultiImageClient
             }
         }
 
-        // grok's imagine WS wants an aspect_ratio string; map the source image's
-        // dimensions onto the nearest supported ratio so an edit keeps the input
-        // shape instead of snapping to a default square.
+        // Grok's imagine WS wants an aspect_ratio string. Invalid or unreadable
+        // input is a hard error because silently substituting a square can change
+        // the requested composition.
         internal static string DeriveAspectRatio(string imagePath)
         {
-            try
+            var info = Image.Identify(imagePath);
+            if (info == null || info.Width <= 0 || info.Height <= 0)
             {
-                var info = Image.Identify(imagePath);
-                var w = info?.Width ?? 0;
-                var h = info?.Height ?? 0;
-                if (w <= 0 || h <= 0)
-                {
-                    return "1:1";
-                }
-
-                var ratio = (double)w / h;
-                var candidates = new (string Name, double Value)[]
-                {
-                    ("1:1", 1.0),
-                    ("2:3", 2.0 / 3.0),
-                    ("3:2", 3.0 / 2.0),
-                    ("3:4", 3.0 / 4.0),
-                    ("4:3", 4.0 / 3.0),
-                    ("9:16", 9.0 / 16.0),
-                    ("16:9", 16.0 / 9.0),
-                };
-                return candidates.OrderBy(c => Math.Abs(c.Value - ratio)).First().Name;
+                throw new InvalidDataException(
+                    $"Could not read source image dimensions from '{imagePath}'.");
             }
-            catch
-            {
-                return "1:1";
-            }
+            return UiShapeMapping.GrokAspectForInput(info.Width, info.Height);
         }
 
         private static string GuessContentTypeFromBytes(byte[] bytes)

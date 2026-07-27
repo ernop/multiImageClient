@@ -25,6 +25,8 @@ namespace MultiImageClient
         public string Id { get; init; } = Guid.NewGuid().ToString("N")[..12];
         public required string Prompt { get; init; }
         public string InputImagePath { get; init; } = "";
+        public int InputImageWidth { get; init; }
+        public int InputImageHeight { get; init; }
         public IReadOnlyList<string> GeneratorKeys { get; init; } = Array.Empty<string>();
         public DateTime CreatedAt { get; init; } = DateTime.Now;
         public string SourceJobId { get; init; } = "";
@@ -158,6 +160,8 @@ namespace MultiImageClient
                     Id = job.Id,
                     Prompt = job.Prompt,
                     InputImagePath = job.InputImagePath,
+                    InputImageWidth = job.InputImageWidth,
+                    InputImageHeight = job.InputImageHeight,
                     GeneratorKeys = job.GeneratorKeys.ToList(),
                     CreatedAt = job.CreatedAt,
                     SourceJobId = job.SourceJobId,
@@ -261,9 +265,11 @@ namespace MultiImageClient
                 {
                     var metadata = JsonSerializer.Deserialize<UiPersistedJob>(
                         File.ReadAllText(metadataPath), JsonOptions);
+                    // Empty prompt is legitimate (video jobs have an optional
+                    // motion prompt); only a missing id makes a record unusable.
                     if (metadata == null
                         || string.IsNullOrWhiteSpace(metadata.Id)
-                        || string.IsNullOrWhiteSpace(metadata.Prompt))
+                        || metadata.Prompt == null)
                     {
                         continue;
                     }
@@ -281,6 +287,8 @@ namespace MultiImageClient
                         Id = metadata.Id,
                         Prompt = metadata.Prompt,
                         InputImagePath = metadata.InputImagePath,
+                        InputImageWidth = metadata.InputImageWidth,
+                        InputImageHeight = metadata.InputImageHeight,
                         GeneratorKeys = metadata.GeneratorKeys,
                         CreatedAt = metadata.CreatedAt,
                         SourceJobId = metadata.SourceJobId,
@@ -344,6 +352,8 @@ namespace MultiImageClient
             public string Id { get; set; } = "";
             public string Prompt { get; set; } = "";
             public string InputImagePath { get; set; } = "";
+            public int InputImageWidth { get; set; }
+            public int InputImageHeight { get; set; }
             public List<string> GeneratorKeys { get; set; } = new();
             public DateTime CreatedAt { get; set; }
             public string SourceJobId { get; set; } = "";
@@ -411,8 +421,9 @@ namespace MultiImageClient
         public int ImageCount { get; init; } = 1;
 
         /// Intent-level output geometry, mapped per generator (gpt-image-2
-        /// gets an exact WxH, grok gets an aspect ratio + 1k/2k resolution,
-        /// edits with shape=auto inherit the source image).
+        /// gets an exact WxH, grok gets an aspect ratio + 1k/2k resolution).
+        /// With an input image, shape=auto means match the source aspect ratio
+        /// using the closest representation each provider accepts.
         /// Shapes: auto | square | landscape | portrait | wide | tall.
         public string Shape { get; init; } = "auto";
 
@@ -433,12 +444,106 @@ namespace MultiImageClient
         public static readonly string[] Shapes = { "auto", "square", "landscape", "portrait", "wide", "tall" };
         public static readonly string[] Details = { "standard", "high", "max" };
 
+        private static readonly (string Name, int Width, int Height)[] GrokAspects =
+        {
+            ("1:1", 1, 1),
+            ("2:3", 2, 3),
+            ("3:2", 3, 2),
+            ("3:4", 3, 4),
+            ("4:3", 4, 3),
+            ("9:16", 9, 16),
+            ("16:9", 16, 9),
+        };
+
+        private static readonly (string Name, int Width, int Height)[] GoogleAspects =
+        {
+            ("1:1", 1, 1),
+            ("2:3", 2, 3),
+            ("3:2", 3, 2),
+            ("3:4", 3, 4),
+            ("4:3", 4, 3),
+            ("4:5", 4, 5),
+            ("5:4", 5, 4),
+            ("9:16", 9, 16),
+            ("16:9", 16, 9),
+            ("21:9", 21, 9),
+        };
+
+        private static readonly (IdeogramAPIClient.IdeogramAspectRatio Aspect, int Width, int Height)[] IdeogramV3Aspects =
+        {
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_1_1, 1, 1),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_2_3, 2, 3),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_3_2, 3, 2),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_3_4, 3, 4),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_4_3, 4, 3),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_9_16, 9, 16),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_16_9, 16, 9),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_10_16, 10, 16),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_16_10, 16, 10),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_1_3, 1, 3),
+            (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_3_1, 3, 1),
+        };
+
+        public static bool IsKnownShape(string shape)
+        {
+            var value = (shape ?? "").Trim().ToLowerInvariant();
+            return Array.IndexOf(Shapes, value) >= 0;
+        }
+
+        public static string GrokAspectForInput(int width, int height)
+            => NearestAspect(width, height, GrokAspects);
+
+        public static string GoogleAspectForInput(int width, int height)
+            => NearestAspect(width, height, GoogleAspects);
+
+        public static IdeogramAPIClient.IdeogramAspectRatio IdeogramV3AspectForInput(int width, int height)
+        {
+            ValidateInputDimensions(width, height);
+            var sourceRatio = (double)width / height;
+            return IdeogramV3Aspects
+                .OrderBy(candidate => RatioDistance(sourceRatio, (double)candidate.Width / candidate.Height))
+                .First()
+                .Aspect;
+        }
+
         /// gpt-image-2 size string. All values are multiples of 16, within
         /// the [655360, 8294400] pixel envelope, edges < 3840 (2880x2880 is
         /// exactly the max pixel count).
-        public static string Gpt2Size(string shape, string detail)
+        public static string Gpt2Size(
+            string shape,
+            string detail,
+            int inputWidth = 0,
+            int inputHeight = 0)
         {
-            return (Norm(shape, Shapes), Norm(detail, Details)) switch
+            var normalizedShape = Norm(shape, Shapes);
+            var normalizedDetail = Norm(detail, Details);
+            if (normalizedShape == "auto" && (inputWidth != 0 || inputHeight != 0))
+            {
+                var targetPixels = normalizedDetail switch
+                {
+                    "high" => 4194304,
+                    "max" => GptImage2Generator.SizeMaxPixels,
+                    _ => 1048576,
+                };
+                var (width, height) = SizeMatchingInput(
+                    inputWidth,
+                    inputHeight,
+                    targetPixels,
+                    multiple: GptImage2Generator.SizeEdgeMultiple,
+                    maxPixels: GptImage2Generator.SizeMaxPixels,
+                    maxEdgeExclusive: GptImage2Generator.SizeMaxEdge,
+                    maxLongShortRatio: GptImage2Generator.SizeMaxAspectRatio);
+                var requested = $"{width}x{height}";
+                if (!GptImage2Generator.TryNormalizeSize(requested, out var normalized, out _, out var error)
+                    || normalized != requested)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not map input aspect ratio to a valid gpt-image-2 size: {error ?? $"{requested} normalized to {normalized}"}");
+                }
+                return requested;
+            }
+
+            return (normalizedShape, normalizedDetail) switch
             {
                 ("auto", _) => "auto",
                 ("square", "standard") => "1024x1024",
@@ -471,12 +576,17 @@ namespace MultiImageClient
             };
         }
 
-        /// Aspect-ratio string for the grok generators. Empty string means
-        /// "no preference" — callers substitute their own default (or, for
-        /// edits, let the source image's AR win).
-        public static string GrokAspect(string shape)
+        /// Aspect-ratio string for the grok generators. With no input image,
+        /// empty means no preference. With input dimensions, auto maps to the
+        /// closest ratio accepted by Grok.
+        public static string GrokAspect(string shape, int inputWidth = 0, int inputHeight = 0)
         {
-            return Norm(shape, Shapes) switch
+            var normalizedShape = Norm(shape, Shapes);
+            if (normalizedShape == "auto" && (inputWidth != 0 || inputHeight != 0))
+            {
+                return GrokAspectForInput(inputWidth, inputHeight);
+            }
+            return normalizedShape switch
             {
                 "square" => "1:1",
                 "landscape" => "3:2",
@@ -508,9 +618,17 @@ namespace MultiImageClient
         }
 
         /// Ideogram v3 aspect enum (image-reference jobs route to v3).
-        public static IdeogramAPIClient.IdeogramAspectRatio IdeogramV3Aspect(string shape)
+        public static IdeogramAPIClient.IdeogramAspectRatio IdeogramV3Aspect(
+            string shape,
+            int inputWidth = 0,
+            int inputHeight = 0)
         {
-            return Norm(shape, Shapes) switch
+            var normalizedShape = Norm(shape, Shapes);
+            if (normalizedShape == "auto" && (inputWidth != 0 || inputHeight != 0))
+            {
+                return IdeogramV3AspectForInput(inputWidth, inputHeight);
+            }
+            return normalizedShape switch
             {
                 "landscape" => IdeogramAPIClient.IdeogramAspectRatio.ASPECT_3_2,
                 "portrait" => IdeogramAPIClient.IdeogramAspectRatio.ASPECT_2_3,
@@ -522,10 +640,26 @@ namespace MultiImageClient
 
         /// BFL FLUX.2 width/height. Multiples of 32, total pixels kept under
         /// FLUX.2's ~4 MP output ceiling, so "max" == "high".
-        public static (int Width, int Height) BflSize(string shape, string detail)
+        public static (int Width, int Height) BflSize(
+            string shape,
+            string detail,
+            int inputWidth = 0,
+            int inputHeight = 0)
         {
             var big = Norm(detail, Details) != "standard";
-            return Norm(shape, Shapes) switch
+            var normalizedShape = Norm(shape, Shapes);
+            if (normalizedShape == "auto" && (inputWidth != 0 || inputHeight != 0))
+            {
+                return SizeMatchingInput(
+                    inputWidth,
+                    inputHeight,
+                    targetPixels: big ? 4000000 : 1048576,
+                    multiple: 32,
+                    maxPixels: 4000000,
+                    maxEdgeExclusive: 2592,
+                    maxLongShortRatio: 3.0);
+            }
+            return normalizedShape switch
             {
                 "landscape" => big ? (2304, 1536) : (1248, 832),
                 "portrait" => big ? (1536, 2304) : (832, 1248),
@@ -535,11 +669,17 @@ namespace MultiImageClient
             };
         }
 
-        /// Gemini imageConfig.aspectRatio; empty (shape=auto) omits the field
-        /// so the model decides.
-        public static string GoogleAspect(string shape)
+        /// Gemini imageConfig.aspectRatio. With no input image, auto omits the
+        /// field so the model decides. With input dimensions, auto maps to the
+        /// closest ratio in Gemini's supported set.
+        public static string GoogleAspect(string shape, int inputWidth = 0, int inputHeight = 0)
         {
-            return Norm(shape, Shapes) switch
+            var normalizedShape = Norm(shape, Shapes);
+            if (normalizedShape == "auto" && (inputWidth != 0 || inputHeight != 0))
+            {
+                return GoogleAspectForInput(inputWidth, inputHeight);
+            }
+            return normalizedShape switch
             {
                 "square" => "1:1",
                 "landscape" => "3:2",
@@ -561,6 +701,86 @@ namespace MultiImageClient
                 _ => "1K",
             };
         }
+
+        private static string NearestAspect(
+            int width,
+            int height,
+            IReadOnlyList<(string Name, int Width, int Height)> candidates)
+        {
+            ValidateInputDimensions(width, height);
+            var sourceRatio = (double)width / height;
+            return candidates
+                .OrderBy(candidate => RatioDistance(sourceRatio, (double)candidate.Width / candidate.Height))
+                .First()
+                .Name;
+        }
+
+        private static double RatioDistance(double first, double second)
+            => Math.Abs(Math.Log(first / second));
+
+        private static void ValidateInputDimensions(int width, int height)
+        {
+            if (width <= 0 || height <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"Input image dimensions must be positive to match its aspect ratio; received {width}x{height}.");
+            }
+        }
+
+        private static (int Width, int Height) SizeMatchingInput(
+            int inputWidth,
+            int inputHeight,
+            int targetPixels,
+            int multiple,
+            int maxPixels,
+            int maxEdgeExclusive,
+            double maxLongShortRatio)
+        {
+            ValidateInputDimensions(inputWidth, inputHeight);
+            if (targetPixels <= 0 || multiple <= 0 || maxPixels <= 0 || maxEdgeExclusive <= multiple)
+            {
+                throw new ArgumentOutOfRangeException(nameof(targetPixels), "Output size constraints must be positive.");
+            }
+
+            var ratio = (double)inputWidth / inputHeight;
+            ratio = Math.Clamp(ratio, 1.0 / maxLongShortRatio, maxLongShortRatio);
+            var rawHeight = Math.Sqrt((double)targetPixels / ratio);
+            var rawWidth = rawHeight * ratio;
+            var scale = Math.Min(
+                1.0,
+                Math.Min(
+                    (double)(maxEdgeExclusive - multiple) / rawWidth,
+                    (double)(maxEdgeExclusive - multiple) / rawHeight));
+            scale = Math.Min(scale, Math.Sqrt((double)maxPixels / (rawWidth * rawHeight)));
+            rawWidth *= scale;
+            rawHeight *= scale;
+
+            var width = Math.Max(multiple, RoundToMultiple(rawWidth, multiple));
+            var height = Math.Max(multiple, RoundToMultiple(rawHeight, multiple));
+            while (width >= maxEdgeExclusive
+                || height >= maxEdgeExclusive
+                || (long)width * height > maxPixels)
+            {
+                var shrink = Math.Min(
+                    (double)(maxEdgeExclusive - multiple) / width,
+                    Math.Min(
+                        (double)(maxEdgeExclusive - multiple) / height,
+                        Math.Sqrt((double)maxPixels / ((long)width * height))));
+                if (shrink >= 1.0)
+                {
+                    shrink = 0.99;
+                }
+                width = Math.Max(multiple, FloorToMultiple(width * shrink, multiple));
+                height = Math.Max(multiple, FloorToMultiple(height * shrink, multiple));
+            }
+            return (width, height);
+        }
+
+        private static int RoundToMultiple(double value, int multiple)
+            => (int)Math.Round(value / multiple, MidpointRounding.AwayFromZero) * multiple;
+
+        private static int FloorToMultiple(double value, int multiple)
+            => (int)Math.Floor(value / multiple) * multiple;
 
         private static string Norm(string value, string[] known)
         {
@@ -976,9 +1196,12 @@ namespace MultiImageClient
             {
                 // Edit rides the same imagine WebSocket as text-to-image (source
                 // image passed as properties.image_uri), sidestepping the
-                // anti-bot-blocked /rest/app-chat endpoint. Empty AR = inherit
-                // the source image's shape.
-                var editAspect = UiShapeMapping.GrokAspect(spec.Shape);
+                // anti-bot-blocked /rest/app-chat endpoint. Auto resolves from
+                // the validated source dimensions before the provider call.
+                var editAspect = UiShapeMapping.GrokAspect(
+                    spec.Shape,
+                    job.InputImageWidth,
+                    job.InputImageHeight);
                 return await GrokWebImagineEditGenerator.CreateAsync(
                     client, job.InputImagePath, maxConcurrency: 1, _stats,
                     pro: _options.GrokWebPro,
@@ -1010,7 +1233,7 @@ namespace MultiImageClient
                 throw new InvalidOperationException("grok-web image-to-video requires a source image");
             }
             var aspectRatio = spec.VideoAspectRatio == "source"
-                ? GrokWebImagineEditGenerator.DeriveAspectRatio(job.InputImagePath)
+                ? UiShapeMapping.GrokAspectForInput(job.InputImageWidth, job.InputImageHeight)
                 : spec.VideoAspectRatio;
             return await GrokWebImagineVideoGenerator.CreateFromImageAsync(
                 client,
@@ -1042,7 +1265,11 @@ namespace MultiImageClient
                     {
                         quality = OpenAIGPTImageOneQuality.high;
                     }
-                    var size = UiShapeMapping.Gpt2Size(spec.Shape, spec.Detail);
+                    var size = UiShapeMapping.Gpt2Size(
+                        spec.Shape,
+                        spec.Detail,
+                        job.InputImageWidth,
+                        job.InputImageHeight);
                     if (job.HasInputImage)
                     {
                         return new GptImage2EditGenerator(
@@ -1107,10 +1334,12 @@ namespace MultiImageClient
                 {
                     RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", key);
                     var pro = key == KeyGrokApiPro;
-                    var mappedAr = UiShapeMapping.GrokAspect(spec.Shape);
+                    var mappedAr = UiShapeMapping.GrokAspect(
+                        spec.Shape,
+                        job.InputImageWidth,
+                        job.InputImageHeight);
                     if (job.HasInputImage)
                     {
-                        // Empty AR = inherit the source image's aspect ratio.
                         return new GrokImagineEditGenerator(
                             _settings.XAIGrokApiKey, maxConcurrency: 1, _stats, _settings,
                             inputImage: job.InputImagePath, pro: pro, aspectRatio: mappedAr);
@@ -1136,7 +1365,10 @@ namespace MultiImageClient
                     var googleApiType = key == KeyGooglePro
                         ? ImageGeneratorApiType.GoogleNanoBananaPro
                         : ImageGeneratorApiType.GoogleNanoBanana;
-                    var googleAspect = UiShapeMapping.GoogleAspect(spec.Shape);
+                    var googleAspect = UiShapeMapping.GoogleAspect(
+                        spec.Shape,
+                        job.InputImageWidth,
+                        job.InputImageHeight);
                     return new GoogleGenerator(
                         googleApiType, _settings.GoogleGeminiApiKey, maxConcurrency: 2,
                         _stats, name: $"{key} ui",
@@ -1151,7 +1383,11 @@ namespace MultiImageClient
                     // ceiling) and optional input_image conditioning for a pasted
                     // image. No n parameter exists on the BFL API — n is ignored.
                     RequireKey(_settings.BFLApiKey, "BFLApiKey", key);
-                    var (bflWidth, bflHeight) = UiShapeMapping.BflSize(spec.Shape, spec.Detail);
+                    var (bflWidth, bflHeight) = UiShapeMapping.BflSize(
+                        spec.Shape,
+                        spec.Detail,
+                        job.InputImageWidth,
+                        job.InputImageHeight);
                     return new BFLGenerator(
                         ImageGeneratorApiType.BFLFlux2ProPreview, _settings.BFLApiKey,
                         maxConcurrency: 2, "1:1", false, bflWidth, bflHeight, _stats, "bfl ui",
@@ -1178,7 +1414,11 @@ namespace MultiImageClient
                     return new IdeogramV3Generator(
                         _settings.IdeogramApiKey, maxConcurrency: 1,
                         IdeogramV3StyleType.AUTO, IdeogramMagicPromptOption.ON,
-                        UiShapeMapping.IdeogramV3Aspect(spec.Shape), IdeogramRenderingSpeed.QUALITY,
+                        UiShapeMapping.IdeogramV3Aspect(
+                            spec.Shape,
+                            job.InputImageWidth,
+                            job.InputImageHeight),
+                        IdeogramRenderingSpeed.QUALITY,
                         "", _stats, "ideogram ui",
                         inputImagePath: job.InputImagePath,
                         imageCount: ideogramN);
@@ -1187,9 +1427,14 @@ namespace MultiImageClient
                 case KeyRecraft:
                 {
                     RequireKey(_settings.RecraftApiKey, "RecraftApiKey", key);
-                    // Recraft accepts the same "w:h" aspect strings as grok;
-                    // "" (shape=auto) omits size so Recraft picks one from the
-                    // prompt (or, with an input image, follows the source).
+                    if (job.HasInputImage && !spec.Shape.Equals("auto", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new NotSupportedException(
+                            "Recraft image-to-image always follows the source dimensions and cannot override output aspect ratio.");
+                    }
+                    // Recraft text-to-image accepts the same "w:h" aspect strings
+                    // as Grok. Its image-to-image endpoint takes no size field and
+                    // inherently follows the source dimensions.
                     var recraftAspect = UiShapeMapping.GrokAspect(spec.Shape);
                     var recraftN = Math.Clamp(spec.ImageCount, 1, 6);
                     // With an input image, RecraftGenerator runs image-to-image

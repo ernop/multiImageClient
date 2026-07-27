@@ -142,12 +142,18 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   overflow: hidden;
 }
 #paste-zone.dragover { background: #dde2f7; border-style: solid; }
-#paste-zone.has-image { border-style: solid; background: var(--card); }
+#paste-zone.has-image {
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--card);
+  border-style: solid;
+}
 #paste-hint { text-align: center; font-size: 14px; line-height: 1.7; color: var(--accent-dark); padding: 10px; }
 #input-preview { max-width: 100%; max-height: 320px; display: block; }
 #clear-image {
-  position: absolute;
-  top: 6px; right: 6px;
+  position: static;
+  align-self: flex-end;
   background: var(--ink); color: #fff;
   border: none; border-radius: 6px;
   padding: 4px 10px; font-size: 12px;
@@ -298,9 +304,15 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .cell-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--accent-dark); }
 .cell-status.err { color: var(--err); font-weight: 600; word-break: break-word; }
 
+/* Keep controls and status labels in normal flow; never obscure image pixels. */
 .cell-images { display: flex; flex-wrap: wrap; gap: 8px; }
 .cell-images a { display: block; }
-.media-result { flex: 1 1 180px; display: flex; flex-direction: column; gap: 6px; }
+.media-result {
+  flex: 1 1 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .cell-images img {
   max-width: 100%;
   border-radius: 6px;
@@ -387,30 +399,54 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 .custom-video-player:fullscreen .video-player-controls { flex: 0 0 auto; }
 .make-video {
-  width: 100%;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  color: #fff;
-  background: var(--accent);
-  border: none;
-  border-radius: 6px;
-  padding: 6px 10px;
+  display: inline-flex;
+  width: auto;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-end;
+  gap: 4px;
+  padding: 3px 7px;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(20, 22, 31, 0.2);
+  font: 700 10px/1.15 system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
 }
-.make-video:hover { background: var(--accent-dark); }
+.make-video-symbol {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 0.8;
+}
+.make-video-brand {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+.make-video:hover,
+.make-video:focus-visible {
+  color: #fff;
+  background: var(--accent-dark);
+  outline: 1px solid #fff;
+}
 .make-video:disabled {
   color: var(--ink);
   background: #eef0fa;
   border: 1px solid var(--line);
   cursor: not-allowed;
+  opacity: 0.7;
 }
-.cell-images .partial-image { position: relative; }
+.cell-images .partial-image { position: static; }
 .cell-images .partial-image::after {
   content: "partial preview";
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
+  position: static;
+  display: block;
+  width: fit-content;
+  margin: 4px 0 0 auto;
   padding: 3px 6px;
   border-radius: 4px;
   color: #fff;
@@ -445,6 +481,7 @@ body.image-viewer-open { overflow: hidden; }
 #image-viewer-window {
   position: absolute;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   min-width: 440px;
   min-height: 320px;
@@ -455,6 +492,7 @@ body.image-viewer-open { overflow: hidden; }
   box-shadow: 0 12px 42px rgba(20, 22, 31, 0.42);
 }
 #image-viewer-stage {
+  position: relative;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -471,9 +509,56 @@ body.image-viewer-open { overflow: hidden; }
   max-height: 100%;
   object-fit: contain;
 }
+/* Temporary, trivially dismissable shortcut overlay — allowed over the stage. */
+#image-viewer-help {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(20, 22, 31, 0.55);
+}
+#image-viewer-help[hidden] { display: none; }
+#image-viewer-help-panel {
+  max-width: min(420px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 14px 16px;
+  color: #fff;
+  background: var(--accent-dark);
+  border: 1px solid #fff;
+  border-radius: 8px;
+  font: 600 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+#image-viewer-help-panel h2 {
+  margin: 0 0 8px;
+  font: 800 15px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+#image-viewer-help-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+#image-viewer-help-list li {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) 1fr;
+  gap: 10px;
+  padding: 3px 0;
+}
+#image-viewer-help-list kbd {
+  font: 700 12px/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: #fff;
+  white-space: nowrap;
+}
+#image-viewer-help-panel p {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
 #image-viewer-status {
   position: relative;
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 12px;
   min-height: 45px;

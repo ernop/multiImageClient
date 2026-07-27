@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
+using SixLabors.ImageSharp;
 
 namespace MultiImageClient
 {
@@ -48,6 +49,10 @@ namespace MultiImageClient
             UiJobRunner.KeyIdeogram,
             UiJobRunner.KeyRecraft,
         };
+
+        private static bool SupportsImageAspectOverride(string key)
+            => ImageCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase)
+                && !key.Equals(UiJobRunner.KeyRecraft, StringComparison.OrdinalIgnoreCase);
 
         public async Task RunAsync(Settings settings, MultiClientRunStats stats, RunOptions options)
         {
@@ -96,15 +101,15 @@ namespace MultiImageClient
                 // sink to the end via the stable OrderBy below.
                 var generators = new[]
                 {
-                    new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise." },
-                    new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = "grok.com cookie session (WebSocket). Its consumer transport has no working prompt-aware auto ratio: auto omits the field and currently yields the native 2:3 default, so choose an explicit shape when ratio matters. Edits with auto inherit the source shape. Side-by-side mode requests up to 4 images. Each result can launch a grok-web image-to-video follow-up." },
-                    new { key = UiJobRunner.KeyGrokApi, label = "grok-api", detail = "api.x.ai standard tier. Shape, detail (1k/2k), and n honored." },
-                    new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api pro", detail = "api.x.ai pro tier. Shape, detail (1k/2k), and n honored." },
-                    new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0, 2K-native (detail tier has no effect). Shape maps to a native resolution. n: the v4 endpoint currently ignores num_images (returns 1); a pasted image routes to V3 as a style reference/guide, where shape and n (up to 8) work." },
-                    new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1. Shape maps to a native aspect ratio (auto lets Recraft pick from the prompt); n up to 6. A pasted image runs image-to-image (output follows the source image)." },
-                    new { key = UiJobRunner.KeyBfl, label = "FLUX.2 Pro Preview", detail = "Black Forest Labs FLUX.2 Pro preview. Shape + detail map to an explicit WxH (~1 MP standard, ~4 MP high/max). A pasted image is used as a reference/guide (input_image conditioning). No n support." },
-                    new { key = UiJobRunner.KeyGoogle, label = "Nano Banana 2", detail = "Google gemini-3.1-flash-image. Shape maps to a native aspect ratio; detail to 1K/2K/4K. A pasted image is used as a reference/guide. No n support." },
-                    new { key = UiJobRunner.KeyGooglePro, label = "Nano Banana Pro", detail = "Google gemini-3-pro-image. Shape maps to a native aspect ratio; detail to 1K/2K/4K. A pasted image is used as a reference/guide. No n support." },
+                    new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise. The default output AR matches an attached source; explicit AR choices override it." },
+                    new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = "grok.com cookie session (WebSocket). Without an input, auto omits the ratio and currently yields Grok's native 2:3 default. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit AR choices override it. Side-by-side mode requests up to 4 images. Each result can launch a grok-web image-to-video follow-up." },
+                    new { key = UiJobRunner.KeyGrokApi, label = "grok-api", detail = "api.x.ai standard tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
+                    new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api pro", detail = "api.x.ai pro tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
+                    new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0, 2K-native (detail tier has no effect). A pasted image routes to V3 as a style reference and defaults to the nearest supported AR; explicit AR choices and n up to 8 work. The v4 text endpoint currently ignores num_images and returns 1." },
+                    new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1. A pasted image runs image-to-image and inherently keeps the source dimensions. That endpoint exposes no size override, so Recraft is unavailable for image jobs with an explicit output AR. n up to 6." },
+                    new { key = UiJobRunner.KeyBfl, label = "FLUX.2 Pro Preview", detail = "Black Forest Labs FLUX.2 Pro preview. With an input, the default derives an explicit source-matching WxH; explicit shape + detail map to ~1 MP standard or ~4 MP high/max. No n support." },
+                    new { key = UiJobRunner.KeyGoogle, label = "Nano Banana 2", detail = "Google gemini-3.1-flash-image. With an input, the default uses the nearest Gemini-supported AR; explicit shape overrides it and detail maps to 1K/2K/4K. No n support." },
+                    new { key = UiJobRunner.KeyGooglePro, label = "Nano Banana Pro", detail = "Google gemini-3-pro-image. With an input, the default uses the nearest Gemini-supported AR; explicit shape overrides it and detail maps to 1K/2K/4K. No n support." },
                     new { key = UiJobRunner.KeyGpt1, label = "gpt-image-1", detail = "OpenAI image generation. Shape, quality, moderation, and n honored. Text-to-image in this UI." },
                     new { key = UiJobRunner.KeyGpt1Mini, label = "gpt-image-1-mini", detail = "OpenAI lower-cost image generation. Shape, quality, moderation, and n honored. Text-to-image in this UI." },
                     new { key = UiJobRunner.KeyMetaWeb, label = "meta-web Muse Image", detail = "Meta AI browser session through Playwright. Text-to-image only; experimental and best-effort." },
@@ -119,6 +124,7 @@ namespace MultiImageClient
                     available = runner.IsAvailable(g.key),
                     availabilityProblem = runner.DescribeAvailabilityProblem(g.key),
                     imageCapable = ImageCapableKeys.Contains(g.key, StringComparer.OrdinalIgnoreCase),
+                    imageAspectOverride = SupportsImageAspectOverride(g.key),
                     // Default-on set = the core use case: gpt-image-2 + grok-web pro.
                     defaultOn = g.key is UiJobRunner.KeyGpt2 or UiJobRunner.KeyGrokWeb,
                 })
@@ -126,17 +132,17 @@ namespace MultiImageClient
                 // unavailable ones trail in the same relative order.
                 .OrderBy(g => g.available ? 0 : 1);
 
-                // Intent-level geometry: the browser picks a shape + detail
-                // tier; the server maps them onto each generator's real knobs
-                // (gpt-image-2 WxH, grok AR + 1k/2k). No freetext sizes.
+                // Intent-level geometry: auto lets text-to-image models decide,
+                // but means match input whenever an image is attached. Explicit
+                // choices always map onto each generator's real knobs.
                 var shapes = new[]
                 {
-                    new { key = "auto", label = "auto (grok-web defaults 2:3)" },
-                    new { key = "square", label = "square 1:1" },
-                    new { key = "landscape", label = "landscape 3:2" },
-                    new { key = "portrait", label = "portrait 2:3" },
-                    new { key = "wide", label = "wide 16:9" },
-                    new { key = "tall", label = "tall 9:16" },
+                    new { key = "auto", label = "auto (no input)", inputLabel = "match input image" },
+                    new { key = "square", label = "square 1:1", inputLabel = "square 1:1" },
+                    new { key = "landscape", label = "landscape 3:2", inputLabel = "landscape 3:2" },
+                    new { key = "portrait", label = "portrait 2:3", inputLabel = "portrait 2:3" },
+                    new { key = "wide", label = "wide 16:9", inputLabel = "wide 16:9" },
+                    new { key = "tall", label = "tall 9:16", inputLabel = "tall 9:16" },
                 };
                 var details = new[]
                 {
@@ -210,6 +216,17 @@ namespace MultiImageClient
                 {
                     n = parsedN;
                 }
+                var shapeValue = form["shape"].ToString();
+                var shape = string.IsNullOrWhiteSpace(shapeValue)
+                    ? "auto"
+                    : shapeValue.Trim().ToLowerInvariant();
+                if (!UiShapeMapping.IsKnownShape(shape))
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = $"Unknown output shape '{shape}'. Expected one of: {string.Join(", ", UiShapeMapping.Shapes)}.",
+                    });
+                }
 
                 // Uploaded image (clipboard paste / drag-drop / file picker) is
                 // persisted under the day folder so job inputs are archived
@@ -217,6 +234,8 @@ namespace MultiImageClient
                 var inputImagePath = "";
                 byte[]? inputImageBytes = null;
                 string inputImageContentType = "image/png";
+                var inputImageWidth = 0;
+                var inputImageHeight = 0;
                 var file = form.Files.GetFile("image");
                 if (file != null && file.Length > 0)
                 {
@@ -230,17 +249,45 @@ namespace MultiImageClient
                             error = $"These generators are text-to-image only in the local UI: {string.Join(", ", incompatible)}. Remove the input image or deselect them.",
                         });
                     }
-                    (inputImagePath, inputImageBytes, inputImageContentType) = await SaveInputImageAsync(file, settings);
+                    if (shape != "auto")
+                    {
+                        var aspectIncompatible = genKeys
+                            .Where(key => !SupportsImageAspectOverride(key))
+                            .ToList();
+                        if (aspectIncompatible.Count > 0)
+                        {
+                            return Results.BadRequest(new
+                            {
+                                error = $"These generators cannot override aspect ratio when an input image is attached: {string.Join(", ", aspectIncompatible)}. Choose match input image or deselect them.",
+                            });
+                        }
+                    }
+                    try
+                    {
+                        (inputImagePath, inputImageBytes, inputImageContentType, inputImageWidth, inputImageHeight)
+                            = await SaveInputImageAsync(file, settings);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        return Results.BadRequest(new { error = ex.Message });
+                    }
                 }
 
-                var job = new UiJob { Prompt = prompt, InputImagePath = inputImagePath, GeneratorKeys = genKeys };
+                var job = new UiJob
+                {
+                    Prompt = prompt,
+                    InputImagePath = inputImagePath,
+                    InputImageWidth = inputImageWidth,
+                    InputImageHeight = inputImageHeight,
+                    GeneratorKeys = genKeys,
+                };
                 var spec = new UiJobSpec
                 {
                     GeneratorKeys = genKeys,
                     Quality = (form["quality"].ToString() ?? "high").Trim().ToLowerInvariant(),
                     Moderation = (form["moderation"].ToString() ?? "low").Trim().ToLowerInvariant(),
                     ImageCount = n,
-                    Shape = (form["shape"].ToString() ?? "auto").Trim().ToLowerInvariant(),
+                    Shape = shape,
                     Detail = (form["detail"].ToString() ?? "standard").Trim().ToLowerInvariant(),
                 };
                 jobs.Add(job);
@@ -255,6 +302,9 @@ namespace MultiImageClient
                     type = "accepted",
                     gens = genKeys,
                     hasImage = job.HasInputImage,
+                    inputWidth = job.HasInputImage ? job.InputImageWidth : (int?)null,
+                    inputHeight = job.HasInputImage ? job.InputImageHeight : (int?)null,
+                    shape,
                     prompt,
                     at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 });
@@ -343,11 +393,24 @@ namespace MultiImageClient
                 }
 
                 var prompt = (form["prompt"].ToString() ?? "").Trim();
-                var inputImagePath = await SaveInputImageBytesAsync(sourceBytes, sourceContentType, settings);
+                string inputImagePath;
+                int inputImageWidth;
+                int inputImageHeight;
+                try
+                {
+                    (inputImagePath, inputImageWidth, inputImageHeight)
+                        = await SaveInputImageBytesAsync(sourceBytes, sourceContentType, settings);
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
                 var job = new UiJob
                 {
                     Prompt = prompt,
                     InputImagePath = inputImagePath,
+                    InputImageWidth = inputImageWidth,
+                    InputImageHeight = inputImageHeight,
                     GeneratorKeys = new[] { UiJobRunner.KeyGrokWebVideo },
                     SourceJobId = sourceJobId,
                     SourceGenerator = sourceGenerator,
@@ -529,7 +592,9 @@ namespace MultiImageClient
             return null;
         }
 
-        private static async Task<(string Path, byte[] Bytes, string ContentType)> SaveInputImageAsync(IFormFile file, Settings settings)
+        private static async Task<(string Path, byte[] Bytes, string ContentType, int Width, int Height)> SaveInputImageAsync(
+            IFormFile file,
+            Settings settings)
         {
             var today = DateTime.Now.ToString("yyyy-MM-dd-dddd");
             var folder = Path.Combine(settings.ImageDownloadBaseFolder, today, "UiInputs");
@@ -547,18 +612,20 @@ namespace MultiImageClient
             using var ms = new MemoryStream();
             await file.CopyToAsync(ms);
             var bytes = ms.ToArray();
+            var (width, height) = IdentifyImageDimensions(bytes);
 
             var path = Path.Combine(folder, $"{DateTime.Now:HHmmss_fff}_input{ext}");
             await File.WriteAllBytesAsync(path, bytes);
-            Logger.Log($"UI input image saved: {path}");
-            return (path, bytes, contentType);
+            Logger.Log($"UI input image saved: {path} ({width}x{height})");
+            return (path, bytes, contentType, width, height);
         }
 
-        private static async Task<string> SaveInputImageBytesAsync(
+        private static async Task<(string Path, int Width, int Height)> SaveInputImageBytesAsync(
             byte[] bytes,
             string contentType,
             Settings settings)
         {
+            var (width, height) = IdentifyImageDimensions(bytes);
             var today = DateTime.Now.ToString("yyyy-MM-dd-dddd");
             var folder = Path.Combine(settings.ImageDownloadBaseFolder, today, "UiInputs");
             Directory.CreateDirectory(folder);
@@ -570,8 +637,30 @@ namespace MultiImageClient
             };
             var path = Path.Combine(folder, $"{DateTime.Now:HHmmss_fff}_video_source{ext}");
             await File.WriteAllBytesAsync(path, bytes);
-            Logger.Log($"UI video source image saved: {path}");
-            return path;
+            Logger.Log($"UI video source image saved: {path} ({width}x{height})");
+            return (path, width, height);
+        }
+
+        private static (int Width, int Height) IdentifyImageDimensions(byte[] bytes)
+        {
+            try
+            {
+                using var stream = new MemoryStream(bytes, writable: false);
+                var info = Image.Identify(stream);
+                if (info == null || info.Width <= 0 || info.Height <= 0)
+                {
+                    throw new InvalidDataException("Uploaded image has no readable dimensions.");
+                }
+                return (info.Width, info.Height);
+            }
+            catch (InvalidDataException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidDataException($"Uploaded image could not be decoded: {ex.Message}", ex);
+            }
         }
 
         // Launching the browser is the whole point of --ui, so this is not
