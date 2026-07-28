@@ -301,6 +301,13 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .gen-toggle input { accent-color: var(--accent); }
 .gen-toggle.checked { border-color: var(--accent); background: #eef0fa; }
 .gen-toggle.unavailable { opacity: 0.45; cursor: not-allowed; }
+/* Image-capability flag: capable targets always show the tiny picture icon;
+   text-only targets show the slashed one only while an image is attached
+   (that's when "your attachment won't be sent here" matters). */
+.gen-img-flag { display: inline-flex; align-items: center; margin-left: auto; }
+.gen-img-flag.capable { color: var(--accent); }
+.gen-img-flag.text-only { display: none; color: var(--err); }
+#gens-row.has-image .gen-img-flag.text-only { display: inline-flex; }
 
 #opts-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; font-size: 13px; }
 #opts-row label { display: inline-flex; align-items: center; gap: 5px; }
@@ -624,6 +631,16 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 .cell-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; }
 .cell-name { font-weight: 700; }
+/* Marker for text-only targets on image jobs: the attachment was NOT sent. */
+.cell-noimg {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--err);
+  border: 1px solid var(--err);
+  border-radius: 4px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
 /* Actual returned pixel size; secondary via smaller size, not desaturation. */
 .cell-size { font-size: 11px; font-weight: 600; color: var(--accent-dark); white-space: nowrap; }
 .cell-cost { margin-left: auto; font-size: 12px; color: var(--accent-dark); font-weight: 700; white-space: nowrap; }

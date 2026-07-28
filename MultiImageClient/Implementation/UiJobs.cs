@@ -13,6 +13,11 @@ using System.Threading.Tasks;
 using IdeogramAPIClient;
 using RecraftAPIClient;
 
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
+
 namespace MultiImageClient
 {
     /// One web-UI generation job: (optional input image, prompt, generator
@@ -124,6 +129,98 @@ namespace MultiImageClient
             bytes = Array.Empty<byte>();
             contentType = "";
             return false;
+        }
+
+        // Card previews exist because a page hydrating 200+ jobs otherwise pulls
+        // every full-resolution original (2-8 MB each, gigabytes total) through
+        // the browser's ~6-socket HTTP/1.1 pool, which starves image loads AND
+        // every other same-origin tab's API calls. Cards get a <=640px preview;
+        // the viewer and open-in-new-tab keep the exact original bytes.
+        private const int CardPreviewMaxEdge = 640;
+        private readonly ConcurrentDictionary<string, (byte[] Bytes, string ContentType)> _cardPreviews = new();
+
+        /// Downscaled preview of a stored image for job-card display. Returns
+        /// the ORIGINAL bytes verbatim when the image is already small enough or
+        /// cannot be decoded for resizing — that is not a data fallback: it is
+        /// the exact same resource, merely un-shrunk, and can never select
+        /// unrelated data. Returns false only when the image itself is missing
+        /// or is not an image (videos have no card preview).
+        public bool TryGetCardPreview(string genKey, int n, out byte[] bytes, out string contentType)
+        {
+            var key = $"{genKey}/{n}";
+            if (_cardPreviews.TryGetValue(key, out var cached))
+            {
+                bytes = cached.Bytes;
+                contentType = cached.ContentType;
+                return true;
+            }
+            if (!TryGetImage(genKey, n, out var original, out var originalType))
+            {
+                bytes = Array.Empty<byte>();
+                contentType = "";
+                return false;
+            }
+            if (!originalType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                bytes = Array.Empty<byte>();
+                contentType = "";
+                return false;
+            }
+
+            byte[] previewBytes;
+            string previewType;
+            try
+            {
+                using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(original);
+                if (Math.Max(image.Width, image.Height) <= CardPreviewMaxEdge)
+                {
+                    previewBytes = original;
+                    previewType = originalType;
+                }
+                else
+                {
+                    var scale = (double)CardPreviewMaxEdge / Math.Max(image.Width, image.Height);
+                    image.Mutate(x => x.Resize(
+                        Math.Max(1, (int)Math.Round(image.Width * scale)),
+                        Math.Max(1, (int)Math.Round(image.Height * scale))));
+
+                    bool hasAlpha = false;
+                    image.ProcessPixelRows(accessor =>
+                    {
+                        for (int y = 0; y < accessor.Height && !hasAlpha; y++)
+                        {
+                            foreach (ref var p in accessor.GetRowSpan(y))
+                            {
+                                if (p.A < 255) { hasAlpha = true; break; }
+                            }
+                        }
+                    });
+
+                    using var ms = new MemoryStream();
+                    if (hasAlpha)
+                    {
+                        image.SaveAsPng(ms);
+                        previewType = "image/png";
+                    }
+                    else
+                    {
+                        image.SaveAsJpeg(ms, new JpegEncoder { Quality = 80 });
+                        previewType = "image/jpeg";
+                    }
+                    previewBytes = ms.ToArray();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI job {Id}: could not build card preview for {key} ({ex.Message}); serving the original bytes.");
+                previewBytes = original;
+                previewType = originalType;
+            }
+
+            _cardPreviews[key] = (previewBytes, previewType);
+            bytes = previewBytes;
+            contentType = previewType;
+            return true;
         }
 
         internal void AttachStorage(UiJobStorage storage) => _storage = storage;
@@ -871,6 +968,7 @@ namespace MultiImageClient
         public const string KeyGpt1 = "gpt1";
         public const string KeyGpt1Mini = "gpt1-mini";
         public const string KeyIdeogram = "ideogram";
+        public const string KeyIdeogramV3 = "ideogram-v3";
         public const string KeyRecraft = "recraft";
         public const string KeyBfl = "bfl";
         public const string KeyGoogle = "google";
@@ -882,6 +980,31 @@ namespace MultiImageClient
         public const string KeyGrokApi = "grok-api";
         public const string KeyGrokApiPro = "grok-api-pro";
         public const string KeyMetaWeb = "meta-web";
+
+        // Single source of truth for which UI targets accept an input image.
+        // Exposed to the frontend via /api/config (per-generator imageCapable
+        // flag) and consulted in BuildGenerator, so the two can't drift.
+        // grok-web edits ride the imagine WebSocket (image_uri). Everything
+        // NOT in this set still runs when a job carries an input image — it
+        // just receives the prompt text only. That "sans image" behavior is a
+        // user-specified product requirement (2026-07-28): keep every target
+        // usable on image jobs, and let the UI badge the ones that won't see
+        // the attachment.
+        public static readonly string[] ImageCapableKeys =
+        {
+            KeyGpt2,
+            KeyGrokWeb,
+            KeyGrokApi,
+            KeyGrokApiPro,
+            KeyGoogle,
+            KeyGooglePro,
+            KeyBfl,
+            KeyIdeogramV3,
+            KeyRecraft,
+        };
+
+        public static bool IsImageCapable(string key)
+            => ImageCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
 
         private readonly Settings _settings;
         private readonly MultiClientRunStats _stats;
@@ -964,6 +1087,8 @@ namespace MultiImageClient
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GptImage2, _settings),
             KeyIdeogram
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV4, _settings),
+            KeyIdeogramV3
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV3, _settings),
             KeyRecraft
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.RecraftV41, _settings),
             KeyBfl
@@ -1104,10 +1229,8 @@ namespace MultiImageClient
                 }
                 else if (key == KeyMetaWeb)
                 {
-                    if (job.HasInputImage)
-                    {
-                        throw new NotSupportedException("meta-web image editing is not implemented; remove the input image for text-to-image generation");
-                    }
+                    // Text-only target: on image jobs it runs from the prompt
+                    // alone (see ImageCapableKeys).
                     generator = new MetaWebImagineGenerator(
                         _metaWebClient ?? throw new InvalidOperationException(
                             DescribeAvailabilityProblem(KeyMetaWeb) ?? "meta-web browser client is unavailable"),
@@ -1383,10 +1506,8 @@ namespace MultiImageClient
                 case KeyGpt1:
                 case KeyGpt1Mini:
                 {
-                    if (job.HasInputImage)
-                    {
-                        throw new NotSupportedException($"{key} image editing is not implemented in the local UI");
-                    }
+                    // Text-only target: on image jobs it runs from the prompt
+                    // alone (see ImageCapableKeys).
                     if (!Enum.TryParse<OpenAIGPTImageOneQuality>(spec.Quality, true, out var quality))
                     {
                         quality = OpenAIGPTImageOneQuality.high;
@@ -1470,21 +1591,28 @@ namespace MultiImageClient
 
                 case KeyIdeogram:
                 {
+                    // V4 is a dedicated text-only target now (split from V3 on
+                    // 2026-07-28 at the user's request): the v4 endpoint is
+                    // JSON-only with no reference-image support, so on image
+                    // jobs it runs from the prompt alone (see ImageCapableKeys)
+                    // — Ideogram's text-to-image is good enough to want even
+                    // when an image is attached. v4 is 2K-native: shape maps to
+                    // a documented resolution (detail has no effect).
                     RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
-                    var ideogramN = Math.Clamp(spec.ImageCount, 1, 8);
-                    if (!job.HasInputImage)
-                    {
-                        // v4 is 2K-native: shape maps to a documented resolution
-                        // (detail has no effect), num_images up to 8.
-                        return new IdeogramV4Generator(
-                            _settings.IdeogramApiKey, maxConcurrency: 1,
-                            UiShapeMapping.IdeogramV4Resolution(spec.Shape),
-                            IdeogramRenderingSpeed.DEFAULT,
-                            _stats, "ideogram ui",
-                            imageCount: ideogramN);
-                    }
-                    // Reference/guide: route to V3 (V4 is JSON-only, no reference
-                    // images) and pass the pasted image as a style reference.
+                    return new IdeogramV4Generator(
+                        _settings.IdeogramApiKey, maxConcurrency: 1,
+                        UiShapeMapping.IdeogramV4Resolution(spec.Shape),
+                        IdeogramRenderingSpeed.DEFAULT,
+                        _stats, "ideogram ui",
+                        imageCount: Math.Clamp(spec.ImageCount, 1, 8));
+                }
+
+                case KeyIdeogramV3:
+                {
+                    // V3 is the image-capable Ideogram target: a pasted image
+                    // rides along as a style reference; without one it's plain
+                    // text-to-image on the same endpoint.
+                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
                     return new IdeogramV3Generator(
                         _settings.IdeogramApiKey, maxConcurrency: 1,
                         IdeogramV3StyleType.AUTO, IdeogramMagicPromptOption.ON,
@@ -1493,9 +1621,9 @@ namespace MultiImageClient
                             job.InputImageWidth,
                             job.InputImageHeight),
                         IdeogramRenderingSpeed.QUALITY,
-                        "", _stats, "ideogram ui",
-                        inputImagePath: job.InputImagePath,
-                        imageCount: ideogramN);
+                        "", _stats, "ideogram-v3 ui",
+                        inputImagePath: job.HasInputImage ? job.InputImagePath : null,
+                        imageCount: Math.Clamp(spec.ImageCount, 1, 8));
                 }
 
                 case KeyRecraft:

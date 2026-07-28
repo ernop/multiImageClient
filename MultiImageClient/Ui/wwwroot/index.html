@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260728-hover-video-copy-square">
+<link rel="stylesheet" href="style.css?v=20260728-spellwell-ideogram-split">
+<link rel="stylesheet" href="spellwell/spellwell.css?v=20260728-spellwell-ideogram-split">
 </head>
 <body>
 <header>
@@ -60,6 +61,10 @@
         <button id="gens-enable-all" type="button">Enable all</button>
         <button id="gens-disable-all" type="button">Disable all</button>
         <button id="gens-toggle-all" type="button">Toggle all</button>
+        <button id="gens-enable-image-capable" type="button" class="image-only-action" hidden
+          title="Enable every available endpoint that accepts the attached image">Enable image-capable</button>
+        <button id="gens-disable-text-only" type="button" class="image-only-action" hidden
+          title="Disable endpoints that can't accept the attached image (they'd run from the prompt text only)">Disable text-only</button>
         <span id="gens-count"></span>
       </div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
@@ -211,6 +216,8 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20260728-hover-video-copy-square"></script>
+<script src="spellwell/vendor/typo/typo.min.js?v=20260728-spellwell-ideogram-split"></script>
+<script src="spellwell/spellwell.js?v=20260728-spellwell-ideogram-split"></script>
+<script src="app.js?v=20260728-spellwell-ideogram-split"></script>
 </body>
 </html>

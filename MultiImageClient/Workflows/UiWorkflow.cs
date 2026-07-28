@@ -33,32 +33,17 @@ namespace MultiImageClient
     ///                                          polling instead of SSE because the browser's
     ///                                          ~6-connection HTTP/1.1 pool is shared across ALL
     ///                                          tabs and must stay free for image loads)
-    ///   GET  /api/jobs/{id}/images/{gen}/{n}  cached or persisted result bytes
+    ///   GET  /api/jobs/{id}/images/{gen}/{n}  cached or persisted result bytes; ?thumb=1 serves a
+    ///                                          <=640px card preview; finished jobs get immutable
+    ///                                          cache headers so refreshes don't re-download history
     ///   GET  /api/input-images                 distinct user-uploaded input images, newest first
     ///                                          (SHA-256 deduped), for the composer's load picker
     ///   GET  /api/logs/poll?after=N            current-process log lines after sequence N
     ///   POST /api/prompt/spellfix              Claude spelling-only correction -> {corrected}
     public class UiWorkflow
     {
-        // Single source of truth for which UI targets accept an input image.
-        // Exposed to the frontend via /api/config (per-generator imageCapable
-        // flag) and enforced server-side in POST /api/jobs, so the two can't
-        // drift. grok-web edits ride the imagine WebSocket (image_uri).
-        private static readonly string[] ImageCapableKeys =
-        {
-            UiJobRunner.KeyGpt2,
-            UiJobRunner.KeyGrokWeb,
-            UiJobRunner.KeyGrokApi,
-            UiJobRunner.KeyGrokApiPro,
-            UiJobRunner.KeyGoogle,
-            UiJobRunner.KeyGooglePro,
-            UiJobRunner.KeyBfl,
-            UiJobRunner.KeyIdeogram,
-            UiJobRunner.KeyRecraft,
-        };
-
         private static bool SupportsImageAspectOverride(string key)
-            => ImageCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase)
+            => UiJobRunner.IsImageCapable(key)
                 && !key.Equals(UiJobRunner.KeyRecraft, StringComparison.OrdinalIgnoreCase);
 
         public async Task RunAsync(Settings settings, MultiClientRunStats stats, RunOptions options)
@@ -120,7 +105,8 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = "grok.com cookie session (WebSocket). Without an input, auto requests square 1:1 (this transport has no prompt-aware auto; Grok's own default is 2:3). With an input, the default maps its dimensions to Grok's nearest supported AR; explicit AR choices override it. Side-by-side mode requests up to 4 images. Each result can launch a grok-web image-to-video follow-up." },
                     new { key = UiJobRunner.KeyGrokApi, label = "grok-api", detail = "api.x.ai standard tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
                     new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api pro", detail = "api.x.ai pro tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
-                    new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0, 2K-native (detail tier has no effect). A pasted image routes to V3 as a style reference and defaults to the nearest supported AR; explicit AR choices and n up to 8 work. The v4 text endpoint currently ignores num_images and returns 1." },
+                    new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0 text-to-image, 2K-native (detail tier has no effect). The v4 endpoint takes no input image, so on image jobs it runs from the prompt alone. It also currently ignores num_images and returns 1." },
+                    new { key = UiJobRunner.KeyIdeogramV3, label = "Ideogram V3", detail = "Ideogram 3.0. A pasted image is used as a style reference and the default AR matches the source; explicit AR choices and n up to 8 are honored. Without an image it runs text-to-image (auto = square)." },
                     new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1. A pasted image runs image-to-image and inherently keeps the source dimensions. That endpoint exposes no size override, so Recraft is unavailable for image jobs with an explicit output AR. n up to 6." },
                     new { key = UiJobRunner.KeyBfl, label = "FLUX.2 Pro Preview", detail = "Black Forest Labs FLUX.2 Pro preview. With an input, the default derives an explicit source-matching WxH; explicit shape + detail map to ~1 MP standard or ~4 MP high/max. No n support." },
                     new { key = UiJobRunner.KeyGoogle, label = "Nano Banana 2", detail = "Google gemini-3.1-flash-image. With an input, the default uses the nearest Gemini-supported AR; explicit shape overrides it and detail maps to 1K/2K/4K. No n support." },
@@ -138,7 +124,7 @@ namespace MultiImageClient
                     g.detail,
                     available = runner.IsAvailable(g.key),
                     availabilityProblem = runner.DescribeAvailabilityProblem(g.key),
-                    imageCapable = ImageCapableKeys.Contains(g.key, StringComparer.OrdinalIgnoreCase),
+                    imageCapable = UiJobRunner.IsImageCapable(g.key),
                     imageAspectOverride = SupportsImageAspectOverride(g.key),
                     // Default-on set for new windows: gpt-image-2, Recraft V4.1,
                     // grok-web pro, Ideogram V4, Nano Banana 2.
@@ -266,20 +252,15 @@ namespace MultiImageClient
                 var file = form.Files.GetFile("image");
                 if (file != null && file.Length > 0)
                 {
-                    var incompatible = genKeys
-                        .Where(key => !ImageCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase))
-                        .ToList();
-                    if (incompatible.Count > 0)
-                    {
-                        return Results.BadRequest(new
-                        {
-                            error = $"These generators are text-to-image only in the local UI: {string.Join(", ", incompatible)}. Remove the input image or deselect them.",
-                        });
-                    }
+                    // Text-to-image-only targets are deliberately allowed on
+                    // image jobs: they run from the prompt alone (user-specified
+                    // product behavior, 2026-07-28 — see UiJobRunner.ImageCapableKeys).
+                    // The AR-override rule only applies to targets that will
+                    // actually consume the image.
                     if (shape != "auto")
                     {
                         var aspectIncompatible = genKeys
-                            .Where(key => !SupportsImageAspectOverride(key))
+                            .Where(key => UiJobRunner.IsImageCapable(key) && !SupportsImageAspectOverride(key))
                             .ToList();
                         if (aspectIncompatible.Count > 0)
                         {
@@ -545,12 +526,37 @@ namespace MultiImageClient
             {
                 var job = jobs.Get(id);
                 if (job == null) return Results.NotFound();
-                if (!job.TryGetImage(gen, n, out var bytes, out var contentType)) return Results.NotFound();
-                // A stable URL may advance from blurry GPT-Image-2 partials to
-                // the final result. Force reloads to ask for the current bytes.
-                ctx.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
-                ctx.Response.Headers.Pragma = "no-cache";
-                ctx.Response.Headers.Expires = "0";
+
+                // ?thumb=1 asks for the <=640px card preview; without it the
+                // exact original bytes are served (viewer, new-tab, video
+                // sources, set-active restore all use the plain URL).
+                byte[] bytes;
+                string contentType;
+                if (ctx.Request.Query.ContainsKey("thumb"))
+                {
+                    if (!job.TryGetCardPreview(gen, n, out bytes, out contentType)) return Results.NotFound();
+                }
+                else if (!job.TryGetImage(gen, n, out bytes, out contentType))
+                {
+                    return Results.NotFound();
+                }
+
+                if (job.IsDone)
+                {
+                    // A finished job's bytes never change, so let the browser
+                    // cache them: without this every page refresh re-downloads
+                    // the entire job history through the ~6-socket pool.
+                    ctx.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
+                }
+                else
+                {
+                    // While the job runs, a stable URL may advance from blurry
+                    // GPT-Image-2 partials to the final result. Force reloads
+                    // to ask for the current bytes.
+                    ctx.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+                    ctx.Response.Headers.Pragma = "no-cache";
+                    ctx.Response.Headers.Expires = "0";
+                }
                 return Results.File(bytes, contentType);
             });
 

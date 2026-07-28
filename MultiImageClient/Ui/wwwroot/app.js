@@ -261,6 +261,20 @@ async function loadConfig() {
 
     label.appendChild(cb);
     label.appendChild(document.createTextNode(g.label));
+    // Image-capability flag on every chip: capable targets always show a tiny
+    // picture icon; text-only targets show a slashed one, but only while an
+    // image is attached (CSS keys off #gens-row.has-image) — that's exactly
+    // when "your attachment will NOT be sent here" matters.
+    const imgFlag = document.createElement("span");
+    imgFlag.className = "gen-img-flag " + (g.imageCapable ? "capable" : "text-only");
+    imgFlag.innerHTML =
+      '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">' +
+      '<rect x="1" y="2.5" width="14" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>' +
+      '<circle cx="5.2" cy="6.4" r="1.3" fill="currentColor"/>' +
+      '<path d="M3 12l3.2-3.6 2.4 2.7 1.9-2.2 2.5 3.1z" fill="currentColor"/>' +
+      (g.imageCapable ? "" : '<line x1="0.5" y1="15.5" x2="15.5" y2="0.5" stroke="currentColor" stroke-width="1.7"/>') +
+      "</svg>";
+    label.appendChild(imgFlag);
     label.classList.toggle("checked", cb.checked);
     gensRow.appendChild(label);
   }
@@ -269,30 +283,38 @@ async function loadConfig() {
 
 function updateGeneratorCompatibility() {
   // imageCapable comes from /api/config so the server stays the single
-  // source of truth for which targets accept an input image.
+  // source of truth for which targets accept an input image. Text-only
+  // targets stay selectable on image jobs — the server runs them from the
+  // prompt alone (user-specified behavior) — so the only hard disable left
+  // is the AR-override gap on targets that actually consume the image
+  // (Recraft image-to-image can't override output AR).
+  gensRow.classList.toggle("has-image", !!inputImageFile);
+  for (const btn of document.querySelectorAll("#gen-controls .image-only-action")) {
+    btn.hidden = !inputImageFile;
+  }
   for (const cb of gensRow.querySelectorAll("input")) {
     const providerAvailable = cb.dataset.available === "true";
-    const imageIncompatible = !!inputImageFile && cb.dataset.imageCapable !== "true";
+    const imageCapable = cb.dataset.imageCapable === "true";
     const aspectIncompatible =
       !!inputImageFile &&
+      imageCapable &&
       el("opt-shape").value !== "auto" &&
       cb.dataset.imageAspectOverride !== "true";
-    const incompatible = imageIncompatible || aspectIncompatible;
-    cb.disabled = !providerAvailable || incompatible;
-    if (incompatible)
+    cb.disabled = !providerAvailable || aspectIncompatible;
+    if (aspectIncompatible)
     {
       cb.checked = false;
     }
     const label = cb.closest(".gen-toggle");
     label.classList.toggle("unavailable", cb.disabled);
     label.classList.toggle("checked", cb.checked);
-    if (imageIncompatible)
-    {
-      label.title = `${genLabel(cb.value)} is text-to-image only; remove the input image to use it`;
-    }
-    else if (aspectIncompatible)
+    if (aspectIncompatible)
     {
       label.title = `${genLabel(cb.value)} cannot override output AR with an input image; choose match input image to use it`;
+    }
+    else if (inputImageFile && !imageCapable)
+    {
+      label.title = `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`;
     }
     else
     {
@@ -334,6 +356,17 @@ function setAllGenerators(mode) {
 el("gens-enable-all").addEventListener("click", () => setAllGenerators("enable"));
 el("gens-disable-all").addEventListener("click", () => setAllGenerators("disable"));
 el("gens-toggle-all").addEventListener("click", () => setAllGenerators("toggle"));
+// Attachment-aware bulk actions, visible only while an image is attached.
+function setGeneratorsByImageCapability(wantCapable, checked) {
+  for (const cb of gensRow.querySelectorAll("input:not(:disabled)")) {
+    if ((cb.dataset.imageCapable === "true") !== wantCapable) continue;
+    cb.checked = checked;
+    cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
+  }
+  updateGeneratorCount();
+}
+el("gens-enable-image-capable").addEventListener("click", () => setGeneratorsByImageCapability(true, true));
+el("gens-disable-text-only").addEventListener("click", () => setGeneratorsByImageCapability(false, false));
 el("opt-shape").addEventListener("change", updateGeneratorCompatibility);
 
 // ---------- image attach: paste / drop / browse ----------
@@ -454,7 +487,7 @@ async function openInputLibrary() {
     const when = item.createdAtUnixMs ? new Date(item.createdAtUnixMs).toLocaleString() : "";
     button.title = `${item.width}×${item.height} · first used ${when}\n${item.prompt}`;
     const img = document.createElement("img");
-    img.src = item.url;
+    img.src = `${item.url}?thumb=1`;
     img.loading = "lazy";
     img.alt = "Previously uploaded input image";
     button.appendChild(img);
@@ -1822,7 +1855,8 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
     thumbLink.target = "_blank";
     const thumb = document.createElement("img");
     thumb.className = "job-input-thumb";
-    thumb.src = thumbLink.href;
+    thumb.src = `${thumbLink.href}?thumb=1`;
+    thumb.loading = "lazy";
     thumbLink.appendChild(thumb);
     head.appendChild(thumbLink);
   }
@@ -1916,6 +1950,16 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
       <div class="cell-status"><div class="spinner"></div><span>queued</span></div>
       <div class="cell-images"></div>`;
     cell.querySelector(".cell-name").textContent = genLabel(key);
+    const genCfg = generators.find((g) => g.key === key);
+    if (hasImage && genCfg && !genCfg.imageCapable) {
+      // Honest marker: this target ran from the prompt alone; the job's
+      // attached image was never sent to it.
+      const noImg = document.createElement("span");
+      noImg.className = "cell-noimg";
+      noImg.textContent = "text-only";
+      noImg.title = `${genLabel(key)} doesn't accept input images; the attached image was not sent to it — this result is from the prompt text alone`;
+      cell.querySelector(".cell-name").after(noImg);
+    }
     cells.appendChild(cell);
   }
   card.appendChild(cells);
@@ -2030,6 +2074,10 @@ function applyJobEvent(id, card, evt) {
       img = document.createElement("img");
       img.dataset.partialIndex = String(evt.imageIndex);
       img.alt = "Partial image preview";
+      // Partial bytes live only in server memory; after a restart a replayed
+      // gen-partial event 404s. Drop the dead preview instead of leaving a
+      // broken-image icon on old failed jobs.
+      img.addEventListener("error", () => a.remove());
       a.appendChild(img);
       images.appendChild(a);
     }
@@ -2106,8 +2154,19 @@ function applyJobEvent(id, card, evt) {
         a.dataset.imageIndex = String(imageIndex);
         a.dataset.generatorCount = String(evt.images.length);
         const img = document.createElement("img");
-        img.src = url;
+        // Cards display the <=640px server-side preview; the anchor (viewer,
+        // open-in-new-tab, video source) keeps the exact original bytes.
+        img.src = `${url}?thumb=1`;
         img.loading = "lazy";
+        // Reserve the final layout box before the bytes arrive: without an
+        // intrinsic size every card collapses, the whole history fits inside
+        // the browser's "near viewport" zone, and loading="lazy" defers
+        // nothing (observed 2026-07-28: 541 eager full-res loads per refresh).
+        const dims = /^(\d+)x(\d+)$/.exec(sizeText);
+        if (dims) {
+          img.style.aspectRatio = `${dims[1]} / ${dims[2]}`;
+          img.style.width = "100%";
+        }
         a.appendChild(img);
         result.appendChild(a);
         const button = document.createElement("button");
