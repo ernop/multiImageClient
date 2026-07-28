@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260728-viewer-input-library">
+<link rel="stylesheet" href="style.css?v=20260728-hover-video-copy-square">
 </head>
 <body>
 <header>
@@ -108,7 +108,7 @@
               <button id="opts-help-close" type="button" aria-label="Close options help">&times;</button>
             </div>
             <ul>
-              <li><strong>output AR</strong> — without an input image, auto lets the model choose. Attach an image and that same default becomes <em>match input image</em>: gpt-image-2 and BFL derive source-matching dimensions; Grok, Ideogram, and Google choose the closest ratio their APIs accept. Any explicit choice overrides matching where the endpoint has an AR control. Recraft image-to-image inherently follows the source and has no size override, so Recraft disables for image jobs with an explicit AR.</li>
+              <li><strong>output AR</strong> — without an input image, auto lets the model choose (grok-web can't do prompt-aware auto, so it defaults to square 1:1 there). Attach an image and that same default becomes <em>match input image</em>: gpt-image-2 and BFL derive source-matching dimensions; Grok, Ideogram, and Google choose the closest ratio their APIs accept. Any explicit choice overrides matching where the endpoint has an AR control. Recraft image-to-image inherently follows the source and has no size override, so Recraft disables for image jobs with an explicit AR.</li>
               <li><strong>detail</strong> — sets the resolution tier where one exists: gpt-image-2, grok-api (1k/2k), BFL (~1/~4 MP), Google (1K/2K/4K). Ideogram is always 2K-native; Recraft and gpt-image-1 are ~1K.</li>
               <li><strong>quality &amp; moderation</strong> — OpenAI image models only.</li>
               <li><strong>n</strong> — OpenAI models and grok-api up to 10, Recraft up to 6, Ideogram up to 8 on the V3 image path (the v4 text endpoint currently ignores it). BFL and Google return one; grok-web requests up to 4 in side-by-side mode; meta-web decides itself.</li>
@@ -211,6 +211,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20260728-viewer-input-library"></script>
+<script src="app.js?v=20260728-hover-video-copy-square"></script>
 </body>
 </html>

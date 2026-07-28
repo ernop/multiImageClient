@@ -1279,10 +1279,15 @@ namespace MultiImageClient
                     settings: _settings);
             }
             var mapped = UiShapeMapping.GrokAspect(spec.Shape);
-            // "auto" tells GrokWebClient to omit aspect_ratio. Unlike the
-            // official API, the consumer transport has no working prompt-aware
-            // auto mode; its current native default is portrait 2:3.
-            var ar = mapped == "" ? "auto" : mapped;
+            // Unlike the official API, the consumer transport has no working
+            // prompt-aware auto mode: live tests (2026-07-20) showed both
+            // literal "auto" and an omitted aspect_ratio always return Grok's
+            // native 2:3 default regardless of the prompt. 2:3 is a poor
+            // universal shape, so an unspecified shape requests square 1:1
+            // instead (a declared input default chosen before the call, not a
+            // fallback). Explicit shapes map as usual; edit-with-image auto
+            // still derives the source's ratio above.
+            var ar = mapped == "" ? "1:1" : mapped;
             return new GrokWebImagineGenerator(
                 client, maxConcurrency: 1, _stats,
                 pro: _options.GrokWebPro,

@@ -1830,6 +1830,43 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
   promptDiv.className = "job-prompt";
   promptDiv.textContent = prompt;
   head.appendChild(promptDiv);
+  if (prompt) {
+    // Copy-prompt affordance (the familiar two-overlapping-squares icon):
+    // copies the exact prompt text and flashes "prompt copied". Deliberately
+    // OUTSIDE .job-prompt, whose textContent is read verbatim elsewhere
+    // (video dialog source prompt, image viewer caption).
+    const copyWrap = document.createElement("div");
+    copyWrap.className = "copy-prompt-wrap";
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "copy-prompt";
+    copyBtn.title = "Copy this prompt";
+    copyBtn.setAttribute("aria-label", "Copy this prompt");
+    copyBtn.innerHTML =
+      '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+      '<rect x="1.5" y="1.5" width="9.5" height="9.5" rx="1.5"/>' +
+      '<rect x="5" y="5" width="9.5" height="9.5" rx="1.5"/>' +
+      '</svg>';
+    const copyNote = document.createElement("span");
+    copyNote.className = "copy-prompt-note";
+    copyNote.hidden = true;
+    let copyNoteTimer = null;
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(prompt);
+        copyNote.textContent = "prompt copied";
+        copyNote.classList.remove("err");
+      } catch {
+        copyNote.textContent = "copy failed";
+        copyNote.classList.add("err");
+      }
+      copyNote.hidden = false;
+      if (copyNoteTimer) clearTimeout(copyNoteTimer);
+      copyNoteTimer = setTimeout(() => { copyNote.hidden = true; }, 1600);
+    });
+    copyWrap.append(copyBtn, copyNote);
+    head.appendChild(copyWrap);
+  }
   const meta = document.createElement("div");
   meta.className = "job-meta";
   meta.innerHTML = `
@@ -2038,9 +2075,7 @@ function applyJobEvent(id, card, evt) {
           redo.className = "make-video make-video-redo";
           redo.setAttribute("aria-label", "Redo Grok video");
           redo.title = "Redo Grok video";
-          redo.innerHTML =
-            '<span class="make-video-symbol" aria-hidden="true">↻</span>' +
-            '<span class="make-video-brand" aria-hidden="true">grok</span>';
+          redo.textContent = "↻ grok video";
           redo.disabled = !videoGeneration.available;
           if (!videoGeneration.available) {
             redo.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
@@ -2078,11 +2113,9 @@ function applyJobEvent(id, card, evt) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "make-video make-video-add";
-        button.setAttribute("aria-label", "Make Grok video");
-        button.title = "Make Grok video";
-        button.innerHTML =
-          '<span class="make-video-symbol" aria-hidden="true">+</span>' +
-          '<span class="make-video-brand" aria-hidden="true">grok</span>';
+        button.setAttribute("aria-label", "Make Grok video from this image");
+        button.title = "Make Grok video from this image";
+        button.textContent = "grok video";
         button.disabled = !videoGeneration.available;
         if (!videoGeneration.available) {
           button.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";

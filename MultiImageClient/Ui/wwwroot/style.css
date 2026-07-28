@@ -515,13 +515,13 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 
 /* ---------- jobs ---------- */
 
-#jobs { display: flex; flex-direction: column; gap: 16px; margin-top: 20px; }
+#jobs { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
 
 .job {
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 14px 16px;
+  border-radius: 6px;
+  padding: 10px 12px;
   box-shadow: 0 2px 8px rgba(20, 22, 31, 0.06);
 }
 
@@ -532,6 +532,28 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   border-radius: 6px; border: 1px solid var(--line);
 }
 .job-prompt { font-size: 14px; line-height: 1.5; flex: 1; word-break: break-word; }
+.copy-prompt-wrap { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.copy-prompt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+}
+/* Two overlaid squares: the front one gets an opaque fill so it reads as
+   stacked copies rather than a lattice. */
+.copy-prompt rect { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.copy-prompt rect:last-of-type { fill: var(--card); }
+.copy-prompt:hover { color: #fff; background: var(--accent); border-color: var(--accent); }
+.copy-prompt:hover rect:last-of-type { fill: var(--accent); }
+.copy-prompt-note { font-size: 11px; font-weight: 700; color: var(--ok); white-space: nowrap; }
+.copy-prompt-note.err { color: var(--err); }
 .job-meta {
   display: flex;
   flex-direction: column;
@@ -587,18 +609,18 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .job-cells {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .cell {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px;
+  border-radius: 4px;
+  padding: 8px;
   min-height: 120px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .cell-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; }
 .cell-name { font-weight: 700; }
@@ -610,8 +632,10 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .cell-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--accent-dark); }
 .cell-status.err { color: var(--err); font-weight: 600; word-break: break-word; }
 
-/* Keep controls and status labels in normal flow; never obscure image pixels. */
-.cell-images { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Status labels stay in normal flow. The one deliberate overlay is the
+   hover-only "grok video" chip on each result's corner (user-requested:
+   zero footprint until mouseover). */
+.cell-images { display: flex; flex-wrap: wrap; gap: 6px; }
 /* Multi-image results (grok-web's 4, any n>1) pack into two columns: four
    half-width images in a 2x2 occupy the same height as one full-width image,
    so the cell matches the single-image generators instead of stacking 4x1. */
@@ -621,6 +645,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 .cell-images a { display: block; }
 .media-result {
+  position: relative;  /* anchors the hover-only "grok video" corner chip */
   flex: 1 1 180px;
   display: flex;
   flex-direction: column;
@@ -628,7 +653,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 .cell-images img {
   max-width: 100%;
-  border-radius: 6px;
+  border-radius: 4px;
   border: 1px solid var(--line);
   display: block;
 }
@@ -711,47 +736,48 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   max-height: none;
 }
 .custom-video-player:fullscreen .video-player-controls { flex: 0 0 auto; }
+/* "grok video" floats over the result's top-right corner and only exists
+   while hovering that result (or keyboard-focusing the button): absolute
+   positioning reserves zero space, and there's deliberately no transition —
+   it snaps in and out instantly. Light opaque chip, dark text. */
 .make-video {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
   display: inline-flex;
   width: auto;
   min-width: 0;
   align-items: center;
   justify-content: center;
-  align-self: flex-end;
   gap: 4px;
-  padding: 3px 7px;
-  color: var(--accent-dark);
+  padding: 4px 10px;
+  color: var(--ink);
   background: var(--card);
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  box-shadow: 0 1px 4px rgba(20, 22, 31, 0.2);
-  font: 700 10px/1.15 system-ui, -apple-system, "Segoe UI", sans-serif;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(20, 22, 31, 0.25);
+  font: 700 11px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
 }
-.make-video-symbol {
-  font-size: 16px;
-  font-weight: 500;
-  line-height: 0.8;
-}
-.make-video-brand {
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  opacity: 0.72;
+.media-result:hover .make-video,
+.make-video:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 .make-video:hover,
 .make-video:focus-visible {
   color: #fff;
   background: var(--accent-dark);
-  outline: 1px solid #fff;
+  border-color: var(--accent-dark);
 }
 .make-video:disabled {
   color: var(--ink);
   background: #eef0fa;
   border: 1px solid var(--line);
   cursor: not-allowed;
-  opacity: 0.7;
 }
 .cell-images .partial-image { position: static; }
 .cell-images .partial-image::after {
