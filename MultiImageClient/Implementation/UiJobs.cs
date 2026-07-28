@@ -37,6 +37,7 @@ namespace MultiImageClient
         private readonly List<string> _events = new();
         private bool _done;
         private UiJobStorage? _storage;
+        private Action<UiJob, string>? _emitCallback;
 
         public bool IsDone
         {
@@ -54,6 +55,22 @@ namespace MultiImageClient
             {
                 _events.Add(json);
                 _storage?.AppendEvent(json);
+                _emitCallback?.Invoke(this, json);
+            }
+        }
+
+        /// Drains every already-recorded event through the callback, then wires
+        /// it up for all future Emits — atomically under the event lock, so the
+        /// global registry log sees this job's events exactly once and in order.
+        internal void AttachEmitCallback(Action<UiJob, string> callback)
+        {
+            lock (_lock)
+            {
+                foreach (var json in _events)
+                {
+                    callback(this, json);
+                }
+                _emitCallback = callback;
             }
         }
 
@@ -376,6 +393,16 @@ namespace MultiImageClient
         private readonly List<UiJob> _ordered = new();
         private readonly string _historyRoot;
 
+        // Global append-only envelope log for the polling transport: each
+        // entry is a pre-serialized {"jobId","kind":"job-known"|"event",...}
+        // JSON object. A job-known announcement (card metadata) always
+        // precedes that job's events. Clients poll with an integer cursor
+        // (index into this list), so they hold ZERO persistent connections —
+        // long-lived SSE streams ate the browser's ~6-connection HTTP/1.1
+        // pool once a few windows were open, starving all image loads.
+        private readonly object _envelopeLock = new();
+        private readonly List<string> _envelopes = new();
+
         public UiJobRegistry(Settings settings)
         {
             _historyRoot = Path.Combine(settings.ImageDownloadBaseFolder, "UiHistory");
@@ -387,6 +414,8 @@ namespace MultiImageClient
                 }
                 _jobs[job.Id] = job;
                 _ordered.Add(job);
+                AppendJobKnown(job);
+                job.AttachEmitCallback(AppendEventEnvelope);
             }
             if (_ordered.Count > 0)
             {
@@ -400,6 +429,8 @@ namespace MultiImageClient
             storage.Initialize(job);
             _jobs[job.Id] = job;
             lock (_orderLock) _ordered.Add(job);
+            AppendJobKnown(job);
+            job.AttachEmitCallback(AppendEventEnvelope);
         }
 
         public UiJob? Get(string id) => _jobs.TryGetValue(id, out var j) ? j : null;
@@ -408,6 +439,45 @@ namespace MultiImageClient
         public List<UiJob> ListChronological()
         {
             lock (_orderLock) return _ordered.ToList();
+        }
+
+        private void AppendJobKnown(UiJob job)
+        {
+            var metadata = JsonSerializer.Serialize(new
+            {
+                id = job.Id,
+                prompt = job.Prompt,
+                gens = job.GeneratorKeys,
+                hasImage = job.HasInputImage,
+                createdAt = job.CreatedAt.ToString("HH:mm:ss"),
+                createdAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
+            });
+            lock (_envelopeLock)
+            {
+                _envelopes.Add($"{{\"jobId\":\"{job.Id}\",\"kind\":\"job-known\",\"job\":{metadata}}}");
+            }
+        }
+
+        private void AppendEventEnvelope(UiJob job, string eventJson)
+        {
+            lock (_envelopeLock)
+            {
+                _envelopes.Add($"{{\"jobId\":\"{job.Id}\",\"kind\":\"event\",\"event\":{eventJson}}}");
+            }
+        }
+
+        /// Envelopes from `fromCursor` onward plus the next cursor. A cursor
+        /// outside the log's range (older server run, restart) deliberately
+        /// resyncs from 0 — the full-history replay is the same idempotent
+        /// semantic a fresh page load uses.
+        public (List<string> Envelopes, int NextCursor) ReadEnvelopes(int fromCursor)
+        {
+            lock (_envelopeLock)
+            {
+                var start = fromCursor >= 0 && fromCursor <= _envelopes.Count ? fromCursor : 0;
+                var batch = _envelopes.GetRange(start, _envelopes.Count - start);
+                return (batch, _envelopes.Count);
+            }
         }
     }
 

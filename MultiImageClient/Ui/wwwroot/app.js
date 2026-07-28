@@ -51,7 +51,6 @@ const imageViewerHelpList = el("image-viewer-help-list");
 const imageViewerPrompt = el("image-viewer-prompt");
 const imageViewerPosition = el("image-viewer-position");
 const imageViewerDimensions = el("image-viewer-dimensions");
-let logsEventSource = null;
 let lastLogSequence = 0;
 
 // ---------- live process log ----------
@@ -134,20 +133,35 @@ function appendLogLine(entry) {
   if (stayAtBottom) logsLines.scrollTop = logsLines.scrollHeight;
 }
 
-function ensureLogStream() {
-  if (logsEventSource) return;
-  logsEventSource = new EventSource("/api/logs/events");
-  logsEventSource.onopen = () => {
+// Log lines arrive by short polling, not SSE: a persistent stream per window
+// counts against the browser's ~6-connection HTTP/1.1 pool (shared across
+// ALL tabs on plain-HTTP localhost), which must stay free for image loads.
+let logsPollTimer = null;
+let logsPollInFlight = false;
+
+async function pollLogs() {
+  if (logsPanel.hidden || logsPollInFlight) return;
+  logsPollInFlight = true;
+  if (logsPollTimer) {
+    clearTimeout(logsPollTimer);
+    logsPollTimer = null;
+  }
+  try {
+    const resp = await fetch(`/api/logs/poll?after=${lastLogSequence}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const body = await resp.json();
+    for (const entry of body.entries) appendLogLine(entry);
     logsConnection.textContent = "live";
     logsConnection.className = "live";
-  };
-  logsEventSource.onmessage = (msg) => {
-    appendLogLine(JSON.parse(msg.data));
-  };
-  logsEventSource.onerror = () => {
+  } catch {
     logsConnection.textContent = "server disconnected — retrying";
     logsConnection.className = "error";
-  };
+  } finally {
+    logsPollInFlight = false;
+    if (!logsPanel.hidden) {
+      logsPollTimer = setTimeout(pollLogs, 1000);
+    }
+  }
 }
 
 function setLogsOpen(open) {
@@ -156,10 +170,13 @@ function setLogsOpen(open) {
   logsToggle.classList.toggle("open", open);
   document.body.classList.toggle("logs-open", open);
   if (open) {
-    ensureLogStream();
+    pollLogs();
     requestAnimationFrame(() => {
       logsLines.scrollTop = logsLines.scrollHeight;
     });
+  } else if (logsPollTimer) {
+    clearTimeout(logsPollTimer);
+    logsPollTimer = null;
   }
 }
 
@@ -362,6 +379,298 @@ pasteZone.addEventListener("drop", (e) => {
   if (e.dataTransfer.files.length > 0) setImage(e.dataTransfer.files[0]);
 });
 
+// ---------- prompt inspiration library ----------
+
+const InspirationStorageKey = "multi-image-client.inspiration-library.v1";
+const inspirationCore = [
+  ["style", "Japanese woodblock print", "art direction: Japanese woodblock print, crisp ink contours, flat balanced color planes"],
+  ["style", "Gouache editorial illustration", "art direction: layered gouache editorial illustration, tactile brushwork, clear silhouettes"],
+  ["style", "Risograph poster", "art direction: risograph poster print, limited bright ink palette, slight registration texture"],
+  ["style", "Cut-paper collage", "art direction: dimensional cut-paper collage, clean layered shapes and cast-paper depth"],
+  ["style", "Ink wash", "art direction: expressive ink wash with deliberate brush marks and spacious composition"],
+  ["style", "Art Nouveau poster", "art direction: Art Nouveau poster design, flowing botanical linework and decorative framing"],
+  ["style", "Bauhaus graphic design", "art direction: Bauhaus graphic design, geometric forms, bold primary color relationships"],
+  ["style", "Memphis design", "art direction: playful Memphis design, bright geometric pattern and confident negative space"],
+  ["style", "Isometric miniature", "art direction: precise isometric miniature, readable architectural details and clean perspective"],
+  ["style", "Architectural watercolor", "art direction: architectural watercolor, precise perspective, luminous washes, fine pen detail"],
+  ["style", "Scientific illustration", "art direction: meticulous scientific illustration, clear labeled-diagram sensibility without text"],
+  ["style", "Screenprint", "art direction: hand-pulled screenprint, limited saturated palette and tactile ink texture"],
+  ["style", "Ceramic sculpture", "art direction: handcrafted glazed ceramic sculpture, visible material texture and studio daylight"],
+  ["style", "Textile tapestry", "art direction: woven textile tapestry, rich fiber texture and an organized ornamental pattern"],
+  ["style", "Retro-futurist travel poster", "art direction: retro-futurist travel poster, optimistic graphic forms and clean daylight color"],
+  ["style", "Surrealist collage", "art direction: precise surrealist collage, unexpected but coherent scale relationships"],
+  ["style", "Botanical field guide", "art direction: botanical field-guide illustration, careful observation and a bright clean background"],
+  ["style", "Stop-motion miniature", "art direction: handcrafted stop-motion miniature set, visible tactile materials and bright studio lighting"],
+  ["world", "Sunlit floating archipelago", "setting: a sunlit floating archipelago connected by rope bridges, clear air and lush planted terraces"],
+  ["world", "Coastal cliff observatory", "setting: a bright coastal cliff observatory above the sea, wind-shaped grasses and precise instruments"],
+  ["world", "Overgrown library conservatory", "setting: an overgrown library conservatory, daylight through glass ceilings and orderly shelves of curiosities"],
+  ["world", "Desert research station", "setting: a clear daytime desert research station with geometric shade structures and distant mesas"],
+  ["world", "Canal city workshop", "setting: a lively canal city workshop, reflective water, painted facades, and open doors"],
+  ["world", "Mountain rail terminal", "setting: a bright mountain rail terminal among alpine meadows and clean modern wayfinding"],
+  ["world", "Orbital greenhouse", "setting: an orbital greenhouse with sunlit planting bays, curved windows, and a visible planet below"],
+  ["world", "Forest village canopy", "setting: a forest village built through the canopy, suspended walkways and warm morning sunlight"],
+  ["world", "Iceberg research harbor", "setting: a polar research harbor beside clear blue icebergs under full daylight"],
+  ["world", "Ancient hilltop market", "setting: an ancient hilltop market with terraced stone, colorful awnings, and an expansive daylight view"],
+  ["world", "Underwater museum", "setting: an underwater museum with bright filtered water, glass corridors, and clearly visible exhibits"],
+  ["world", "Rainy neon street", "setting: a rain-polished city street with saturated signage, crisp reflections, and readable storefronts"],
+  ["world", "Solarpunk neighborhood", "setting: a bright solarpunk neighborhood with rooftop gardens, public transit, and abundant daylight"],
+  ["world", "Giant botanical laboratory", "setting: a giant botanical laboratory with oversized specimens, skylights, and orderly worktables"],
+  ["world", "Clifftop wind farm", "setting: a clean clifftop wind farm above the ocean, dramatic scale and full clear daylight"],
+  ["world", "Moon base commons", "setting: a sunlit lunar base commons with modular habitats, crisp shadows, and Earth in the sky"],
+  ["composition", "Low horizon", "composition: low horizon, expansive sky, strong foreground anchor, and a clear focal subject"],
+  ["composition", "Leading lines", "composition: strong leading lines guiding directly to the main subject"],
+  ["composition", "Symmetrical frontal", "composition: calm symmetrical frontal view with precise visual hierarchy"],
+  ["composition", "Rule of thirds", "composition: deliberate rule-of-thirds placement with generous readable negative space"],
+  ["composition", "Bird's-eye map", "composition: bird's-eye view with coherent miniature detail and easy-to-read spatial organization"],
+  ["composition", "Intimate close-up", "composition: intimate close-up with a clear primary detail and softly simplified surroundings"],
+  ["composition", "Layered depth", "composition: layered foreground, middle distance, and background with clean separation"],
+  ["composition", "Bold diagonal", "composition: bold diagonal movement, balanced by a stable counterweight"],
+  ["composition", "Centered icon", "composition: a centered iconic subject on a simple high-contrast background"],
+  ["composition", "Panoramic story", "composition: a wide panoramic scene with several clearly separated story moments"],
+  ["atmosphere", "Clear spring morning", "clear spring-morning daylight, fresh balanced color, and highly readable details"],
+  ["atmosphere", "Warm studio daylight", "warm studio daylight, soft natural shadows, and accurate material color"],
+  ["atmosphere", "Crisp winter sun", "crisp winter sunlight, clean air, high visibility, and restrained cool color"],
+  ["atmosphere", "Festival color", "joyful festival color, bright decorations, clear daylight, and organized visual energy"],
+  ["atmosphere", "Calm contemplative", "calm contemplative mood, open breathing room, gentle daylight, and intentional simplicity"],
+  ["atmosphere", "Playfully oversized", "playfully oversized scale, clear visual logic, and a bright inviting atmosphere"],
+  ["atmosphere", "Luxurious craft", "luxurious handmade craft, rich material detail, and bright gallery-quality lighting"],
+  ["atmosphere", "Whimsical precision", "whimsical precision, surprising details, and a coherent carefully organized scene"],
+  ["atmosphere", "Bright retro optimism", "bright retro optimism, confident shapes, clean color separation, and full daytime clarity"],
+  ["atmosphere", "Natural material study", "natural material study, tactile wood, paper, stone, or fiber texture in soft clear daylight"],
+].map(([category, label, text], index) => ({ id: `core-${index}`, category, label, text }));
+
+const inspirationState = {
+  activeTab: "all",
+  selectedIndex: 0,
+  custom: [],
+  favorites: [],
+  recent: [],
+};
+let inspirationRendered = [];
+
+function loadInspirationState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(InspirationStorageKey) || "{}");
+    inspirationState.custom = Array.isArray(saved.custom) ? saved.custom.filter(validInspirationItem) : [];
+    inspirationState.favorites = Array.isArray(saved.favorites) ? saved.favorites : [];
+    inspirationState.recent = Array.isArray(saved.recent) ? saved.recent : [];
+  } catch {
+    // A malformed local value should never make the composer unusable.
+  }
+}
+
+function validInspirationItem(item) {
+  return item && typeof item.id === "string" && typeof item.label === "string"
+    && typeof item.text === "string" && typeof item.category === "string";
+}
+
+function saveInspirationState() {
+  localStorage.setItem(InspirationStorageKey, JSON.stringify({
+    custom: inspirationState.custom,
+    favorites: inspirationState.favorites,
+    recent: inspirationState.recent,
+  }));
+}
+
+function inspirationItems() {
+  return [...inspirationCore, ...inspirationState.custom];
+}
+
+function isFavorite(item) {
+  return inspirationState.favorites.includes(item.id);
+}
+
+function categoryLabel(category) {
+  return ({ style: "Style", world: "World", composition: "Composition", atmosphere: "Mood & material", custom: "Mine" })[category] || category;
+}
+
+function openInspiration() {
+  el("inspiration-panel").hidden = false;
+  el("inspiration-toggle").setAttribute("aria-expanded", "true");
+  renderInspiration();
+  el("inspiration-search").focus();
+}
+
+function closeInspiration() {
+  el("inspiration-panel").hidden = true;
+  el("inspiration-toggle").setAttribute("aria-expanded", "false");
+  el("inspiration-toggle").focus();
+}
+
+function renderInspiration() {
+  const search = el("inspiration-search").value.trim().toLocaleLowerCase();
+  const itemsById = new Map(inspirationItems().map((item) => [item.id, item]));
+  const tabs = [
+    ["all", "All"], ["recent", "Recent"], ["favorites", "Favorites"],
+    ["style", "Style"], ["world", "World"], ["composition", "Composition"], ["atmosphere", "Mood"],
+  ];
+  el("inspiration-tabs").replaceChildren(...tabs.map(([key, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "inspiration-tab";
+    button.textContent = label;
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(inspirationState.activeTab === key));
+    button.addEventListener("click", () => {
+      inspirationState.activeTab = key;
+      inspirationState.selectedIndex = 0;
+      renderInspiration();
+    });
+    return button;
+  }));
+
+  let source = inspirationItems();
+  if (inspirationState.activeTab === "recent") {
+    source = inspirationState.recent.map((id) => itemsById.get(id)).filter(Boolean);
+  } else if (inspirationState.activeTab === "favorites") {
+    source = inspirationState.favorites.map((id) => itemsById.get(id)).filter(Boolean);
+  } else if (inspirationState.activeTab !== "all") {
+    source = source.filter((item) => item.category === inspirationState.activeTab);
+  }
+  if (search) {
+    source = source.filter((item) => `${item.label} ${item.text} ${item.category}`.toLocaleLowerCase().includes(search));
+  } else if (!["recent", "favorites"].includes(inspirationState.activeTab)) {
+    source = source.sort((a, b) => Number(isFavorite(b)) - Number(isFavorite(a)) || a.label.localeCompare(b.label));
+  }
+  inspirationRendered = source;
+  inspirationState.selectedIndex = Math.min(inspirationState.selectedIndex, Math.max(0, source.length - 1));
+
+  const results = el("inspiration-results");
+  if (source.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "inspiration-empty";
+    empty.textContent = search ? "No matching direction yet." : "Nothing here yet — star directions or add your own.";
+    results.replaceChildren(empty);
+  } else {
+    results.replaceChildren(...source.map((item, index) => inspirationItemElement(item, index)));
+  }
+  el("inspiration-custom").hidden = !search || source.some((item) => item.text.toLocaleLowerCase() === search);
+}
+
+function inspirationItemElement(item, index) {
+  const row = document.createElement("div");
+  row.className = `inspiration-item${index === inspirationState.selectedIndex ? " is-active" : ""}`;
+  row.setAttribute("role", "option");
+  row.setAttribute("aria-selected", String(index === inspirationState.selectedIndex));
+
+  const use = document.createElement("button");
+  use.type = "button";
+  use.className = "inspiration-use";
+  use.addEventListener("click", () => useInspiration(item));
+  const label = document.createElement("span");
+  label.className = "inspiration-label";
+  label.textContent = item.label;
+  const preview = document.createElement("span");
+  preview.className = "inspiration-preview";
+  preview.textContent = `${categoryLabel(item.category)} · ${item.text}`;
+  use.append(label, preview);
+
+  const actions = document.createElement("div");
+  actions.className = "inspiration-actions";
+  const favorite = document.createElement("button");
+  favorite.type = "button";
+  favorite.className = `inspiration-action${isFavorite(item) ? " is-favorite" : ""}`;
+  favorite.textContent = isFavorite(item) ? "★" : "☆";
+  favorite.title = isFavorite(item) ? "Remove from favorites" : "Add to favorites";
+  favorite.setAttribute("aria-label", favorite.title);
+  favorite.addEventListener("click", () => toggleInspirationFavorite(item.id));
+  actions.appendChild(favorite);
+  if (item.id.startsWith("custom-")) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "inspiration-action";
+    remove.textContent = "×";
+    remove.title = "Delete this personal direction";
+    remove.setAttribute("aria-label", remove.title);
+    remove.addEventListener("click", () => deleteCustomInspiration(item.id));
+    actions.appendChild(remove);
+  }
+  row.append(use, actions);
+  return row;
+}
+
+function insertPromptText(text) {
+  const start = promptBox.selectionStart ?? promptBox.value.length;
+  const end = promptBox.selectionEnd ?? start;
+  const before = promptBox.value.slice(0, start);
+  const after = promptBox.value.slice(end);
+  const separator = before.trim() && !/[\s,.;:]$/.test(before) ? ", " : before.trim() ? " " : "";
+  const trailing = after && !/^\s/.test(after) ? " " : "";
+  promptBox.value = `${before}${separator}${text}${trailing}${after}`;
+  const caret = before.length + separator.length + text.length;
+  promptBox.focus();
+  promptBox.setSelectionRange(caret, caret);
+}
+
+function useInspiration(item) {
+  insertPromptText(item.text);
+  inspirationState.recent = [item.id, ...inspirationState.recent.filter((id) => id !== item.id)].slice(0, 12);
+  saveInspirationState();
+  renderInspiration();
+}
+
+function toggleInspirationFavorite(id) {
+  inspirationState.favorites = isFavorite({ id })
+    ? inspirationState.favorites.filter((favoriteId) => favoriteId !== id)
+    : [id, ...inspirationState.favorites.filter((favoriteId) => favoriteId !== id)];
+  saveInspirationState();
+  renderInspiration();
+}
+
+function addCustomInspiration() {
+  const text = el("inspiration-search").value.trim();
+  if (!text) return;
+  const existing = inspirationItems().find((item) => item.text.toLocaleLowerCase() === text.toLocaleLowerCase());
+  const item = existing || {
+    id: `custom-${crypto.randomUUID()}`,
+    category: "custom",
+    label: text.length > 58 ? `${text.slice(0, 55)}…` : text,
+    text,
+  };
+  if (!existing) inspirationState.custom.unshift(item);
+  if (!isFavorite(item)) inspirationState.favorites.unshift(item.id);
+  useInspiration(item);
+  el("inspiration-search").value = "";
+  saveInspirationState();
+  renderInspiration();
+}
+
+function deleteCustomInspiration(id) {
+  inspirationState.custom = inspirationState.custom.filter((item) => item.id !== id);
+  inspirationState.favorites = inspirationState.favorites.filter((favoriteId) => favoriteId !== id);
+  inspirationState.recent = inspirationState.recent.filter((recentId) => recentId !== id);
+  saveInspirationState();
+  renderInspiration();
+}
+
+el("inspiration-toggle").addEventListener("click", () => el("inspiration-panel").hidden ? openInspiration() : closeInspiration());
+el("inspiration-close").addEventListener("click", closeInspiration);
+el("inspiration-search").addEventListener("input", () => {
+  inspirationState.selectedIndex = 0;
+  renderInspiration();
+});
+el("inspiration-add-custom").addEventListener("click", addCustomInspiration);
+el("inspiration-search").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") { event.preventDefault(); closeInspiration(); }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (inspirationRendered.length) {
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      inspirationState.selectedIndex = (inspirationState.selectedIndex + delta + inspirationRendered.length) % inspirationRendered.length;
+      renderInspiration();
+    }
+  }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    if (inspirationRendered[inspirationState.selectedIndex]) useInspiration(inspirationRendered[inspirationState.selectedIndex]);
+    else addCustomInspiration();
+  }
+});
+document.addEventListener("pointerdown", (event) => {
+  if (!el("inspiration-panel").hidden && !el("inspiration-control").contains(event.target)) closeInspiration();
+});
+loadInspirationState();
+
 // ---------- submit ----------
 
 function checkedGeneratorKeys() {
@@ -391,7 +700,6 @@ async function submit() {
     const body = await resp.json();
     if (!resp.ok) { sendError.textContent = body.error || `HTTP ${resp.status}`; return; }
     addJobCard(body.id, prompt, gens, !!inputImageFile, null, Date.now());
-    watchJob(body.id);
   } catch (err) {
     sendError.textContent = String(err);
   } finally {
@@ -458,7 +766,6 @@ el("video-form").addEventListener("submit", async (e) => {
     }
     videoDialog.close();
     addJobCard(body.id, prompt, ["grok-web-video"], true, null, Date.now());
-    watchJob(body.id);
   } catch (err) {
     error.textContent = String(err);
   } finally {
@@ -1316,178 +1623,234 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
   return card;
 }
 
-function watchJob(id) {
-  const es = new EventSource(`/api/jobs/${id}/events`);
-  es.onopen = () => {
-    const card = el(`job-${id}`);
-    if (!card || card.dataset.state === "done") return;
+// All job events arrive by short cursor-based polling, deliberately NOT by
+// EventSource/WebSocket: on plain-HTTP localhost the browser has no HTTP/2,
+// so every persistent connection permanently occupies one of ~6 HTTP/1.1
+// sockets shared across ALL tabs of the whole browser. A few open windows
+// each holding a stream starved every <img> load and the page went blind
+// (observed twice, 2026-07-27). Each poll answers immediately and releases
+// its socket. cursor=0 replays the full envelope log (job-known metadata
+// announcements followed by each job's events), which is also how a fresh
+// window hydrates; replays are idempotent.
+let jobsPollCursor = 0;
+let jobsPollTimer = null;
+let jobsPollInFlight = false;
+let jobsPollFailing = false;
+
+function setAllJobConnections(text, isError) {
+  for (const card of jobsSection.querySelectorAll(".job")) {
+    if (card.dataset.state === "done") continue;
+    const connection = card.querySelector(".job-connection");
+    connection.textContent = text;
+    connection.classList.toggle("err", isError);
+  }
+}
+
+async function pollJobEvents() {
+  if (jobsPollInFlight) return;
+  jobsPollInFlight = true;
+  if (jobsPollTimer) {
+    clearTimeout(jobsPollTimer);
+    jobsPollTimer = null;
+  }
+  try {
+    const resp = await fetch(`/api/events/poll?cursor=${jobsPollCursor}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const body = await resp.json();
+    // A cursor lower than ours means the server restarted and resynced us
+    // from 0; the replayed history is applied idempotently.
+    jobsPollCursor = body.cursor;
+    for (const envelope of body.envelopes) {
+      if (envelope.kind === "job-known") {
+        const j = envelope.job;
+        addJobCard(j.id, j.prompt, j.gens, j.hasImage, j.createdAt, j.createdAtUnixMs);
+        continue;
+      }
+      const card = el(`job-${envelope.jobId}`);
+      if (card) applyJobEvent(envelope.jobId, card, envelope.event);
+    }
+    if (jobsPollFailing) {
+      jobsPollFailing = false;
+      setAllJobConnections("live", false);
+    }
+  } catch {
+    if (!jobsPollFailing) {
+      jobsPollFailing = true;
+      setAllJobConnections("server disconnected — retrying", true);
+    }
+  } finally {
+    jobsPollInFlight = false;
+    // Back off in hidden tabs; the visibilitychange handler polls
+    // immediately when the tab comes back.
+    jobsPollTimer = setTimeout(pollJobEvents, document.hidden ? 5000 : 1000);
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) pollJobEvents();
+});
+
+function applyJobEvent(id, card, evt) {
+  if (card.dataset.state !== "done") {
     const connection = card.querySelector(".job-connection");
     connection.textContent = "live";
     connection.classList.remove("err");
-  };
-  es.onmessage = (msg) => {
-    const evt = JSON.parse(msg.data);
-    const card = el(`job-${id}`);
-    if (!card) return;
+  }
 
-    if (evt.type === "accepted" || evt.type === "job-queued") {
-      card.dataset.state = "queued";
-    } else if (evt.type === "job-start") {
-      card.dataset.state = "running";
-      card.dataset.startedAt = String(evt.at || Date.now());
-    } else if (evt.type === "gen-start") {
-      const cell = card.querySelector(`.cell[data-gen="${evt.gen}"]`);
-      if (!cell || ["done", "error"].includes(cell.dataset.state)) return;
-      cell.dataset.state = "running";
-      cell.dataset.startedAt = String(evt.at || Date.now());
-      setCellStatus(cell, "generating…", true);
-    } else if (evt.type === "gen-partial") {
-      const cell = card.querySelector(`.cell[data-gen="${evt.gen}"]`);
-      if (!cell || ["done", "error"].includes(cell.dataset.state)) return;
-      setCellStatus(cell, `partial preview ${evt.partialIndex + 1} received`, true);
-      const images = cell.querySelector(".cell-images");
-      const selector = `img[data-partial-index="${evt.imageIndex}"]`;
-      let img = images.querySelector(selector);
-      if (!img) {
-        const a = document.createElement("a");
-        a.target = "_blank";
-        a.className = "partial-image";
-        img = document.createElement("img");
-        img.dataset.partialIndex = String(evt.imageIndex);
-        img.alt = "Partial image preview";
-        a.appendChild(img);
-        images.appendChild(a);
-      }
-      img.parentElement.href = `${evt.url}?v=${evt.partialIndex}`;
-      img.src = `${evt.url}?v=${evt.partialIndex}`;
-    } else if (evt.type === "gen-result") {
-      const cell = card.querySelector(`.cell[data-gen="${evt.gen}"]`);
-      if (!cell) return;
-      const status = cell.querySelector(".cell-status");
-      const images = cell.querySelector(".cell-images");
-      const time = cell.querySelector(".cell-time");
-      if (evt.ms > 0) time.textContent = `${(evt.ms / 1000).toFixed(1)}s`;
-      images.textContent = "";
+  if (evt.type === "accepted" || evt.type === "job-queued") {
+    card.dataset.state = "queued";
+  } else if (evt.type === "job-start") {
+    card.dataset.state = "running";
+    card.dataset.startedAt = String(evt.at || Date.now());
+  } else if (evt.type === "gen-start") {
+    const cell = card.querySelector(`.cell[data-gen="${evt.gen}"]`);
+    if (!cell || ["done", "error"].includes(cell.dataset.state)) return;
+    cell.dataset.state = "running";
+    cell.dataset.startedAt = String(evt.at || Date.now());
+    setCellStatus(cell, "generating…", true);
+  } else if (evt.type === "gen-partial") {
+    const cell = card.querySelector(`.cell[data-gen="${evt.gen}"]`);
+    if (!cell || ["done", "error"].includes(cell.dataset.state)) return;
+    setCellStatus(cell, `partial preview ${evt.partialIndex + 1} received`, true);
+    const images = cell.querySelector(".cell-images");
+    const selector = `img[data-partial-index="${evt.imageIndex}"]`;
+    let img = images.querySelector(selector);
+    if (!img) {
+      const a = document.createElement("a");
+      a.target = "_blank";
+      a.className = "partial-image";
+      img = document.createElement("img");
+      img.dataset.partialIndex = String(evt.imageIndex);
+      img.alt = "Partial image preview";
+      a.appendChild(img);
+      images.appendChild(a);
+    }
+    img.parentElement.href = `${evt.url}?v=${evt.partialIndex}`;
+    img.src = `${evt.url}?v=${evt.partialIndex}`;
+  } else if (evt.type === "gen-result") {
+    const cell = card.querySelector(`.cell[data-gen="${evt.gen}"]`);
+    if (!cell) return;
+    const status = cell.querySelector(".cell-status");
+    const images = cell.querySelector(".cell-images");
+    const time = cell.querySelector(".cell-time");
+    if (evt.ms > 0) time.textContent = `${(evt.ms / 1000).toFixed(1)}s`;
+    images.textContent = "";
+    // Multi-image results (e.g. grok-web's 4) render as a 2-column grid so
+    // the cell stays roughly the same height as a single full-width image.
+    images.classList.toggle(
+      "multi",
+      evt.ok && evt.images.length > 1 && !(evt.mediaType && evt.mediaType.startsWith("video/")));
 
-      if (evt.ok) {
-        cell.dataset.state = "done";
-        if (evt.label) cell.querySelector(".cell-name").textContent = evt.label;
-        cell.dataset.cost = String(evt.cost || 0);
-        cell.dataset.imgCount = String(evt.images.length);
-        cell.querySelector(".cell-cost").textContent = formatCost(evt.cost);
-        status.textContent = "";
-        for (const [imageIndex, url] of evt.images.entries()) {
-          if (evt.mediaType && evt.mediaType.startsWith("video/")) {
-            const result = document.createElement("div");
-            result.className = "media-result";
-            result.appendChild(createVideoPlayer(url));
-
-            const redo = document.createElement("button");
-            redo.type = "button";
-            redo.className = "make-video make-video-redo";
-            redo.setAttribute("aria-label", "Redo Grok video");
-            redo.title = "Redo Grok video";
-            redo.innerHTML =
-              '<span class="make-video-symbol" aria-hidden="true">↻</span>' +
-              '<span class="make-video-brand" aria-hidden="true">grok</span>';
-            redo.disabled = !videoGeneration.available;
-            if (!videoGeneration.available) {
-              redo.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
-            }
-            redo.addEventListener("click", () => {
-              const priorPrompt = card.querySelector(".job-prompt").textContent;
-              const sourceUrl = `/api/jobs/${encodeURIComponent(id)}/images/input/0`;
-              openVideoDialog(id, "input", 0, sourceUrl, priorPrompt, {
-                mode: evt.videoMode,
-                durationSeconds: evt.videoDurationSeconds,
-                resolution: evt.videoResolution,
-                aspectRatio: evt.videoAspectRatio,
-              });
-            });
-            result.appendChild(redo);
-            images.appendChild(result);
-            continue;
-          }
-
+    if (evt.ok) {
+      cell.dataset.state = "done";
+      if (evt.label) cell.querySelector(".cell-name").textContent = evt.label;
+      cell.dataset.cost = String(evt.cost || 0);
+      cell.dataset.imgCount = String(evt.images.length);
+      cell.querySelector(".cell-cost").textContent = formatCost(evt.cost);
+      status.textContent = "";
+      for (const [imageIndex, url] of evt.images.entries()) {
+        if (evt.mediaType && evt.mediaType.startsWith("video/")) {
           const result = document.createElement("div");
           result.className = "media-result";
-          const a = document.createElement("a");
-          a.href = url;
-          a.target = "_blank";
-          a.dataset.viewerImage = "true";
-          a.dataset.jobId = id;
-          a.dataset.generator = evt.gen;
-          a.dataset.imageIndex = String(imageIndex);
-          a.dataset.generatorCount = String(evt.images.length);
-          const img = document.createElement("img");
-          img.src = url;
-          img.loading = "lazy";
-          a.appendChild(img);
-          result.appendChild(a);
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "make-video make-video-add";
-          button.setAttribute("aria-label", "Make Grok video");
-          button.title = "Make Grok video";
-          button.innerHTML =
-            '<span class="make-video-symbol" aria-hidden="true">+</span>' +
+          result.appendChild(createVideoPlayer(url));
+
+          const redo = document.createElement("button");
+          redo.type = "button";
+          redo.className = "make-video make-video-redo";
+          redo.setAttribute("aria-label", "Redo Grok video");
+          redo.title = "Redo Grok video";
+          redo.innerHTML =
+            '<span class="make-video-symbol" aria-hidden="true">↻</span>' +
             '<span class="make-video-brand" aria-hidden="true">grok</span>';
-          button.disabled = !videoGeneration.available;
+          redo.disabled = !videoGeneration.available;
           if (!videoGeneration.available) {
-            button.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
+            redo.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
           }
-          button.addEventListener("click", () => {
-            const sourcePrompt = card.querySelector(".job-prompt").textContent;
-            openVideoDialog(id, evt.gen, imageIndex, url, sourcePrompt);
+          redo.addEventListener("click", () => {
+            const priorPrompt = card.querySelector(".job-prompt").textContent;
+            const sourceUrl = `/api/jobs/${encodeURIComponent(id)}/images/input/0`;
+            openVideoDialog(id, "input", 0, sourceUrl, priorPrompt, {
+              mode: evt.videoMode,
+              durationSeconds: evt.videoDurationSeconds,
+              resolution: evt.videoResolution,
+              aspectRatio: evt.videoAspectRatio,
+            });
           });
-          result.appendChild(button);
+          result.appendChild(redo);
           images.appendChild(result);
+          continue;
         }
-        if (!imageViewer.hidden) renderImageViewer();
-      } else {
-        cell.dataset.state = "error";
-        // Keep the short generator name on failure (the long spec label just
-        // adds noise next to an error) and turn the timing red, not green.
-        time.classList.add("err");
-        status.className = "cell-status err";
-        status.textContent = evt.error || "failed";
+
+        const result = document.createElement("div");
+        result.className = "media-result";
+        const a = document.createElement("a");
+        a.href = url;
+        a.target = "_blank";
+        a.dataset.viewerImage = "true";
+        a.dataset.jobId = id;
+        a.dataset.generator = evt.gen;
+        a.dataset.imageIndex = String(imageIndex);
+        a.dataset.generatorCount = String(evt.images.length);
+        const img = document.createElement("img");
+        img.src = url;
+        img.loading = "lazy";
+        a.appendChild(img);
+        result.appendChild(a);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "make-video make-video-add";
+        button.setAttribute("aria-label", "Make Grok video");
+        button.title = "Make Grok video";
+        button.innerHTML =
+          '<span class="make-video-symbol" aria-hidden="true">+</span>' +
+          '<span class="make-video-brand" aria-hidden="true">grok</span>';
+        button.disabled = !videoGeneration.available;
+        if (!videoGeneration.available) {
+          button.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
+        }
+        button.addEventListener("click", () => {
+          const sourcePrompt = card.querySelector(".job-prompt").textContent;
+          openVideoDialog(id, evt.gen, imageIndex, url, sourcePrompt);
+        });
+        result.appendChild(button);
+        images.appendChild(result);
       }
-      updateJobProgress(card);
-      updateCostTotals();
-    } else if (evt.type === "grid") {
-      let link = card.querySelector(".grid-link");
-      if (!link) {
-        link = document.createElement("div");
-        link.className = "grid-link";
-        link.innerHTML = `<a target="_blank"></a><span></span>`;
-        card.appendChild(link);
-      }
-      const a = link.querySelector("a");
-      a.href = evt.url;
-      a.textContent = "combined contact sheet";
-      link.querySelector("span").textContent = `  (saved: ${evt.path})`;
-    } else if (evt.type === "job-done") {
-      es.close();
-      card.dataset.state = "done";
-      card.querySelector(".job-connection").textContent = "complete";
-      // Any cell still spinning got no gen-result (shouldn't happen, but
-      // never leave an infinite spinner).
-      for (const spin of card.querySelectorAll(".cell-status .spinner")) {
-        const status = spin.parentElement;
-        status.closest(".cell").dataset.state = "no-result";
-        status.className = "cell-status err";
-        status.textContent = "no result";
-      }
-      updateJobProgress(card);
+      if (!imageViewer.hidden) renderImageViewer();
+    } else {
+      cell.dataset.state = "error";
+      // Keep the short generator name on failure (the long spec label just
+      // adds noise next to an error) and turn the timing red, not green.
+      time.classList.add("err");
+      status.className = "cell-status err";
+      status.textContent = evt.error || "failed";
     }
-  };
-  es.onerror = () => {
-    const card = el(`job-${id}`);
-    if (!card || card.dataset.state === "done") return;
-    const connection = card.querySelector(".job-connection");
-    connection.textContent = "server disconnected — retrying";
-    connection.classList.add("err");
-  };
+    updateJobProgress(card);
+    updateCostTotals();
+  } else if (evt.type === "grid") {
+    let link = card.querySelector(".grid-link");
+    if (!link) {
+      link = document.createElement("div");
+      link.className = "grid-link";
+      link.innerHTML = `<a target="_blank"></a><span></span>`;
+      card.appendChild(link);
+    }
+    const a = link.querySelector("a");
+    a.href = evt.url;
+    a.textContent = "combined contact sheet";
+    link.querySelector("span").textContent = `  (saved: ${evt.path})`;
+  } else if (evt.type === "job-done") {
+    card.dataset.state = "done";
+    card.querySelector(".job-connection").textContent = "complete";
+    // Any cell still spinning got no gen-result (shouldn't happen, but
+    // never leave an infinite spinner).
+    for (const spin of card.querySelectorAll(".cell-status .spinner")) {
+      const status = spin.parentElement;
+      status.closest(".cell").dataset.state = "no-result";
+      status.className = "cell-status err";
+      status.textContent = "no result";
+    }
+    updateJobProgress(card);
+  }
 }
 
 setInterval(() => {
@@ -1507,21 +1870,12 @@ setInterval(() => {
 
 // ---------- boot ----------
 
-// Every window is a view over durable server-side job history. On load,
-// hydrate all jobs (the SSE stream replays each job's full event history, so
-// finished jobs render completely and running ones resume live).
-async function hydrateJobs() {
-  const resp = await fetch("/api/jobs");
-  const body = await resp.json();
-  for (const j of body.jobs) {           // chronological; prepend => newest on top
-    if (el(`job-${j.id}`)) continue;
-    addJobCard(j.id, j.prompt, j.gens, j.hasImage, j.createdAt, j.createdAtUnixMs);
-    watchJob(j.id);
-  }
-}
-
+// Every window is a view over durable server-side job history. The first
+// poll (cursor=0) hydrates it: jobs are announced chronologically (prepend
+// => newest on top) and each job's full event history replays, so finished
+// jobs render completely and running ones resume live.
 loadConfig()
-  .then(hydrateJobs)
+  .then(pollJobEvents)
   .catch((err) => {
     sendError.textContent = `config load failed: ${err}`;
   });

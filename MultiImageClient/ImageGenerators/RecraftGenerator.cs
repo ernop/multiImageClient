@@ -4,6 +4,7 @@
 using RecraftAPIClient;
 
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 
 using System;
 using System.Collections.Generic;
@@ -237,7 +238,8 @@ namespace MultiImageClient
                     // Reference image → /images/imageToImage (works on V3 and
                     // V4/V4.1; API-created custom styles are V3-only, so the old
                     // create-style-then-style_id path silently broke on V4.x).
-                    var refBytes = File.ReadAllBytes(_inputImagePath);
+                    var refBytes = ConformImageToImageInput(
+                        File.ReadAllBytes(_inputImagePath), _inputImagePath);
                     generationResult = await _recraftClient.ImageToImageAsync(
                         refBytes, usingPrompt, _imageStrength, _model, _imageCount, _randomSeed);
                 }
@@ -303,6 +305,68 @@ namespace MultiImageClient
             finally
             {
                 _recraftSemaphore.Release();
+            }
+        }
+
+        // Recraft's /images/imageToImage input contract (recraft.ai docs,
+        // 2026-07): file < 10 MB, resolution < 16 MP, max dimension < 4096 px,
+        // min dimension 256 px. Anything over gets rejected outright with
+        // "image_too_big" — e.g. Google 4K outputs (exactly 4096 px wide) or
+        // max-detail gpt-image-2 PNGs (> 10 MB). The endpoint has no size
+        // field and its output follows the input dimensions, so the ONLY way
+        // to submit such an image is to shrink it first. This is pre-declared
+        // input conformance applied before the provider call begins (not
+        // failure recovery): oversized inputs are deterministically downscaled
+        // (aspect preserved) and re-encoded as PNG, with the exact
+        // transformation logged. Undersized inputs stay a hard error because
+        // upscaling would fabricate detail.
+        private const int MaxInputDimension = 4095;
+        private const long MaxInputPixels = 15_900_000;
+        private const long MaxInputBytes = 10L * 1024 * 1024 - 65536;
+        private const int MinInputDimension = 256;
+
+        internal static byte[] ConformImageToImageInput(byte[] bytes, string sourcePath)
+        {
+            using var image = SixLabors.ImageSharp.Image.Load(bytes);
+            if (image.Width < MinInputDimension || image.Height < MinInputDimension)
+            {
+                throw new InvalidOperationException(
+                    $"Recraft imageToImage requires both dimensions to be at least {MinInputDimension}px; "
+                    + $"'{sourcePath}' is {image.Width}x{image.Height}.");
+            }
+
+            var scale = Math.Min(1.0, Math.Min(
+                (double)MaxInputDimension / Math.Max(image.Width, image.Height),
+                Math.Sqrt((double)MaxInputPixels / ((long)image.Width * image.Height))));
+            if (scale >= 1.0 && bytes.LongLength <= MaxInputBytes)
+            {
+                return bytes;
+            }
+
+            while (true)
+            {
+                var width = Math.Max(MinInputDimension, (int)Math.Floor(image.Width * scale));
+                var height = Math.Max(MinInputDimension, (int)Math.Floor(image.Height * scale));
+                using var resized = image.Clone(ctx => ctx.Resize(width, height));
+                using var ms = new MemoryStream();
+                resized.SaveAsPng(ms);
+                var encoded = ms.ToArray();
+                if (encoded.LongLength <= MaxInputBytes)
+                {
+                    Logger.Log(
+                        $"Recraft imageToImage input '{sourcePath}' ({image.Width}x{image.Height}, "
+                        + $"{bytes.LongLength:N0} bytes) exceeds Recraft's input limits "
+                        + $"(<{MaxInputDimension + 1}px per edge, <16 MP, <10 MB); "
+                        + $"downscaled to {width}x{height} ({encoded.LongLength:N0} bytes) before upload.");
+                    return encoded;
+                }
+                if (width <= MinInputDimension && height <= MinInputDimension)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not fit '{sourcePath}' under Recraft's {MaxInputBytes:N0}-byte input cap "
+                        + $"even at {width}x{height}.");
+                }
+                scale *= 0.85;
             }
         }
 

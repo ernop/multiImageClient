@@ -49,6 +49,26 @@
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
 
       <div id="opts-row">
+        <div id="inspiration-control">
+          <button id="inspiration-toggle" type="button" aria-expanded="false" aria-controls="inspiration-panel">
+            + inspiration
+          </button>
+          <div id="inspiration-panel" hidden>
+            <div class="inspiration-head">
+              <label class="sr-only" for="inspiration-search">Find or add a prompt direction</label>
+              <input id="inspiration-search" type="search" autocomplete="off"
+                placeholder="Search styles, worlds, moods…">
+              <button id="inspiration-close" type="button" aria-label="Close inspiration picker">&times;</button>
+            </div>
+            <div id="inspiration-tabs" role="tablist" aria-label="Inspiration categories"></div>
+            <div id="inspiration-results" role="listbox" aria-label="Prompt directions"></div>
+            <div id="inspiration-custom" hidden>
+              <span>Use your exact text as a personal direction.</span>
+              <button id="inspiration-add-custom" type="button">Add to my library</button>
+            </div>
+            <p class="inspiration-note">Choose to insert · ☆ favorite · your additions, favorites, and recents stay in this browser.</p>
+          </div>
+        </div>
         <label>output AR <select id="opt-shape"></select></label>
         <label>detail <select id="opt-detail"></select></label>
         <label>quality

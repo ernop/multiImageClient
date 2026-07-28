@@ -28,9 +28,13 @@ namespace MultiImageClient
     ///   GET  /api/config                      generator availability + defaults
     ///   POST /api/jobs                        multipart: prompt, generators, options, image? -> {id}
     ///   POST /api/video-jobs                  grok-web image result -> video job
-    ///   GET  /api/jobs/{id}/events            SSE stream (replays from the start, so refresh-safe)
+    ///   GET  /api/events/poll?cursor=N        cursor-based poll over every job's envelope log
+    ///                                          (cursor=0 replays the full history, so refresh-safe;
+    ///                                          polling instead of SSE because the browser's
+    ///                                          ~6-connection HTTP/1.1 pool is shared across ALL
+    ///                                          tabs and must stay free for image loads)
     ///   GET  /api/jobs/{id}/images/{gen}/{n}  cached or persisted result bytes
-    ///   GET  /api/logs/events                  SSE stream of current-process log lines
+    ///   GET  /api/logs/poll?after=N            current-process log lines after sequence N
     public class UiWorkflow
     {
         // Single source of truth for which UI targets accept an input image.
@@ -125,8 +129,13 @@ namespace MultiImageClient
                     availabilityProblem = runner.DescribeAvailabilityProblem(g.key),
                     imageCapable = ImageCapableKeys.Contains(g.key, StringComparer.OrdinalIgnoreCase),
                     imageAspectOverride = SupportsImageAspectOverride(g.key),
-                    // Default-on set = the core use case: gpt-image-2 + grok-web pro.
-                    defaultOn = g.key is UiJobRunner.KeyGpt2 or UiJobRunner.KeyGrokWeb,
+                    // Default-on set for new windows: gpt-image-2, Recraft V4.1,
+                    // grok-web pro, Ideogram V4, Nano Banana 2.
+                    defaultOn = g.key is UiJobRunner.KeyGpt2
+                        or UiJobRunner.KeyRecraft
+                        or UiJobRunner.KeyGrokWeb
+                        or UiJobRunner.KeyIdeogram
+                        or UiJobRunner.KeyGoogle,
                 })
                 // Stable sort: available targets keep the intent order above,
                 // unavailable ones trail in the same relative order.
@@ -161,7 +170,7 @@ namespace MultiImageClient
                         available = runner.IsAvailable(UiJobRunner.KeyGrokWebVideo),
                         availabilityProblem = runner.DescribeAvailabilityProblem(UiJobRunner.KeyGrokWebVideo),
                     },
-                    defaults = new { shape = "auto", detail = "standard", quality = "high", moderation = "low", n = 1 },
+                    defaults = new { shape = "auto", detail = "high", quality = "high", moderation = "low", n = 1 },
                 });
             });
 
@@ -460,48 +469,24 @@ namespace MultiImageClient
                 return Results.Json(new { id = job.Id });
             });
 
-            app.MapGet("/api/jobs/{id}/events", async (string id, HttpContext ctx) =>
+            // Cursor-based poll for ALL job events. Deliberately NOT a
+            // persistent stream: browsers cap plain-HTTP/1.1 at ~6 connections
+            // per origin ACROSS ALL TABS (no HTTP/2 without TLS on localhost),
+            // so any long-lived SSE/WebSocket per window re-starved every
+            // <img> load once a few windows were open (observed 2026-07-27,
+            // twice). Each poll answers immediately and releases its socket.
+            // Envelopes are {jobId, kind:"job-known"|"event", job?|event?};
+            // a job-known announcement precedes each job's events, so cursor=0
+            // replays the full history and hydrates a fresh window. An
+            // out-of-range cursor (server restart) resyncs from 0, which is
+            // idempotent client-side.
+            app.MapGet("/api/events/poll", (int? cursor, HttpContext ctx) =>
             {
-                var job = jobs.Get(id);
-                if (job == null)
-                {
-                    ctx.Response.StatusCode = StatusCodes.Status404NotFound;
-                    return;
-                }
-
-                ctx.Response.Headers.ContentType = "text/event-stream";
-                ctx.Response.Headers.CacheControl = "no-cache";
-
-                var index = 0;
-                var ct = ctx.RequestAborted;
-                while (!ct.IsCancellationRequested)
-                {
-                    var (batch, done) = job.ReadFrom(index);
-                    foreach (var evt in batch)
-                    {
-                        await ctx.Response.WriteAsync($"data: {evt}\n\n", ct);
-                    }
-                    if (batch.Count > 0)
-                    {
-                        index += batch.Count;
-                        await ctx.Response.Body.FlushAsync(ct);
-                    }
-                    if (done)
-                    {
-                        // One final read in case events landed between the
-                        // snapshot and the done flag (Emit happens before
-                        // MarkDone, so this drains everything).
-                        var (tail, _) = job.ReadFrom(index);
-                        foreach (var evt in tail)
-                        {
-                            await ctx.Response.WriteAsync($"data: {evt}\n\n", ct);
-                        }
-                        await ctx.Response.Body.FlushAsync(ct);
-                        break;
-                    }
-                    try { await Task.Delay(250, ct); }
-                    catch (OperationCanceledException) { break; }
-                }
+                var (envelopes, nextCursor) = jobs.ReadEnvelopes(cursor ?? 0);
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Text(
+                    $"{{\"cursor\":{nextCursor},\"envelopes\":[{string.Join(",", envelopes)}]}}",
+                    "application/json");
             });
 
             app.MapGet("/api/jobs/{id}/images/{gen}/{n:int}", (string id, string gen, int n, HttpContext ctx) =>
@@ -517,40 +502,15 @@ namespace MultiImageClient
                 return Results.File(bytes, contentType);
             });
 
-            app.MapGet("/api/logs/events", async (HttpContext ctx) =>
+            // Same zero-persistent-connection rule as /api/events/poll: the
+            // logs panel used to hold an SSE connection per window, which
+            // counted against the same 6-connection browser pool.
+            app.MapGet("/api/logs/poll", (long? after, HttpContext ctx) =>
             {
-                ctx.Response.Headers.ContentType = "text/event-stream";
-                ctx.Response.Headers.CacheControl = "no-cache";
-                ctx.Response.Headers.Connection = "keep-alive";
-
-                var afterText = ctx.Request.Query["after"].ToString();
-                if (string.IsNullOrWhiteSpace(afterText))
-                {
-                    afterText = ctx.Request.Headers["Last-Event-ID"].ToString();
-                }
-                _ = long.TryParse(afterText, out var afterSequence);
-
-                var ct = ctx.RequestAborted;
-                while (!ct.IsCancellationRequested)
-                {
-                    var batch = Logger.ReadBuffered(afterSequence);
-                    foreach (var entry in batch)
-                    {
-                        var json = JsonSerializer.Serialize(new
-                        {
-                            sequence = entry.Sequence,
-                            line = entry.Line,
-                        });
-                        await ctx.Response.WriteAsync($"id: {entry.Sequence}\ndata: {json}\n\n", ct);
-                        afterSequence = entry.Sequence;
-                    }
-                    if (batch.Count > 0)
-                    {
-                        await ctx.Response.Body.FlushAsync(ct);
-                    }
-                    try { await Task.Delay(250, ct); }
-                    catch (OperationCanceledException) { break; }
-                }
+                var entries = Logger.ReadBuffered(after ?? 0)
+                    .Select(entry => new { sequence = entry.Sequence, line = entry.Line });
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new { entries });
             });
 
             Logger.Log($"UI server starting on {url}  (wwwroot: {wwwroot})");
