@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
@@ -81,9 +82,16 @@ namespace MultiImageClient
             var app = builder.Build();
 
             app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = new PhysicalFileProvider(wwwroot) });
+            // SpellWell's Hunspell dictionary files use extensions the default
+            // content-type map doesn't know; without these entries the static
+            // middleware would 404 them.
+            var contentTypes = new FileExtensionContentTypeProvider();
+            contentTypes.Mappings[".aff"] = "text/plain";
+            contentTypes.Mappings[".dic"] = "text/plain";
             app.UseStaticFiles(new StaticFileOptions
             {
                 FileProvider = new PhysicalFileProvider(wwwroot),
+                ContentTypeProvider = contentTypes,
                 OnPrepareResponse = context =>
                 {
                     // The UI deliberately serves source-tree assets for live

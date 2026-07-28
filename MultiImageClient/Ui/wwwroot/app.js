@@ -879,7 +879,7 @@ async function fixSpelling() {
   }
   sendError.textContent = "";
   spellfixBtn.disabled = true;
-  const idleLabel = "fix spelling";
+  const idleLabel = "fix spelling (Claude)";
   spellfixBtn.textContent = "fixing…";
   try {
     const form = new FormData();
@@ -898,6 +898,7 @@ async function fixSpelling() {
     spellfixPrevious = original;
     promptBox.value = body.corrected;
     spellfixUndoBtn.hidden = false;
+    if (spellwellCtl) spellwellCtl.refresh();
   } catch (err) {
     sendError.textContent = String(err);
   } finally {
@@ -912,8 +913,76 @@ spellfixUndoBtn.addEventListener("click", () => {
   promptBox.value = spellfixPrevious;
   spellfixPrevious = null;
   spellfixUndoBtn.hidden = true;
+  if (spellwellCtl) spellwellCtl.refresh();
   promptBox.focus();
 });
+
+// ---------- SpellWell: local dictionary highlighting + local fix ----------
+
+// Complements the Claude button with a fully offline pass: live block
+// highlights behind the prompt (pink = misspelled, blue = unknown word,
+// yellow/grey boxes = double spaces) plus a free one-click fix. The module
+// lives in spellwell/ as a self-contained drop-in shared across projects.
+let spellwell = null;     // SpellWell checker instance (null until loaded)
+let spellwellCtl = null;  // overlay controller for the prompt textarea
+const spellfixLocalBtn = el("spellfix-local");
+
+// Provider/model jargon that appears in prompts constantly and must never
+// light up as a misspelling.
+const spellwellJargon = [
+  "grok", "xai", "recraft", "ideogram", "bfl", "gpt", "openai", "midjourney",
+  "dalle", "webp", "png", "jpeg", "screenshot", "screenshots", "hyperrealistic",
+  "photoreal", "photorealistic", "cinematic", "bokeh", "vaporwave", "cyberpunk",
+];
+
+async function initSpellwell() {
+  try {
+    spellwell = await SpellWell.create({
+      affUrl: "spellwell/vendor/typo/en_US.aff",
+      dicUrl: "spellwell/vendor/typo/en_US.dic",
+      extraWords: spellwellJargon,
+      customDictStorageKey: "mic_spellwell_custom_dict",
+    });
+    spellwellCtl = spellwell.attach(promptBox);
+    spellfixLocalBtn.disabled = false;
+  } catch (err) {
+    // No dictionary means no local spellcheck, plainly reported — the Claude
+    // button and native browser spellcheck still work.
+    console.error(err);
+    spellfixLocalBtn.title = `Local fix unavailable: ${err.message || err}`;
+  }
+}
+
+spellfixLocalBtn.addEventListener("click", () => {
+  if (!spellwell) return;
+  const original = promptBox.value;
+  if (!original.trim()) {
+    sendError.textContent = "prompt is empty";
+    return;
+  }
+  sendError.textContent = "";
+  const fix = spellwell.localFix(original);
+  const idleLabel = "fix typos (local)";
+  if (fix.text === original) {
+    spellfixLocalBtn.textContent = "no changes";
+    setTimeout(() => { spellfixLocalBtn.textContent = idleLabel; }, 1600);
+    return;
+  }
+  spellfixPrevious = original;
+  promptBox.value = fix.text;
+  spellfixUndoBtn.hidden = false;
+  if (spellwellCtl) spellwellCtl.refresh();
+  const parts = [];
+  if (fix.wordChanges.length) {
+    parts.push(fix.wordChanges.map((c) => `${c.from}→${c.to}`).join(", "));
+  }
+  if (fix.spaceRuns) parts.push(`${fix.spaceRuns} double space${fix.spaceRuns === 1 ? "" : "s"}`);
+  spellfixLocalBtn.textContent = `fixed: ${parts.join(" · ")}`;
+  setTimeout(() => { spellfixLocalBtn.textContent = idleLabel; }, 3200);
+  promptBox.focus();
+});
+
+initSpellwell();
 
 // ---------- options help popover ----------
 

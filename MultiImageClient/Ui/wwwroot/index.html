@@ -125,8 +125,10 @@
 
       <div id="send-row">
         <button id="send" type="button">Generate</button>
-        <button id="spellfix" type="button" title="Fix spelling mistakes in the prompt (Claude, spelling only — no rephrasing)">fix spelling</button>
-        <button id="spellfix-undo" type="button" hidden title="Restore the prompt as it was before the spelling fix">undo fix</button>
+        <button id="spellfix-local" type="button" disabled
+          title="Dictionary-based local fix (offline, free): collapse double spaces and replace each highlighted misspelling with the dictionary's top suggestion">fix typos (local)</button>
+        <button id="spellfix" type="button" title="Fix spelling mistakes in the prompt (Claude, spelling only — no rephrasing; costs a fraction of a cent)">fix spelling (Claude)</button>
+        <button id="spellfix-undo" type="button" hidden title="Restore the prompt as it was before the last fix">undo fix</button>
         <span id="send-error"></span>
       </div>
     </div>

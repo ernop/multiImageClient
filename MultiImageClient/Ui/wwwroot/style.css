@@ -497,7 +497,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 #opts-help-panel ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; }
 
 #send-row { display: flex; align-items: center; gap: 12px; }
-#spellfix, #spellfix-undo {
+#spellfix, #spellfix-undo, #spellfix-local {
   font: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -508,8 +508,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   padding: 5px 12px;
   cursor: pointer;
 }
-#spellfix:hover:not(:disabled), #spellfix-undo:hover { color: #fff; background: var(--accent); }
-#spellfix:disabled { opacity: 0.5; cursor: default; }
+#spellfix:hover:not(:disabled), #spellfix-undo:hover, #spellfix-local:hover:not(:disabled) { color: #fff; background: var(--accent); }
+#spellfix:disabled, #spellfix-local:disabled { opacity: 0.5; cursor: default; }
 #send {
   font: inherit; font-size: 15px; font-weight: 600;
   background: var(--accent); color: #fff;

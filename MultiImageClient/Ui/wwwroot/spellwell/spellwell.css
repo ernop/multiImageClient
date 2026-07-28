@@ -1,0 +1,54 @@
+/* SpellWell overlay — see spellwell.js for the drop-in contract.
+   The backdrop mirrors the textarea's text invisibly; only mark backgrounds
+   show through the (now transparent) textarea. */
+
+.spellwell-host {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.spellwell-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* width/height are set from the textarea's client box in spellwell.js so a
+     vertical scrollbar can't skew the wrap width. */
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  color: transparent;
+  border-style: solid;
+  border-color: transparent;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.spellwell-textarea {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+  width: 100%;
+}
+
+.spellwell-backdrop mark {
+  color: transparent;
+  border-radius: 3px;
+}
+
+/* Misspelled non-real word: light red/pink block background. */
+.spellwell-mark-misspelled { background: #ffd6dc; }
+
+/* Unknown word (Capitalized / ALLCAPS / camelCase, not in dictionary):
+   light blue block background. */
+.spellwell-mark-unknown { background: #d7e6ff; }
+
+/* Each extra space in a 2+ space run: small yellow box with a grey outline,
+   so a double space reads as two adjacent squares. */
+.spellwell-mark-doublespace {
+  background: #ffe98a;
+  box-shadow: inset 0 0 0 1px #6b7280;
+  border-radius: 2px;
+}
