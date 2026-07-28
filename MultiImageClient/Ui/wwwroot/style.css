@@ -128,9 +128,16 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   box-shadow: 0 2px 8px rgba(20, 22, 31, 0.06);
 }
 
+#compose-left {
+  display: flex;
+  flex: 0 0 260px;
+  flex-direction: column;
+  gap: 8px;
+}
+
 #paste-zone {
   position: relative;
-  flex: 0 0 260px;
+  flex: 1 1 auto;
   min-height: 190px;
   border: 2px dashed var(--accent);
   border-radius: 8px;
@@ -158,6 +165,92 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   border: none; border-radius: 6px;
   padding: 4px 10px; font-size: 12px;
   cursor: pointer;
+}
+
+/* ---------- past-input-image picker ---------- */
+
+#input-library-control { position: relative; }
+#input-library-toggle {
+  width: 100%;
+  padding: 5px 10px;
+  color: var(--accent-dark);
+  background: #eef0fa;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font: 700 12px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+#input-library-toggle:hover, #input-library-toggle[aria-expanded="true"] {
+  color: #fff;
+  background: var(--accent);
+}
+#input-library-panel {
+  position: absolute;
+  z-index: 100;
+  top: calc(100% + 7px);
+  left: 0;
+  display: flex;
+  width: min(520px, calc(100vw - 56px));
+  max-height: min(520px, calc(100vh - 140px));
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  color: var(--ink);
+  background: var(--card);
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20, 22, 31, 0.23);
+}
+#input-library-panel[hidden] { display: none; }
+.input-library-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+#input-library-close {
+  width: 28px;
+  color: var(--accent-dark);
+  background: #eef0fa;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  font-size: 18px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+#input-library-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 7px;
+  overflow-y: auto;
+  min-height: 60px;
+}
+.input-library-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 14px 6px;
+  color: var(--accent-dark);
+  font-size: 13px;
+  text-align: center;
+}
+.input-library-item {
+  padding: 0;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.input-library-item:hover, .input-library-item:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.input-library-item img {
+  display: block;
+  width: 100%;
+  height: 104px;
+  object-fit: cover;
 }
 
 #compose-right { flex: 1; display: flex; flex-direction: column; gap: 10px; }
@@ -216,6 +309,9 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   border: 1px solid var(--line); border-radius: 6px;
 }
 #opt-n { width: 52px; }
+/* Monospace so the NBSP padding built in app.js right-aligns the numeric
+   ratio column of the AR options. */
+#opt-shape { font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace; font-size: 13px; }
 
 /* ---------- prompt inspiration library ---------- */
 
@@ -350,16 +446,63 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
 }
+#opts-help-control { position: relative; display: inline-flex; }
 .opts-help {
   display: inline-flex; align-items: center; justify-content: center;
   width: 18px; height: 18px;
+  padding: 0;
+  font: inherit;
   font-size: 12px; font-weight: 700;
   color: #fff; background: var(--accent);
-  border-radius: 50%;
-  cursor: help; user-select: none;
+  border: none; border-radius: 50%;
+  cursor: pointer; user-select: none;
 }
+.opts-help:hover, .opts-help[aria-expanded="true"] { background: var(--accent-dark); }
+#opts-help-panel {
+  position: absolute;
+  z-index: 100;
+  top: calc(100% + 7px);
+  right: 0;
+  width: min(560px, calc(100vw - 56px));
+  max-height: min(480px, calc(100vh - 140px));
+  overflow-y: auto;
+  padding: 12px 14px;
+  color: var(--ink);
+  background: var(--card);
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20, 22, 31, 0.23);
+  font-size: 13px;
+  line-height: 1.5;
+}
+#opts-help-panel[hidden] { display: none; }
+.opts-help-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+#opts-help-close {
+  width: 28px;
+  color: var(--accent-dark);
+  background: #eef0fa;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  font-size: 18px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+#opts-help-panel ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; }
 
 #send-row { display: flex; align-items: center; gap: 12px; }
+#spellfix, #spellfix-undo {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+#spellfix:hover:not(:disabled), #spellfix-undo:hover { color: #fff; background: var(--accent); }
+#spellfix:disabled { opacity: 0.5; cursor: default; }
 #send {
   font: inherit; font-size: 15px; font-weight: 600;
   background: var(--accent); color: #fff;
@@ -401,9 +544,22 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .job-connection { font-weight: 700; color: var(--ok); }
 .job-connection.err { color: var(--err); }
 .job-cost { font-weight: 700; color: var(--accent-dark); }
+.job-set-active {
+  padding: 3px 9px;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font: 700 11px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+.job-set-active:hover { color: #fff; background: var(--accent); }
 
 /* Running session spend, rebuilt from the job cards on every result. */
 #cost-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   margin-top: 16px;
   padding: 10px 16px;
   background: var(--card);
@@ -413,6 +569,20 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   font-weight: 600;
   color: var(--accent-dark);
 }
+#cost-summary[hidden] { display: none; }
+#cost-toggle {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  background: #eef0fa;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+#cost-toggle:hover { color: #fff; background: var(--accent); }
 
 .job-cells {
   display: grid;
@@ -432,6 +602,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 .cell-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; }
 .cell-name { font-weight: 700; }
+/* Actual returned pixel size; secondary via smaller size, not desaturation. */
+.cell-size { font-size: 11px; font-weight: 600; color: var(--accent-dark); white-space: nowrap; }
 .cell-cost { margin-left: auto; font-size: 12px; color: var(--accent-dark); font-weight: 700; white-space: nowrap; }
 .cell-time { font-size: 12px; color: var(--ok); font-weight: 600; }
 .cell-time.err { color: var(--err); }
@@ -632,6 +804,8 @@ body.image-viewer-open { overflow: hidden; }
   border-radius: 9px;
   box-shadow: 0 12px 42px rgba(20, 22, 31, 0.42);
 }
+/* Dark stage: the unused area around the image fades away instead of
+   glowing white, so the image itself carries the frame. */
 #image-viewer-stage {
   position: relative;
   display: flex;
@@ -640,7 +814,7 @@ body.image-viewer-open { overflow: hidden; }
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: #fff;
+  background: var(--ink);
 }
 #image-viewer-image {
   display: block;
@@ -696,70 +870,63 @@ body.image-viewer-open { overflow: hidden; }
   margin: 10px 0 0;
   font-size: 12px;
 }
+/* Bottom bar in the main page's own visual language (card background, ink
+   text, system-ui) — no nav buttons (keyboard covers navigation), no close
+   button (Esc / click outside), full wrapping prompt, generator, and
+   returned resolution. */
 #image-viewer-status {
   position: relative;
   display: flex;
   min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 24px 9px 12px;
+  color: var(--ink);
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+#image-viewer-meta-row {
+  display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 45px;
-  padding: 7px 24px 7px 9px;
-  color: #fff;
-  background: var(--accent-dark);
-  border-top: 1px solid var(--accent);
 }
-.image-viewer-buttons {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 5px;
-}
-#image-viewer-status button {
-  flex: 0 0 auto;
-  padding: 5px 9px;
+#image-viewer-generator {
+  font-size: 13px;
+  font-weight: 700;
   color: var(--accent-dark);
-  background: #fff;
-  border: 1px solid #fff;
-  border-radius: 5px;
-  font: 700 11px/1.25 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+}
+#image-viewer-dimensions {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+#image-viewer-help-toggle {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--accent-dark);
+  background: #eef0fa;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  font: 700 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
 }
-#image-viewer-status button:hover,
-#image-viewer-status button:focus-visible {
+#image-viewer-help-toggle:hover,
+#image-viewer-help-toggle:focus-visible {
   color: #fff;
   background: var(--accent);
-  outline: 1px solid #fff;
-}
-#image-viewer-status button:disabled {
-  color: var(--ink);
-  background: #eef0fa;
-  border-color: #eef0fa;
-  cursor: default;
-  opacity: 0.62;
-}
-#image-viewer-metadata {
-  display: flex;
-  flex: 1 1 auto;
-  min-width: 0;
-  align-items: baseline;
-  gap: 10px;
-  color: #fff;
-  font-size: 12px;
+  outline: none;
 }
 #image-viewer-prompt {
   min-width: 0;
-  overflow: hidden;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-height: 108px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
-#image-viewer-position,
-#image-viewer-dimensions {
-  flex: 0 0 auto;
-  color: #fff;
-  font: 700 11px/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
-  white-space: nowrap;
-}
-#image-viewer-close { margin-left: auto; }
 #image-viewer-resize {
   position: absolute;
   right: 0;
@@ -869,9 +1036,5 @@ body.image-viewer-open { overflow: hidden; }
   .video-resolution { display: none; }
   .video-volume { flex-basis: 55px; width: 55px; }
   #image-viewer-window { min-width: 300px; min-height: 260px; }
-  #image-viewer-status { align-items: stretch; flex-wrap: wrap; gap: 6px; }
-  .image-viewer-buttons { order: 2; }
-  #image-viewer-metadata { flex-basis: calc(100% - 58px); }
-  #image-viewer-prompt { display: none; }
-  #image-viewer-close { order: 1; }
+  #image-viewer-prompt { max-height: 64px; }
 }

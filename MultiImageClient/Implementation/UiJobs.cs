@@ -1181,16 +1181,14 @@ namespace MultiImageClient
                 var label = copy.RuntimeMeta.TryGetValue("label", out var l) && !string.IsNullOrEmpty(l)
                     ? l
                     : result.ImageGeneratorDescription;
-                // Append the actual produced pixel size so the card reflects what
-                // the provider really returned, not just the requested aspect.
-                // grok /images/edits in particular does not reliably honor the
-                // requested AR, so "AR 2:3 · 1024x1024" makes the mismatch visible
-                // instead of silently mislabeling a square as 2:3.
+                // The actual produced pixel size travels as its own field so the
+                // card reflects what the provider really returned, not just the
+                // requested aspect. grok /images/edits in particular does not
+                // reliably honor the requested AR, so showing "1024x1024" next to
+                // a 2:3 request makes the mismatch visible. The frontend keeps
+                // the catalog display name as the cell title and demotes this
+                // provider spec label to a tooltip.
                 var actualSize = firstImageBytes != null ? ReadImageSize(firstImageBytes) : null;
-                if (actualSize != null)
-                {
-                    label = string.IsNullOrEmpty(label) ? actualSize : $"{label} · {actualSize}";
-                }
                 var ok = result.IsSuccess && urls.Count > 0;
                 if (result.IsSuccess && !ok)
                 {
@@ -1208,6 +1206,7 @@ namespace MultiImageClient
                     images = urls,
                     mediaType,
                     label,
+                    size = actualSize,
                     videoMode = key == KeyGrokWebVideo ? spec.VideoMode : null,
                     videoDurationSeconds = key == KeyGrokWebVideo
                         ? spec.VideoDurationSeconds

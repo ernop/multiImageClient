@@ -6,6 +6,8 @@ let inputImageFile = null;   // File/Blob for the attached image
 let generators = [];         // from /api/config
 let videoSource = null;       // { jobId, generator, index, url }
 let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
+let spellfix = { available: false, availabilityProblem: "configuration not loaded" };
+let spellfixPrevious = null;  // prompt text as it was before the last fix, for undo
 let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
 let imageViewerRenderVersion = 0;
 let imageViewerHelpOpen = false;
@@ -49,7 +51,7 @@ const imageViewerImage = el("image-viewer-image");
 const imageViewerHelp = el("image-viewer-help");
 const imageViewerHelpList = el("image-viewer-help-list");
 const imageViewerPrompt = el("image-viewer-prompt");
-const imageViewerPosition = el("image-viewer-position");
+const imageViewerGenerator = el("image-viewer-generator");
 const imageViewerDimensions = el("image-viewer-dimensions");
 let lastLogSequence = 0;
 
@@ -198,19 +200,35 @@ async function loadConfig() {
   const cfg = await resp.json();
   generators = cfg.generators;
   videoGeneration = cfg.videoGeneration || videoGeneration;
+  spellfix = cfg.spellfix || spellfix;
+  applySpellfixAvailability();
 
   const fillSelect = (selectEl, entries) => {
     selectEl.innerHTML = "";
     for (const e of entries) {
       const opt = document.createElement("option");
       opt.value = e.key;
-      opt.textContent = e.label;
-      opt.dataset.defaultLabel = e.label;
+      opt.textContent = e.displayLabel || e.label;
+      opt.dataset.defaultLabel = e.displayLabel || e.label;
       if (e.inputLabel) opt.dataset.inputLabel = e.inputLabel;
       selectEl.appendChild(opt);
     }
   };
-  fillSelect(el("opt-shape"), cfg.shapes);
+  // The AR picker keeps the descriptive word on the left and right-aligns the
+  // numeric ratio: the select renders in a monospace font, so NBSP padding
+  // between text and ratio lines the ratio column up. auto has no ratio and
+  // stays a plain label (it also swaps to "match input image" with an input).
+  const ratioShapes = cfg.shapes.filter((s) => s.ratio);
+  const shapeTextWidth = Math.max(0, ...ratioShapes.map((s) => s.text.length));
+  const shapeRatioWidth = Math.max(0, ...ratioShapes.map((s) => s.ratio.length));
+  fillSelect(el("opt-shape"), cfg.shapes.map((s) => s.ratio
+    ? {
+        ...s,
+        displayLabel: s.text
+          + "\u00a0".repeat(shapeTextWidth - s.text.length + 1 + shapeRatioWidth - s.ratio.length)
+          + s.ratio,
+      }
+    : s));
   fillSelect(el("opt-detail"), cfg.details);
 
   el("opt-shape").value = cfg.defaults.shape;
@@ -377,6 +395,96 @@ pasteZone.addEventListener("drop", (e) => {
   e.preventDefault();
   pasteZone.classList.remove("dragover");
   if (e.dataTransfer.files.length > 0) setImage(e.dataTransfer.files[0]);
+});
+
+// ---------- past-input-image picker ("load a previous image") ----------
+
+// Every user-uploaded input image ever archived, deduplicated server-side by
+// content hash, newest first. Fetched fresh on each open.
+const inputLibraryPanel = el("input-library-panel");
+const inputLibraryToggle = el("input-library-toggle");
+
+function closeInputLibrary() {
+  inputLibraryPanel.hidden = true;
+  inputLibraryToggle.setAttribute("aria-expanded", "false");
+}
+
+async function attachLibraryImage(item) {
+  const resp = await fetch(item.url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const blob = await resp.blob();
+  if (!blob.type.startsWith("image/")) {
+    throw new Error(`unexpected content type ${blob.type || "unknown"}`);
+  }
+  setImage(blob);
+}
+
+async function openInputLibrary() {
+  inputLibraryPanel.hidden = false;
+  inputLibraryToggle.setAttribute("aria-expanded", "true");
+  const results = el("input-library-results");
+  const showMessage = (text) => {
+    const p = document.createElement("p");
+    p.className = "input-library-empty";
+    p.textContent = text;
+    results.replaceChildren(p);
+  };
+  showMessage("loading…");
+
+  let images;
+  try {
+    const resp = await fetch("/api/input-images");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    images = (await resp.json()).images;
+  } catch (err) {
+    showMessage(`could not list past images: ${err}`);
+    return;
+  }
+  if (inputLibraryPanel.hidden) return;
+  if (images.length === 0) {
+    showMessage("No uploaded input images yet — paste or drop one to start the collection.");
+    return;
+  }
+
+  results.replaceChildren(...images.map((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "input-library-item";
+    button.setAttribute("role", "option");
+    const when = item.createdAtUnixMs ? new Date(item.createdAtUnixMs).toLocaleString() : "";
+    button.title = `${item.width}×${item.height} · first used ${when}\n${item.prompt}`;
+    const img = document.createElement("img");
+    img.src = item.url;
+    img.loading = "lazy";
+    img.alt = "Previously uploaded input image";
+    button.appendChild(img);
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await attachLibraryImage(item);
+        closeInputLibrary();
+      } catch (err) {
+        sendError.textContent = `could not load that image: ${err}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+    return button;
+  }));
+}
+
+inputLibraryToggle.addEventListener("click", () => {
+  if (inputLibraryPanel.hidden) openInputLibrary();
+  else closeInputLibrary();
+});
+el("input-library-close").addEventListener("click", closeInputLibrary);
+document.addEventListener("pointerdown", (event) => {
+  if (!inputLibraryPanel.hidden && !el("input-library-control").contains(event.target)) {
+    closeInputLibrary();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !inputLibraryPanel.hidden) closeInputLibrary();
 });
 
 // ---------- prompt inspiration library ----------
@@ -713,6 +821,84 @@ promptBox.addEventListener("keydown", (e) => {
     e.preventDefault();
     submit();
   }
+});
+
+// ---------- fix spelling (Claude, spelling only) + undo ----------
+
+// Browser spellcheck suggestions aren't scriptable, so "accept all" runs the
+// prompt through a server-side Claude call constrained to spelling-only
+// corrections. Undo restores the exact pre-fix text.
+const spellfixBtn = el("spellfix");
+const spellfixUndoBtn = el("spellfix-undo");
+
+function applySpellfixAvailability() {
+  spellfixBtn.disabled = !spellfix.available;
+  if (!spellfix.available) {
+    spellfixBtn.title = `Fix spelling is unavailable: ${spellfix.availabilityProblem || "not configured"}`;
+  }
+}
+
+async function fixSpelling() {
+  const original = promptBox.value;
+  if (!original.trim()) {
+    sendError.textContent = "prompt is empty";
+    return;
+  }
+  sendError.textContent = "";
+  spellfixBtn.disabled = true;
+  const idleLabel = "fix spelling";
+  spellfixBtn.textContent = "fixing…";
+  try {
+    const form = new FormData();
+    form.append("prompt", original);
+    const resp = await fetch("/api/prompt/spellfix", { method: "POST", body: form });
+    const body = await resp.json();
+    if (!resp.ok) {
+      sendError.textContent = body.error || `HTTP ${resp.status}`;
+      return;
+    }
+    if (body.corrected === original) {
+      spellfixBtn.textContent = "no changes";
+      setTimeout(() => { spellfixBtn.textContent = idleLabel; }, 1600);
+      return;
+    }
+    spellfixPrevious = original;
+    promptBox.value = body.corrected;
+    spellfixUndoBtn.hidden = false;
+  } catch (err) {
+    sendError.textContent = String(err);
+  } finally {
+    spellfixBtn.disabled = !spellfix.available;
+    if (spellfixBtn.textContent === "fixing…") spellfixBtn.textContent = idleLabel;
+  }
+}
+
+spellfixBtn.addEventListener("click", fixSpelling);
+spellfixUndoBtn.addEventListener("click", () => {
+  if (spellfixPrevious === null) return;
+  promptBox.value = spellfixPrevious;
+  spellfixPrevious = null;
+  spellfixUndoBtn.hidden = true;
+  promptBox.focus();
+});
+
+// ---------- options help popover ----------
+
+const optsHelpPanel = el("opts-help-panel");
+const optsHelpToggle = el("opts-help-toggle");
+
+function setOptsHelpOpen(open) {
+  optsHelpPanel.hidden = !open;
+  optsHelpToggle.setAttribute("aria-expanded", String(open));
+}
+
+optsHelpToggle.addEventListener("click", () => setOptsHelpOpen(optsHelpPanel.hidden));
+el("opts-help-close").addEventListener("click", () => setOptsHelpOpen(false));
+document.addEventListener("pointerdown", (event) => {
+  if (!optsHelpPanel.hidden && !el("opts-help-control").contains(event.target)) setOptsHelpOpen(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !optsHelpPanel.hidden) setOptsHelpOpen(false);
 });
 
 // ---------- job cards + live events ----------
@@ -1118,7 +1304,7 @@ async function renderImageViewer() {
   if (!current) {
     imageViewerImage.removeAttribute("src");
     imageViewerPrompt.textContent = "";
-    imageViewerPosition.textContent = "selected image is no longer available";
+    imageViewerGenerator.textContent = "selected image is no longer available";
     imageViewerDimensions.textContent = "";
     return;
   }
@@ -1126,19 +1312,8 @@ async function renderImageViewer() {
   const version = ++imageViewerRenderVersion;
   imageViewerImage.removeAttribute("src");
   imageViewerPrompt.textContent = current.prompt.prompt;
-  imageViewerPrompt.title = current.prompt.prompt;
-  imageViewerPosition.textContent =
-    `${current.item.generator} ${current.item.imageIndex + 1}/${current.item.generatorCount}` +
-    ` · prompt ${current.promptIndex + 1}/${prompts.length}`;
+  imageViewerGenerator.textContent = genLabel(current.item.generator);
   imageViewerDimensions.textContent = "loading…";
-
-  el("image-viewer-previous").disabled =
-    current.promptIndex === 0 && current.itemIndex === 0;
-  el("image-viewer-next").disabled =
-    current.promptIndex === prompts.length - 1 &&
-    current.itemIndex === current.prompt.items.length - 1;
-  el("image-viewer-newer").disabled = current.promptIndex === 0;
-  el("image-viewer-older").disabled = current.promptIndex === prompts.length - 1;
 
   try {
     const entry = await prepareImageViewerWindow(prompts, current);
@@ -1350,7 +1525,7 @@ function openImageViewer(link) {
   if (!imageViewerWindow.dataset.sized) sizeImageViewerWindow();
   else clampImageViewerWindow();
   renderImageViewer();
-  el("image-viewer-close").focus({ preventScroll: true });
+  imageViewerWindow.focus({ preventScroll: true });
 }
 
 function closeImageViewer() {
@@ -1376,12 +1551,9 @@ jobsSection.addEventListener("click", (event) => {
   openImageViewer(link);
 });
 
-el("image-viewer-previous").addEventListener("click", () => navigateImageViewerImage(-1));
-el("image-viewer-next").addEventListener("click", () => navigateImageViewerImage(1));
-el("image-viewer-newer").addEventListener("click", () => navigateImageViewerPrompt(-1));
-el("image-viewer-older").addEventListener("click", () => navigateImageViewerPrompt(1));
+// Navigation is keyboard-only (see ImageViewerCommands; ? shows the list).
+// Closing is Escape or a click outside the window.
 el("image-viewer-help-toggle").addEventListener("click", () => toggleImageViewerHelp());
-el("image-viewer-close").addEventListener("click", closeImageViewer);
 
 imageViewer.addEventListener("click", (event) => {
   if (event.target === imageViewer) {
@@ -1494,6 +1666,37 @@ function formatCost(v) {
   return "~$" + v.toFixed(v < 0.01 ? 4 : 3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
+// The session-spend bar collapses to just the headline total; the collapsed
+// preference sticks per browser.
+const CostSummaryCollapsedKey = "multi-image-client.cost-summary-collapsed";
+let costSummaryCollapsed = localStorage.getItem(CostSummaryCollapsedKey) === "true";
+let costHeadline = "";
+let costBreakdown = "";
+
+function renderCostSummary() {
+  const bar = el("cost-summary");
+  if (!costHeadline) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  el("cost-text").textContent = costSummaryCollapsed
+    ? costHeadline
+    : `${costHeadline}: ${costBreakdown}`;
+  const toggle = el("cost-toggle");
+  toggle.textContent = costSummaryCollapsed ? "show" : "hide";
+  toggle.title = costSummaryCollapsed
+    ? "Show the per-generator spend breakdown"
+    : "Collapse the per-generator spend breakdown";
+  toggle.setAttribute("aria-expanded", String(!costSummaryCollapsed));
+}
+
+el("cost-toggle").addEventListener("click", () => {
+  costSummaryCollapsed = !costSummaryCollapsed;
+  localStorage.setItem(CostSummaryCollapsedKey, String(costSummaryCollapsed));
+  renderCostSummary();
+});
+
 // Recompute per-job and session cost totals from the DOM (each cell stores
 // its own cost in data attributes), so SSE replays / reconnects can never
 // double-count. Estimates from each generator's GetCost(), not bills.
@@ -1518,17 +1721,18 @@ function updateCostTotals() {
     card.querySelector(".job-cost").textContent = jobTotal > 0 ? `est. ${formatCost(jobTotal)}` : "";
   }
 
-  const bar = el("cost-summary");
   if (grandImages === 0) {
-    bar.hidden = true;
+    costHeadline = "";
+    costBreakdown = "";
+    renderCostSummary();
     return;
   }
-  bar.hidden = false;
-  const breakdown = [...perGen.entries()]
+  costHeadline = `Session est. spend ${grand > 0 ? formatCost(grand) : "$0"} for ${grandImages} image${grandImages === 1 ? "" : "s"}`;
+  costBreakdown = [...perGen.entries()]
     .sort((a, b) => b[1].cost - a[1].cost)
     .map(([key, v]) => `${genLabel(key)} ${v.cost > 0 ? formatCost(v.cost) : "free"} (${v.images})`)
     .join(" \u00b7 ");
-  bar.textContent = `Session est. spend ${grand > 0 ? formatCost(grand) : "$0"} for ${grandImages} image${grandImages === 1 ? "" : "s"}: ${breakdown}`;
+  renderCostSummary();
 }
 
 function formatElapsed(ms) {
@@ -1558,6 +1762,45 @@ function updateJobProgress(card) {
   const failed = cells.filter((cell) => ["error", "no-result"].includes(cell.dataset.state)).length;
   const progress = card.querySelector(".job-progress");
   progress.textContent = `${finished}/${cells.length} finished${failed ? `, ${failed} failed` : ""}`;
+}
+
+// "Set active": copy a past job's entire setup (input image, prompt,
+// generator selection, and the options recorded on its accepted event) back
+// into the composer as the new working state. Options are only applied when
+// the job's events actually recorded them (jobs persisted before the
+// accepted event carried options restore prompt/image/generators only).
+async function setActiveFromJob(id, card) {
+  if (card.querySelector(".job-input-thumb")) {
+    const resp = await fetch(`/api/jobs/${encodeURIComponent(id)}/images/input/0`);
+    if (!resp.ok) throw new Error(`input image fetch returned HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    if (!blob.type.startsWith("image/")) {
+      throw new Error(`input image fetch returned ${blob.type || "an unknown content type"}`);
+    }
+    setImage(blob);
+  } else {
+    clearImage();
+  }
+
+  promptBox.value = card.querySelector(".job-prompt").textContent;
+  const recorded = card.dataset;
+  if (recorded.optShape) el("opt-shape").value = recorded.optShape;
+  if (recorded.optDetail) el("opt-detail").value = recorded.optDetail;
+  if (recorded.optQuality) el("opt-quality").value = recorded.optQuality;
+  if (recorded.optModeration) el("opt-moderation").value = recorded.optModeration;
+  if (recorded.optN) el("opt-n").value = recorded.optN;
+  updateShapeOptionLabel();
+
+  const wanted = new Set([...card.querySelectorAll(".cell")].map((cell) => cell.dataset.gen));
+  for (const cb of gensRow.querySelectorAll("input")) {
+    if (cb.dataset.available !== "true") continue;
+    cb.checked = wanted.has(cb.value);
+    cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
+  }
+  updateGeneratorCompatibility();
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  promptBox.focus({ preventScroll: true });
 }
 
 function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
@@ -1596,6 +1839,26 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
     <span class="job-cost"></span>
     <span class="job-connection">connecting…</span>`;
   meta.querySelector(".job-created").textContent = createdAt || new Date().toLocaleTimeString();
+  // Video jobs aren't composer setups, so they get no set-active button.
+  if (!gens.includes("grok-web-video")) {
+    const setActive = document.createElement("button");
+    setActive.type = "button";
+    setActive.className = "job-set-active";
+    setActive.textContent = "⤴ set active";
+    setActive.title = "Copy this job's image, prompt, generators, and options into the composer";
+    setActive.addEventListener("click", async () => {
+      setActive.disabled = true;
+      try {
+        await setActiveFromJob(id, card);
+      } catch (err) {
+        sendError.textContent = `set active failed: ${err}`;
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } finally {
+        setActive.disabled = false;
+      }
+    });
+    meta.appendChild(setActive);
+  }
   head.appendChild(meta);
   card.appendChild(head);
 
@@ -1609,6 +1872,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
     cell.innerHTML = `
       <div class="cell-head">
         <span class="cell-name"></span>
+        <span class="cell-size"></span>
         <span class="cell-cost"></span>
         <span class="cell-time"></span>
       </div>
@@ -1699,6 +1963,13 @@ function applyJobEvent(id, card, evt) {
 
   if (evt.type === "accepted" || evt.type === "job-queued") {
     card.dataset.state = "queued";
+    // Recorded composer options, consumed by setActiveFromJob. Older
+    // persisted events may lack them; only what was recorded is stored.
+    if (evt.shape) card.dataset.optShape = evt.shape;
+    if (evt.detail) card.dataset.optDetail = evt.detail;
+    if (evt.quality) card.dataset.optQuality = evt.quality;
+    if (evt.moderation) card.dataset.optModeration = evt.moderation;
+    if (evt.n) card.dataset.optN = String(evt.n);
   } else if (evt.type === "job-start") {
     card.dataset.state = "running";
     card.dataset.startedAt = String(evt.at || Date.now());
@@ -1743,7 +2014,15 @@ function applyJobEvent(id, card, evt) {
 
     if (evt.ok) {
       cell.dataset.state = "done";
-      if (evt.label) cell.querySelector(".cell-name").textContent = evt.label;
+      // Naming rule: the cell keeps the exact display name shown in the
+      // generator chooser; the provider's internal spec string moves to a
+      // tooltip and the actual returned pixel size renders beside the name.
+      // (Events persisted before 2026-07-28 embed the size in label.)
+      const sizeText = evt.size
+        || (evt.label && (/ \u00b7 (\d+x\d+)$/.exec(evt.label) || [])[1])
+        || "";
+      cell.querySelector(".cell-size").textContent = sizeText;
+      if (evt.label) cell.querySelector(".cell-head").title = evt.label;
       cell.dataset.cost = String(evt.cost || 0);
       cell.dataset.imgCount = String(evt.images.length);
       cell.querySelector(".cell-cost").textContent = formatCost(evt.cost);
@@ -1831,13 +2110,14 @@ function applyJobEvent(id, card, evt) {
     if (!link) {
       link = document.createElement("div");
       link.className = "grid-link";
-      link.innerHTML = `<a target="_blank"></a><span></span>`;
+      link.innerHTML = `<a target="_blank"></a>`;
       card.appendChild(link);
     }
     const a = link.querySelector("a");
     a.href = evt.url;
     a.textContent = "combined contact sheet";
-    link.querySelector("span").textContent = `  (saved: ${evt.path})`;
+    // The on-disk path is tooltip-only; the clickable link is what matters.
+    a.title = `saved: ${evt.path}`;
   } else if (evt.type === "job-done") {
     card.dataset.state = "done";
     card.querySelector(".job-connection").textContent = "complete";

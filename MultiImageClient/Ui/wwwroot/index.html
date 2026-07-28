@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260726-viewer-commands">
+<link rel="stylesheet" href="style.css?v=20260728-viewer-input-library">
 </head>
 <body>
 <header>
@@ -26,14 +26,30 @@
 
 <main>
   <section id="composer">
-    <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse">
-      <div id="paste-hint">
-        <strong>Ctrl+V</strong> to paste an image<br>
-        or drop / click to browse
+    <div id="compose-left">
+      <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse">
+        <div id="paste-hint">
+          <strong>Ctrl+V</strong> to paste an image<br>
+          or drop / click to browse
+        </div>
+        <img id="input-preview" alt="" hidden>
+        <button id="clear-image" type="button" hidden>&times; remove</button>
+        <input id="file-input" type="file" accept="image/*" hidden>
       </div>
-      <img id="input-preview" alt="" hidden>
-      <button id="clear-image" type="button" hidden>&times; remove</button>
-      <input id="file-input" type="file" accept="image/*" hidden>
+      <div id="input-library-control">
+        <button id="input-library-toggle" type="button" aria-expanded="false"
+          aria-controls="input-library-panel"
+          title="Pick from every image you've previously uploaded (deduplicated, newest first)">
+          load a previous image
+        </button>
+        <div id="input-library-panel" hidden>
+          <div class="input-library-head">
+            <strong>Past input images</strong>
+            <button id="input-library-close" type="button" aria-label="Close image picker">&times;</button>
+          </div>
+          <div id="input-library-results" role="listbox" aria-label="Previously uploaded images"></div>
+        </div>
+      </div>
     </div>
 
     <div id="compose-right">
@@ -82,23 +98,46 @@
             <option selected>low</option><option>auto</option>
           </select>
         </label>
-        <span class="opts-help" tabindex="0" title="Which options apply where:&#10;&#10;&#8226; output AR: without an input image, auto lets the model choose. Attach an image and that same default becomes match input image. gpt-image-2 and BFL derive source-matching dimensions; Grok, Ideogram, and Google choose the closest ratio their APIs accept. Any explicit dropdown choice overrides matching where the endpoint supports an AR control. Recraft image-to-image inherently follows the source and exposes no size override, so Recraft disables for image jobs when an explicit AR is selected.&#10;&#8226; detail sets the resolution tier where one exists: gpt-image-2, grok-api (1k/2k), BFL (~1/~4 MP), Google (1K/2K/4K). Ideogram is always 2K-native; Recraft and gpt-image-1 are ~1K.&#10;&#8226; quality and moderation: OpenAI image models only.&#10;&#8226; n: OpenAI models and grok-api up to 10, Recraft up to 6, Ideogram up to 8 on the V3 image path (the v4 text endpoint currently ignores it). BFL/Google return one; grok-web requests up to 4 in side-by-side mode; meta-web decides itself.&#10;&#8226; Input images: gpt-image-2 and grok-api do true edits; Recraft runs image-to-image; Ideogram, BFL, and Google use the pasted image as a style/reference guide; grok-web edit works via the imagine WebSocket. Targets that can't honor the attached image or explicit AR disable before submission.">?</span>
+        <span id="opts-help-control">
+          <button class="opts-help" id="opts-help-toggle" type="button"
+            aria-expanded="false" aria-controls="opts-help-panel"
+            title="Which options apply where">?</button>
+          <div id="opts-help-panel" hidden>
+            <div class="opts-help-head">
+              <strong>Which options apply where</strong>
+              <button id="opts-help-close" type="button" aria-label="Close options help">&times;</button>
+            </div>
+            <ul>
+              <li><strong>output AR</strong> — without an input image, auto lets the model choose. Attach an image and that same default becomes <em>match input image</em>: gpt-image-2 and BFL derive source-matching dimensions; Grok, Ideogram, and Google choose the closest ratio their APIs accept. Any explicit choice overrides matching where the endpoint has an AR control. Recraft image-to-image inherently follows the source and has no size override, so Recraft disables for image jobs with an explicit AR.</li>
+              <li><strong>detail</strong> — sets the resolution tier where one exists: gpt-image-2, grok-api (1k/2k), BFL (~1/~4 MP), Google (1K/2K/4K). Ideogram is always 2K-native; Recraft and gpt-image-1 are ~1K.</li>
+              <li><strong>quality &amp; moderation</strong> — OpenAI image models only.</li>
+              <li><strong>n</strong> — OpenAI models and grok-api up to 10, Recraft up to 6, Ideogram up to 8 on the V3 image path (the v4 text endpoint currently ignores it). BFL and Google return one; grok-web requests up to 4 in side-by-side mode; meta-web decides itself.</li>
+              <li><strong>input images</strong> — gpt-image-2 and grok-api do true edits; Recraft runs image-to-image; Ideogram, BFL, and Google use the pasted image as a style/reference guide; grok-web edit rides the imagine WebSocket. Targets that can't honor the attached image or explicit AR disable before submission.</li>
+            </ul>
+          </div>
+        </span>
       </div>
 
       <div id="send-row">
         <button id="send" type="button">Generate</button>
+        <button id="spellfix" type="button" title="Fix spelling mistakes in the prompt (Claude, spelling only — no rephrasing)">fix spelling</button>
+        <button id="spellfix-undo" type="button" hidden title="Restore the prompt as it was before the spelling fix">undo fix</button>
         <span id="send-error"></span>
       </div>
     </div>
   </section>
 
-  <section id="cost-summary" hidden></section>
+  <section id="cost-summary" hidden>
+    <button id="cost-toggle" type="button" aria-expanded="true"
+      title="Collapse the per-generator spend breakdown">hide</button>
+    <span id="cost-text"></span>
+  </section>
 
   <section id="jobs"></section>
 </main>
 
 <div id="image-viewer" hidden role="dialog" aria-modal="true" aria-label="Generated image viewer">
-  <div id="image-viewer-window">
+  <div id="image-viewer-window" tabindex="-1">
     <div id="image-viewer-stage">
       <img id="image-viewer-image" alt="Generated image">
       <div id="image-viewer-help" hidden>
@@ -110,19 +149,12 @@
       </div>
     </div>
     <div id="image-viewer-status">
-      <div class="image-viewer-buttons">
-        <button id="image-viewer-newer" type="button" title="First image of the newer prompt (Ctrl+Left)">newer prompt</button>
-        <button id="image-viewer-previous" type="button" title="Previous image across gallery (Left)">previous</button>
-        <button id="image-viewer-next" type="button" title="Next image across gallery (Right)">next</button>
-        <button id="image-viewer-older" type="button" title="First image of the older prompt (Ctrl+Right)">older prompt</button>
-        <button id="image-viewer-help-toggle" type="button" title="Keyboard shortcuts (?)">?</button>
-      </div>
-      <div id="image-viewer-metadata">
-        <span id="image-viewer-prompt"></span>
-        <span id="image-viewer-position"></span>
+      <div id="image-viewer-meta-row">
+        <span id="image-viewer-generator"></span>
         <span id="image-viewer-dimensions"></span>
+        <button id="image-viewer-help-toggle" type="button" title="Keyboard shortcuts (?) — Esc or click outside to close">?</button>
       </div>
-      <button id="image-viewer-close" type="button" title="Close viewer (Escape)">close</button>
+      <div id="image-viewer-prompt"></div>
     </div>
     <div id="image-viewer-resize" role="separator" aria-label="Resize image viewer" title="Drag to resize"></div>
   </div>
@@ -179,6 +211,6 @@
   </form>
 </dialog>
 
-<script src="app.js?v=20260726-match-input-ar"></script>
+<script src="app.js?v=20260728-viewer-input-library"></script>
 </body>
 </html>

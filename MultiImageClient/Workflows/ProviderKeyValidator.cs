@@ -91,6 +91,23 @@ namespace MultiImageClient
             return null;
         }
 
+        /// Same emptiness/placeholder rules as the image-provider keys, for
+        /// text-model keys like AnthropicApiKey that have no ImageGeneratorApiType.
+        public static string? DescribeTextKeyProblem(string keyName, string? keyValue)
+        {
+            if (string.IsNullOrWhiteSpace(keyValue))
+            {
+                return $"settings.json: {keyName} is empty - paste a real key to enable this feature";
+            }
+
+            if (keyValue.Contains(' ') || keyValue.StartsWith("Optional", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"settings.json: {keyName} still contains template placeholder text - paste a real key to enable this feature";
+            }
+
+            return null;
+        }
+
         private static string? DescribeGrokWebCookieProblem(Settings settings)
         {
             var path = settings.GrokWebCookiePath;

@@ -112,6 +112,52 @@ namespace MultiImageClient
             }
         }
 
+        /// Spelling-only correction for the web UI's "fix spelling" button.
+        /// Deliberately NOT a rewrite: the system prompt forbids rephrasing,
+        /// and temperature 0 keeps the result deterministic. Returns the
+        /// corrected text; throws on refusal or empty output (fail closed —
+        /// the caller must never swap the user's prompt for garbage).
+        public async Task<string> FixSpellingAsync(string text)
+        {
+            await _claudeSemaphore.WaitAsync();
+            try
+            {
+                var parameters = new MessageParameters()
+                {
+                    System = new List<SystemMessage>
+                    {
+                        new SystemMessage(
+                            "Fix spelling mistakes and obvious typos in the user's text. Return ONLY the corrected text, nothing else. "
+                            + "Preserve the author's wording, word order, punctuation, capitalization style, line breaks, and formatting exactly, "
+                            + "changing only misspelled words. Do not rephrase, do not add or remove content, do not correct grammar, "
+                            + "and do not normalize slang or intentional stylization. If nothing needs fixing, return the input unchanged."),
+                    },
+                    Messages = new List<Message> { new Message(RoleType.User, text) },
+                    MaxTokens = 4096,
+                    Model = AnthropicModels.Claude3Haiku,
+                    Stream = false,
+                    Temperature = 0m,
+                };
+
+                var result = await _anthropicClient.Messages.GetClaudeMessageAsync(parameters);
+                var corrected = result.Message.ToString();
+                if (string.IsNullOrWhiteSpace(corrected))
+                {
+                    throw new InvalidOperationException("Claude returned an empty spelling correction.");
+                }
+                if (DidClaudeRefuse(corrected))
+                {
+                    stats.ClaudeRefusedCount++;
+                    throw new InvalidOperationException($"Claude refused to correct this text: {corrected}");
+                }
+                return corrected;
+            }
+            finally
+            {
+                _claudeSemaphore.Release();
+            }
+        }
+
         public static IEnumerable<string> WordsClaudeHates =>
             System.IO.File.Exists("claude-bad.txt")
                 ? System.IO.File.ReadAllLines("claude-bad.txt")

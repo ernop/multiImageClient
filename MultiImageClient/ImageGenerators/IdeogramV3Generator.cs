@@ -128,7 +128,9 @@ namespace IdeogramAPIClient
                 {
                     var refBytes = File.ReadAllBytes(_inputImagePath);
                     request.StyleReferenceImages.Add(new IdeogramFile(
-                        refBytes, Path.GetFileName(_inputImagePath), "image/png"));
+                        refBytes,
+                        Path.GetFileName(_inputImagePath),
+                        DetectReferenceContentType(refBytes, _inputImagePath)));
                 }
 
                 var response = await _client.GenerateImageV3Async(request);
@@ -218,6 +220,32 @@ namespace IdeogramAPIClient
             {
                 _semaphore.Release();
             }
+        }
+
+        // Ideogram's generate endpoint only accepts PNG/JPEG/WEBP reference
+        // images and sniffs the actual bytes, so the multipart part must be
+        // labeled with the file's true type — a mislabeled part gets the whole
+        // request rejected. Anything else is a hard error here rather than a
+        // guessed label.
+        private static string DetectReferenceContentType(byte[] bytes, string sourcePath)
+        {
+            if (bytes.Length >= 8
+                && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+            {
+                return "image/png";
+            }
+            if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            {
+                return "image/jpeg";
+            }
+            if (bytes.Length >= 12
+                && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P')
+            {
+                return "image/webp";
+            }
+            throw new InvalidOperationException(
+                $"Ideogram style reference images must be PNG, JPEG, or WEBP; '{sourcePath}' is none of those.");
         }
 
         private async Task<(byte[] Bytes, string ContentType)> DownloadImageAsync(string url)

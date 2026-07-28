@@ -34,7 +34,10 @@ namespace MultiImageClient
     ///                                          ~6-connection HTTP/1.1 pool is shared across ALL
     ///                                          tabs and must stay free for image loads)
     ///   GET  /api/jobs/{id}/images/{gen}/{n}  cached or persisted result bytes
+    ///   GET  /api/input-images                 distinct user-uploaded input images, newest first
+    ///                                          (SHA-256 deduped), for the composer's load picker
     ///   GET  /api/logs/poll?after=N            current-process log lines after sequence N
+    ///   POST /api/prompt/spellfix              Claude spelling-only correction -> {corrected}
     public class UiWorkflow
     {
         // Single source of truth for which UI targets accept an input image.
@@ -70,6 +73,14 @@ namespace MultiImageClient
             var jobs = new UiJobRegistry(settings);
             var activeJobs = new ConcurrentDictionary<string, Task>();
             await using var runner = new UiJobRunner(settings, stats, options);
+
+            // Claude-backed spelling-only prompt correction ("fix spelling" in
+            // the composer). Gated on AnthropicApiKey like every other lazy key.
+            var spellfixProblem = ProviderKeyValidator.DescribeTextKeyProblem(
+                nameof(settings.AnthropicApiKey), settings.AnthropicApiKey);
+            var claudeService = spellfixProblem == null
+                ? new ClaudeService(settings.AnthropicApiKey, maxConcurrency: 2, stats)
+                : null;
 
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
@@ -143,15 +154,17 @@ namespace MultiImageClient
 
                 // Intent-level geometry: auto lets text-to-image models decide,
                 // but means match input whenever an image is attached. Explicit
-                // choices always map onto each generator's real knobs.
+                // choices always map onto each generator's real knobs. text and
+                // ratio are separate so the frontend can right-align the numeric
+                // ratio column in the picker; label stays the plain fallback.
                 var shapes = new[]
                 {
-                    new { key = "auto", label = "auto (no input)", inputLabel = "match input image" },
-                    new { key = "square", label = "square 1:1", inputLabel = "square 1:1" },
-                    new { key = "landscape", label = "landscape 3:2", inputLabel = "landscape 3:2" },
-                    new { key = "portrait", label = "portrait 2:3", inputLabel = "portrait 2:3" },
-                    new { key = "wide", label = "wide 16:9", inputLabel = "wide 16:9" },
-                    new { key = "tall", label = "tall 9:16", inputLabel = "tall 9:16" },
+                    new { key = "auto", label = "auto (no input)", inputLabel = "match input image", text = "", ratio = "" },
+                    new { key = "square", label = "square 1:1", inputLabel = "square 1:1", text = "square", ratio = "1:1" },
+                    new { key = "landscape", label = "landscape 3:2", inputLabel = "landscape 3:2", text = "landscape", ratio = "3:2" },
+                    new { key = "portrait", label = "portrait 2:3", inputLabel = "portrait 2:3", text = "portrait", ratio = "2:3" },
+                    new { key = "wide", label = "wide 16:9", inputLabel = "wide 16:9", text = "wide", ratio = "16:9" },
+                    new { key = "tall", label = "tall 9:16", inputLabel = "tall 9:16", text = "tall", ratio = "9:16" },
                 };
                 var details = new[]
                 {
@@ -169,6 +182,11 @@ namespace MultiImageClient
                     {
                         available = runner.IsAvailable(UiJobRunner.KeyGrokWebVideo),
                         availabilityProblem = runner.DescribeAvailabilityProblem(UiJobRunner.KeyGrokWebVideo),
+                    },
+                    spellfix = new
+                    {
+                        available = spellfixProblem == null,
+                        availabilityProblem = spellfixProblem,
                     },
                     defaults = new { shape = "auto", detail = "high", quality = "high", moderation = "low", n = 1 },
                 });
@@ -306,6 +324,9 @@ namespace MultiImageClient
                     // can show the thumbnail without touching the saves/ layout.
                     job.StoreImage("input", 0, inputImageBytes, inputImageContentType, inputImagePath);
                 }
+                // The full option set rides the persisted accepted event so a
+                // job card can restore this exact setup into the composer
+                // ("set active"), including after a server restart.
                 job.Emit(new
                 {
                     type = "accepted",
@@ -314,6 +335,10 @@ namespace MultiImageClient
                     inputWidth = job.HasInputImage ? job.InputImageWidth : (int?)null,
                     inputHeight = job.HasInputImage ? job.InputImageHeight : (int?)null,
                     shape,
+                    detail = spec.Detail,
+                    quality = spec.Quality,
+                    moderation = spec.Moderation,
+                    n = spec.ImageCount,
                     prompt,
                     at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 });
@@ -469,6 +494,33 @@ namespace MultiImageClient
                 return Results.Json(new { id = job.Id });
             });
 
+            // Spelling-only prompt correction via Claude (temperature 0, no
+            // rephrasing). The frontend keeps the pre-fix text for its undo
+            // button; the server is stateless here.
+            app.MapPost("/api/prompt/spellfix", async (HttpRequest request) =>
+            {
+                if (claudeService == null)
+                {
+                    return Results.BadRequest(new { error = spellfixProblem });
+                }
+                var form = await request.ReadFormAsync();
+                var prompt = form["prompt"].ToString();
+                if (string.IsNullOrWhiteSpace(prompt))
+                {
+                    return Results.BadRequest(new { error = "prompt is empty" });
+                }
+                try
+                {
+                    var corrected = await claudeService.FixSpellingAsync(prompt);
+                    return Results.Json(new { corrected });
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"UI spellfix failed: {ex.Message}");
+                    return Results.Json(new { error = ex.Message }, statusCode: 502);
+                }
+            });
+
             // Cursor-based poll for ALL job events. Deliberately NOT a
             // persistent stream: browsers cap plain-HTTP/1.1 at ~6 connections
             // per origin ACROSS ALL TABS (no HTTP/2 without TLS on localhost),
@@ -500,6 +552,49 @@ namespace MultiImageClient
                 ctx.Response.Headers.Pragma = "no-cache";
                 ctx.Response.Headers.Expires = "0";
                 return Results.File(bytes, contentType);
+            });
+
+            // Every distinct user-uploaded input image, newest first, for the
+            // composer's "load a previous image" picker. Video jobs are
+            // excluded: their stored input is a copied result image, not an
+            // upload. Re-pastes of the same image across jobs are deduped by
+            // SHA-256 of the archived bytes (hashes cached per job id; a
+            // job's input never changes). Entries whose archived bytes are no
+            // longer readable are omitted and logged, never guessed at.
+            var inputImageHashes = new ConcurrentDictionary<string, string>();
+            app.MapGet("/api/input-images", () =>
+            {
+                var seenHashes = new HashSet<string>();
+                var images = new List<object>();
+                foreach (var job in jobs.ListChronological()
+                    .Where(j => j.HasInputImage && string.IsNullOrEmpty(j.SourceJobId))
+                    .OrderByDescending(j => j.CreatedAt))
+                {
+                    if (!inputImageHashes.TryGetValue(job.Id, out var hash))
+                    {
+                        if (!job.TryGetImage("input", 0, out var bytes, out _))
+                        {
+                            Logger.Log($"UI input library: job {job.Id} input image bytes are unavailable; omitted from the listing.");
+                            continue;
+                        }
+                        hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+                        inputImageHashes[job.Id] = hash;
+                    }
+                    if (!seenHashes.Add(hash))
+                    {
+                        continue;
+                    }
+                    images.Add(new
+                    {
+                        jobId = job.Id,
+                        url = $"/api/jobs/{job.Id}/images/input/0",
+                        width = job.InputImageWidth,
+                        height = job.InputImageHeight,
+                        prompt = job.Prompt,
+                        createdAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
+                    });
+                }
+                return Results.Json(new { images });
             });
 
             // Same zero-persistent-connection rule as /api/events/poll: the
@@ -556,28 +651,9 @@ namespace MultiImageClient
             IFormFile file,
             Settings settings)
         {
-            var today = DateTime.Now.ToString("yyyy-MM-dd-dddd");
-            var folder = Path.Combine(settings.ImageDownloadBaseFolder, today, "UiInputs");
-            Directory.CreateDirectory(folder);
-
-            var contentType = (file.ContentType ?? "").ToLowerInvariant();
-            var ext = contentType switch
-            {
-                "image/jpeg" => ".jpg",
-                "image/webp" => ".webp",
-                _ => ".png",
-            };
-            if (ext == ".png") contentType = "image/png";
-
             using var ms = new MemoryStream();
             await file.CopyToAsync(ms);
-            var bytes = ms.ToArray();
-            var (width, height) = IdentifyImageDimensions(bytes);
-
-            var path = Path.Combine(folder, $"{DateTime.Now:HHmmss_fff}_input{ext}");
-            await File.WriteAllBytesAsync(path, bytes);
-            Logger.Log($"UI input image saved: {path} ({width}x{height})");
-            return (path, bytes, contentType, width, height);
+            return await SaveConformedInputImageAsync(ms.ToArray(), "input", settings);
         }
 
         private static async Task<(string Path, int Width, int Height)> SaveInputImageBytesAsync(
@@ -585,24 +661,28 @@ namespace MultiImageClient
             string contentType,
             Settings settings)
         {
-            var (width, height) = IdentifyImageDimensions(bytes);
-            var today = DateTime.Now.ToString("yyyy-MM-dd-dddd");
-            var folder = Path.Combine(settings.ImageDownloadBaseFolder, today, "UiInputs");
-            Directory.CreateDirectory(folder);
-            var ext = contentType.ToLowerInvariant() switch
-            {
-                "image/jpeg" => ".jpg",
-                "image/webp" => ".webp",
-                _ => ".png",
-            };
-            var path = Path.Combine(folder, $"{DateTime.Now:HHmmss_fff}_video_source{ext}");
-            await File.WriteAllBytesAsync(path, bytes);
-            Logger.Log($"UI video source image saved: {path} ({width}x{height})");
+            var (path, _, _, width, height)
+                = await SaveConformedInputImageAsync(bytes, "video_source", settings);
             return (path, width, height);
         }
 
-        private static (int Width, int Height) IdentifyImageDimensions(byte[] bytes)
+        // Every provider consumes the pasted image from this saved file, so the
+        // saved extension + content type MUST match the actual bytes. The browser
+        // hands over whatever it had (drag-dropping a web image can yield GIF,
+        // BMP, AVIF, ...), and providers sniff the bytes: Ideogram, for one,
+        // rejects anything that isn't PNG/JPEG/WEBP. PNG/JPEG/WEBP inputs are
+        // saved verbatim under their true type; other decodable formats are
+        // deterministically re-encoded to PNG before any job starts (logged
+        // pre-operation input conformance, same policy as the Recraft input
+        // conformer). Undecodable uploads are a hard 400 before the job exists.
+        private static async Task<(string Path, byte[] Bytes, string ContentType, int Width, int Height)> SaveConformedInputImageAsync(
+            byte[] bytes,
+            string namePart,
+            Settings settings)
         {
+            string mime;
+            int width;
+            int height;
             try
             {
                 using var stream = new MemoryStream(bytes, writable: false);
@@ -611,7 +691,10 @@ namespace MultiImageClient
                 {
                     throw new InvalidDataException("Uploaded image has no readable dimensions.");
                 }
-                return (info.Width, info.Height);
+                mime = info.Metadata.DecodedImageFormat?.DefaultMimeType
+                    ?? throw new InvalidDataException("Uploaded image format could not be identified.");
+                width = info.Width;
+                height = info.Height;
             }
             catch (InvalidDataException)
             {
@@ -621,6 +704,36 @@ namespace MultiImageClient
             {
                 throw new InvalidDataException($"Uploaded image could not be decoded: {ex.Message}", ex);
             }
+
+            var ext = mime.ToLowerInvariant() switch
+            {
+                "image/png" => ".png",
+                "image/jpeg" => ".jpg",
+                "image/webp" => ".webp",
+                _ => "",
+            };
+            var contentType = mime.ToLowerInvariant();
+            if (ext == "")
+            {
+                using var image = Image.Load(bytes);
+                using var pngStream = new MemoryStream();
+                await image.SaveAsPngAsync(pngStream);
+                Logger.Log(
+                    $"UI input image arrived as {mime} ({width}x{height}); re-encoded to PNG "
+                    + $"({bytes.LongLength:N0} -> {pngStream.Length:N0} bytes) so every provider "
+                    + "receives a correctly-labeled supported format.");
+                bytes = pngStream.ToArray();
+                ext = ".png";
+                contentType = "image/png";
+            }
+
+            var today = DateTime.Now.ToString("yyyy-MM-dd-dddd");
+            var folder = Path.Combine(settings.ImageDownloadBaseFolder, today, "UiInputs");
+            Directory.CreateDirectory(folder);
+            var path = Path.Combine(folder, $"{DateTime.Now:HHmmss_fff}_{namePart}{ext}");
+            await File.WriteAllBytesAsync(path, bytes);
+            Logger.Log($"UI {namePart} image saved: {path} ({contentType}, {width}x{height})");
+            return (path, bytes, contentType, width, height);
         }
 
         // Launching the browser is the whole point of --ui, so this is not
