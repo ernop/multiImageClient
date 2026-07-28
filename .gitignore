@@ -30,3 +30,8 @@ tools/vid2img/sessions/
 !djangoManager/imageMaker/requirements.txt
 !tools/vid2img/requirements.txt
 !smoke_in.txt
+
+# w-detection: generated perturbation outputs (gigabytes of PNGs); scripts are tracked
+w-detection/output-*/
+w-detection/*.png
+w-detection/__pycache__/
