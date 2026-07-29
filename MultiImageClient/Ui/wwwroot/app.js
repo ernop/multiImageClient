@@ -1622,15 +1622,17 @@ const ImageViewerCommands = [
   },
 ];
 
+// Default size: fill the viewport (any monitor aspect — ultrawide included)
+// minus a thin margin that keeps the click-outside-to-close backdrop
+// reachable. The contained images then scale to the largest undistorted fit.
 function sizeImageViewerWindow() {
   const margin = 16;
-  const width = Math.max(300, Math.min(1400, window.innerWidth - margin * 2));
-  const height = Math.max(260, Math.min(950, window.innerHeight - margin * 2));
+  const width = Math.max(300, window.innerWidth - margin * 2);
+  const height = Math.max(260, window.innerHeight - margin * 2);
   imageViewerWindow.style.width = `${width}px`;
   imageViewerWindow.style.height = `${height}px`;
   imageViewerWindow.style.left = `${Math.max(margin, (window.innerWidth - width) / 2)}px`;
   imageViewerWindow.style.top = `${Math.max(margin, (window.innerHeight - height) / 2)}px`;
-  imageViewerWindow.dataset.sized = "true";
 }
 
 function clampImageViewerWindow() {
@@ -1665,8 +1667,10 @@ function openImageViewer(link) {
   imageViewerWheelAccumulator = 0;
   imageViewer.hidden = false;
   document.body.classList.add("image-viewer-open");
-  if (!imageViewerWindow.dataset.sized) sizeImageViewerWindow();
-  else clampImageViewerWindow();
+  // Refit to the current screen on every open (browser may have moved to a
+  // different monitor); a manual drag-resize takes over until reload.
+  if (imageViewerWindow.dataset.userSized) clampImageViewerWindow();
+  else sizeImageViewerWindow();
   renderImageViewer();
   imageViewerWindow.focus({ preventScroll: true });
 }
@@ -1792,6 +1796,7 @@ imageViewerResize.addEventListener("pointermove", (event) => {
     Math.min(maximumHeight, imageViewerResizeStart.height + event.clientY - imageViewerResizeStart.pointerY));
   imageViewerWindow.style.width = `${width}px`;
   imageViewerWindow.style.height = `${height}px`;
+  imageViewerWindow.dataset.userSized = "true";
 });
 imageViewerResize.addEventListener("pointerup", (event) => {
   imageViewerResizeStart = null;
@@ -1802,7 +1807,11 @@ imageViewerResize.addEventListener("pointerup", (event) => {
 imageViewerResize.addEventListener("pointercancel", () => {
   imageViewerResizeStart = null;
 });
-window.addEventListener("resize", clampImageViewerWindow);
+window.addEventListener("resize", () => {
+  if (imageViewer.hidden) return;
+  if (imageViewerWindow.dataset.userSized) clampImageViewerWindow();
+  else sizeImageViewerWindow();
+});
 
 // "~$0.25", "~$0.02", "~$1.5" — trailing zeros trimmed. Empty for 0/absent.
 function formatCost(v) {
