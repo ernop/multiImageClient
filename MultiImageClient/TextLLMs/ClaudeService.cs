@@ -15,6 +15,12 @@ namespace MultiImageClient
 {
     public class ClaudeService
     {
+        // The SDK's AnthropicModels.Claude3Haiku pins claude-3-haiku-20240307,
+        // which Anthropic retired (API now returns not_found_error, observed
+        // 2026-07-29). Haiku 4.5 is its successor for these cheap fast tasks;
+        // verified available on this account via /v1/models.
+        private const string HaikuModel = "claude-haiku-4-5-20251001";
+
         private readonly AnthropicClient _anthropicClient;
         private readonly SemaphoreSlim _claudeSemaphore;
         private MultiClientRunStats stats;
@@ -78,7 +84,7 @@ namespace MultiImageClient
                 {
                     Messages = messages,
                     MaxTokens = 2048,
-                    Model = AnthropicModels.Claude3Haiku,
+                    Model = HaikuModel,
                     Stream = false,
                     Temperature = temp,
                 };
@@ -134,7 +140,7 @@ namespace MultiImageClient
                     },
                     Messages = new List<Message> { new Message(RoleType.User, text) },
                     MaxTokens = 4096,
-                    Model = AnthropicModels.Claude3Haiku,
+                    Model = HaikuModel,
                     Stream = false,
                     Temperature = 0m,
                 };
