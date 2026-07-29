@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260728-spellwell-ideogram-split">
-<link rel="stylesheet" href="spellwell/spellwell.css?v=20260728-spellwell-ideogram-split">
+<link rel="stylesheet" href="style.css?v=20260729-viewer-input-compare">
+<link rel="stylesheet" href="spellwell/spellwell.css?v=20260729-viewer-input-compare">
 </head>
 <body>
 <header>
@@ -146,6 +146,9 @@
 <div id="image-viewer" hidden role="dialog" aria-modal="true" aria-label="Generated image viewer">
   <div id="image-viewer-window" tabindex="-1">
     <div id="image-viewer-stage">
+      <img id="image-viewer-input-image" alt="Input image for comparison" hidden>
+      <span class="image-viewer-pane-label" id="image-viewer-input-label" hidden>input</span>
+      <span class="image-viewer-pane-label" id="image-viewer-output-label" hidden>output</span>
       <img id="image-viewer-image" alt="Generated image">
       <div id="image-viewer-help" hidden>
         <div id="image-viewer-help-panel">
@@ -159,7 +162,7 @@
       <div id="image-viewer-meta-row">
         <span id="image-viewer-generator"></span>
         <span id="image-viewer-dimensions"></span>
-        <button id="image-viewer-help-toggle" type="button" title="Keyboard shortcuts (?) — Esc or click outside to close">?</button>
+        <button id="image-viewer-help-toggle" type="button" title="Keyboard shortcuts (?) — c compares with the input image, Esc or click outside to close">?</button>
       </div>
       <div id="image-viewer-prompt"></div>
     </div>
@@ -218,8 +221,8 @@
   </form>
 </dialog>
 
-<script src="spellwell/vendor/typo/typo.min.js?v=20260728-spellwell-ideogram-split"></script>
-<script src="spellwell/spellwell.js?v=20260728-spellwell-ideogram-split"></script>
-<script src="app.js?v=20260728-spellwell-ideogram-split"></script>
+<script src="spellwell/vendor/typo/typo.min.js?v=20260729-viewer-input-compare"></script>
+<script src="spellwell/spellwell.js?v=20260729-viewer-input-compare"></script>
+<script src="app.js?v=20260729-viewer-input-compare"></script>
 </body>
 </html>

@@ -11,6 +11,10 @@ let spellfixPrevious = null;  // prompt text as it was before the last fix, for 
 let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
 let imageViewerRenderVersion = 0;
 let imageViewerHelpOpen = false;
+// Global "always compare with the input image" toggle (`c` in the viewer),
+// sticky across images and page loads. Jobs without an input image show the
+// normal single-image view even while the mode is on.
+let imageViewerCompareInput = localStorage.getItem("imageViewerCompareInput") === "true";
 let imageViewerFocusBeforeOpen = null;
 let imageViewerWheelAccumulator = 0;
 let imageViewerWheelResetTimer = null;
@@ -48,6 +52,10 @@ const logsConnection = el("logs-connection");
 const imageViewer = el("image-viewer");
 const imageViewerWindow = el("image-viewer-window");
 const imageViewerImage = el("image-viewer-image");
+const imageViewerStage = el("image-viewer-stage");
+const imageViewerInputImage = el("image-viewer-input-image");
+const imageViewerInputLabel = el("image-viewer-input-label");
+const imageViewerOutputLabel = el("image-viewer-output-label");
 const imageViewerHelp = el("image-viewer-help");
 const imageViewerHelpList = el("image-viewer-help-list");
 const imageViewerPrompt = el("image-viewer-prompt");
@@ -1275,6 +1283,7 @@ function getImageViewerPrompts() {
     prompts.push({
       jobId: card.id.substring("job-".length),
       prompt: card.querySelector(".job-prompt").textContent,
+      hasInput: card.dataset.hasInputImage === "true",
       items,
     });
   }
@@ -1399,10 +1408,33 @@ function setImageViewerIdentity(item) {
   renderImageViewer();
 }
 
+// Left pane of the `c` comparison: the job's archived input image, straight
+// from the durable input URL (immutable-cached for finished jobs).
+function applyImageViewerCompare(current) {
+  const active = !!current && imageViewerCompareInput && current.prompt.hasInput;
+  imageViewerStage.classList.toggle("compare", active);
+  imageViewerInputImage.hidden = !active;
+  imageViewerInputLabel.hidden = !active;
+  imageViewerOutputLabel.hidden = !active;
+  if (active) {
+    const inputUrl = `/api/jobs/${encodeURIComponent(current.item.jobId)}/images/input/0`;
+    if (!imageViewerInputImage.src.endsWith(inputUrl)) imageViewerInputImage.src = inputUrl;
+  } else {
+    imageViewerInputImage.removeAttribute("src");
+  }
+}
+
+function toggleImageViewerCompare() {
+  imageViewerCompareInput = !imageViewerCompareInput;
+  localStorage.setItem("imageViewerCompareInput", String(imageViewerCompareInput));
+  renderImageViewer();
+}
+
 async function renderImageViewer() {
   if (imageViewer.hidden || !imageViewerState) return;
   const prompts = getImageViewerPrompts();
   const current = locateImageViewerState(prompts);
+  applyImageViewerCompare(current);
   if (!current) {
     imageViewerImage.removeAttribute("src");
     imageViewerPrompt.textContent = "";
@@ -1561,6 +1593,15 @@ const ImageViewerCommands = [
     run: () => navigateImageViewerAbsolute(-1),
   },
   {
+    id: "compareInput",
+    keys: ["c"],
+    match: (event) =>
+      !event.ctrlKey && !event.metaKey && !event.altKey &&
+      (event.key === "c" || event.key === "C"),
+    help: "Compare with input image (left: input, right: output; applies to every image whose job had an input)",
+    run: () => toggleImageViewerCompare(),
+  },
+  {
     id: "help",
     keys: ["?", "/"],
     match: (event) =>
@@ -1638,6 +1679,7 @@ function closeImageViewer() {
   imageViewerRenderVersion++;
   imageViewerWheelAccumulator = 0;
   imageViewerImage.removeAttribute("src");
+  applyImageViewerCompare(null);
   for (const [url, entry] of imageViewerCache) discardImageViewerCacheEntry(url, entry);
   const restore = imageViewerFocusBeforeOpen;
   imageViewerFocusBeforeOpen = null;
@@ -1914,6 +1956,8 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
   card.id = `job-${id}`;
   card.dataset.state = "queued";
   card.dataset.createdAt = String(createdAtUnixMs || Date.now());
+  // Read by the image viewer's input-comparison mode (`c`).
+  card.dataset.hasInputImage = String(!!hasImage);
 
   const head = document.createElement("div");
   head.className = "job-head";

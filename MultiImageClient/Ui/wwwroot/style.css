@@ -859,7 +859,8 @@ body.image-viewer-open { overflow: hidden; }
   overflow: hidden;
   background: var(--ink);
 }
-#image-viewer-image {
+#image-viewer-image,
+#image-viewer-input-image {
   display: block;
   width: auto;
   height: auto;
@@ -867,6 +868,32 @@ body.image-viewer-open { overflow: hidden; }
   max-height: 100%;
   object-fit: contain;
 }
+#image-viewer-input-image[hidden] { display: none; }
+/* Input-comparison mode (toggled with `c`, only for jobs that carried an
+   input image): the stage splits into equal halves — input on the left,
+   generated output on the right — each image centered in its half. */
+#image-viewer-stage.compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 4px;
+}
+#image-viewer-stage.compare img {
+  justify-self: center;
+  align-self: center;
+}
+.image-viewer-pane-label {
+  position: absolute;
+  top: 8px;
+  z-index: 3;
+  padding: 2px 9px;
+  color: #fff;
+  background: var(--accent-dark);
+  border-radius: 6px;
+  font: 700 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.image-viewer-pane-label[hidden] { display: none; }
+#image-viewer-input-label { left: 8px; }
+#image-viewer-output-label { left: calc(50% + 10px); }
 /* Temporary, trivially dismissable shortcut overlay — allowed over the stage. */
 #image-viewer-help {
   position: absolute;
