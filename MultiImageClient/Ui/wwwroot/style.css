@@ -293,8 +293,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 .gen-toggle {
   display: inline-flex; align-items: center; gap: 6px;
-  border: 1px solid var(--line); border-radius: 20px;
-  padding: 5px 12px; font-size: 13px;
+  border: 1px solid var(--line); border-radius: 14px;
+  padding: 3px 12px; font-size: 13px;
   cursor: pointer; user-select: none;
   background: var(--card);
 }
@@ -322,7 +322,9 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 
 /* ---------- prompt inspiration library ---------- */
 
-#inspiration-control { position: relative; }
+/* Lives at the far right of the options row; the panel opens right-anchored
+   so it can't overflow the viewport edge. */
+#inspiration-control { position: relative; order: 99; margin-left: auto; }
 #inspiration-toggle {
   padding: 4px 10px;
   color: var(--accent-dark);
@@ -340,7 +342,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   position: absolute;
   z-index: 100;
   top: calc(100% + 7px);
-  left: 0;
+  right: 0;
+  left: auto;
   display: flex;
   width: min(470px, calc(100vw - 56px));
   max-height: min(560px, calc(100vh - 140px));
@@ -510,6 +513,34 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 #spellfix:hover:not(:disabled), #spellfix-undo:hover, #spellfix-local:hover:not(:disabled) { color: #fff; background: var(--accent); }
 #spellfix:disabled, #spellfix-local:disabled { opacity: 0.5; cursor: default; }
+/* Local-fix change report: persistent (until dismissed), one change per line. */
+#spellfix-report {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  color: var(--accent-dark);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: #eef0fa;
+  font-size: 13px;
+  line-height: 1.5;
+}
+#spellfix-report[hidden] { display: none; }
+#spellfix-report-lines { flex: 1; }
+#spellfix-report-close {
+  flex: 0 0 auto;
+  width: 24px;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-size: 16px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+#spellfix-report-close:hover { color: #fff; background: var(--accent); }
 #send {
   font: inherit; font-size: 15px; font-weight: 600;
   background: var(--accent); color: #fff;

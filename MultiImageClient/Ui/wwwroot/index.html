@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260729-viewer-fill-screen">
-<link rel="stylesheet" href="spellwell/spellwell.css?v=20260729-viewer-fill-screen">
+<link rel="stylesheet" href="style.css?v=20260730-fix-report-layout">
+<link rel="stylesheet" href="spellwell/spellwell.css?v=20260730-fix-report-layout">
 </head>
 <body>
 <header>
@@ -117,7 +117,7 @@
               <li><strong>detail</strong> — sets the resolution tier where one exists: gpt-image-2, grok-api (1k/2k), BFL (~1/~4 MP), Google (1K/2K/4K). Ideogram is always 2K-native; Recraft and gpt-image-1 are ~1K.</li>
               <li><strong>quality &amp; moderation</strong> — OpenAI image models only.</li>
               <li><strong>n</strong> — OpenAI models and grok-api up to 10, Recraft up to 6, Ideogram up to 8 on the V3 image path (the v4 text endpoint currently ignores it). BFL and Google return one; grok-web requests up to 4 in side-by-side mode; meta-web decides itself.</li>
-              <li><strong>input images</strong> — gpt-image-2 and grok-api do true edits; Recraft runs image-to-image; Ideogram, BFL, and Google use the pasted image as a style/reference guide; grok-web edit rides the imagine WebSocket. Targets that can't honor the attached image or explicit AR disable before submission.</li>
+              <li><strong>input images</strong> — gpt-image-2 and grok-api do true edits; Recraft runs image-to-image; Ideogram V3, BFL, and Google use the pasted image as a style/reference guide; grok-web edit rides the imagine WebSocket. Text-to-image-only targets (slashed icon) stay selectable but run from the prompt alone — the attached image is not sent to them. Only Recraft disables, and only for image jobs with an explicit AR it can't honor.</li>
             </ul>
           </div>
         </span>
@@ -126,10 +126,15 @@
       <div id="send-row">
         <button id="send" type="button">Generate</button>
         <button id="spellfix-local" type="button" disabled
-          title="Dictionary-based local fix (offline, free): collapse double spaces and replace each highlighted misspelling with the dictionary's top suggestion">fix typos (local)</button>
+          title="Dictionary-based local fix (offline, free): collapse double spaces and apply confident corrections to highlighted misspellings; ambiguous words stay highlighted">fix typos (local)</button>
         <button id="spellfix" type="button" title="Fix spelling mistakes in the prompt (Claude, spelling only — no rephrasing; costs a fraction of a cent)">fix spelling (Claude)</button>
         <button id="spellfix-undo" type="button" hidden title="Restore the prompt as it was before the last fix">undo fix</button>
         <span id="send-error"></span>
+      </div>
+
+      <div id="spellfix-report" hidden>
+        <div id="spellfix-report-lines"></div>
+        <button id="spellfix-report-close" type="button" aria-label="Dismiss fix report">&times;</button>
       </div>
     </div>
   </section>
@@ -221,8 +226,8 @@
   </form>
 </dialog>
 
-<script src="spellwell/vendor/typo/typo.min.js?v=20260729-viewer-fill-screen"></script>
-<script src="spellwell/spellwell.js?v=20260729-viewer-fill-screen"></script>
-<script src="app.js?v=20260729-viewer-fill-screen"></script>
+<script src="spellwell/vendor/typo/typo.min.js?v=20260730-fix-report-layout"></script>
+<script src="spellwell/spellwell.js?v=20260730-fix-report-layout"></script>
+<script src="app.js?v=20260730-fix-report-layout"></script>
 </body>
 </html>

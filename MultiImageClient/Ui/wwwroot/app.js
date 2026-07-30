@@ -921,6 +921,9 @@ spellfixUndoBtn.addEventListener("click", () => {
   promptBox.value = spellfixPrevious;
   spellfixPrevious = null;
   spellfixUndoBtn.hidden = true;
+  // The report describes changes that no longer exist once undone.
+  const report = el("spellfix-report");
+  if (report) report.hidden = true;
   if (spellwellCtl) spellwellCtl.refresh();
   promptBox.focus();
 });
@@ -980,14 +983,23 @@ spellfixLocalBtn.addEventListener("click", () => {
   promptBox.value = fix.text;
   spellfixUndoBtn.hidden = false;
   if (spellwellCtl) spellwellCtl.refresh();
-  const parts = [];
-  if (fix.wordChanges.length) {
-    parts.push(fix.wordChanges.map((c) => `${c.from}→${c.to}`).join(", "));
+  // Persistent report, one change per line, visible until dismissed — so a
+  // bad correction can't flash past unnoticed (undo fix restores everything).
+  const lines = fix.wordChanges.map((c) => `${c.from} → ${c.to}`);
+  if (fix.spaceRuns) lines.push(`${fix.spaceRuns} double space${fix.spaceRuns === 1 ? "" : "s"} collapsed`);
+  const report = el("spellfix-report-lines");
+  report.innerHTML = "";
+  for (const line of lines) {
+    const div = document.createElement("div");
+    div.textContent = line;
+    report.appendChild(div);
   }
-  if (fix.spaceRuns) parts.push(`${fix.spaceRuns} double space${fix.spaceRuns === 1 ? "" : "s"}`);
-  spellfixLocalBtn.textContent = `fixed: ${parts.join(" · ")}`;
-  setTimeout(() => { spellfixLocalBtn.textContent = idleLabel; }, 3200);
+  el("spellfix-report").hidden = false;
   promptBox.focus();
+});
+
+el("spellfix-report-close").addEventListener("click", () => {
+  el("spellfix-report").hidden = true;
 });
 
 initSpellwell();

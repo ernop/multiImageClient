@@ -68,8 +68,11 @@ sw.listCustomWords();
   scrollbar can't skew wrapping.
 - Classification is deliberately heuristic and predictable, not clever:
   anything capitalized/ALLCAPS/camelCase that the dictionary doesn't know is
-  "unknown" (blue), on the theory that names and jargon shouldn't nag. The
-  cost: a sentence-initial capitalized typo reads blue, not pink.
+  "unknown" (blue), on the theory that names and jargon shouldn't nag. A
+  lowercase word whose Capitalized form is in the dictionary (english,
+  virginians) is also blue, never auto-"fixed" to an unrelated word
+  (english→anguish would be vandalism). The cost: a sentence-initial
+  capitalized typo reads blue, not pink.
 - `localFix` is precision-first because a wrong "fix" is worse than a
   highlight: a small built-in common-typos map wins outright (typo-js ranks
   classics like "teh" badly — its suggestions don't even include "the");

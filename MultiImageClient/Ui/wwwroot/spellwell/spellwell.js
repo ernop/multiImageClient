@@ -135,7 +135,11 @@ var SpellWell = (function () {
   // a plain-lowercase word the dictionary doesn't know is a misspelling
   // (pink); anything shaped like a name/acronym/identifier is unknown (blue).
   // Sentence-initial capitalized typos therefore read as unknown — acceptable
-  // for the "don't nag me about proper nouns" trade this makes.
+  // for the "don't nag me about proper nouns" trade this makes. A lowercase
+  // word whose Capitalized form IS in the dictionary (english, virginians,
+  // mainer) is also unknown, not misspelled: it's a casually-lowercased
+  // proper noun, and "correcting" it to an unrelated word (english→anguish)
+  // would be vandalism.
   Checker.prototype.classify = function (word) {
     if (word.length <= 1) return "ok";
     var lower = word.toLowerCase();
@@ -145,6 +149,7 @@ var SpellWell = (function () {
     if (this.dict.check(plain)) return "ok";
     if (plain !== normalizedApostrophe && this.dict.check(normalizedApostrophe)) return "ok";
     if (word !== lower) return "unknown";
+    if (this.dict.check(plain.charAt(0).toUpperCase() + plain.slice(1))) return "unknown";
     return "misspelled";
   };
 
