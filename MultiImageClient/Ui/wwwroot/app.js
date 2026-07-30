@@ -8,6 +8,11 @@ let videoSource = null;       // { jobId, generator, index, url }
 let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
 let spellfix = { available: false, availabilityProblem: "configuration not loaded" };
 let spellfixPrevious = null;  // prompt text as it was before the last fix, for undo
+// gpt-image-2 anti-murk guidance defaults from /api/config; the live control
+// state lives in the DOM and persists per-browser in localStorage.
+let gpt2Guidance = { defaultEnabled: true, defaultText: "" };
+const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
+const Gpt2GuidanceTextKey = "gpt2GuidanceText";
 let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
 let imageViewerRenderVersion = 0;
 let imageViewerHelpOpen = false;
@@ -15,6 +20,7 @@ let imageViewerHelpOpen = false;
 // sticky across images and page loads. Jobs without an input image show the
 // normal single-image view even while the mode is on.
 let imageViewerCompareInput = localStorage.getItem("imageViewerCompareInput") === "true";
+let imageViewerContentAr = null; // current output image's aspect ratio, for window shrink-wrap
 let imageViewerFocusBeforeOpen = null;
 let imageViewerWheelAccumulator = 0;
 let imageViewerWheelResetTimer = null;
@@ -210,6 +216,8 @@ async function loadConfig() {
   videoGeneration = cfg.videoGeneration || videoGeneration;
   spellfix = cfg.spellfix || spellfix;
   applySpellfixAvailability();
+  gpt2Guidance = cfg.gpt2Guidance || gpt2Guidance;
+  initGpt2Guidance();
 
   const fillSelect = (selectEl, entries) => {
     selectEl.innerHTML = "";
@@ -351,7 +359,74 @@ function updateGeneratorCount() {
   const available = [...gensRow.querySelectorAll("input:not(:disabled)")];
   const enabled = available.filter((cb) => cb.checked).length;
   gensCount.textContent = `${enabled} of ${available.length} available enabled`;
+  // Every generator-selection change funnels through here, so this is also
+  // the recompute point for the prompt-length notice.
+  updatePromptLimitNotice();
 }
+
+// ---------- prompt length limits (gentle, non-blocking) ----------
+
+// Some targets hard-cap prompt length (grok-web's imagine WebSocket rejects
+// anything over 8192 chars). /api/config carries maxPromptChars per
+// generator; an over-limit prompt still submits — the server truncates it at
+// the send-to-provider stage — this notice just says so before the fact.
+const promptLimitNotice = el("prompt-limit-notice");
+
+function updatePromptLimitNotice() {
+  const length = promptBox.value.trim().length;
+  const affected = [...gensRow.querySelectorAll("input:checked")]
+    .map((cb) => generators.find((g) => g.key === cb.value))
+    .filter((g) => g && g.maxPromptChars && length > g.maxPromptChars);
+  if (affected.length === 0) {
+    promptLimitNotice.hidden = true;
+    promptLimitNotice.textContent = "";
+    return;
+  }
+  const parts = affected.map((g) => `${g.label} (max ${g.maxPromptChars.toLocaleString()})`);
+  promptLimitNotice.textContent =
+    `prompt is ${length.toLocaleString()} chars — over the limit for ${parts.join(", ")}. ` +
+    `You can still generate; the prompt will be sent truncated to ` +
+    `${affected.length === 1 ? "that target" : "those targets"} (other targets get the full text).`;
+  promptLimitNotice.hidden = false;
+}
+
+promptBox.addEventListener("input", updatePromptLimitNotice);
+
+// ---------- gpt-image-2 anti-murk guidance ----------
+
+// gpt-image-2 habitually drifts into dark, murky, underexposed output, so a
+// default-on toggle appends corrective guidance (editable below it) to every
+// prompt sent to the gpt2 target — and only that target; the server does the
+// appending and records it as a prompt-transformation step. Checkbox state
+// and any custom text persist per-browser; defaults come from /api/config.
+const gpt2GuidanceEnabledBox = el("gpt2-guidance-enabled");
+const gpt2GuidanceTextBox = el("gpt2-guidance-text");
+
+function applyGpt2GuidanceEnabledState() {
+  gpt2GuidanceTextBox.disabled = !gpt2GuidanceEnabledBox.checked;
+}
+
+function initGpt2Guidance() {
+  const storedEnabled = localStorage.getItem(Gpt2GuidanceEnabledKey);
+  gpt2GuidanceEnabledBox.checked = storedEnabled === null
+    ? gpt2Guidance.defaultEnabled
+    : storedEnabled === "true";
+  const storedText = localStorage.getItem(Gpt2GuidanceTextKey);
+  gpt2GuidanceTextBox.value = storedText === null ? gpt2Guidance.defaultText : storedText;
+  applyGpt2GuidanceEnabledState();
+}
+
+gpt2GuidanceEnabledBox.addEventListener("change", () => {
+  localStorage.setItem(Gpt2GuidanceEnabledKey, String(gpt2GuidanceEnabledBox.checked));
+  applyGpt2GuidanceEnabledState();
+});
+gpt2GuidanceTextBox.addEventListener("input", () => {
+  localStorage.setItem(Gpt2GuidanceTextKey, gpt2GuidanceTextBox.value);
+});
+el("gpt2-guidance-reset").addEventListener("click", () => {
+  gpt2GuidanceTextBox.value = gpt2Guidance.defaultText;
+  localStorage.removeItem(Gpt2GuidanceTextKey);
+});
 
 function setAllGenerators(mode) {
   for (const cb of gensRow.querySelectorAll("input:not(:disabled)")) {
@@ -749,6 +824,7 @@ function insertPromptText(text) {
   const caret = before.length + separator.length + text.length;
   promptBox.focus();
   promptBox.setSelectionRange(caret, caret);
+  updatePromptLimitNotice();
 }
 
 function useInspiration(item) {
@@ -841,6 +917,8 @@ async function submit() {
   form.append("quality", el("opt-quality").value);
   form.append("moderation", el("opt-moderation").value);
   form.append("n", el("opt-n").value);
+  form.append("gpt2GuidanceEnabled", String(gpt2GuidanceEnabledBox.checked));
+  form.append("gpt2GuidanceText", gpt2GuidanceTextBox.value);
   if (inputImageFile) form.append("image", inputImageFile, "input.png");
 
   sendBtn.disabled = true;
@@ -907,6 +985,7 @@ async function fixSpelling() {
     promptBox.value = body.corrected;
     spellfixUndoBtn.hidden = false;
     if (spellwellCtl) spellwellCtl.refresh();
+    updatePromptLimitNotice();
   } catch (err) {
     sendError.textContent = String(err);
   } finally {
@@ -925,6 +1004,7 @@ spellfixUndoBtn.addEventListener("click", () => {
   const report = el("spellfix-report");
   if (report) report.hidden = true;
   if (spellwellCtl) spellwellCtl.refresh();
+  updatePromptLimitNotice();
   promptBox.focus();
 });
 
@@ -983,6 +1063,7 @@ spellfixLocalBtn.addEventListener("click", () => {
   promptBox.value = fix.text;
   spellfixUndoBtn.hidden = false;
   if (spellwellCtl) spellwellCtl.refresh();
+  updatePromptLimitNotice();
   // Persistent report, one change per line, visible until dismissed — so a
   // bad correction can't flash past unnoticed (undo fix restores everything).
   const lines = fix.wordChanges.map((c) => `${c.from} → ${c.to}`);
@@ -1473,6 +1554,8 @@ async function renderImageViewer() {
     imageViewerImage.alt =
       `${current.item.generator} image ${current.item.imageIndex + 1} of ${current.item.generatorCount}`;
     imageViewerDimensions.textContent = `${entry.image.naturalWidth}×${entry.image.naturalHeight}`;
+    imageViewerContentAr = entry.image.naturalWidth / entry.image.naturalHeight;
+    fitImageViewerWindow();
   } catch (error) {
     if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
     if (error && error.name === "AbortError") return;
@@ -1634,9 +1717,9 @@ const ImageViewerCommands = [
   },
 ];
 
-// Default size: fill the viewport (any monitor aspect — ultrawide included)
-// minus a thin margin that keeps the click-outside-to-close backdrop
-// reachable. The contained images then scale to the largest undistorted fit.
+// Pre-content size: fill the viewport (any monitor aspect) minus a thin
+// margin that keeps the click-outside-to-close backdrop reachable. Once the
+// image decodes, fitImageViewerWindow shrink-wraps the window to the content.
 function sizeImageViewerWindow() {
   const margin = 16;
   const width = Math.max(300, window.innerWidth - margin * 2);
@@ -1645,6 +1728,46 @@ function sizeImageViewerWindow() {
   imageViewerWindow.style.height = `${height}px`;
   imageViewerWindow.style.left = `${Math.max(margin, (window.innerWidth - width) / 2)}px`;
   imageViewerWindow.style.top = `${Math.max(margin, (window.innerHeight - height) / 2)}px`;
+}
+
+// Shrink-wrap the window to the displayed content: the image (or the two
+// compare panes) draws at the largest undistorted size the screen allows,
+// and the window hugs that — full width only when the content actually
+// needs it (wide image, ultrawide compare), never just to fill the monitor.
+// Two passes because the status bar's height depends on the window width
+// (the prompt wraps differently when the window narrows).
+function fitImageViewerWindow() {
+  if (imageViewer.hidden || imageViewerWindow.dataset.userSized || !imageViewerContentAr) return;
+  const margin = 16;
+  const gap = 4; // matches #image-viewer-stage.compare gap
+  const availWidth = Math.max(440, window.innerWidth - margin * 2);
+  const availHeight = Math.max(320, window.innerHeight - margin * 2);
+  for (let pass = 0; pass < 2; pass++) {
+    const statusHeight = el("image-viewer-status").offsetHeight;
+    const stageMaxHeight = Math.max(120, availHeight - statusHeight);
+    let stageWidth;
+    let stageHeight;
+    if (imageViewerStage.classList.contains("compare")) {
+      const inputAr = imageViewerInputImage.naturalWidth > 0
+        ? imageViewerInputImage.naturalWidth / imageViewerInputImage.naturalHeight
+        : imageViewerContentAr;
+      // Equal-width panes: the wider aspect dictates the pane width needed
+      // for both images to reach the shared stage height.
+      const paneAr = Math.max(inputAr, imageViewerContentAr);
+      const paneMaxWidth = (availWidth - gap) / 2;
+      stageHeight = Math.min(stageMaxHeight, paneMaxWidth / paneAr);
+      stageWidth = stageHeight * paneAr * 2 + gap;
+    } else {
+      stageHeight = Math.min(stageMaxHeight, availWidth / imageViewerContentAr);
+      stageWidth = stageHeight * imageViewerContentAr;
+    }
+    const width = Math.max(440, Math.min(availWidth, Math.round(stageWidth)));
+    const height = Math.max(320, Math.min(availHeight, Math.round(stageHeight + statusHeight)));
+    imageViewerWindow.style.width = `${width}px`;
+    imageViewerWindow.style.height = `${height}px`;
+    imageViewerWindow.style.left = `${Math.max(margin, (window.innerWidth - width) / 2)}px`;
+    imageViewerWindow.style.top = `${Math.max(margin, (window.innerHeight - height) / 2)}px`;
+  }
 }
 
 function clampImageViewerWindow() {
@@ -1679,10 +1802,14 @@ function openImageViewer(link) {
   imageViewerWheelAccumulator = 0;
   imageViewer.hidden = false;
   document.body.classList.add("image-viewer-open");
-  // Refit to the current screen on every open (browser may have moved to a
-  // different monitor); a manual drag-resize takes over until reload.
+  // A manual drag-resize takes over until reload. Otherwise the very first
+  // open pre-sizes to the viewport (content unknown while loading); later
+  // opens keep the previous shrink-wrapped size until the new image decodes
+  // and fitImageViewerWindow refits, avoiding a full-screen flash.
+  imageViewerContentAr = null;
   if (imageViewerWindow.dataset.userSized) clampImageViewerWindow();
-  else sizeImageViewerWindow();
+  else if (!imageViewerWindow.style.width) sizeImageViewerWindow();
+  else clampImageViewerWindow();
   renderImageViewer();
   imageViewerWindow.focus({ preventScroll: true });
 }
@@ -1821,9 +1948,12 @@ imageViewerResize.addEventListener("pointercancel", () => {
 });
 window.addEventListener("resize", () => {
   if (imageViewer.hidden) return;
-  if (imageViewerWindow.dataset.userSized) clampImageViewerWindow();
-  else sizeImageViewerWindow();
+  if (imageViewerWindow.dataset.userSized || !imageViewerContentAr) clampImageViewerWindow();
+  else fitImageViewerWindow();
 });
+// The compare pane's input image loads independently of the output; its
+// aspect ratio can widen the shrink-wrapped window once known.
+imageViewerInputImage.addEventListener("load", fitImageViewerWindow);
 
 // "~$0.25", "~$0.02", "~$1.5" — trailing zeros trimmed. Empty for 0/absent.
 function formatCost(v) {
@@ -1954,6 +2084,15 @@ async function setActiveFromJob(id, card) {
   if (recorded.optQuality) el("opt-quality").value = recorded.optQuality;
   if (recorded.optModeration) el("opt-moderation").value = recorded.optModeration;
   if (recorded.optN) el("opt-n").value = recorded.optN;
+  if (recorded.optGpt2GuidanceEnabled) {
+    gpt2GuidanceEnabledBox.checked = recorded.optGpt2GuidanceEnabled === "true";
+    localStorage.setItem(Gpt2GuidanceEnabledKey, String(gpt2GuidanceEnabledBox.checked));
+    applyGpt2GuidanceEnabledState();
+  }
+  if (recorded.optGpt2GuidanceText !== undefined) {
+    gpt2GuidanceTextBox.value = recorded.optGpt2GuidanceText;
+    localStorage.setItem(Gpt2GuidanceTextKey, gpt2GuidanceTextBox.value);
+  }
   updateShapeOptionLabel();
 
   const wanted = new Set([...card.querySelectorAll(".cell")].map((cell) => cell.dataset.gen));
@@ -2185,6 +2324,12 @@ function applyJobEvent(id, card, evt) {
     if (evt.quality) card.dataset.optQuality = evt.quality;
     if (evt.moderation) card.dataset.optModeration = evt.moderation;
     if (evt.n) card.dataset.optN = String(evt.n);
+    if (typeof evt.gpt2GuidanceEnabled === "boolean") {
+      card.dataset.optGpt2GuidanceEnabled = String(evt.gpt2GuidanceEnabled);
+    }
+    if (typeof evt.gpt2GuidanceText === "string") {
+      card.dataset.optGpt2GuidanceText = evt.gpt2GuidanceText;
+    }
   } else if (evt.type === "job-start") {
     card.dataset.state = "running";
     card.dataset.startedAt = String(evt.at || Date.now());

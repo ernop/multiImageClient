@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260730-fix-report-layout">
-<link rel="stylesheet" href="spellwell/spellwell.css?v=20260730-fix-report-layout">
+<link rel="stylesheet" href="style.css?v=20260730-gpt2-guidance">
+<link rel="stylesheet" href="spellwell/spellwell.css?v=20260730-gpt2-guidance">
 </head>
 <body>
 <header>
@@ -123,6 +123,18 @@
         </span>
       </div>
 
+      <div id="gpt2-guidance-row">
+        <label id="gpt2-guidance-toggle"
+          title="gpt-image-2 habitually drifts into dark, murky, underexposed output. While this is on, the text below is appended to the prompt sent to gpt-image-2 on every job (and only to gpt-image-2 — other generators get your prompt untouched).">
+          <input id="gpt2-guidance-enabled" type="checkbox" checked>
+          include special guidance to gpt-image-2 to not produce such dark murky images
+        </label>
+        <button id="gpt2-guidance-reset" type="button"
+          title="Restore the default guidance text">reset text</button>
+        <textarea id="gpt2-guidance-text" rows="3" spellcheck="false"
+          aria-label="Guidance text appended to every gpt-image-2 prompt"></textarea>
+      </div>
+
       <div id="send-row">
         <button id="send" type="button">Generate</button>
         <button id="spellfix-local" type="button" disabled
@@ -131,6 +143,8 @@
         <button id="spellfix-undo" type="button" hidden title="Restore the prompt as it was before the last fix">undo fix</button>
         <span id="send-error"></span>
       </div>
+
+      <div id="prompt-limit-notice" hidden></div>
 
       <div id="spellfix-report" hidden>
         <div id="spellfix-report-lines"></div>
@@ -226,8 +240,8 @@
   </form>
 </dialog>
 
-<script src="spellwell/vendor/typo/typo.min.js?v=20260730-fix-report-layout"></script>
-<script src="spellwell/spellwell.js?v=20260730-fix-report-layout"></script>
-<script src="app.js?v=20260730-fix-report-layout"></script>
+<script src="spellwell/vendor/typo/typo.min.js?v=20260730-gpt2-guidance"></script>
+<script src="spellwell/spellwell.js?v=20260730-gpt2-guidance"></script>
+<script src="app.js?v=20260730-gpt2-guidance"></script>
 </body>
 </html>
