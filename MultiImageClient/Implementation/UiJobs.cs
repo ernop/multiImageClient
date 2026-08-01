@@ -1208,176 +1208,214 @@ namespace MultiImageClient
                 gen = key,
                 at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             });
-            GrokWebClient? grokWebClient = null;
-            PromptDetails? copy = null;
-            try
+
+            // An explicit N>1 is a deliberate "give me N of these" — so we run N
+            // independent single-image generations and return every one. They run
+            // sequentially (the save-path filename scheme collides for the same
+            // generator+prompt within a second) and give up the mid-stream partial
+            // preview when N>1 (OpenAI forbids streaming with n>1, and parallel
+            // partials would fight over one cell). All N are saved and shown.
+            // Video is inherently single-output, so grok-web-video ignores N.
+            var want = key == KeyGrokWebVideo ? 1 : Math.Clamp(spec.ImageCount, 1, 10);
+            var enablePartials = want == 1;
+
+            var urls = new List<string>();
+            var merged = new TaskProcessResult
             {
-                IImageGenerator generator;
-                if (key is KeyGrokWeb or KeyGrokWebVideo)
-                {
-                    var cookiePath = ResolveGrokWebCookiePath()
-                        ?? throw new InvalidOperationException("grok-web cookie file not found (settings.json GrokWebCookiePath or --grok-web-cookies)");
-                    var appChatBrowser = key == KeyGrokWebVideo
-                        ? _grokWebBrowserClient ?? throw new InvalidOperationException(
-                            DescribeAvailabilityProblem(KeyGrokWebVideo)
-                            ?? "grok-web video browser client is unavailable")
-                        : null;
-                    grokWebClient = GrokWebClient.FromCookieFile(cookiePath, appChatBrowser);
-                    generator = key == KeyGrokWebVideo
-                        ? await BuildGrokWebVideoAsync(grokWebClient, job, spec)
-                        : await BuildGrokWebAsync(grokWebClient, job, spec);
-                }
-                else if (key == KeyMetaWeb)
-                {
-                    // Text-only target: on image jobs it runs from the prompt
-                    // alone (see ImageCapableKeys).
-                    generator = new MetaWebImagineGenerator(
-                        _metaWebClient ?? throw new InvalidOperationException(
-                            DescribeAvailabilityProblem(KeyMetaWeb) ?? "meta-web browser client is unavailable"),
-                        maxConcurrency: 1,
-                        _stats);
-                }
-                else
-                {
-                    generator = BuildGenerator(key, spec, job);
-                }
+                PromptDetails = pd,
+                ImageGeneratorDescription = key,
+                ContentType = "image/png",
+            };
+            byte[] firstImageBytes = null;
+            var mediaType = "";
+            decimal totalCost = 0m;
+            long createMs = 0, downloadMs = 0;
+            string label = null;
+            string firstError = null;
 
-                copy = pd.Copy();
-                if (key == KeyGrokWebVideo && !string.IsNullOrWhiteSpace(job.SourceGenerator))
+            for (var attempt = 0; attempt < want; attempt++)
+            {
+                GrokWebClient? grokWebClient = null;
+                PromptDetails? copy = null;
+                try
                 {
-                    copy.RuntimeMeta["sourceJobId"] = job.SourceJobId;
-                    copy.RuntimeMeta["sourceGenerator"] = job.SourceGenerator;
-                    copy.RuntimeMeta["sourceIndex"] = job.SourceIndex?.ToString() ?? "";
-                }
-                // Estimated cost for this call (per-image estimate x n, from
-                // each generator's GetCost). Estimates, not bills — but good
-                // enough for calibrating which providers are worth their price.
-                var costEstimate = generator.GetCost();
-                Logger.Log($"[ui #{job.Id}]   -> {generator.GetGeneratorSpecPart()} (~${costEstimate:0.###})");
-                var result = await GenerationArchive.ExecuteAndSaveAsync(
-                    generator,
-                    copy,
-                    _imageManager,
-                    new GenerationArchiveContext
+                    IImageGenerator generator;
+                    if (key is KeyGrokWeb or KeyGrokWebVideo)
                     {
-                        Source = "ui",
-                        ExternalJobId = job.Id,
-                        GeneratorKey = key,
-                    });
+                        var cookiePath = ResolveGrokWebCookiePath()
+                            ?? throw new InvalidOperationException("grok-web cookie file not found (settings.json GrokWebCookiePath or --grok-web-cookies)");
+                        var appChatBrowser = key == KeyGrokWebVideo
+                            ? _grokWebBrowserClient ?? throw new InvalidOperationException(
+                                DescribeAvailabilityProblem(KeyGrokWebVideo)
+                                ?? "grok-web video browser client is unavailable")
+                            : null;
+                        grokWebClient = GrokWebClient.FromCookieFile(cookiePath, appChatBrowser);
+                        generator = key == KeyGrokWebVideo
+                            ? await BuildGrokWebVideoAsync(grokWebClient, job, spec)
+                            : await BuildGrokWebAsync(grokWebClient, job, spec);
+                    }
+                    else if (key == KeyMetaWeb)
+                    {
+                        // Text-only target: on image jobs it runs from the prompt
+                        // alone (see ImageCapableKeys).
+                        generator = new MetaWebImagineGenerator(
+                            _metaWebClient ?? throw new InvalidOperationException(
+                                DescribeAvailabilityProblem(KeyMetaWeb) ?? "meta-web browser client is unavailable"),
+                            maxConcurrency: 1,
+                            _stats);
+                    }
+                    else
+                    {
+                        generator = BuildGenerator(key, spec, job, enablePartials);
+                    }
 
-                var urls = new List<string>();
-                var mediaType = "";
-                byte[] firstImageBytes = null;
-                if (result.IsSuccess
-                    && !string.IsNullOrEmpty(result.GeneratedMediaPath)
-                    && File.Exists(result.GeneratedMediaPath))
-                {
-                    var mediaBytes = await File.ReadAllBytesAsync(result.GeneratedMediaPath);
-                    mediaType = string.IsNullOrWhiteSpace(result.GeneratedMediaContentType)
-                        ? "application/octet-stream"
-                        : result.GeneratedMediaContentType;
-                    job.StoreImage(key, 0, mediaBytes, mediaType, result.GeneratedMediaPath);
-                    urls.Add($"/api/jobs/{job.Id}/images/{key}/0");
-                }
-                else
-                {
-                    int i = 0;
-                    foreach (var bytes in result.GetAllImages)
+                    copy = pd.Copy();
+                    if (key == KeyGrokWebVideo && !string.IsNullOrWhiteSpace(job.SourceGenerator))
                     {
-                        firstImageBytes ??= bytes;
-                        job.StoreImage(
-                            key,
-                            i,
-                            bytes,
-                            result.ContentType ?? "image/png",
-                            result.GetSavedRawImagePath(i));
-                        urls.Add($"/api/jobs/{job.Id}/images/{key}/{i}");
-                        i++;
+                        copy.RuntimeMeta["sourceJobId"] = job.SourceJobId;
+                        copy.RuntimeMeta["sourceGenerator"] = job.SourceGenerator;
+                        copy.RuntimeMeta["sourceIndex"] = job.SourceIndex?.ToString() ?? "";
+                    }
+                    // Per single-image estimate from each generator's GetCost.
+                    // Estimates, not bills — but good enough for calibrating
+                    // which providers are worth their price.
+                    var costEstimate = generator.GetCost();
+                    var attemptTag = want > 1 ? $"  [{attempt + 1}/{want}]" : "";
+                    Logger.Log($"[ui #{job.Id}]   -> {generator.GetGeneratorSpecPart()} (~${costEstimate:0.###}){attemptTag}");
+                    var result = await GenerationArchive.ExecuteAndSaveAsync(
+                        generator,
+                        copy,
+                        _imageManager,
+                        new GenerationArchiveContext
+                        {
+                            Source = "ui",
+                            ExternalJobId = job.Id,
+                            GeneratorKey = key,
+                        });
+
+                    if (result.IsSuccess
+                        && !string.IsNullOrEmpty(result.GeneratedMediaPath)
+                        && File.Exists(result.GeneratedMediaPath))
+                    {
+                        var mediaBytes = await File.ReadAllBytesAsync(result.GeneratedMediaPath);
+                        mediaType = string.IsNullOrWhiteSpace(result.GeneratedMediaContentType)
+                            ? "application/octet-stream"
+                            : result.GeneratedMediaContentType;
+                        var idx = urls.Count;
+                        job.StoreImage(key, idx, mediaBytes, mediaType, result.GeneratedMediaPath);
+                        urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
+                        merged.GeneratedMediaPath = result.GeneratedMediaPath;
+                        merged.GeneratedMediaContentType = result.GeneratedMediaContentType;
+                    }
+                    else if (result.IsSuccess)
+                    {
+                        int i = 0;
+                        foreach (var bytes in result.GetAllImages)
+                        {
+                            firstImageBytes ??= bytes;
+                            var idx = urls.Count;
+                            job.StoreImage(
+                                key,
+                                idx,
+                                bytes,
+                                result.ContentType ?? "image/png",
+                                result.GetSavedRawImagePath(i));
+                            merged.SetImageBytes(idx, bytes);
+                            merged.SetSavedRawImagePath(idx, result.GetSavedRawImagePath(i));
+                            urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
+                            i++;
+                        }
+                    }
+
+                    if (result.IsSuccess)
+                    {
+                        totalCost += costEstimate;
+                        createMs += result.CreateTotalMs;
+                        downloadMs += result.DownloadTotalMs;
+                        if (label == null)
+                        {
+                            label = copy.RuntimeMeta.TryGetValue("label", out var l) && !string.IsNullOrEmpty(l)
+                                ? l
+                                : result.ImageGeneratorDescription;
+                        }
+                    }
+                    else if (firstError == null)
+                    {
+                        firstError = result.ErrorMessage ?? "unknown error";
                     }
                 }
+                catch (Exception ex)
+                {
+                    // GrokWebException carries the server's response body — that's
+                    // where the actual reason lives ("post not found" etc).
+                    var responseBody = ex switch
+                    {
+                        GrokWebException gwe => gwe.ResponseBody,
+                        MetaWebException mwe => mwe.ResponseBody,
+                        _ => "",
+                    };
+                    var detail = !string.IsNullOrEmpty(responseBody)
+                        ? $"{ex.Message} {Truncate(responseBody, 300)}"
+                        : ex.Message;
+                    Logger.Log($"[ui #{job.Id}]   <- EXCEPTION from {key}: {detail}");
+                    firstError ??= detail;
+                }
+                finally
+                {
+                    grokWebClient?.Dispose();
+                }
+            }
 
-                var elapsed = result.CreateTotalMs + result.DownloadTotalMs;
-                if (elapsed <= 0)
-                {
-                    elapsed = wallClock.ElapsedMilliseconds;
-                }
-                var label = copy.RuntimeMeta.TryGetValue("label", out var l) && !string.IsNullOrEmpty(l)
-                    ? l
-                    : result.ImageGeneratorDescription;
-                // The actual produced pixel size travels as its own field so the
-                // card reflects what the provider really returned, not just the
-                // requested aspect. grok /images/edits in particular does not
-                // reliably honor the requested AR, so showing "1024x1024" next to
-                // a 2:3 request makes the mismatch visible. The frontend keeps
-                // the catalog display name as the cell title and demotes this
-                // provider spec label to a tooltip.
-                var actualSize = firstImageBytes != null ? ReadImageSize(firstImageBytes) : null;
-                var ok = result.IsSuccess && urls.Count > 0;
-                if (result.IsSuccess && !ok)
-                {
-                    result.IsSuccess = false;
-                    result.ErrorMessage = "Generation completed without returning usable image or video media.";
-                }
-                var errorMessage = ok ? "" : (result.ErrorMessage ?? "unknown error");
-                job.Emit(new
-                {
-                    type = "gen-result",
-                    gen = key,
-                    ok,
-                    error = errorMessage,
-                    ms = elapsed,
-                    images = urls,
-                    mediaType,
-                    label,
-                    size = actualSize,
-                    videoMode = key == KeyGrokWebVideo ? spec.VideoMode : null,
-                    videoDurationSeconds = key == KeyGrokWebVideo
-                        ? spec.VideoDurationSeconds
-                        : (int?)null,
-                    videoResolution = key == KeyGrokWebVideo ? spec.VideoResolution : null,
-                    videoAspectRatio = key == KeyGrokWebVideo ? spec.VideoAspectRatio : null,
-                    // Failed calls generally aren't billed, so report 0 for them.
-                    cost = ok ? costEstimate : 0m,
-                });
-                Logger.Log($"[ui #{job.Id}]   <- {(ok ? "OK" : $"FAIL ({errorMessage})")} from {key} in {elapsed} ms");
-                return result;
-            }
-            catch (Exception ex)
+            var elapsed = createMs + downloadMs;
+            if (elapsed <= 0)
             {
-                // GrokWebException carries the server's response body — that's
-                // where the actual reason lives ("post not found" etc).
-                var responseBody = ex switch
-                {
-                    GrokWebException gwe => gwe.ResponseBody,
-                    MetaWebException mwe => mwe.ResponseBody,
-                    _ => "",
-                };
-                var detail = !string.IsNullOrEmpty(responseBody)
-                    ? $"{ex.Message} {Truncate(responseBody, 300)}"
-                    : ex.Message;
-                Logger.Log($"[ui #{job.Id}]   <- EXCEPTION from {key}: {detail}");
-                job.Emit(new
-                {
-                    type = "gen-result",
-                    gen = key,
-                    ok = false,
-                    error = detail,
-                    ms = wallClock.ElapsedMilliseconds,
-                    images = new List<string>(),
-                    label = key,
-                });
-                return new TaskProcessResult
-                {
-                    IsSuccess = false,
-                    ErrorMessage = ex.Message,
-                    PromptDetails = copy ?? pd,
-                    ImageGeneratorDescription = key,
-                };
+                elapsed = wallClock.ElapsedMilliseconds;
             }
-            finally
+            // The actual produced pixel size travels as its own field so the
+            // card reflects what the provider really returned, not just the
+            // requested aspect. grok /images/edits in particular does not
+            // reliably honor the requested AR, so showing "1024x1024" next to
+            // a 2:3 request makes the mismatch visible. The frontend keeps
+            // the catalog display name as the cell title and demotes this
+            // provider spec label to a tooltip.
+            var actualSize = firstImageBytes != null ? ReadImageSize(firstImageBytes) : null;
+            // When N>1, show how many of the requested images actually came back.
+            if (want > 1 && urls.Count > 0)
             {
-                grokWebClient?.Dispose();
+                label = string.IsNullOrEmpty(label) ? $"{urls.Count}/{want} imgs" : $"{label} · {urls.Count}/{want} imgs";
             }
+
+            var ok = urls.Count > 0;
+            merged.IsSuccess = ok;
+            merged.CreateTotalMs = createMs;
+            merged.DownloadTotalMs = downloadMs;
+            if (!ok)
+            {
+                merged.ErrorMessage = firstError ?? "Generation completed without returning usable image or video media.";
+            }
+
+            job.Emit(new
+            {
+                type = "gen-result",
+                gen = key,
+                ok,
+                error = ok ? "" : merged.ErrorMessage,
+                ms = elapsed,
+                images = urls,
+                mediaType,
+                label = label ?? key,
+                size = actualSize,
+                videoMode = key == KeyGrokWebVideo ? spec.VideoMode : null,
+                videoDurationSeconds = key == KeyGrokWebVideo
+                    ? spec.VideoDurationSeconds
+                    : (int?)null,
+                videoResolution = key == KeyGrokWebVideo ? spec.VideoResolution : null,
+                videoAspectRatio = key == KeyGrokWebVideo ? spec.VideoAspectRatio : null,
+                // Failed calls generally aren't billed, so report 0 for them.
+                cost = ok ? totalCost : 0m,
+            });
+            Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({urls.Count}/{want})" : $"FAIL ({merged.ErrorMessage})")} from {key} in {elapsed} ms");
+            return merged;
         }
 
         // grok-web is async-built because the edit path uploads the source
@@ -1445,7 +1483,10 @@ namespace MultiImageClient
                 videoMode: spec.VideoMode);
         }
 
-        private IImageGenerator BuildGenerator(string key, UiJobSpec spec, UiJob job)
+        // enablePartials: emit mid-stream preview images for gpt-image-2. Only
+        // valid for a single-image request; RunOneAsync turns it off for N>1
+        // (each generator is always built single-image and invoked N times).
+        private IImageGenerator BuildGenerator(string key, UiJobSpec spec, UiJob job, bool enablePartials = true)
         {
             var availabilityProblem = DescribeAvailabilityProblem(key);
             if (availabilityProblem != null)
@@ -1473,7 +1514,7 @@ namespace MultiImageClient
                             _settings.OpenAIApiKey, maxConcurrency: 2,
                             new[] { job.InputImagePath },
                             size, quality, _stats, "ui",
-                            imageCount: spec.ImageCount);
+                            imageCount: 1);
                     }
                     return new GptImage2Generator(
                         _settings.OpenAIApiKey, maxConcurrency: 2,
@@ -1483,8 +1524,8 @@ namespace MultiImageClient
                         stats: _stats, name: "ui",
                         partialSaveFolder: _settings.ImageDownloadBaseFolder,
                         popUpPartials: false,
-                        imageCount: spec.ImageCount,
-                        partialImageCallback: (partialIndex, imageIndex, bytes) =>
+                        imageCount: 1,
+                        partialImageCallback: !enablePartials ? null : (partialIndex, imageIndex, bytes) =>
                         {
                             var outputIndex = Math.Max(0, imageIndex);
                             // Preview and final bytes deliberately share one stable
@@ -1521,7 +1562,7 @@ namespace MultiImageClient
                         apiType: key == KeyGpt1 ? ImageGeneratorApiType.GptImage1 : ImageGeneratorApiType.GptImage1Mini,
                         _stats,
                         name: $"{key} ui",
-                        imageCount: spec.ImageCount);
+                        imageCount: 1);
                 }
 
                 case KeyGrokApi:
@@ -1547,7 +1588,7 @@ namespace MultiImageClient
                         quality: "high",
                         resolution: UiShapeMapping.GrokResolution(spec.Detail),
                         settings: _settings,
-                        imageCount: spec.ImageCount);
+                        imageCount: 1);
                 }
 
                 case KeyGoogle:

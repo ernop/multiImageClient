@@ -258,7 +258,7 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 #prompt {
   width: 100%;
   font: inherit;
-  font-size: 15px;
+  font-size: 22px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
