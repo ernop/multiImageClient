@@ -28,6 +28,7 @@ tools/vid2img/sessions/
 *.txt
 !MultiImageClient/prompts.txt
 !djangoManager/imageMaker/requirements.txt
+!tools/ideogram-export/requirements.txt
 !tools/vid2img/requirements.txt
 !smoke_in.txt
 
