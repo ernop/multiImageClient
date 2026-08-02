@@ -61,6 +61,28 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Stop after N pages per visibility pass (0 = no limit)",
     )
+    parser.add_argument(
+        "--start-page",
+        type=int,
+        default=None,
+        help="First page number to fetch in each pass (default: 0, or auto with --resume)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue each pass after the highest existing page_N*.json snapshot",
+    )
+    parser.add_argument(
+        "--merge-only",
+        action="store_true",
+        help="Rebuild ideogram_data_all.json from page snapshots and exit",
+    )
+    parser.add_argument(
+        "--merge-every",
+        type=int,
+        default=10,
+        help="Rewrite ideogram_data_all.json every N fetched pages (default: 10, 0=only at end)",
+    )
     return parser.parse_args()
 
 
@@ -189,6 +211,54 @@ def load_existing_items(all_path: Path) -> dict[str, dict[str, Any]]:
     return merged
 
 
+def load_items_from_page_snapshots(pages_dir: Path) -> dict[str, dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    if not pages_dir.is_dir():
+        return merged
+
+    for page_path in sorted(pages_dir.glob("page_*.json")):
+        data = json.loads(page_path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            raise SystemExit(f"Expected a JSON array in {page_path}")
+        for item in data:
+            if isinstance(item, dict):
+                merged[item_key(item)] = item
+    return merged
+
+
+def discover_resume_page(pages_dir: Path, is_private: bool) -> int:
+    suffix = "-private" if is_private else ""
+    highest = -1
+    for page_path in pages_dir.glob(f"page_*{suffix}.json"):
+        stem = page_path.stem
+        page_part = stem.removesuffix("-private") if is_private else stem
+        if not page_part.startswith("page_"):
+            continue
+        try:
+            page_num = int(page_part.removeprefix("page_"))
+        except ValueError:
+            continue
+        highest = max(highest, page_num)
+    return highest + 1 if highest >= 0 else 0
+
+
+def write_merged(all_path: Path, merged: dict[str, dict[str, Any]]) -> None:
+    all_items = list(merged.values())
+    all_path.write_text(json.dumps(all_items, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Merged unique items: {len(all_items)} -> {all_path}")
+
+
+def resolve_start_page(args: argparse.Namespace, pages_dir: Path, is_private: bool) -> int:
+    if args.start_page is not None:
+        return args.start_page
+    if args.resume:
+        start = discover_resume_page(pages_dir, is_private)
+        label = "private" if is_private else "public"
+        print(f"Resume {label}: starting at page {start}")
+        return start
+    return 0
+
+
 def append_ledger(ledger_path: Path, record: dict[str, Any]) -> None:
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     with ledger_path.open("a", encoding="utf-8") as handle:
@@ -220,19 +290,33 @@ def main() -> int:
     scraper = cloudscraper.create_scraper()
 
     pages_dir.mkdir(parents=True, exist_ok=True)
-    merged = load_existing_items(all_path)
+    merged = load_items_from_page_snapshots(pages_dir)
+    if not merged:
+        merged = load_existing_items(all_path)
+    elif all_path.is_file():
+        merged.update(load_existing_items(all_path))
+
+    if args.merge_only:
+        write_merged(all_path, merged)
+        print(f"Page snapshots: {pages_dir}")
+        return 0
+
     run_started = datetime.now(timezone.utc).isoformat()
     fetched_this_run = 0
+    pages_since_merge = 0
 
     print(
         "Fetching Ideogram history. Ideogram re-paginates over time; "
         "this run merges by stable item id into ideogram_data_all.json."
     )
+    print(f"Loaded {len(merged)} unique items from existing snapshots.")
 
     for is_private in visibility_passes(args):
-        page = 0
+        start_page = resolve_start_page(args, pages_dir, is_private)
+        page = start_page
+        pages_fetched_this_pass = 0
         while True:
-            if args.max_pages and page >= args.max_pages:
+            if args.max_pages and pages_fetched_this_pass >= args.max_pages:
                 print(f"Stopping at --max-pages={args.max_pages} for private={is_private}.")
                 break
 
@@ -281,14 +365,17 @@ def main() -> int:
                 break
 
             page += 1
+            pages_fetched_this_pass += 1
+            pages_since_merge += 1
+            if args.merge_every and pages_since_merge >= args.merge_every:
+                write_merged(all_path, merged)
+                pages_since_merge = 0
+
             if args.page_delay > 0:
                 time.sleep(args.page_delay)
 
-    all_items = list(merged.values())
-    all_path.write_text(json.dumps(all_items, indent=2, ensure_ascii=False), encoding="utf-8")
-
     print(f"\nRun fetched {fetched_this_run} page rows.")
-    print(f"Merged unique items: {len(all_items)} -> {all_path}")
+    write_merged(all_path, merged)
     print(f"Page snapshots: {pages_dir}")
     print(f"Fetch log: {ledger_path}")
     print("Next: python tools/ideogram-export/extract_prompts.py --archive-root", archive_root)
