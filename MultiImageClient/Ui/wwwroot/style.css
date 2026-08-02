@@ -680,6 +680,11 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .cell-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--accent-dark); }
 .cell-status.err { color: var(--err); font-weight: 600; word-break: break-word; }
 
+/* Server-classified "next step" under a payment/auth failure: calm (not
+   error-red) because it's the way out, with the fix-it link made obvious. */
+.cell-hint { font-size: 12.5px; color: var(--muted, #666); margin-top: 4px; word-break: break-word; }
+.cell-hint a { font-weight: 600; white-space: nowrap; }
+
 /* Status labels stay in normal flow. The one deliberate overlay is the
    hover-only "grok video" chip on each result's corner (user-requested:
    zero footprint until mouseover). */

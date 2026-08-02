@@ -1394,12 +1394,17 @@ namespace MultiImageClient
                 merged.ErrorMessage = firstError ?? "Generation completed without returning usable image or video media.";
             }
 
+            // Known payment/auth failures carry a "next step" hint + the URL
+            // where it gets fixed; the card renders it under the error text.
+            var actionHint = ok ? null : ProviderActionHints.For(key, merged.ErrorMessage);
             job.Emit(new
             {
                 type = "gen-result",
                 gen = key,
                 ok,
                 error = ok ? "" : merged.ErrorMessage,
+                errorHint = actionHint?.Text,
+                errorHintUrl = actionHint?.Url,
                 ms = elapsed,
                 images = urls,
                 mediaType,
@@ -1414,7 +1419,8 @@ namespace MultiImageClient
                 // Failed calls generally aren't billed, so report 0 for them.
                 cost = ok ? totalCost : 0m,
             });
-            Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({urls.Count}/{want})" : $"FAIL ({merged.ErrorMessage})")} from {key} in {elapsed} ms");
+            Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({urls.Count}/{want})" : $"FAIL ({merged.ErrorMessage})")} from {key} in {elapsed} ms"
+                + (actionHint != null ? $"\n[ui #{job.Id}]      next step: {actionHint.Text} -> {actionHint.Url}" : ""));
             return merged;
         }
 

@@ -2473,6 +2473,22 @@ function applyJobEvent(id, card, evt) {
       time.classList.add("err");
       status.className = "cell-status err";
       status.textContent = evt.error || "failed";
+      // Payment/auth failures arrive with a server-classified next step and
+      // the URL that fixes it (billing page, key console, cookie re-export).
+      if (evt.errorHint) {
+        const hint = document.createElement("div");
+        hint.className = "cell-hint";
+        hint.textContent = `${evt.errorHint} `;
+        if (evt.errorHintUrl) {
+          const a = document.createElement("a");
+          a.href = evt.errorHintUrl;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.textContent = new URL(evt.errorHintUrl).hostname.replace(/^www\./, "") + " ↗";
+          hint.appendChild(a);
+        }
+        status.after(hint);
+      }
     }
     updateJobProgress(card);
     updateCostTotals();
