@@ -69,6 +69,7 @@ const imageViewerOutputLabel = el("image-viewer-output-label");
 const imageViewerHelp = el("image-viewer-help");
 const imageViewerHelpList = el("image-viewer-help-list");
 const imageViewerPrompt = el("image-viewer-prompt");
+const imageViewerGuidance = el("image-viewer-guidance");
 const imageViewerGenerator = el("image-viewer-generator");
 const imageViewerDimensions = el("image-viewer-dimensions");
 let lastLogSequence = 0;
@@ -439,8 +440,14 @@ function initGpt2Guidance() {
   gpt2GuidanceEnabledBox.checked = storedEnabled === null
     ? gpt2Guidance.defaultEnabled
     : storedEnabled === "true";
+  // A stored EMPTY text is treated as unset and re-prefilled: the checkbox is
+  // the only off-switch. A browser that persisted an emptied textbox silently
+  // stripped the guidance from every gpt2 call 2026-07-31 → 08-02 (ultra-dark
+  // output) while the toggle still said on.
   const storedText = localStorage.getItem(Gpt2GuidanceTextKey);
-  gpt2GuidanceTextBox.value = storedText === null ? gpt2Guidance.defaultText : storedText;
+  gpt2GuidanceTextBox.value = storedText === null || storedText.trim() === ""
+    ? gpt2Guidance.defaultText
+    : storedText;
   applyGpt2GuidanceEnabledState();
 }
 
@@ -449,7 +456,12 @@ gpt2GuidanceEnabledBox.addEventListener("change", () => {
   applyGpt2GuidanceEnabledState();
 });
 gpt2GuidanceTextBox.addEventListener("input", () => {
-  localStorage.setItem(Gpt2GuidanceTextKey, gpt2GuidanceTextBox.value);
+  // Never persist blank guidance text (see initGpt2Guidance).
+  if (gpt2GuidanceTextBox.value.trim() === "") {
+    localStorage.removeItem(Gpt2GuidanceTextKey);
+  } else {
+    localStorage.setItem(Gpt2GuidanceTextKey, gpt2GuidanceTextBox.value);
+  }
 });
 el("gpt2-guidance-reset").addEventListener("click", () => {
   gpt2GuidanceTextBox.value = gpt2Guidance.defaultText;
@@ -1484,6 +1496,8 @@ function getImageViewerPrompts() {
       jobId: card.id.substring("job-".length),
       prompt: card.querySelector(".job-prompt").textContent,
       hasInput: card.dataset.hasInputImage === "true",
+      gpt2Guidance: card.dataset.gpt2Guidance || "",         // "sent" | "off" | "" (unknown)
+      gpt2GuidanceText: card.dataset.gpt2GuidanceText || "",
       items,
     });
   }
@@ -1630,6 +1644,29 @@ function toggleImageViewerCompare() {
   renderImageViewer();
 }
 
+// Below the prompt, state plainly whether the anti-murk guidance rode along
+// with the viewed gpt2 image. Green = the exact appended text; red = a gpt2
+// image that went out WITHOUT it. Silence here once hid a two-day stretch of
+// guidance-free (ultra-dark) generations, so absence is now a visible state.
+function renderImageViewerGuidance(current) {
+  const state = current && current.item.generator === "gpt2"
+    ? current.prompt.gpt2Guidance
+    : "";
+  if (state === "sent") {
+    imageViewerGuidance.hidden = false;
+    imageViewerGuidance.className = "sent";
+    imageViewerGuidance.textContent = `+ gpt-image-2 guidance: ${current.prompt.gpt2GuidanceText}`;
+  } else if (state === "off") {
+    imageViewerGuidance.hidden = false;
+    imageViewerGuidance.className = "off";
+    imageViewerGuidance.textContent = "anti-murk guidance was NOT sent with this image";
+  } else {
+    imageViewerGuidance.hidden = true;
+    imageViewerGuidance.className = "";
+    imageViewerGuidance.textContent = "";
+  }
+}
+
 async function renderImageViewer() {
   if (imageViewer.hidden || !imageViewerState) return;
   const prompts = getImageViewerPrompts();
@@ -1638,6 +1675,7 @@ async function renderImageViewer() {
   if (!current) {
     imageViewerImage.removeAttribute("src");
     imageViewerPrompt.textContent = "";
+    renderImageViewerGuidance(null);
     imageViewerGenerator.textContent = "selected image is no longer available";
     imageViewerDimensions.textContent = "";
     return;
@@ -1646,6 +1684,7 @@ async function renderImageViewer() {
   const version = ++imageViewerRenderVersion;
   imageViewerImage.removeAttribute("src");
   imageViewerPrompt.textContent = current.prompt.prompt;
+  renderImageViewerGuidance(current);
   imageViewerGenerator.textContent = genLabel(current.item.generator);
   imageViewerDimensions.textContent = "loading…";
 
@@ -2447,6 +2486,15 @@ function applyJobEvent(id, card, evt) {
     if (evt.quality) card.dataset.optQuality = evt.quality;
     if (evt.moderation) card.dataset.optModeration = evt.moderation;
     if (evt.n) card.dataset.optN = String(evt.n);
+    // What the gpt2 target actually received: "sent" (guidance text rode
+    // along) or "off" (toggle disabled). Absent on events recorded before
+    // this control existed — the viewer then makes no claim either way.
+    if (typeof evt.gpt2GuidanceEnabled === "boolean") {
+      const guidanceText = (evt.gpt2GuidanceText || "").trim();
+      const guidanceSent = evt.gpt2GuidanceEnabled && guidanceText.length > 0;
+      card.dataset.gpt2Guidance = guidanceSent ? "sent" : "off";
+      card.dataset.gpt2GuidanceText = guidanceSent ? guidanceText : "";
+    }
     if (Number.isInteger(evt.inputCount) && evt.inputCount >= 0) {
       card.dataset.inputCount = String(evt.inputCount);
       card.dataset.hasInputImage = String(evt.inputCount > 0);

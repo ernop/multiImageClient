@@ -1353,6 +1353,13 @@ namespace MultiImageClient
                         var guided = $"{copy.Prompt}\n\n{spec.Gpt2GuidanceText.Trim()}";
                         copy.ReplacePrompt(guided, guided, TransformationType.ManualSuffixation);
                     }
+                    else if (key == KeyGpt2)
+                    {
+                        // Loud on purpose: a guidance-free gpt2 call reliably
+                        // comes back dark and murky, and this once went
+                        // unnoticed for two days (2026-07-31 → 08-02).
+                        Logger.Log($"[ui #{job.Id}]   gpt2 anti-murk guidance is OFF for this call — expect darker output");
+                    }
                     if (key == KeyGrokWebVideo && !string.IsNullOrWhiteSpace(job.SourceGenerator))
                     {
                         copy.RuntimeMeta["sourceJobId"] = job.SourceJobId;

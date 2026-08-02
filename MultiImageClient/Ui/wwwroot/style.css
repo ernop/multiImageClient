@@ -1229,6 +1229,19 @@ body.image-viewer-open { overflow: hidden; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* gpt2 anti-murk guidance status under the prompt: green shows the exact
+   appended text, red flags a gpt2 image generated without it. Secondary via
+   size, not desaturation (house style: no gray text). */
+#image-viewer-guidance {
+  min-width: 0;
+  max-height: 64px;
+  overflow-y: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#image-viewer-guidance.sent { color: var(--ok); }
+#image-viewer-guidance.off { color: var(--err); font-weight: 600; }
 #image-viewer-resize {
   position: absolute;
   right: 0;

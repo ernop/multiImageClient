@@ -348,6 +348,15 @@ namespace MultiImageClient
                 var gpt2GuidanceText = form.ContainsKey("gpt2GuidanceText")
                     ? form["gpt2GuidanceText"].ToString().Trim()
                     : DefaultGpt2GuidanceText;
+                // Enabled-but-blank falls back to the default text. A browser
+                // that persisted an emptied textbox stripped the guidance from
+                // every gpt2 call for two days (2026-07-31 → 08-02; ultra-dark
+                // output) while the toggle still said on. Turning guidance off
+                // is the toggle's job; blank text never silently disables it.
+                if (gpt2GuidanceEnabled && string.IsNullOrWhiteSpace(gpt2GuidanceText))
+                {
+                    gpt2GuidanceText = DefaultGpt2GuidanceText;
+                }
 
                 var job = new UiJob
                 {
