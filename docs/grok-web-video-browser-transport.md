@@ -27,9 +27,10 @@ The missing condition is Grok's own request initiation path. The web app adds a 
 
 ## Implemented transport split
 
-- Image generation and image editing continue to use `wss://grok.com/ws/imagine/listen`.
+- Text-to-image generation continues to use `wss://grok.com/ws/imagine/listen`.
+- Image editing does **not** use that WebSocket. `properties.image_uri` is accepted but ignored by the consumer transport (observed 2026-07-31: outputs invented from the prompt alone). Live edit uses browser-backed `POST /rest/app-chat/conversations/new` with `modelName: "imagine-image-edit"` and `mediaGenInput.imageToImage.inputAssets: [assetId]`, triggered by grok.com's real **Edit** control so `x-statsig-id` is attached.
 - Image upload, asset lookup, media-post creation, polling, and downloads continue to use `GrokWebClient` HTTP calls.
-- Video generation's app-chat POST alone runs through `GrokWebBrowserClient`, a shared Playwright Chromium context with the `GrokWebCookiePath` cookies injected.
+- Video generation's and image editing's app-chat POSTs run through `GrokWebBrowserClient`, a shared Playwright Chromium context with the `GrokWebCookiePath` cookies injected.
 - The app first uploads the source and creates its normal Grok image post. The browser client opens that post, verifies the session through `/rest/media/imagine/quota_info`, clicks Grok's real **Make Video → Quick Animate** controls, and intercepts only the outgoing request body. Grok's generated integrity headers remain untouched while the body receives the selected method, optional motion prompt, duration, resolution, and aspect ratio.
 - Browser app-chat operations are serialized. The UI owns one browser client for the server lifetime; the CLI owns one for the workflow lifetime.
 - Relative `streamingVideoGenerationResponse.videoUrl` values are normalized to `https://assets.grok.com/...` before download.

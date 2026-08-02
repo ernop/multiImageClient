@@ -26,10 +26,21 @@ namespace MultiImageClient
         public required string Url { get; init; }
     }
 
+    // Which real grok.com control must initiate the integrity-signed app-chat
+    // POST. A plain fetch inside Playwright still 403s; only the site's own
+    // click path attaches a valid x-statsig-id.
+    public enum GrokWebAppChatTrigger
+    {
+        None = 0,
+        Video = 1,
+        ImageEdit = 2,
+    }
+
     // grok.com's app-chat endpoint rejects standalone HTTP clients even when
-    // they copy browser headers. Video generation therefore performs only that
-    // POST inside a real logged-in Chromium page. Uploads, image generation,
-    // media polling, downloads, and saving remain in GrokWebClient.
+    // they copy browser headers. Video generation and image editing therefore
+    // perform only that POST inside a real logged-in Chromium page. Uploads,
+    // image generation (text-to-image WS), media polling, downloads, and
+    // saving remain in GrokWebClient.
     public sealed class GrokWebBrowserClient : IAsyncDisposable, IDisposable
     {
         public const string ImagineUrl = "https://grok.com/imagine";
@@ -67,6 +78,7 @@ namespace MultiImageClient
         public async Task<GrokWebBrowserResponse> PostAppChatAsync(
             object payload,
             string? triggerPostId,
+            GrokWebAppChatTrigger trigger = GrokWebAppChatTrigger.None,
             CancellationToken cancellationToken = default)
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -81,11 +93,21 @@ namespace MultiImageClient
                 await PrepareImaginePageAsync(triggerPostId, ct);
 
                 var payloadJson = JsonSerializer.Serialize(payload);
-                if (!string.IsNullOrWhiteSpace(triggerPostId))
+                if (trigger != GrokWebAppChatTrigger.None)
                 {
-                    return await TriggerAppChatFromPageAsync(payloadJson, ct);
+                    if (string.IsNullOrWhiteSpace(triggerPostId))
+                    {
+                        throw new GrokWebException(
+                            $"Grok web browser {trigger} trigger requires a source post id.");
+                    }
+                    return trigger == GrokWebAppChatTrigger.ImageEdit
+                        ? await TriggerImageEditAppChatFromPageAsync(payloadJson, ct)
+                        : await TriggerVideoAppChatFromPageAsync(payloadJson, ct);
                 }
 
+                // Plain page fetch still 403s on app-chat (no x-statsig-id).
+                // Callers that need a signed request must pass a Video/ImageEdit
+                // trigger instead of relying on this path.
                 var responseTask = _page!.EvaluateAsync<JsonElement>(
                     """
                     async ({ payloadJson, timeoutMs }) => {
@@ -131,7 +153,7 @@ namespace MultiImageClient
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 throw new GrokWebException(
-                    $"Grok web browser video request timed out after {_options.Timeout.TotalSeconds:0} seconds.");
+                    $"Grok web browser request timed out after {_options.Timeout.TotalSeconds:0} seconds.");
             }
             catch (PlaywrightException ex)
             {
@@ -146,7 +168,117 @@ namespace MultiImageClient
             }
         }
 
-        private async Task<GrokWebBrowserResponse> TriggerAppChatFromPageAsync(
+        // Live protocol (2026-07-31): on an uploaded image post, fill the
+        // composer and click aria-label=Edit. Grok sends modelName
+        // imagine-image-edit with mediaGenInput.imageToImage.inputAssets.
+        // Route interception replaces only the body; x-statsig-id stays.
+        private async Task<GrokWebBrowserResponse> TriggerImageEditAppChatFromPageAsync(
+            string payloadJson,
+            CancellationToken ct)
+        {
+            const string endpointPattern = "**/rest/app-chat/conversations/new";
+            var responseSource = new TaskCompletionSource<IResponse>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+
+            void HandleResponse(object? sender, IResponse response)
+            {
+                if (response.Request.Method == "POST"
+                    && response.Url.Contains(
+                        "/rest/app-chat/conversations/new",
+                        StringComparison.Ordinal))
+                {
+                    responseSource.TrySetResult(response);
+                }
+            }
+
+            Func<IRoute, Task> routeHandler = async route =>
+            {
+                await route.ContinueAsync(new RouteContinueOptions
+                {
+                    PostData = Encoding.UTF8.GetBytes(payloadJson),
+                });
+            };
+
+            _page!.Response += HandleResponse;
+            await _page.RouteAsync(endpointPattern, routeHandler);
+            try
+            {
+                var imageToggle = _page.Locator("button[aria-label=\"Image\" i]").Last;
+                if (await imageToggle.CountAsync() > 0 && await imageToggle.IsVisibleAsync())
+                {
+                    await imageToggle.ClickAsync(new LocatorClickOptions { Force = true });
+                }
+
+                var composer = _page.Locator(
+                    "[contenteditable=\"true\"][aria-label*=\"Ask Grok\" i], "
+                    + "[contenteditable=\"true\"]").Last;
+                await composer.WaitForAsync(new LocatorWaitForOptions
+                {
+                    State = WaitForSelectorState.Visible,
+                    Timeout = 30_000,
+                });
+                await composer.ClickAsync(new LocatorClickOptions { Force = true });
+                // Harmless placeholder: the intercepted body carries the real prompt.
+                await composer.FillAsync("edit this image");
+
+                var editButton = _page.Locator("button[aria-label=\"Edit\" i]").Last;
+                var enabled = false;
+                for (var i = 0; i < 40; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (await editButton.CountAsync() > 0
+                        && await editButton.IsVisibleAsync()
+                        && !await editButton.IsDisabledAsync())
+                    {
+                        enabled = true;
+                        break;
+                    }
+                    await Task.Delay(250, ct);
+                }
+                if (!enabled)
+                {
+                    throw new GrokWebException(
+                        "Grok web: the Edit control stayed disabled after filling the composer. "
+                        + "The Imagine post page layout or account controls may have changed; "
+                        + "retry with --grok-web-headed.");
+                }
+
+                await editButton.ClickAsync(new LocatorClickOptions { Force = true });
+
+                IResponse response;
+                try
+                {
+                    response = await responseSource.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+                }
+                catch (TimeoutException)
+                {
+                    var screenshotPath = Path.Combine(
+                        Path.GetTempPath(),
+                        $"grok-web-edit-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+                    await _page.ScreenshotAsync(new PageScreenshotOptions
+                    {
+                        Path = screenshotPath,
+                        FullPage = true,
+                    });
+                    Logger.Log($"Grok web edit trigger failed; screenshot: {screenshotPath}");
+                    throw new GrokWebException(
+                        "Grok web: the real Edit control did not start an app-chat request. "
+                        + "The Imagine page layout or account controls may have changed; retry with --grok-web-headed.");
+                }
+
+                // Edit results arrive in the streaming body as relative
+                // generatedImageUrls / streamingImageGenerationResponse URLs.
+                // Wait long enough to collect finals; do not rely on liked-post polling.
+                return await ReadAppChatResponseAsync(response, ct, bodyTimeoutSeconds: 90);
+            }
+            finally
+            {
+                _page.Response -= HandleResponse;
+                await _page.UnrouteAsync(endpointPattern, routeHandler);
+            }
+        }
+
+        private async Task<GrokWebBrowserResponse> TriggerVideoAppChatFromPageAsync(
             string payloadJson,
             CancellationToken ct)
         {
@@ -311,44 +443,52 @@ namespace MultiImageClient
                         "Grok web: the real Make Video control did not start an app-chat request. "
                         + "The Imagine page layout or account controls may have changed; retry with --grok-web-headed.");
                 }
-                string body;
-                try
-                {
-                    // The endpoint streams. On silent moderation failures Grok can
-                    // leave the body open indefinitely after returning HTTP 200.
-                    // The durable media-post poll is the source of truth, so do
-                    // not hold the whole video job for the 15-minute browser limit.
-                    var bodyTimeout = TimeSpan.FromSeconds(
-                        Math.Min(30, Math.Max(5, _options.Timeout.TotalSeconds)));
-                    body = await response.TextAsync().WaitAsync(bodyTimeout, ct);
-                }
-                catch (TimeoutException)
-                {
-                    body = "";
-                    Logger.Log(
-                        "Grok web browser: app-chat returned headers but left its streaming body open; "
-                        + "continuing with media-post polling.");
-                }
-                catch (PlaywrightException ex)
-                {
-                    body = "";
-                    Logger.Log(
-                        $"Grok web browser: could not read the accepted app-chat stream ({ex.Message}); "
-                        + "continuing with media-post polling.");
-                }
-
-                return new GrokWebBrowserResponse
-                {
-                    StatusCode = response.Status,
-                    Body = body,
-                    Url = response.Url,
-                };
+                return await ReadAppChatResponseAsync(response, ct, bodyTimeoutSeconds: 30);
             }
             finally
             {
                 _page.Response -= HandleResponse;
                 await _page.UnrouteAsync(endpointPattern, routeHandler);
             }
+        }
+
+        private async Task<GrokWebBrowserResponse> ReadAppChatResponseAsync(
+            IResponse response,
+            CancellationToken ct,
+            int bodyTimeoutSeconds)
+        {
+            string body;
+            try
+            {
+                // The endpoint streams. On silent moderation failures Grok can
+                // leave the body open indefinitely after returning HTTP 200.
+                // Video can fall back to media-post polling; image edit needs the
+                // streamed finals, so callers pass a longer bodyTimeoutSeconds.
+                var bodyTimeout = TimeSpan.FromSeconds(
+                    Math.Min(bodyTimeoutSeconds, Math.Max(5, _options.Timeout.TotalSeconds)));
+                body = await response.TextAsync().WaitAsync(bodyTimeout, ct);
+            }
+            catch (TimeoutException)
+            {
+                body = "";
+                Logger.Log(
+                    "Grok web browser: app-chat returned headers but left its streaming body open; "
+                    + "continuing with whatever partial body was already collected / media-post polling.");
+            }
+            catch (PlaywrightException ex)
+            {
+                body = "";
+                Logger.Log(
+                    $"Grok web browser: could not read the accepted app-chat stream ({ex.Message}); "
+                    + "continuing with media-post polling.");
+            }
+
+            return new GrokWebBrowserResponse
+            {
+                StatusCode = response.Status,
+                Body = body,
+                Url = response.Url,
+            };
         }
 
         private async Task EnsureStartedAsync(CancellationToken ct)

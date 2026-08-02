@@ -20,16 +20,21 @@ using SixLabors.ImageSharp.Processing;
 
 namespace MultiImageClient
 {
-    /// One web-UI generation job: (optional input image, prompt, generator
+    /// One web-UI generation job: (optional input image(s), prompt, generator
     /// set, options). Holds an append-only event log that SSE subscribers
     /// replay from any index (so a page refresh mid-job still sees the full
     /// history), plus a live byte cache and durable references to saved result
     /// files so completed cards survive a server restart.
+    ///
+    /// Multiple input images (up to UiJobRunner.MaxInputImages) are ordered;
+    /// index 0 is the primary used for AR matching, compare-with-input, and
+    /// the job-card thumb. gpt-image-2 /edits receives the full list; every
+    /// other generator receives only the primary.
     public class UiJob
     {
         public string Id { get; init; } = Guid.NewGuid().ToString("N")[..12];
         public required string Prompt { get; init; }
-        public string InputImagePath { get; init; } = "";
+        public IReadOnlyList<string> InputImagePaths { get; init; } = Array.Empty<string>();
         public int InputImageWidth { get; init; }
         public int InputImageHeight { get; init; }
         public IReadOnlyList<string> GeneratorKeys { get; init; } = Array.Empty<string>();
@@ -51,7 +56,9 @@ namespace MultiImageClient
 
         private readonly ConcurrentDictionary<string, (byte[] Bytes, string ContentType)> _images = new();
 
-        public bool HasInputImage => !string.IsNullOrEmpty(InputImagePath);
+        public string InputImagePath => InputImagePaths.Count > 0 ? InputImagePaths[0] : "";
+        public int InputImageCount => InputImagePaths.Count;
+        public bool HasInputImage => InputImagePaths.Count > 0;
 
         public void Emit(object evt)
         {
@@ -274,6 +281,7 @@ namespace MultiImageClient
                     Id = job.Id,
                     Prompt = job.Prompt,
                     InputImagePath = job.InputImagePath,
+                    InputImagePaths = job.InputImagePaths.ToList(),
                     InputImageWidth = job.InputImageWidth,
                     InputImageHeight = job.InputImageHeight,
                     GeneratorKeys = job.GeneratorKeys.ToList(),
@@ -400,7 +408,7 @@ namespace MultiImageClient
                     {
                         Id = metadata.Id,
                         Prompt = metadata.Prompt,
-                        InputImagePath = metadata.InputImagePath,
+                        InputImagePaths = ResolvePersistedInputPaths(metadata),
                         InputImageWidth = metadata.InputImageWidth,
                         InputImageHeight = metadata.InputImageHeight,
                         GeneratorKeys = metadata.GeneratorKeys,
@@ -461,11 +469,26 @@ namespace MultiImageClient
             }
         }
 
+        // Older job.json records only had InputImagePath. Prefer the list when
+        // present; otherwise promote the single path. Never invent paths.
+        private static IReadOnlyList<string> ResolvePersistedInputPaths(UiPersistedJob metadata)
+        {
+            var paths = (metadata.InputImagePaths ?? new List<string>())
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .ToList();
+            if (paths.Count == 0 && !string.IsNullOrWhiteSpace(metadata.InputImagePath))
+            {
+                paths.Add(metadata.InputImagePath);
+            }
+            return paths;
+        }
+
         private sealed class UiPersistedJob
         {
             public string Id { get; set; } = "";
             public string Prompt { get; set; } = "";
             public string InputImagePath { get; set; } = "";
+            public List<string> InputImagePaths { get; set; } = new();
             public int InputImageWidth { get; set; }
             public int InputImageHeight { get; set; }
             public List<string> GeneratorKeys { get; set; } = new();
@@ -546,6 +569,7 @@ namespace MultiImageClient
                 prompt = job.Prompt,
                 gens = job.GeneratorKeys,
                 hasImage = job.HasInputImage,
+                inputCount = job.InputImageCount,
                 createdAt = job.CreatedAt.ToString("HH:mm:ss"),
                 createdAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
             });
@@ -597,6 +621,16 @@ namespace MultiImageClient
         /// Output detail tier: standard (~1K) | high (~2K) | max (~4K-ish,
         /// capped by each backend's envelope).
         public string Detail { get; init; } = "standard";
+
+        /// gpt-image-2 anti-murk guidance (on by default): when enabled and
+        /// non-empty, this text is appended to the prompt sent to the gpt2
+        /// target only — both /generations and /edits, since both ride the
+        /// same UI key. Every other target receives the untouched prompt.
+        /// Exists because gpt-image-2 habitually drifts into dark, murky,
+        /// underexposed output unless told not to on EVERY call (see the
+        /// Universal Image Prompt Defaults policy).
+        public bool Gpt2GuidanceEnabled { get; init; } = true;
+        public string Gpt2GuidanceText { get; init; } = "";
         public string VideoMode { get; init; } = "normal";
         public int VideoDurationSeconds { get; init; } = 10;
         public string VideoResolution { get; init; } = "480p";
@@ -964,6 +998,11 @@ namespace MultiImageClient
     {
         // Generator keys exposed to the browser. Availability is checked at
         // /api/config time and again defensively at build time.
+        // Composer + /api/jobs accept at most this many ordered input images.
+        // gpt-image-2 /edits allows up to 16; four is enough for the A+B(+…)
+        // gesture without turning the paste zone into a contact sheet.
+        public const int MaxInputImages = 4;
+
         public const string KeyGpt2 = "gpt2";
         public const string KeyGpt1 = "gpt1";
         public const string KeyGpt1Mini = "gpt1-mini";
@@ -984,7 +1023,7 @@ namespace MultiImageClient
         // Single source of truth for which UI targets accept an input image.
         // Exposed to the frontend via /api/config (per-generator imageCapable
         // flag) and consulted in BuildGenerator, so the two can't drift.
-        // grok-web edits ride the imagine WebSocket (image_uri). Everything
+        // grok-web edits use browser app-chat (imagine-image-edit). Everything
         // NOT in this set still runs when a job carries an input image — it
         // just receives the prompt text only. That "sans image" behavior is a
         // user-specified product requirement (2026-07-28): keep every target
@@ -1036,8 +1075,8 @@ namespace MultiImageClient
             {
                 try
                 {
-                    // Video app-chat calls share one real browser for the UI
-                    // lifetime and serialize inside GrokWebBrowserClient.
+                    // Video + image-edit app-chat calls share one real browser
+                    // for the UI lifetime and serialize inside GrokWebBrowserClient.
                     _grokWebBrowserClient = new GrokWebBrowserClient(
                         GrokWebBrowserClient.BuildOptions(
                             settings,
@@ -1047,7 +1086,7 @@ namespace MultiImageClient
                 catch (Exception ex)
                 {
                     _grokWebBrowserStartupProblem = ex.Message;
-                    Logger.Log($"Grok web video unavailable: {ex.Message}");
+                    Logger.Log($"Grok web browser (video/edit) unavailable: {ex.Message}");
                 }
             }
             _metaWebOptions = MetaWebClient.BuildOptions(
@@ -1099,6 +1138,9 @@ namespace MultiImageClient
                 => DescribeComfyAvailability(ImageGeneratorApiType.LocalFlux2Klein),
             KeyLocalZImage
                 => DescribeComfyAvailability(ImageGeneratorApiType.LocalZImage),
+            // Text-to-image only needs cookies (imagine WS). Edit-with-image
+            // additionally needs the Playwright browser; that is enforced at
+            // job build time when an input image is attached.
             KeyGrokWeb => ResolveGrokWebCookiePath() == null
                 ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
                 : null,
@@ -1163,7 +1205,32 @@ namespace MultiImageClient
                     type = "job-start",
                     at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 });
-                Logger.Log($"[ui #{job.Id}] START ({spec.GeneratorKeys.Count} gen(s), image={(job.HasInputImage ? job.InputImagePath : "none")}): {job.Prompt}");
+                var imageLabel = job.InputImageCount switch
+                {
+                    0 => "none",
+                    1 => job.InputImagePath,
+                    _ => $"{job.InputImageCount} images (primary {Path.GetFileName(job.InputImagePath)})",
+                };
+                Logger.Log($"[ui #{job.Id}] START ({spec.GeneratorKeys.Count} gen(s), image={imageLabel}): {job.Prompt}");
+                if (job.InputImageCount > 1)
+                {
+                    var others = spec.GeneratorKeys
+                        .Where(k => !string.Equals(k, KeyGpt2, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (others.Count > 0)
+                    {
+                        Logger.Log(
+                            $"[ui #{job.Id}] {job.InputImageCount} input images attached; "
+                            + $"gpt-image-2 received all {job.InputImageCount}; "
+                            + $"other generators ({string.Join(", ", others)}) received only the first.");
+                    }
+                    else
+                    {
+                        Logger.Log(
+                            $"[ui #{job.Id}] {job.InputImageCount} input images attached; "
+                            + $"gpt-image-2 received all {job.InputImageCount}.");
+                    }
+                }
 
                 var pd = new PromptDetails();
                 pd.ReplacePrompt(job.Prompt, job.Prompt, TransformationType.InitialPrompt);
@@ -1244,10 +1311,14 @@ namespace MultiImageClient
                     {
                         var cookiePath = ResolveGrokWebCookiePath()
                             ?? throw new InvalidOperationException("grok-web cookie file not found (settings.json GrokWebCookiePath or --grok-web-cookies)");
-                        var appChatBrowser = key == KeyGrokWebVideo
+                        // Image edit and video both need the integrity-signed
+                        // browser app-chat path. Text-to-image stays on the WS.
+                        var needsAppChatBrowser = key == KeyGrokWebVideo
+                            || (key == KeyGrokWeb && job.HasInputImage);
+                        var appChatBrowser = needsAppChatBrowser
                             ? _grokWebBrowserClient ?? throw new InvalidOperationException(
-                                DescribeAvailabilityProblem(KeyGrokWebVideo)
-                                ?? "grok-web video browser client is unavailable")
+                                _grokWebBrowserStartupProblem
+                                ?? "grok-web browser client is unavailable (required for edit-with-image and video; run --playwright-install once)")
                             : null;
                         grokWebClient = GrokWebClient.FromCookieFile(cookiePath, appChatBrowser);
                         generator = key == KeyGrokWebVideo
@@ -1270,6 +1341,18 @@ namespace MultiImageClient
                     }
 
                     copy = pd.Copy();
+                    // gpt-image-2 only: append the anti-murk guidance as a recorded
+                    // prompt-transformation step, so the archive, annotations, and
+                    // sidecar logs all show the exact text that went to OpenAI.
+                    // Other generators keep the untouched prompt (their copies are
+                    // made from the shared pd independently).
+                    if (key == KeyGpt2
+                        && spec.Gpt2GuidanceEnabled
+                        && !string.IsNullOrWhiteSpace(spec.Gpt2GuidanceText))
+                    {
+                        var guided = $"{copy.Prompt}\n\n{spec.Gpt2GuidanceText.Trim()}";
+                        copy.ReplacePrompt(guided, guided, TransformationType.ManualSuffixation);
+                    }
                     if (key == KeyGrokWebVideo && !string.IsNullOrWhiteSpace(job.SourceGenerator))
                     {
                         copy.RuntimeMeta["sourceJobId"] = job.SourceJobId;
@@ -1430,10 +1513,10 @@ namespace MultiImageClient
         {
             if (job.HasInputImage)
             {
-                // Edit rides the same imagine WebSocket as text-to-image (source
-                // image passed as properties.image_uri), sidestepping the
-                // anti-bot-blocked /rest/app-chat endpoint. Auto resolves from
-                // the validated source dimensions before the provider call.
+                // Edit uses browser-backed app-chat (imagine-image-edit with
+                // mediaGenInput.imageToImage.inputAssets). The WS image_uri
+                // path silently ignores the source. Auto AR resolves from the
+                // validated source dimensions before the provider call.
                 var editAspect = UiShapeMapping.GrokAspect(
                     spec.Shape,
                     job.InputImageWidth,
@@ -1518,7 +1601,7 @@ namespace MultiImageClient
                     {
                         return new GptImage2EditGenerator(
                             _settings.OpenAIApiKey, maxConcurrency: 2,
-                            new[] { job.InputImagePath },
+                            job.InputImagePaths,
                             size, quality, _stats, "ui",
                             imageCount: 1);
                     }

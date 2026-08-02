@@ -63,8 +63,10 @@ namespace MultiImageClient
                 return null;
             }
 
-            var isVideoMode = mode is "video" or "video-from-image";
-            await using var browserClient = isVideoMode
+            // Video and image-edit need the integrity-signed browser app-chat
+            // path; plain text-to-image stays on the imagine WebSocket.
+            var needsBrowser = mode is "video" or "video-from-image" or "edit";
+            await using var browserClient = needsBrowser
                 ? new GrokWebBrowserClient(GrokWebBrowserClient.BuildOptions(
                     settings,
                     cookiePath,

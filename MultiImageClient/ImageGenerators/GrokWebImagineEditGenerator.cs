@@ -5,60 +5,52 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
-    /// Edits an existing image through the consumer grok.com imagine WebSocket
-    /// (wss://grok.com/ws/imagine/listen), the same transport the text-to-image
-    /// generator uses. The uploaded source image's media URL is passed as
-    /// properties.image_uri on the generate message and Grok edits that image
-    /// instead of generating from scratch.
+    /// Edits an existing image through the consumer grok.com app-chat path
+    /// (imagine-image-edit), using the same Playwright integrity-signed
+    /// transport as image-to-video. The source is uploaded, posted, then
+    /// referenced as mediaGenInput.imageToImage.inputAssets=[assetId].
     ///
-    /// This deliberately avoids /rest/app-chat/conversations/new (the old
-    /// imagine-image-edit path), which 403s with "Request rejected by anti-bot
-    /// rules" for non-browser callers. Upload (/http/upload-file-v2/direct) and
-    /// asset lookup (/rest/assets/{id}) are not behind that gate, so the media
-    /// URL is obtainable; the WS honors image_uri without any anti-bot header.
+    /// Do not use wss://grok.com/ws/imagine/listen with properties.image_uri
+    /// for edits: that transport accepts the field but ignores the source
+    /// image and invents a new scene from the prompt alone (observed
+    /// 2026-07-31). Standalone HTTP to /rest/app-chat/conversations/new
+    /// still 403s without a real Edit-button click that attaches x-statsig-id.
     public class GrokWebImagineEditGenerator : IImageGenerator
     {
         private readonly GrokWebClient _client;
         private readonly SemaphoreSlim _semaphore;
         private readonly MultiClientRunStats _stats;
-        private readonly string _imageReferenceUrl;
+        private readonly GrokWebAsset _sourceAsset;
         private readonly bool _enablePro;
         private readonly string _aspectRatio;
-        private readonly bool _enableSideBySide;
-        private readonly TimeSpan _timeout;
-        private readonly string? _captureBaseFolder;
+        private readonly TimeSpan _pollInterval;
+        private readonly TimeSpan _pollTimeout;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GrokWebImagineEdit;
 
         public GrokWebImagineEditGenerator(
             GrokWebClient client,
-            string imageReferenceUrl,
+            GrokWebAsset sourceAsset,
             int maxConcurrency,
             MultiClientRunStats stats,
             bool pro = true,
             string aspectRatio = "1:1",
-            bool enableSideBySide = true,
-            int timeoutMinutes = 10,
-            Settings? settings = null,
-            bool captureSessions = false)
+            int pollSeconds = 5,
+            int timeoutMinutes = 10)
         {
             _client = client;
-            _imageReferenceUrl = imageReferenceUrl;
+            _sourceAsset = sourceAsset;
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _stats = stats;
             _enablePro = pro;
             _aspectRatio = string.IsNullOrWhiteSpace(aspectRatio) ? "1:1" : aspectRatio;
-            _enableSideBySide = enableSideBySide;
-            _timeout = TimeSpan.FromMinutes(timeoutMinutes);
-            _captureBaseFolder = captureSessions && settings != null
-                ? settings.ImageDownloadBaseFolder
-                : null;
+            _pollInterval = TimeSpan.FromSeconds(pollSeconds);
+            _pollTimeout = TimeSpan.FromMinutes(timeoutMinutes);
         }
 
         public static async Task<GrokWebImagineEditGenerator> CreateAsync(
@@ -72,16 +64,27 @@ namespace MultiImageClient
             Settings? settings = null,
             bool captureSessions = false)
         {
+            // enableSideBySide / captureSessions kept on the signature so UI/CLI
+            // call sites compile; the live Edit control currently returns one
+            // image and capture is unused on the app-chat path.
+            _ = enableSideBySide;
+            _ = settings;
+            _ = captureSessions;
+
             var uploaded = await client.UploadImageAsync(inputImagePath);
-            // With shape=auto (empty AR) the edit should keep the source image's
-            // shape; derive the nearest supported AR from the file itself.
+            var post = await client.CreateImagePostAsync(uploaded.MediaUrl);
+            var asset = new GrokWebAsset
+            {
+                AssetId = uploaded.AssetId,
+                MediaUrl = uploaded.MediaUrl,
+                PostId = post.PostId ?? post.AssetId,
+            };
             var resolvedAspect = string.IsNullOrWhiteSpace(aspectRatio)
                 ? DeriveAspectRatio(inputImagePath)
                 : aspectRatio;
             return new GrokWebImagineEditGenerator(
-                client, uploaded.MediaUrl, maxConcurrency, stats,
-                pro: pro, aspectRatio: resolvedAspect, enableSideBySide: enableSideBySide,
-                settings: settings, captureSessions: captureSessions);
+                client, asset, maxConcurrency, stats,
+                pro: pro, aspectRatio: resolvedAspect);
         }
 
         public string GetFilenamePart(PromptDetails pd)
@@ -96,10 +99,9 @@ namespace MultiImageClient
             return new List<string>
             {
                 _enablePro ? "Grok Web Imagine Edit Pro" : "Grok Web Imagine Edit",
-                "imagine-x-1",
-                "grok.com/ws/imagine/listen",
+                "imagine-image-edit",
+                "grok.com browser app-chat",
                 $"AR {_aspectRatio}",
-                _enableSideBySide ? "side-by-side" : "single",
             };
         }
 
@@ -107,7 +109,6 @@ namespace MultiImageClient
         {
             var line = _enablePro ? "Grok Web Imagine Edit Pro" : "Grok Web Imagine Edit";
             line += $"  {_aspectRatio}";
-            if (_enableSideBySide) line += "  side-by-side";
             return line;
         }
 
@@ -121,40 +122,60 @@ namespace MultiImageClient
             {
                 _stats.GrokImageGenerationRequestCount++;
                 var prompt = promptDetails.Prompt ?? string.Empty;
-                Logger.Log($"\t-> Grok Web Edit AR={_aspectRatio} pro={_enablePro}: {prompt}");
+                var parentPostId = _sourceAsset.PostId ?? _sourceAsset.AssetId;
+                Logger.Log($"\t-> Grok Web Edit parent={parentPostId} AR={_aspectRatio} pro={_enablePro}: {prompt}");
 
-                var result = await _client.GenerateImageAsync(
-                    prompt,
-                    _aspectRatio,
-                    _enablePro,
-                    _enableSideBySide,
-                    _timeout,
-                    _captureBaseFolder,
-                    imageReferenceUrl: _imageReferenceUrl);
-
-                sw.Stop();
-                if (result.Images.Count == 0)
+                var chat = await _client.RunImageEditAsync(prompt, _sourceAsset);
+                if (!string.IsNullOrWhiteSpace(chat.ErrorMessage))
                 {
                     _stats.GrokImageGenerationErrorCount++;
-                    return Fail("Grok web edit returned no images.", promptDetails, generator, sw.ElapsedMilliseconds);
+                    return Fail(
+                        $"Grok web edit failed: {chat.ErrorMessage}",
+                        promptDetails,
+                        generator,
+                        sw.ElapsedMilliseconds);
                 }
 
-                _stats.GrokImageGenerationSuccessCount++;
-                Logger.Log($"\t<- Grok Web Edit OK in {sw.ElapsedMilliseconds} ms; {result.Images.Count} image(s) model={result.ModelName ?? "?"} mode={result.Mode ?? "?"}");
+                var urls = chat.GeneratedImageUrls;
+                if (urls.Count == 0)
+                {
+                    urls = await _client.PollForImageUrlsAsync(
+                        parentPostId,
+                        _pollInterval,
+                        _pollTimeout);
+                }
 
-                var images = result.Images
-                    .Select(bytes => new CreatedBase64Image
+                if (urls.Count == 0)
+                {
+                    _stats.GrokImageGenerationErrorCount++;
+                    var hint = string.IsNullOrWhiteSpace(chat.ModelMessage) ? "no image URLs" : chat.ModelMessage;
+                    return Fail(
+                        $"Grok web edit completed without downloadable images ({hint}).",
+                        promptDetails,
+                        generator,
+                        sw.ElapsedMilliseconds);
+                }
+
+                var images = new List<CreatedBase64Image>();
+                foreach (var url in urls)
+                {
+                    var bytes = await _client.DownloadBytesAsync(url);
+                    images.Add(new CreatedBase64Image
                     {
                         bytesBase64 = Convert.ToBase64String(bytes),
                         newPrompt = prompt,
-                    })
-                    .ToList();
+                    });
+                }
+
+                sw.Stop();
+                _stats.GrokImageGenerationSuccessCount++;
+                Logger.Log($"\t<- Grok Web Edit OK in {sw.ElapsedMilliseconds} ms; {images.Count} image(s)");
 
                 return new TaskProcessResult
                 {
                     IsSuccess = true,
                     Base64ImageDatas = images,
-                    ContentType = GuessContentTypeFromBytes(result.Images[0]),
+                    ContentType = GuessContentType(urls[0], images[0].bytesBase64),
                     PromptDetails = promptDetails,
                     ImageGenerator = ApiType,
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
@@ -177,9 +198,6 @@ namespace MultiImageClient
             }
         }
 
-        // Grok's imagine WS wants an aspect_ratio string. Invalid or unreadable
-        // input is a hard error because silently substituting a square can change
-        // the requested composition.
         internal static string DeriveAspectRatio(string imagePath)
         {
             var info = Image.Identify(imagePath);
@@ -191,14 +209,24 @@ namespace MultiImageClient
             return UiShapeMapping.GrokAspectForInput(info.Width, info.Height);
         }
 
-        private static string GuessContentTypeFromBytes(byte[] bytes)
+        private static string GuessContentType(string url, string b64)
         {
-            if (bytes.Length >= 8
-                && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+            var lower = url.ToLowerInvariant();
+            if (lower.Contains(".webp")) return "image/webp";
+            if (lower.Contains(".jpg") || lower.Contains(".jpeg")) return "image/jpeg";
+            try
             {
-                return "image/png";
+                var bytes = Convert.FromBase64String(b64);
+                if (bytes.Length >= 8
+                    && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47)
+                {
+                    return "image/png";
+                }
             }
-
+            catch (FormatException)
+            {
+                // Fall through to jpeg default for grok asset URLs.
+            }
             return "image/jpeg";
         }
 

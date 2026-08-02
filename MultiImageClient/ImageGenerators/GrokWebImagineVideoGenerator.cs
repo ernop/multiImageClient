@@ -176,7 +176,7 @@ namespace MultiImageClient
                     return Fail($"Grok web video completed without a downloadable mp4 ({hint}).", promptDetails, generator, sw.ElapsedMilliseconds);
                 }
 
-                var mp4Bytes = await _client.DownloadBytesAsync(videoUrl);
+                var mp4Bytes = await _client.DownloadBytesAsync(videoUrl, expectVideo: true);
                 var mp4Path = SaveVideo(mp4Bytes, prompt);
                 DlMirror.Copy(mp4Path, _settings.FlatImageMirrorPath);
 

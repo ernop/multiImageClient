@@ -65,6 +65,13 @@ namespace MultiImageClient
     {
         public const string Origin = "https://grok.com";
         public const string ImagineListenWebSocket = "wss://grok.com/ws/imagine/listen";
+
+        /// Hard prompt-length cap of the consumer imagine WebSocket, verified
+        /// empirically 2026-07-30: an 8192-char prompt generated normally while
+        /// 8193 chars was rejected instantly (pre-generation, free) with
+        /// "Prompt is too long (invalid_parameter)". Note this differs from the
+        /// official api.x.ai limit of 4096 — that does not apply here.
+        public const int MaxPromptChars = 8192;
         private static readonly TimeSpan FirstImageEventTimeout = TimeSpan.FromSeconds(60);
         private static readonly TimeSpan ImageEventInactivityTimeout = TimeSpan.FromSeconds(60);
 
@@ -108,6 +115,23 @@ namespace MultiImageClient
             string? imageReferenceUrl = null,
             CancellationToken cancellationToken = default)
         {
+            // Explicit user-required product behavior (2026-07-30): prompts over
+            // the verified transport cap are truncated here, at the send-to-grok
+            // stage, instead of letting the WebSocket reject the whole job. This
+            // is a declared pre-call input transformation (the UI warns before
+            // submit), not a failure fallback. Never splits a surrogate pair.
+            if (prompt.Length > MaxPromptChars)
+            {
+                var originalLength = prompt.Length;
+                var cut = MaxPromptChars;
+                if (char.IsHighSurrogate(prompt[cut - 1]))
+                {
+                    cut--;
+                }
+                prompt = prompt[..cut];
+                Logger.Log($"\t   Grok web prompt truncated from {originalLength} to {prompt.Length} chars (transport limit {MaxPromptChars}).");
+            }
+
             using var ws = new ClientWebSocket();
             ws.Options.SetRequestHeader("Cookie", _cookieHeader);
             ws.Options.SetRequestHeader("Origin", Origin);
@@ -170,11 +194,10 @@ namespace MultiImageClient
                 capture?.LogOutbound(resetPayload);
                 await SendJsonAsync(ws, resetPayload, cancellationToken);
 
-                // Image edit rides the same imagine WebSocket as text-to-image: the
-                // uploaded asset's media URL goes in properties.image_uri and the
-                // model edits that image instead of generating from scratch. This
-                // sidesteps /rest/app-chat/conversations/new, which 403s with
-                // "Request rejected by anti-bot rules" for non-browser callers.
+                // Optional imageReferenceUrl remains for experimentation only.
+                // Production edits must use RunImageEditAsync (browser app-chat);
+                // putting a URL in properties.image_uri here is accepted by the
+                // WS but the consumer transport ignores the source image.
                 var properties = new Dictionary<string, object>
                 {
                     ["section_count"] = 0,
@@ -901,7 +924,76 @@ namespace MultiImageClient
                 };
             }
 
-            return await RunAppChatAsync(payload, parentPostId, cancellationToken);
+            return await RunAppChatAsync(
+                payload,
+                parentPostId,
+                GrokWebAppChatTrigger.Video,
+                cancellationToken);
+        }
+
+        // Live browser protocol (verified 2026-07-31): imagine-image-edit via
+        // app-chat with mediaGenInput.imageToImage.inputAssets = [assetId].
+        // The older properties.image_uri WebSocket path and the legacy
+        // imageReferences/parentPostId app-chat shape are both wrong for the
+        // current grok.com UI — they either ignore the source or 403.
+        public async Task<GrokWebAppChatResult> RunImageEditAsync(
+            string prompt,
+            GrokWebAsset sourceAsset,
+            CancellationToken cancellationToken = default)
+        {
+            if (_appChatBrowser == null)
+            {
+                throw new GrokWebException(
+                    "Grok web image edit requires the Playwright browser transport "
+                    + "(same integrity-signed app-chat path as video). "
+                    + "Run with --playwright-install once if Chromium is missing.");
+            }
+            if (string.IsNullOrWhiteSpace(sourceAsset.AssetId))
+            {
+                throw new GrokWebException(
+                    "Grok web image edit requires a source asset id from upload.");
+            }
+
+            var parentPostId = sourceAsset.PostId ?? sourceAsset.AssetId;
+            if (string.IsNullOrWhiteSpace(parentPostId))
+            {
+                throw new GrokWebException(
+                    "Grok web image edit requires a source post id.");
+            }
+
+            var message = prompt ?? string.Empty;
+            var payload = new
+            {
+                modelName = "imagine-image-edit",
+                message,
+                enableImageStreaming = true,
+                sendFinalMetadata = true,
+                responseMetadata = new
+                {
+                    modelConfigOverride = new
+                    {
+                        modelMap = new
+                        {
+                            imageEditModel = "imagine",
+                        },
+                    },
+                },
+                mediaGenInput = new
+                {
+                    imageToImage = new
+                    {
+                        prompt = message,
+                        inputAssets = new[] { sourceAsset.AssetId },
+                    },
+                },
+                kind = "CONVERSATION_KIND_IMAGINE",
+            };
+
+            return await RunAppChatAsync(
+                payload,
+                parentPostId,
+                GrokWebAppChatTrigger.ImageEdit,
+                cancellationToken);
         }
 
         public static string NormalizeVideoMode(string? mode)
@@ -975,7 +1067,10 @@ namespace MultiImageClient
             return new List<string>();
         }
 
-        public async Task<byte[]> DownloadBytesAsync(string url, CancellationToken cancellationToken = default)
+        public async Task<byte[]> DownloadBytesAsync(
+            string url,
+            CancellationToken cancellationToken = default,
+            bool expectVideo = false)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.TryAddWithoutValidation("Cookie", _cookieHeader);
@@ -996,7 +1091,7 @@ namespace MultiImageClient
                     "GET",
                     url,
                     startedAtUtc,
-                    request: new { mediaUrl = url },
+                    request: new { mediaUrl = url, expectVideo },
                     response: bytes == null ? null : BinaryMetadata(response, bytes),
                     statusCode: response == null ? null : (int)response.StatusCode,
                     error: ex,
@@ -1019,7 +1114,7 @@ namespace MultiImageClient
                         (int)response.StatusCode,
                         errorBody ?? "[binary response]");
                 }
-                else if (!IsMp4(bytes))
+                else if (expectVideo && !IsMp4(bytes))
                 {
                     var bodyHint = CanTraceAsText(contentType)
                         ? Truncate(Encoding.UTF8.GetString(bytes), 500)
@@ -1030,13 +1125,24 @@ namespace MultiImageClient
                         (int)response.StatusCode,
                         bodyHint);
                 }
+                else if (!expectVideo && DetectImageContentType(bytes) == null)
+                {
+                    var bodyHint = CanTraceAsText(contentType)
+                        ? Truncate(Encoding.UTF8.GetString(bytes), 500)
+                        : "[non-image binary response]";
+                    providerError = new GrokWebException(
+                        $"Grok web image download returned HTTP 200 but was not PNG/JPEG/WEBP/GIF "
+                        + $"(content-type {contentType ?? "missing"}, {bytes.Length} bytes).",
+                        (int)response.StatusCode,
+                        bodyHint);
+                }
                 GenerationTrace.RecordProviderCall(
                     "grok-web",
                     "http",
                     "GET",
                     url,
                     startedAtUtc,
-                    request: new { mediaUrl = url },
+                    request: new { mediaUrl = url, expectVideo },
                     response: new
                     {
                         binary = BinaryMetadata(response, bytes),
@@ -1093,11 +1199,18 @@ namespace MultiImageClient
         private async Task<GrokWebAppChatResult> RunAppChatAsync(
             object payload,
             string? triggerPostId,
+            GrokWebAppChatTrigger trigger,
             CancellationToken cancellationToken)
         {
             if (_appChatBrowser != null)
             {
-                return await RunAppChatInBrowserAsync(payload, triggerPostId, cancellationToken);
+                return await RunAppChatInBrowserAsync(payload, triggerPostId, trigger, cancellationToken);
+            }
+            if (trigger != GrokWebAppChatTrigger.None)
+            {
+                throw new GrokWebException(
+                    "Grok web app-chat requires the Playwright browser transport for "
+                    + $"{trigger} (integrity-signed request). Standalone HTTP returns 403.");
             }
 
             const string path = "/rest/app-chat/conversations/new";
@@ -1274,16 +1387,21 @@ namespace MultiImageClient
         private async Task<GrokWebAppChatResult> RunAppChatInBrowserAsync(
             object payload,
             string? triggerPostId,
+            GrokWebAppChatTrigger trigger,
             CancellationToken cancellationToken)
         {
             const string path = "/rest/app-chat/conversations/new";
             var startedAtUtc = DateTime.UtcNow;
+            var operation = trigger == GrokWebAppChatTrigger.ImageEdit
+                ? "image-edit"
+                : "video-generation";
             GrokWebBrowserResponse? response = null;
             try
             {
                 response = await _appChatBrowser!.PostAppChatAsync(
                     payload,
                     triggerPostId,
+                    trigger,
                     cancellationToken);
                 if (response.StatusCode < 200 || response.StatusCode >= 300)
                 {
@@ -1296,7 +1414,7 @@ namespace MultiImageClient
                 var result = ParseAppChatBody(response.Body);
                 var logicalError = string.IsNullOrWhiteSpace(result.ErrorMessage)
                     ? null
-                    : new GrokWebException($"Grok web video generation failed: {result.ErrorMessage}");
+                    : new GrokWebException($"Grok web {operation} failed: {result.ErrorMessage}");
                 GenerationTrace.RecordProviderCall(
                     "grok-web",
                     "playwright-fetch",
@@ -1314,7 +1432,7 @@ namespace MultiImageClient
                     },
                     statusCode: response.StatusCode,
                     error: logicalError,
-                    metadata: new { operation = "video-generation" });
+                    metadata: new { operation });
                 return result;
             }
             catch (Exception ex)
@@ -1333,7 +1451,7 @@ namespace MultiImageClient
                     },
                     statusCode: response?.StatusCode,
                     error: ex,
-                    metadata: new { operation = "video-generation" });
+                    metadata: new { operation });
                 throw;
             }
         }
@@ -1577,6 +1695,32 @@ namespace MultiImageClient
                         }
                     }
 
+                    // Image edit streams relative paths under
+                    // streamingImageGenerationResponse.imageUrl. Only accept
+                    // progress=100 finals that are not moderated and not
+                    // intermediate -part- previews.
+                    if (response.TryGetProperty("streamingImageGenerationResponse", out var streamingImage)
+                        && streamingImage.ValueKind == JsonValueKind.Object)
+                    {
+                        var moderated = streamingImage.TryGetProperty("moderated", out var modEl)
+                            && modEl.ValueKind == JsonValueKind.True;
+                        var progress = streamingImage.TryGetProperty("progress", out var progEl)
+                            && progEl.TryGetInt32(out var prog)
+                                ? prog
+                                : -1;
+                        if (!moderated
+                            && progress >= 100
+                            && streamingImage.TryGetProperty("imageUrl", out var imageUrlEl))
+                        {
+                            var imageUrl = NormalizeAssetUrl(imageUrlEl.GetString());
+                            if (!string.IsNullOrWhiteSpace(imageUrl)
+                                && !imageUrl.Contains("-part-", StringComparison.OrdinalIgnoreCase))
+                            {
+                                imageUrls.Add(imageUrl);
+                            }
+                        }
+                    }
+
                     if (response.TryGetProperty("modelResponse", out var modelResponse)
                         && modelResponse.ValueKind == JsonValueKind.Object)
                     {
@@ -1591,7 +1735,7 @@ namespace MultiImageClient
                         {
                             foreach (var item in genImages.EnumerateArray())
                             {
-                                var url = item.GetString();
+                                var url = NormalizeAssetUrl(item.GetString());
                                 if (!string.IsNullOrWhiteSpace(url))
                                 {
                                     imageUrls.Add(url);
@@ -1607,6 +1751,11 @@ namespace MultiImageClient
                     }
                 }
 
+                // Absolute asset URLs also appear in request metadata as
+                // imageReferences (often users/_/… placeholders for the SOURCE).
+                // Never harvest those — only generated outputs under /generated/,
+                // plus explicit streamingImageGenerationResponse /
+                // generatedImageUrls parsing above.
                 foreach (Match match in Regex.Matches(line, @"https://assets\.grok\.com[^""'\s]+", RegexOptions.IgnoreCase))
                 {
                     var url = match.Value;
@@ -1614,7 +1763,9 @@ namespace MultiImageClient
                     {
                         videoUrls.Add(url);
                     }
-                    else if (url.Contains("/content", StringComparison.OrdinalIgnoreCase))
+                    else if (url.Contains("/generated/", StringComparison.OrdinalIgnoreCase)
+                        && !url.Contains("-part-", StringComparison.OrdinalIgnoreCase)
+                        && !url.Contains("/users/_/", StringComparison.OrdinalIgnoreCase))
                     {
                         imageUrls.Add(url);
                     }
