@@ -2,7 +2,10 @@
 
 // ---------- state ----------
 
-let inputImageFile = null;   // File/Blob for the attached image
+// Ordered composer attachments. gpt-image-2 /edits receives every entry;
+// every other generator receives only index 0. Cap comes from /api/config.
+let inputImageItems = [];    // [{ file: Blob, url: objectURL }]
+let maxInputImages = 4;
 let generators = [];         // from /api/config
 let videoSource = null;       // { jobId, generator, index, url }
 let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
@@ -12,7 +15,10 @@ let spellfixPrevious = null;  // prompt text as it was before the last fix, for 
 // state lives in the DOM and persists per-browser in localStorage.
 let gpt2Guidance = { defaultEnabled: true, defaultText: "" };
 const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
-const Gpt2GuidanceTextKey = "gpt2GuidanceText";
+// V2: the default guidance text was replaced on 2026-07-31 (user request);
+// the key bump retires stored copies of the old default so every browser
+// re-prefills from the current server default.
+const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
 let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
 let imageViewerRenderVersion = 0;
 let imageViewerHelpOpen = false;
@@ -40,13 +46,11 @@ if (startsAtDefaultView) {
   window.addEventListener("pageshow", () => window.scrollTo(0, 0), { once: true });
 }
 const pasteZone = el("paste-zone");
-const preview = el("input-preview");
 const pasteHint = el("paste-hint");
 const clearBtn = el("clear-image");
 const fileInput = el("file-input");
 const promptBox = el("prompt");
 const gensRow = el("gens-row");
-const gensCount = el("gens-count");
 const sendBtn = el("send");
 const sendError = el("send-error");
 const jobsSection = el("jobs");
@@ -217,6 +221,9 @@ async function loadConfig() {
   spellfix = cfg.spellfix || spellfix;
   applySpellfixAvailability();
   gpt2Guidance = cfg.gpt2Guidance || gpt2Guidance;
+  if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
+    maxInputImages = cfg.maxInputImages;
+  }
   initGpt2Guidance();
 
   const fillSelect = (selectEl, entries) => {
@@ -230,18 +237,20 @@ async function loadConfig() {
       selectEl.appendChild(opt);
     }
   };
-  // The AR picker keeps the descriptive word on the left and right-aligns the
-  // numeric ratio: the select renders in a monospace font, so NBSP padding
-  // between text and ratio lines the ratio column up. auto has no ratio and
-  // stays a plain label (it also swaps to "match input image" with an input).
+  // The AR picker puts the descriptive word at the far left and the numeric
+  // ratio at the far right of a two-column layout: the select renders in a
+  // monospace font, so NBSP padding between text and ratio forms a wide
+  // gutter with the ratio column right-aligned. auto has no ratio and stays
+  // a plain label (it also swaps to "match input image" with an input).
   const ratioShapes = cfg.shapes.filter((s) => s.ratio);
   const shapeTextWidth = Math.max(0, ...ratioShapes.map((s) => s.text.length));
   const shapeRatioWidth = Math.max(0, ...ratioShapes.map((s) => s.ratio.length));
+  const shapeGutter = 5;
   fillSelect(el("opt-shape"), cfg.shapes.map((s) => s.ratio
     ? {
         ...s,
         displayLabel: s.text
-          + "\u00a0".repeat(shapeTextWidth - s.text.length + 1 + shapeRatioWidth - s.ratio.length)
+          + "\u00a0".repeat(shapeTextWidth - s.text.length + shapeGutter + shapeRatioWidth - s.ratio.length)
           + s.ratio,
       }
     : s));
@@ -297,22 +306,28 @@ async function loadConfig() {
   updateGeneratorCount();
 }
 
+function hasInputImages() {
+  return inputImageItems.length > 0;
+}
+
 function updateGeneratorCompatibility() {
   // imageCapable comes from /api/config so the server stays the single
   // source of truth for which targets accept an input image. Text-only
   // targets stay selectable on image jobs — the server runs them from the
   // prompt alone (user-specified behavior) — so the only hard disable left
   // is the AR-override gap on targets that actually consume the image
-  // (Recraft image-to-image can't override output AR).
-  gensRow.classList.toggle("has-image", !!inputImageFile);
+  // (Recraft image-to-image can't override output AR). Multi-image jobs do
+  // not lock generator chips: non-gpt2 targets simply receive image 0.
+  const hasImage = hasInputImages();
+  gensRow.classList.toggle("has-image", hasImage);
   for (const btn of document.querySelectorAll("#gen-controls .image-only-action")) {
-    btn.hidden = !inputImageFile;
+    btn.hidden = !hasImage;
   }
   for (const cb of gensRow.querySelectorAll("input")) {
     const providerAvailable = cb.dataset.available === "true";
     const imageCapable = cb.dataset.imageCapable === "true";
     const aspectIncompatible =
-      !!inputImageFile &&
+      hasImage &&
       imageCapable &&
       el("opt-shape").value !== "auto" &&
       cb.dataset.imageAspectOverride !== "true";
@@ -328,9 +343,13 @@ function updateGeneratorCompatibility() {
     {
       label.title = `${genLabel(cb.value)} cannot override output AR with an input image; choose match input image to use it`;
     }
-    else if (inputImageFile && !imageCapable)
+    else if (hasImage && !imageCapable)
     {
       label.title = `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`;
+    }
+    else if (hasImage && inputImageItems.length > 1 && cb.value !== "gpt2" && imageCapable)
+    {
+      label.title = `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (gpt-image-2 receives all)`;
     }
     else
     {
@@ -347,19 +366,17 @@ function updateShapeOptionLabel() {
   const shapeSelect = el("opt-shape");
   const autoOption = shapeSelect.querySelector('option[value="auto"]');
   if (!autoOption) return;
-  autoOption.textContent = inputImageFile && autoOption.dataset.inputLabel
+  autoOption.textContent = hasInputImages() && autoOption.dataset.inputLabel
     ? autoOption.dataset.inputLabel
     : autoOption.dataset.defaultLabel;
-  shapeSelect.title = inputImageFile
-    ? "Default: match the attached image's aspect ratio using each model's closest supported output geometry. Choose another option to override it."
+  shapeSelect.title = hasInputImages()
+    ? "Default: match the first attached image's aspect ratio using each model's closest supported output geometry. Choose another option to override it."
     : "Default: let each model choose its output aspect ratio.";
 }
 
 function updateGeneratorCount() {
-  const available = [...gensRow.querySelectorAll("input:not(:disabled)")];
-  const enabled = available.filter((cb) => cb.checked).length;
-  gensCount.textContent = `${enabled} of ${available.length} available enabled`;
-  // Every generator-selection change funnels through here, so this is also
+  // The visible "N of M enabled" counter was removed (2026-07-31), but every
+  // generator-selection change still funnels through here, so this remains
   // the recompute point for the prompt-length notice.
   updatePromptLimitNotice();
 }
@@ -392,13 +409,24 @@ function updatePromptLimitNotice() {
 
 promptBox.addEventListener("input", updatePromptLimitNotice);
 
-// ---------- gpt-image-2 anti-murk guidance ----------
+// ---------- settings modal (browser-local, localStorage only) ----------
+
+const settingsDialog = el("settings-dialog");
+el("settings-toggle").addEventListener("click", () => settingsDialog.showModal());
+el("settings-close").addEventListener("click", () => settingsDialog.close());
+// Clicking the backdrop closes; clicks inside the dialog land on child
+// elements, so target === dialog only for the backdrop area.
+settingsDialog.addEventListener("click", (event) => {
+  if (event.target === settingsDialog) settingsDialog.close();
+});
+
+// ---------- gpt-image-2 anti-murk guidance (lives in the settings modal) ----------
 
 // gpt-image-2 habitually drifts into dark, murky, underexposed output, so a
 // default-on toggle appends corrective guidance (editable below it) to every
 // prompt sent to the gpt2 target — and only that target; the server does the
-// appending and records it as a prompt-transformation step. Checkbox state
-// and any custom text persist per-browser; defaults come from /api/config.
+// appending and records it as a prompt-transformation step. State persists
+// in this browser's localStorage only; defaults come from /api/config.
 const gpt2GuidanceEnabledBox = el("gpt2-guidance-enabled");
 const gpt2GuidanceTextBox = el("gpt2-guidance-text");
 
@@ -452,38 +480,104 @@ el("gens-enable-image-capable").addEventListener("click", () => setGeneratorsByI
 el("gens-disable-text-only").addEventListener("click", () => setGeneratorsByImageCapability(false, false));
 el("opt-shape").addEventListener("change", updateGeneratorCompatibility);
 
-// ---------- image attach: paste / drop / browse ----------
+// ---------- image attach: paste / drop / browse (up to maxInputImages) ----------
 
-function setImage(fileOrBlob) {
-  if (!fileOrBlob || !fileOrBlob.type.startsWith("image/")) return;
-  inputImageFile = fileOrBlob;
-  preview.src = URL.createObjectURL(fileOrBlob);
-  preview.hidden = false;
-  clearBtn.hidden = false;
-  pasteHint.hidden = true;
-  pasteZone.classList.add("has-image");
+const inputThumbs = el("input-thumbs");
+const multiInputHint = el("multi-input-hint");
+
+function renderInputThumbs() {
+  inputThumbs.replaceChildren();
+  inputImageItems.forEach((item, index) => {
+    const wrap = document.createElement("div");
+    wrap.className = "input-thumb";
+    const img = document.createElement("img");
+    img.src = item.url;
+    img.alt = `Input image ${index + 1}`;
+    const badge = document.createElement("span");
+    badge.className = "input-thumb-index";
+    badge.textContent = String(index + 1);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "input-thumb-remove";
+    remove.title = `Remove image ${index + 1}`;
+    remove.setAttribute("aria-label", `Remove image ${index + 1}`);
+    remove.textContent = "×";
+    remove.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeInputAt(index);
+    });
+    wrap.appendChild(img);
+    wrap.appendChild(badge);
+    wrap.appendChild(remove);
+    inputThumbs.appendChild(wrap);
+  });
+  if (inputImageItems.length > 0 && inputImageItems.length < maxInputImages) {
+    const add = document.createElement("button");
+    add.type = "button";
+    add.id = "input-add-slot";
+    add.title = `Add another image (${inputImageItems.length}/${maxInputImages})`;
+    add.textContent = `+ add (${inputImageItems.length}/${maxInputImages})`;
+    add.addEventListener("click", (e) => {
+      e.stopPropagation();
+      fileInput.click();
+    });
+    inputThumbs.appendChild(add);
+  }
+
+  const hasImage = hasInputImages();
+  inputThumbs.hidden = !hasImage;
+  pasteHint.hidden = hasImage;
+  clearBtn.hidden = !hasImage;
+  multiInputHint.hidden = inputImageItems.length < 2;
+  pasteZone.classList.toggle("has-image", hasImage);
   updateShapeOptionLabel();
   updateGeneratorCompatibility();
+}
+
+function appendImage(fileOrBlob) {
+  if (!fileOrBlob || !fileOrBlob.type.startsWith("image/")) return false;
+  if (inputImageItems.length >= maxInputImages) {
+    sendError.textContent = `At most ${maxInputImages} input images. Remove one to add another.`;
+    return false;
+  }
+  sendError.textContent = "";
+  inputImageItems.push({
+    file: fileOrBlob,
+    url: URL.createObjectURL(fileOrBlob),
+  });
+  renderInputThumbs();
+  return true;
+}
+
+function removeInputAt(index) {
+  if (index < 0 || index >= inputImageItems.length) return;
+  const [removed] = inputImageItems.splice(index, 1);
+  if (removed?.url) URL.revokeObjectURL(removed.url);
+  renderInputThumbs();
 }
 
 function clearImage() {
-  inputImageFile = null;
-  if (preview.src) URL.revokeObjectURL(preview.src);
-  preview.removeAttribute("src");
-  preview.hidden = true;
-  clearBtn.hidden = true;
-  pasteHint.hidden = false;
-  pasteZone.classList.remove("has-image");
-  updateShapeOptionLabel();
-  updateGeneratorCompatibility();
+  for (const item of inputImageItems) {
+    if (item.url) URL.revokeObjectURL(item.url);
+  }
+  inputImageItems = [];
+  renderInputThumbs();
+}
+
+async function setImagesFromBlobs(blobs) {
+  clearImage();
+  for (const blob of blobs) {
+    if (!appendImage(blob)) break;
+  }
 }
 
 // Paste works anywhere on the page: grabbing the clipboard image is the
-// core gesture, so don't make the user click the zone first.
+// core gesture, so don't make the user click the zone first. Additional
+// pastes append until the cap.
 document.addEventListener("paste", (e) => {
   for (const item of e.clipboardData.items) {
     if (item.type.startsWith("image/")) {
-      setImage(item.getAsFile());
+      appendImage(item.getAsFile());
       e.preventDefault();
       return;
     }
@@ -491,14 +585,19 @@ document.addEventListener("paste", (e) => {
 });
 
 pasteZone.addEventListener("click", (e) => {
-  if (e.target !== clearBtn) fileInput.click();
+  if (e.target.closest("#clear-image, .input-thumb-remove, #input-add-slot")) return;
+  if (inputImageItems.length >= maxInputImages) {
+    sendError.textContent = `At most ${maxInputImages} input images. Remove one to add another.`;
+    return;
+  }
+  fileInput.click();
 });
 clearBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   clearImage();
 });
 fileInput.addEventListener("change", () => {
-  if (fileInput.files.length > 0) setImage(fileInput.files[0]);
+  if (fileInput.files.length > 0) appendImage(fileInput.files[0]);
   fileInput.value = "";
 });
 
@@ -510,7 +609,10 @@ pasteZone.addEventListener("dragleave", () => pasteZone.classList.remove("dragov
 pasteZone.addEventListener("drop", (e) => {
   e.preventDefault();
   pasteZone.classList.remove("dragover");
-  if (e.dataTransfer.files.length > 0) setImage(e.dataTransfer.files[0]);
+  const files = [...e.dataTransfer.files].filter((f) => f.type.startsWith("image/"));
+  for (const file of files) {
+    if (!appendImage(file)) break;
+  }
 });
 
 // ---------- past-input-image picker ("load a previous image") ----------
@@ -532,7 +634,7 @@ async function attachLibraryImage(item) {
   if (!blob.type.startsWith("image/")) {
     throw new Error(`unexpected content type ${blob.type || "unknown"}`);
   }
-  setImage(blob);
+  appendImage(blob);
 }
 
 async function openInputLibrary() {
@@ -919,14 +1021,19 @@ async function submit() {
   form.append("n", el("opt-n").value);
   form.append("gpt2GuidanceEnabled", String(gpt2GuidanceEnabledBox.checked));
   form.append("gpt2GuidanceText", gpt2GuidanceTextBox.value);
-  if (inputImageFile) form.append("image", inputImageFile, "input.png");
+  inputImageItems.forEach((item, index) => {
+    const name = item.file.name && item.file.name.includes(".")
+      ? item.file.name
+      : `input${index}.png`;
+    form.append("images", item.file, name);
+  });
 
   sendBtn.disabled = true;
   try {
     const resp = await fetch("/api/jobs", { method: "POST", body: form });
     const body = await resp.json();
     if (!resp.ok) { sendError.textContent = body.error || `HTTP ${resp.status}`; return; }
-    addJobCard(body.id, prompt, gens, !!inputImageFile, null, Date.now());
+    addJobCard(body.id, prompt, gens, inputImageItems.length > 0, null, Date.now(), inputImageItems.length);
   } catch (err) {
     sendError.textContent = String(err);
   } finally {
@@ -2065,14 +2172,24 @@ function updateJobProgress(card) {
 // the job's events actually recorded them (jobs persisted before the
 // accepted event carried options restore prompt/image/generators only).
 async function setActiveFromJob(id, card) {
-  if (card.querySelector(".job-input-thumb")) {
-    const resp = await fetch(`/api/jobs/${encodeURIComponent(id)}/images/input/0`);
-    if (!resp.ok) throw new Error(`input image fetch returned HTTP ${resp.status}`);
-    const blob = await resp.blob();
-    if (!blob.type.startsWith("image/")) {
-      throw new Error(`input image fetch returned ${blob.type || "an unknown content type"}`);
+  const inputCount = Math.max(
+    0,
+    parseInt(card.dataset.inputCount || (card.querySelector(".job-input-thumb") ? "1" : "0"), 10) || 0);
+  if (inputCount > 0) {
+    const blobs = [];
+    for (let i = 0; i < inputCount; i++) {
+      const resp = await fetch(`/api/jobs/${encodeURIComponent(id)}/images/input/${i}`);
+      if (!resp.ok) {
+        if (i === 0) throw new Error(`input image fetch returned HTTP ${resp.status}`);
+        break;
+      }
+      const blob = await resp.blob();
+      if (!blob.type.startsWith("image/")) {
+        throw new Error(`input image ${i} fetch returned ${blob.type || "an unknown content type"}`);
+      }
+      blobs.push(blob);
     }
-    setImage(blob);
+    await setImagesFromBlobs(blobs);
   } else {
     clearImage();
   }
@@ -2084,15 +2201,8 @@ async function setActiveFromJob(id, card) {
   if (recorded.optQuality) el("opt-quality").value = recorded.optQuality;
   if (recorded.optModeration) el("opt-moderation").value = recorded.optModeration;
   if (recorded.optN) el("opt-n").value = recorded.optN;
-  if (recorded.optGpt2GuidanceEnabled) {
-    gpt2GuidanceEnabledBox.checked = recorded.optGpt2GuidanceEnabled === "true";
-    localStorage.setItem(Gpt2GuidanceEnabledKey, String(gpt2GuidanceEnabledBox.checked));
-    applyGpt2GuidanceEnabledState();
-  }
-  if (recorded.optGpt2GuidanceText !== undefined) {
-    gpt2GuidanceTextBox.value = recorded.optGpt2GuidanceText;
-    localStorage.setItem(Gpt2GuidanceTextKey, gpt2GuidanceTextBox.value);
-  }
+  // gpt-image-2 guidance is deliberately NOT restored here: it's a global
+  // browser setting (settings modal, localStorage), not per-job composer state.
   updateShapeOptionLabel();
 
   const wanted = new Set([...card.querySelectorAll(".cell")].map((cell) => cell.dataset.gen));
@@ -2107,9 +2217,13 @@ async function setActiveFromJob(id, card) {
   promptBox.focus({ preventScroll: true });
 }
 
-function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
+function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inputCount) {
   const existing = el(`job-${id}`);
   if (existing) return existing;
+
+  const resolvedInputCount = Math.max(
+    0,
+    Number.isFinite(inputCount) ? inputCount : (hasImage ? 1 : 0));
 
   const card = document.createElement("div");
   card.className = "job";
@@ -2117,12 +2231,14 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
   card.dataset.state = "queued";
   card.dataset.createdAt = String(createdAtUnixMs || Date.now());
   // Read by the image viewer's input-comparison mode (`c`).
-  card.dataset.hasInputImage = String(!!hasImage);
+  card.dataset.hasInputImage = String(!!hasImage || resolvedInputCount > 0);
+  card.dataset.inputCount = String(resolvedInputCount);
 
   const head = document.createElement("div");
   head.className = "job-head";
-  if (hasImage) {
+  if (hasImage || resolvedInputCount > 0) {
     // Served through the job store; completed jobs also survive server restarts.
+    // Primary (index 0) is the card thumb; a badge shows when more were attached.
     const thumbLink = document.createElement("a");
     thumbLink.href = `/api/jobs/${id}/images/input/0`;
     thumbLink.target = "_blank";
@@ -2131,6 +2247,13 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs) {
     thumb.src = `${thumbLink.href}?thumb=1`;
     thumb.loading = "lazy";
     thumbLink.appendChild(thumb);
+    if (resolvedInputCount > 1) {
+      const countBadge = document.createElement("span");
+      countBadge.className = "job-input-count";
+      countBadge.textContent = `×${resolvedInputCount}`;
+      countBadge.title = `${resolvedInputCount} input images (gpt-image-2 received all; others received the first)`;
+      thumbLink.appendChild(countBadge);
+    }
     head.appendChild(thumbLink);
   }
   const promptDiv = document.createElement("div");
@@ -2281,7 +2404,7 @@ async function pollJobEvents() {
     for (const envelope of body.envelopes) {
       if (envelope.kind === "job-known") {
         const j = envelope.job;
-        addJobCard(j.id, j.prompt, j.gens, j.hasImage, j.createdAt, j.createdAtUnixMs);
+        addJobCard(j.id, j.prompt, j.gens, j.hasImage, j.createdAt, j.createdAtUnixMs, j.inputCount);
         continue;
       }
       const card = el(`job-${envelope.jobId}`);
@@ -2324,11 +2447,19 @@ function applyJobEvent(id, card, evt) {
     if (evt.quality) card.dataset.optQuality = evt.quality;
     if (evt.moderation) card.dataset.optModeration = evt.moderation;
     if (evt.n) card.dataset.optN = String(evt.n);
-    if (typeof evt.gpt2GuidanceEnabled === "boolean") {
-      card.dataset.optGpt2GuidanceEnabled = String(evt.gpt2GuidanceEnabled);
-    }
-    if (typeof evt.gpt2GuidanceText === "string") {
-      card.dataset.optGpt2GuidanceText = evt.gpt2GuidanceText;
+    if (Number.isInteger(evt.inputCount) && evt.inputCount >= 0) {
+      card.dataset.inputCount = String(evt.inputCount);
+      card.dataset.hasInputImage = String(evt.inputCount > 0);
+      // Older cards may have been created from job-known before inputCount
+      // arrived; ensure a multi-input badge appears once accepted is known.
+      const thumbLink = card.querySelector(".job-head > a");
+      if (thumbLink && evt.inputCount > 1 && !thumbLink.querySelector(".job-input-count")) {
+        const countBadge = document.createElement("span");
+        countBadge.className = "job-input-count";
+        countBadge.textContent = `×${evt.inputCount}`;
+        countBadge.title = `${evt.inputCount} input images (gpt-image-2 received all; others received the first)`;
+        thumbLink.appendChild(countBadge);
+      }
     }
   } else if (evt.type === "job-start") {
     card.dataset.state = "running";

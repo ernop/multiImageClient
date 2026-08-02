@@ -27,7 +27,7 @@ namespace MultiImageClient
     ///
     /// API surface:
     ///   GET  /api/config                      generator availability + defaults
-    ///   POST /api/jobs                        multipart: prompt, generators, options, image? -> {id}
+    ///   POST /api/jobs                        multipart: prompt, generators, options, images? (up to 4) -> {id}
     ///   POST /api/video-jobs                  grok-web image result -> video job
     ///   GET  /api/events/poll?cursor=N        cursor-based poll over every job's envelope log
     ///                                          (cursor=0 replays the full history, so refresh-safe;
@@ -46,6 +46,17 @@ namespace MultiImageClient
         private static bool SupportsImageAspectOverride(string key)
             => UiJobRunner.IsImageCapable(key)
                 && !key.Equals(UiJobRunner.KeyRecraft, StringComparison.OrdinalIgnoreCase);
+
+        // Default anti-murk guidance appended to every gpt-image-2 prompt while
+        // the composer's toggle is on (which it is by default). gpt-image-2
+        // reliably drifts into dark cinematic murk — low luminosity, dusky
+        // haze, over-fine smudged texture — unless told not to on EVERY call.
+        // The composer textbox is prefilled with this text and fully editable;
+        // whatever text the user submits is what gets appended.
+        private const string DefaultGpt2GuidanceText =
+            "Render in normal daytime lighting. Absolutely do not make the image dim, murky, grimy, "
+            + "muddy, gloomy, shadow-choked, underexposed, hazy, dusk-like, night-like, or dark. "
+            + "No smudged, muddy, overly fine micro-texture.";
 
         public async Task RunAsync(Settings settings, MultiClientRunStats stats, RunOptions options)
         {
@@ -109,7 +120,7 @@ namespace MultiImageClient
                 // sink to the end via the stable OrderBy below.
                 var generators = new[]
                 {
-                    new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise. The default output AR matches an attached source; explicit AR choices override it." },
+                    new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise. Accepts up to 4 ordered input images (other selected generators only receive the first). The default output AR matches the primary attached source; explicit AR choices override it." },
                     new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = "grok.com cookie session (WebSocket). Without an input, auto requests square 1:1 (this transport has no prompt-aware auto; Grok's own default is 2:3). With an input, the default maps its dimensions to Grok's nearest supported AR; explicit AR choices override it. Side-by-side mode requests up to 4 images. Each result can launch a grok-web image-to-video follow-up." },
                     new { key = UiJobRunner.KeyGrokApi, label = "grok-api", detail = "api.x.ai standard tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
                     new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api pro", detail = "api.x.ai pro tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
@@ -134,6 +145,10 @@ namespace MultiImageClient
                     availabilityProblem = runner.DescribeAvailabilityProblem(g.key),
                     imageCapable = UiJobRunner.IsImageCapable(g.key),
                     imageAspectOverride = SupportsImageAspectOverride(g.key),
+                    // Known hard prompt-length caps, surfaced so the composer can
+                    // warn before submit; the server truncates over-limit prompts
+                    // at the provider send stage (grok-web: GrokWebClient).
+                    maxPromptChars = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptChars : null,
                     // Default-on set for new windows: gpt-image-2, Recraft V4.1,
                     // grok-web pro, Ideogram V4, Nano Banana 2.
                     defaultOn = g.key is UiJobRunner.KeyGpt2
@@ -182,7 +197,16 @@ namespace MultiImageClient
                         available = spellfixProblem == null,
                         availabilityProblem = spellfixProblem,
                     },
+                    // gpt-image-2 anti-murk guidance: on by default, textbox
+                    // prefilled with this text, appended server-side to the
+                    // gpt2 target's prompt only.
+                    gpt2Guidance = new
+                    {
+                        defaultEnabled = true,
+                        defaultText = DefaultGpt2GuidanceText,
+                    },
                     defaults = new { shape = "auto", detail = "high", quality = "high", moderation = "low", n = 1 },
+                    maxInputImages = UiJobRunner.MaxInputImages,
                 });
             });
 
@@ -197,6 +221,7 @@ namespace MultiImageClient
                     prompt = j.Prompt,
                     gens = j.GeneratorKeys,
                     hasImage = j.HasInputImage,
+                    inputCount = j.InputImageCount,
                     done = j.IsDone,
                     sourceJobId = j.SourceJobId,
                     sourceGenerator = j.SourceGenerator,
@@ -249,22 +274,35 @@ namespace MultiImageClient
                     });
                 }
 
-                // Uploaded image (clipboard paste / drag-drop / file picker) is
-                // persisted under the day folder so job inputs are archived
+                // Uploaded images (clipboard paste / drag-drop / file picker)
+                // are persisted under the day folder so job inputs are archived
                 // alongside outputs, then fed to edit generators by path.
-                var inputImagePath = "";
-                byte[]? inputImageBytes = null;
-                string inputImageContentType = "image/png";
+                // Accept repeated "images" parts and the legacy single "image".
+                var uploadFiles = form.Files.GetFiles("images")
+                    .Concat(form.Files.GetFiles("image"))
+                    .Where(f => f != null && f.Length > 0)
+                    .Take(UiJobRunner.MaxInputImages + 1)
+                    .ToList();
+                if (uploadFiles.Count > UiJobRunner.MaxInputImages)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = $"At most {UiJobRunner.MaxInputImages} input images are accepted.",
+                    });
+                }
+
+                var inputPaths = new List<string>();
                 var inputImageWidth = 0;
                 var inputImageHeight = 0;
-                var file = form.Files.GetFile("image");
-                if (file != null && file.Length > 0)
+                var savedInputs = new List<(byte[] Bytes, string ContentType, string Path)>();
+                if (uploadFiles.Count > 0)
                 {
                     // Text-to-image-only targets are deliberately allowed on
                     // image jobs: they run from the prompt alone (user-specified
                     // product behavior, 2026-07-28 — see UiJobRunner.ImageCapableKeys).
                     // The AR-override rule only applies to targets that will
-                    // actually consume the image.
+                    // actually consume the image. Aspect matching uses the
+                    // primary (first) attached image.
                     if (shape != "auto")
                     {
                         var aspectIncompatible = genKeys
@@ -280,8 +318,18 @@ namespace MultiImageClient
                     }
                     try
                     {
-                        (inputImagePath, inputImageBytes, inputImageContentType, inputImageWidth, inputImageHeight)
-                            = await SaveInputImageAsync(file, settings);
+                        for (var i = 0; i < uploadFiles.Count; i++)
+                        {
+                            var (path, bytes, contentType, width, height)
+                                = await SaveInputImageAsync(uploadFiles[i], settings, $"input{i}");
+                            inputPaths.Add(path);
+                            savedInputs.Add((bytes, contentType, path));
+                            if (i == 0)
+                            {
+                                inputImageWidth = width;
+                                inputImageHeight = height;
+                            }
+                        }
                     }
                     catch (InvalidDataException ex)
                     {
@@ -289,10 +337,22 @@ namespace MultiImageClient
                     }
                 }
 
+                // gpt-image-2 anti-murk guidance. Missing fields (an older
+                // window still open from before this control existed) get the
+                // declared defaults — enabled with the standard text — chosen
+                // before the job starts, exactly like the other option defaults.
+                var gpt2GuidanceEnabled = !string.Equals(
+                    form["gpt2GuidanceEnabled"].ToString(),
+                    "false",
+                    StringComparison.OrdinalIgnoreCase);
+                var gpt2GuidanceText = form.ContainsKey("gpt2GuidanceText")
+                    ? form["gpt2GuidanceText"].ToString().Trim()
+                    : DefaultGpt2GuidanceText;
+
                 var job = new UiJob
                 {
                     Prompt = prompt,
-                    InputImagePath = inputImagePath,
+                    InputImagePaths = inputPaths,
                     InputImageWidth = inputImageWidth,
                     InputImageHeight = inputImageHeight,
                     GeneratorKeys = genKeys,
@@ -305,13 +365,16 @@ namespace MultiImageClient
                     ImageCount = n,
                     Shape = shape,
                     Detail = (form["detail"].ToString() ?? "standard").Trim().ToLowerInvariant(),
+                    Gpt2GuidanceEnabled = gpt2GuidanceEnabled,
+                    Gpt2GuidanceText = gpt2GuidanceText,
                 };
                 jobs.Add(job);
-                if (inputImageBytes != null)
+                for (var i = 0; i < savedInputs.Count; i++)
                 {
-                    // Keep the input in the job's image store so reloaded pages
-                    // can show the thumbnail without touching the saves/ layout.
-                    job.StoreImage("input", 0, inputImageBytes, inputImageContentType, inputImagePath);
+                    // Keep each input in the job's image store so reloaded pages
+                    // can show thumbnails without touching the saves/ layout.
+                    var saved = savedInputs[i];
+                    job.StoreImage("input", i, saved.Bytes, saved.ContentType, saved.Path);
                 }
                 // The full option set rides the persisted accepted event so a
                 // job card can restore this exact setup into the composer
@@ -321,6 +384,7 @@ namespace MultiImageClient
                     type = "accepted",
                     gens = genKeys,
                     hasImage = job.HasInputImage,
+                    inputCount = job.InputImageCount,
                     inputWidth = job.HasInputImage ? job.InputImageWidth : (int?)null,
                     inputHeight = job.HasInputImage ? job.InputImageHeight : (int?)null,
                     shape,
@@ -328,6 +392,8 @@ namespace MultiImageClient
                     quality = spec.Quality,
                     moderation = spec.Moderation,
                     n = spec.ImageCount,
+                    gpt2GuidanceEnabled = spec.Gpt2GuidanceEnabled,
+                    gpt2GuidanceText = spec.Gpt2GuidanceText,
                     prompt,
                     at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 });
@@ -431,7 +497,7 @@ namespace MultiImageClient
                 var job = new UiJob
                 {
                     Prompt = prompt,
-                    InputImagePath = inputImagePath,
+                    InputImagePaths = new[] { inputImagePath },
                     InputImageWidth = inputImageWidth,
                     InputImageHeight = inputImageHeight,
                     GeneratorKeys = new[] { UiJobRunner.KeyGrokWebVideo },
@@ -571,9 +637,10 @@ namespace MultiImageClient
             // Every distinct user-uploaded input image, newest first, for the
             // composer's "load a previous image" picker. Video jobs are
             // excluded: their stored input is a copied result image, not an
-            // upload. Re-pastes of the same image across jobs are deduped by
-            // SHA-256 of the archived bytes (hashes cached per job id; a
-            // job's input never changes). Entries whose archived bytes are no
+            // upload. Multi-input jobs contribute every index. Re-pastes of
+            // the same image across jobs are deduped by SHA-256 of the
+            // archived bytes (hashes cached per job id + index; a job's
+            // inputs never change). Entries whose archived bytes are no
             // longer readable are omitted and logged, never guessed at.
             var inputImageHashes = new ConcurrentDictionary<string, string>();
             app.MapGet("/api/input-images", () =>
@@ -584,29 +651,35 @@ namespace MultiImageClient
                     .Where(j => j.HasInputImage && string.IsNullOrEmpty(j.SourceJobId))
                     .OrderByDescending(j => j.CreatedAt))
                 {
-                    if (!inputImageHashes.TryGetValue(job.Id, out var hash))
+                    for (var index = 0; index < job.InputImageCount; index++)
                     {
-                        if (!job.TryGetImage("input", 0, out var bytes, out _))
+                        var cacheKey = $"{job.Id}:{index}";
+                        if (!inputImageHashes.TryGetValue(cacheKey, out var hash))
                         {
-                            Logger.Log($"UI input library: job {job.Id} input image bytes are unavailable; omitted from the listing.");
+                            if (!job.TryGetImage("input", index, out var bytes, out _))
+                            {
+                                Logger.Log(
+                                    $"UI input library: job {job.Id} input image {index} bytes are unavailable; omitted from the listing.");
+                                continue;
+                            }
+                            hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+                            inputImageHashes[cacheKey] = hash;
+                        }
+                        if (!seenHashes.Add(hash))
+                        {
                             continue;
                         }
-                        hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
-                        inputImageHashes[job.Id] = hash;
+                        images.Add(new
+                        {
+                            jobId = job.Id,
+                            index,
+                            url = $"/api/jobs/{job.Id}/images/input/{index}",
+                            width = index == 0 ? job.InputImageWidth : 0,
+                            height = index == 0 ? job.InputImageHeight : 0,
+                            prompt = job.Prompt,
+                            createdAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
+                        });
                     }
-                    if (!seenHashes.Add(hash))
-                    {
-                        continue;
-                    }
-                    images.Add(new
-                    {
-                        jobId = job.Id,
-                        url = $"/api/jobs/{job.Id}/images/input/0",
-                        width = job.InputImageWidth,
-                        height = job.InputImageHeight,
-                        prompt = job.Prompt,
-                        createdAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
-                    });
                 }
                 return Results.Json(new { images });
             });
@@ -627,7 +700,17 @@ namespace MultiImageClient
             Console.WriteLine($"  MultiImageClient UI:  {url}");
             Console.WriteLine("  Ctrl-C to stop.");
             Console.WriteLine();
-            TryOpenBrowser(url);
+            // Interactive `dotnet run -- --ui` still opens a tab. Under systemd
+            // (always-on unit / dashboard restart) every start would otherwise
+            // pile up new browser tabs — skip unless --ui-open forced it.
+            if (ShouldAutoOpenBrowser(options))
+            {
+                TryOpenBrowser(url);
+            }
+            else
+            {
+                Logger.Log($"UI: not auto-opening browser (systemd or --ui-no-open); open {url} yourself.");
+            }
 
             await app.RunAsync();
 
@@ -663,11 +746,12 @@ namespace MultiImageClient
 
         private static async Task<(string Path, byte[] Bytes, string ContentType, int Width, int Height)> SaveInputImageAsync(
             IFormFile file,
-            Settings settings)
+            Settings settings,
+            string namePart = "input")
         {
             using var ms = new MemoryStream();
             await file.CopyToAsync(ms);
-            return await SaveConformedInputImageAsync(ms.ToArray(), "input", settings);
+            return await SaveConformedInputImageAsync(ms.ToArray(), namePart, settings);
         }
 
         private static async Task<(string Path, int Width, int Height)> SaveInputImageBytesAsync(
@@ -750,8 +834,23 @@ namespace MultiImageClient
             return (path, bytes, contentType, width, height);
         }
 
-        // Launching the browser is the whole point of --ui, so this is not
-        // gated by --open-images (which governs finished-image viewer pops).
+        // Interactive --ui still opens a tab by default. That is not gated by
+        // --open-images (which governs finished-image viewer pops). Always-on
+        // systemd starts must not open a tab on every restart.
+        private static bool ShouldAutoOpenBrowser(RunOptions options)
+        {
+            if (options.UiOpenBrowser == false)
+            {
+                return false;
+            }
+            if (options.UiOpenBrowser == true)
+            {
+                return true;
+            }
+            // systemd sets INVOCATION_ID for every started unit.
+            return string.IsNullOrEmpty(Environment.GetEnvironmentVariable("INVOCATION_ID"));
+        }
+
         private static void TryOpenBrowser(string url)
         {
             try

@@ -244,6 +244,11 @@ namespace MultiImageClient
         /// Port for --ui. The server binds 127.0.0.1 only.
         public int UiPort { get; set; } = 5960;
 
+        /// Whether --ui should open a browser tab on start.
+        /// null = default (open when interactive; skip under systemd).
+        /// true/false = force via --ui-open / --ui-no-open.
+        public bool? UiOpenBrowser { get; set; }
+
         /// Master switch for popping finished images/contact-sheets open in the
         /// system default viewer. Defaults to false: runs are headless and just
         /// save to disk. Set with --open-images. Drives
@@ -331,6 +336,12 @@ namespace MultiImageClient
                         break;
                     case "--ui-port":
                         o.UiPort = int.Parse(args[++i]);
+                        break;
+                    case "--ui-open":
+                        o.UiOpenBrowser = true;
+                        break;
+                    case "--ui-no-open":
+                        o.UiOpenBrowser = false;
                         break;
                     case "--repl-size":
                         o.ReplSize = args[++i];
@@ -505,6 +516,8 @@ namespace MultiImageClient
             Console.WriteLine("  --quick-test      Like --fast plus: save every streamed partial PNG and open each one in the default viewer as it arrives (implies --open-images). Still asks y/n/custom per prompt unless combined with --auto.");
             Console.WriteLine("  --ui              Start the local web UI (browser control panel): paste an image + prompt, fan out to selected generators (gpt-image-2 edit, grok-web pro, grok-api), watch results fill in live. Binds 127.0.0.1 only.");
             Console.WriteLine("  --ui-port N       Port for --ui (default 5960).");
+            Console.WriteLine("  --ui-open         Force opening a browser tab when --ui starts (default for interactive runs; unused under systemd unless set).");
+            Console.WriteLine("  --ui-no-open      Never open a browser tab when --ui starts (default under systemd so restarts don't pile up tabs).");
             Console.WriteLine("  --repl            Interactive prompt-by-prompt REPL. Prompts fire asynchronously (up to --repl-concurrency at a time); NO viewer pops. Commands: :help :size :quality :gens :status :wait :edit :retry :quit.");
             Console.WriteLine("  --repl-size WxH       REPL session default size for gpt-image-2 (default 2048x2048). Change at runtime with :size WxH.");
             Console.WriteLine("  --repl-quality L      REPL session default quality: low|medium|high (default high). Change at runtime with :quality <L>.");

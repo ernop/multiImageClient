@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260730-gpt2-guidance">
-<link rel="stylesheet" href="spellwell/spellwell.css?v=20260730-gpt2-guidance">
+<link rel="stylesheet" href="style.css?v=20260731-settings-modal">
+<link rel="stylesheet" href="spellwell/spellwell.css?v=20260731-settings-modal">
 </head>
 <body>
 <header>
   <h1>MultiImageClient</h1>
-  <span class="tagline">paste an image, write a prompt, fan out</span>
+  <span class="tagline">paste image(s), write a prompt, fan out</span>
+  <button id="settings-toggle" type="button" title="Settings (stored in this browser only)">settings</button>
   <button id="logs-toggle" type="button" aria-expanded="false" aria-controls="logs-panel">logs</button>
 </header>
 
@@ -28,13 +29,17 @@
 <main>
   <section id="composer">
     <div id="compose-left">
-      <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse">
+      <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse. Up to 4 images; gpt-image-2 receives all, other generators only the first.">
         <div id="paste-hint">
           <strong>Ctrl+V</strong> to paste an image<br>
           or drop / click to browse
         </div>
-        <img id="input-preview" alt="" hidden>
-        <button id="clear-image" type="button" hidden>&times; remove</button>
+        <div id="input-thumbs" hidden></div>
+        <p id="multi-input-hint" hidden>
+          gpt-image-2 gets these in order — say how to use each in the prompt.
+          Other generators only receive the first.
+        </p>
+        <button id="clear-image" type="button" hidden>&times; clear all</button>
         <input id="file-input" type="file" accept="image/*" hidden>
       </div>
       <div id="input-library-control">
@@ -55,7 +60,12 @@
 
     <div id="compose-right">
       <textarea id="prompt" rows="5"
-        placeholder="Prompt… (Ctrl+Enter to send). With an image attached this is an edit instruction; without one it's a plain text-to-image prompt."></textarea>
+        placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (gpt-image-2 sees all of them in order); without one it's plain text-to-image."></textarea>
+      <div id="prompt-limit-notice" hidden></div>
+      <div id="spellfix-report" hidden>
+        <div id="spellfix-report-lines"></div>
+        <button id="spellfix-report-close" type="button" aria-label="Dismiss fix report">&times;</button>
+      </div>
 
       <div id="gen-controls">
         <button id="gens-enable-all" type="button">Enable all</button>
@@ -65,7 +75,12 @@
           title="Enable every available endpoint that accepts the attached image">Enable image-capable</button>
         <button id="gens-disable-text-only" type="button" class="image-only-action" hidden
           title="Disable endpoints that can't accept the attached image (they'd run from the prompt text only)">Disable text-only</button>
-        <span id="gens-count"></span>
+        <span id="prompt-tools">
+          <button id="spellfix-local" type="button" disabled
+            title="Dictionary-based local fix (offline, free): collapse double spaces and apply confident corrections to highlighted misspellings; ambiguous words stay highlighted">fix typos (local)</button>
+          <button id="spellfix" type="button" title="Fix spelling mistakes in the prompt (Claude, spelling only — no rephrasing; costs a fraction of a cent)">fix spelling (Claude)</button>
+          <button id="spellfix-undo" type="button" hidden title="Restore the prompt as it was before the last fix">undo fix</button>
+        </span>
       </div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
 
@@ -123,32 +138,9 @@
         </span>
       </div>
 
-      <div id="gpt2-guidance-row">
-        <label id="gpt2-guidance-toggle"
-          title="gpt-image-2 habitually drifts into dark, murky, underexposed output. While this is on, the text below is appended to the prompt sent to gpt-image-2 on every job (and only to gpt-image-2 — other generators get your prompt untouched).">
-          <input id="gpt2-guidance-enabled" type="checkbox" checked>
-          include special guidance to gpt-image-2 to not produce such dark murky images
-        </label>
-        <button id="gpt2-guidance-reset" type="button"
-          title="Restore the default guidance text">reset text</button>
-        <textarea id="gpt2-guidance-text" rows="3" spellcheck="false"
-          aria-label="Guidance text appended to every gpt-image-2 prompt"></textarea>
-      </div>
-
       <div id="send-row">
         <button id="send" type="button">Generate</button>
-        <button id="spellfix-local" type="button" disabled
-          title="Dictionary-based local fix (offline, free): collapse double spaces and apply confident corrections to highlighted misspellings; ambiguous words stay highlighted">fix typos (local)</button>
-        <button id="spellfix" type="button" title="Fix spelling mistakes in the prompt (Claude, spelling only — no rephrasing; costs a fraction of a cent)">fix spelling (Claude)</button>
-        <button id="spellfix-undo" type="button" hidden title="Restore the prompt as it was before the last fix">undo fix</button>
         <span id="send-error"></span>
-      </div>
-
-      <div id="prompt-limit-notice" hidden></div>
-
-      <div id="spellfix-report" hidden>
-        <div id="spellfix-report-lines"></div>
-        <button id="spellfix-report-close" type="button" aria-label="Dismiss fix report">&times;</button>
       </div>
     </div>
   </section>
@@ -188,6 +180,27 @@
     <div id="image-viewer-resize" role="separator" aria-label="Resize image viewer" title="Drag to resize"></div>
   </div>
 </div>
+
+<dialog id="settings-dialog">
+  <div class="settings-dialog-head">
+    <h2>Settings</h2>
+    <button id="settings-close" type="button" aria-label="Close settings">&times;</button>
+  </div>
+  <div class="settings-dialog-body">
+    <div id="gpt2-guidance-row">
+      <label id="gpt2-guidance-toggle"
+        title="gpt-image-2 habitually drifts into dark, murky, underexposed output. While this is on, the text below is appended to the prompt sent to gpt-image-2 on every job (and only to gpt-image-2 — other generators get your prompt untouched).">
+        <input id="gpt2-guidance-enabled" type="checkbox" checked>
+        include special guidance to gpt-image-2 to not produce such dark murky images
+      </label>
+      <button id="gpt2-guidance-reset" type="button"
+        title="Restore the default guidance text">reset text</button>
+      <textarea id="gpt2-guidance-text" rows="4" spellcheck="false"
+        aria-label="Guidance text appended to every gpt-image-2 prompt"></textarea>
+    </div>
+    <p class="settings-note">Settings are saved in this browser only (localStorage).</p>
+  </div>
+</dialog>
 
 <dialog id="video-dialog">
   <form method="dialog" id="video-form">
@@ -240,8 +253,8 @@
   </form>
 </dialog>
 
-<script src="spellwell/vendor/typo/typo.min.js?v=20260730-gpt2-guidance"></script>
-<script src="spellwell/spellwell.js?v=20260730-gpt2-guidance"></script>
-<script src="app.js?v=20260730-gpt2-guidance"></script>
+<script src="spellwell/vendor/typo/typo.min.js?v=20260731-settings-modal"></script>
+<script src="spellwell/spellwell.js?v=20260731-settings-modal"></script>
+<script src="app.js?v=20260731-settings-modal"></script>
 </body>
 </html>
