@@ -71,6 +71,42 @@ namespace MultiImageClient
         private const float LabelDescenderReserveFraction = 0.25f;
 
 
+        /// Loads the job's input image as a grid cell that is visually and
+        /// textually distinct from generated outputs: gold frame, black
+        /// "INPUT" label, and a caller-supplied role text explaining exactly
+        /// what function the image served for each generator. The caller must
+        /// state the role — we never guess it here.
+        private static LoadedImage LoadInputImageCell(string inputImagePath, string roleText)
+        {
+            var bytes = File.ReadAllBytes(inputImagePath);
+            var image = Image.Load<Rgba32>(bytes);
+
+            var sourceWidth = image.Width;
+            var sourceHeight = image.Height;
+
+            if (image.Height > 1300)
+            {
+                var aspectRatio = (float)image.Width / image.Height;
+                var newHeight = 1024;
+                var newWidth = (int)(newHeight * aspectRatio);
+                Logger.Log($"Resizing input image from {image.Width}x{image.Height} to {newWidth}x{newHeight} for combining");
+                image.Mutate(x => x.Resize(newWidth, newHeight));
+            }
+
+            return new LoadedImage
+            {
+                Success = true,
+                IsInput = true,
+                Result = "input",
+                Generator = "INPUT",
+                PromptText = roleText,
+                SourceResolutionLabel = $"{sourceWidth}x{sourceHeight}",
+                Image = image,
+                Width = image.Width,
+                Height = image.Height
+            };
+        }
+
         private static IEnumerable<LoadedImage> LoadResultImages(IEnumerable<TaskProcessResult> results)
         {
             var loadedImages = new List<LoadedImage>();
@@ -334,7 +370,7 @@ namespace MultiImageClient
                     Math.Max(columnWidths[col], 1),
                     generatorFont,
                     cellPromptFont,
-                    includeCellPrompts);
+                    includeCellPrompts || images[i].IsInput);
                 rowTextHeights[row] = Math.Max(rowTextHeights[row], textHeight);
             }
 
@@ -368,6 +404,16 @@ namespace MultiImageClient
                         if (li.Success && li.Image != null)
                         {
                             ctx.DrawImage(li.Image, new Point(imageX, imageY), 1f);
+                            if (li.IsInput)
+                            {
+                                // Gold frame so the input image can never be
+                                // mistaken for a generated output.
+                                float borderWidth = 6f;
+                                float inset = borderWidth / 2f;
+                                ctx.Draw(
+                                    Pens.Solid(UIConstants.Gold, borderWidth),
+                                    new RectangleF(imageX + inset, imageY + inset, li.Width - borderWidth, li.Height - borderWidth));
+                            }
                         }
                         else
                         {
@@ -377,10 +423,15 @@ namespace MultiImageClient
                         }
 
                         float centerX = columnX + Math.Max(columnWidth, 1) / 2f;
-                        var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
+                        var labelColor = li.IsInput
+                            ? UIConstants.Black
+                            : li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
                         var labelY = textBandY + UIConstants.Padding;
                         DrawCompositeLabelLine(ctx, li.Generator, BuildSecondaryLabel(li), generatorFont, timingFont, labelColor, centerX, labelY);
-                        if (includeCellPrompts && !string.IsNullOrWhiteSpace(li.PromptText))
+                        // Input cells always render their role text so the
+                        // image's function in this job is stated on the sheet
+                        // itself, regardless of the per-cell prompt setting.
+                        if ((includeCellPrompts || li.IsInput) && !string.IsNullOrWhiteSpace(li.PromptText))
                         {
                             var wrappingWidth = Math.Max(1, columnWidth - UIConstants.Padding * 2);
                             var promptY = labelY + MeasureCellLabelHeight(li, columnWidth, generatorFont) + UIConstants.Padding / 2f;
@@ -436,17 +487,36 @@ namespace MultiImageClient
         // open in the system default viewer after it's written. Defaults to
         // false: nothing auto-opens. Callers that explicitly want a viewer
         // popup (none currently) can pass true.
+        //
+        // inputImagePath/inputImageRole: when the job carried an input image,
+        // pass its path plus a human-readable statement of what function it
+        // served (per generator). It renders as the FIRST cell of the grid,
+        // gold-framed and labeled INPUT with the role text underneath, so the
+        // sheet documents the complete job. Both must be provided together —
+        // we refuse to show an input image without stating its function.
         public static async Task<string> CreateBatchLayoutImageSquareAsync(
             IEnumerable<TaskProcessResult> results,
             string prompt,
             Settings settings,
             bool openWhenDone = false,
-            bool showPerImagePrompts = false)
+            bool showPerImagePrompts = false,
+            string? inputImagePath = null,
+            string? inputImageRole = null)
         {
             var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
             var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
 
             var loadedImages = LoadResultImages(results);
+            if (!string.IsNullOrEmpty(inputImagePath))
+            {
+                if (string.IsNullOrWhiteSpace(inputImageRole))
+                {
+                    throw new ArgumentException(
+                        "inputImageRole is required when inputImagePath is provided: the sheet must state what the input image was used for.",
+                        nameof(inputImageRole));
+                }
+                loadedImages = new[] { LoadInputImageCell(inputImagePath, inputImageRole) }.Concat(loadedImages);
+            }
 
             using var layoutImage = RenderSquareLayout(loadedImages, generatorFont, promptFont, showPerImagePrompts);
             using var promptPanel = RenderPromptPanel(layoutImage.Width, prompt, promptFont);
@@ -1025,6 +1095,10 @@ namespace MultiImageClient
         public class LoadedImage
         {
             public bool Success { get; set; }
+            /// True for the job's input image cell (gold-framed, labeled
+            /// INPUT, role text always rendered) as opposed to a generated
+            /// output.
+            public bool IsInput { get; set; }
             public string? Result { get; set; }
             public required string Generator { get; set; }
             public string? PromptText { get; set; }

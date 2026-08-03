@@ -1045,6 +1045,29 @@ namespace MultiImageClient
         public static bool IsImageCapable(string key)
             => ImageCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
 
+        // States, per selected generator, exactly what function the job's
+        // input image served. Rendered under the INPUT cell of the combined
+        // contact sheet. Must stay truthful to BuildGenerator's routing: edit
+        // generators consume it as the edit source, Recraft as the
+        // image-to-image source, the reference-style targets as a
+        // style/reference guide, and text-only targets never receive it
+        // (user-specified attachment policy, 2026-07-28).
+        private static string DescribeInputImageFunction(string key) => key switch
+        {
+            KeyGpt2 or KeyGrokWeb or KeyGrokApi or KeyGrokApiPro => "edit source",
+            KeyRecraft => "image-to-image source",
+            KeyGoogle or KeyGooglePro or KeyBfl or KeyIdeogramV3 => "style/reference image",
+            KeyGrokWebVideo => "video source",
+            _ => "NOT sent (text-only target, prompt only)",
+        };
+
+        public static string BuildInputImageRoleText(IReadOnlyList<string> generatorKeys)
+        {
+            var perGenerator = generatorKeys
+                .Select(k => $"{k}: {DescribeInputImageFunction(k)}");
+            return $"Input image attached to this job (not a generated result). Function per generator - {string.Join("; ", perGenerator)}";
+        }
+
         private readonly Settings _settings;
         private readonly MultiClientRunStats _stats;
         private readonly RunOptions _options;
@@ -1240,10 +1263,15 @@ namespace MultiImageClient
 
                 // Build + save the standard combined contact sheet for the
                 // archive; never popped open (the browser IS the viewer here).
+                // Jobs with an input image get it rendered as the sheet's
+                // first cell, with an explicit statement of what each
+                // selected generator did (or didn't do) with it.
                 try
                 {
                     var combined = await ImageCombiner.CreateBatchLayoutImageSquareAsync(
-                        results, job.Prompt, _settings, openWhenDone: false);
+                        results, job.Prompt, _settings, openWhenDone: false,
+                        inputImagePath: job.HasInputImage ? job.InputImagePath : null,
+                        inputImageRole: job.HasInputImage ? BuildInputImageRoleText(spec.GeneratorKeys) : null);
                     if (!string.IsNullOrEmpty(combined) && File.Exists(combined))
                     {
                         var bytes = await File.ReadAllBytesAsync(combined);
