@@ -41,6 +41,10 @@ namespace MultiImageClient
     ///                                          (SHA-256 deduped), for the composer's load picker
     ///   GET  /api/logs/poll?after=N            current-process log lines after sequence N
     ///   POST /api/prompt/spellfix              Claude spelling-only correction -> {corrected}
+    ///   GET  /api/archive/days                 archived (pre-today) days with job counts
+    ///   GET  /api/archive/days/{day}           one archived day's jobs + full event history
+    ///   GET  /api/users                        every creator name with job counts (filter bar)
+    ///   POST /api/auth/login|logout            shared-site access gate (only when UiAuthFilePath is set)
     public class UiWorkflow
     {
         private static bool SupportsImageAspectOverride(string key)
@@ -64,6 +68,20 @@ namespace MultiImageClient
             if (wwwroot == null)
             {
                 Console.Error.WriteLine("UI aborted: could not locate Ui/wwwroot (looked relative to CWD and the exe).");
+                return;
+            }
+
+            // Optional shared-site gate. A configured-but-broken auth file is
+            // a hard startup error: a shared deployment must never come up
+            // open because of a typo in its access-control file.
+            UiAuth? auth;
+            try
+            {
+                auth = UiAuth.CreateFromSettings(settings);
+            }
+            catch (InvalidOperationException ex)
+            {
+                Console.Error.WriteLine($"UI aborted: {ex.Message}");
                 return;
             }
 
@@ -92,6 +110,79 @@ namespace MultiImageClient
 
             var app = builder.Build();
 
+            // ---- access gate (shared deployments only) ----
+            // Runs before static files and every endpoint. Unauthenticated
+            // API calls get 401 JSON; unauthenticated page loads get the
+            // inline login page. The login endpoint itself is the only
+            // anonymous route. When auth is off (blank UiAuthFilePath) this
+            // middleware is not even registered — local behavior unchanged.
+            if (auth != null)
+            {
+                app.Use(async (ctx, next) =>
+                {
+                    var path = ctx.Request.Path.Value ?? "/";
+                    if (path == "/api/auth/login" && HttpMethods.IsPost(ctx.Request.Method))
+                    {
+                        await next();
+                        return;
+                    }
+                    if (!auth.IsEnforced)
+                    {
+                        await next();
+                        return;
+                    }
+                    if (auth.TryValidateCookie(ctx.Request.Cookies[UiAuth.CookieName], out var user))
+                    {
+                        ctx.Items["micUser"] = user;
+                        await next();
+                        return;
+                    }
+                    if (path.StartsWith("/api/", StringComparison.Ordinal))
+                    {
+                        ctx.Response.StatusCode = 401;
+                        ctx.Response.Headers.CacheControl = "no-store";
+                        await ctx.Response.WriteAsJsonAsync(new { error = "not logged in" });
+                        return;
+                    }
+                    ctx.Response.StatusCode = 401;
+                    ctx.Response.ContentType = "text/html; charset=utf-8";
+                    ctx.Response.Headers.CacheControl = "no-store";
+                    await ctx.Response.WriteAsync(LoginPageHtml);
+                });
+
+                app.MapPost("/api/auth/login", async (HttpRequest request, HttpContext ctx) =>
+                {
+                    var form = await request.ReadFormAsync();
+                    var username = form["username"].ToString().Trim();
+                    var password = form["password"].ToString();
+                    if (username.Length == 0 || password.Length == 0)
+                    {
+                        return Results.BadRequest(new { error = "username and password are required" });
+                    }
+                    if (!auth.TryLogin(username, password, ClientIpForThrottle(ctx), out var cookieValue, out var error))
+                    {
+                        Logger.Log($"UI auth: failed login for '{username}' from {ClientIpForThrottle(ctx)}.");
+                        return Results.Json(new { error }, statusCode: 401);
+                    }
+                    ctx.Response.Cookies.Append(UiAuth.CookieName, cookieValue, new CookieOptions
+                    {
+                        HttpOnly = true,
+                        SameSite = SameSiteMode.Lax,
+                        Secure = IsEffectivelyHttps(ctx),
+                        MaxAge = TimeSpan.FromDays(3650),
+                        Path = "/",
+                    });
+                    Logger.Log($"UI auth: '{username}' logged in from {ClientIpForThrottle(ctx)}.");
+                    return Results.Json(new { ok = true, username });
+                });
+
+                app.MapPost("/api/auth/logout", (HttpContext ctx) =>
+                {
+                    ctx.Response.Cookies.Delete(UiAuth.CookieName, new CookieOptions { Path = "/" });
+                    return Results.Json(new { ok = true });
+                });
+            }
+
             app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = new PhysicalFileProvider(wwwroot) });
             // SpellWell's Hunspell dictionary files use extensions the default
             // content-type map doesn't know; without these entries the static
@@ -113,7 +204,7 @@ namespace MultiImageClient
                 },
             });
 
-            app.MapGet("/api/config", () =>
+            app.MapGet("/api/config", (HttpContext ctx) =>
             {
                 // Display order: gpt-image-2, grok-*, ideogram, recraft, then the
                 // rest; unavailable targets (missing keys, gated local models)
@@ -207,6 +298,13 @@ namespace MultiImageClient
                     },
                     defaults = new { shape = "auto", detail = "high", quality = "high", moderation = "low", n = 1 },
                     maxInputImages = UiJobRunner.MaxInputImages,
+                    // Shared-site identity: when the access gate is on, the
+                    // authenticated login name seeds the creator-name control.
+                    auth = new
+                    {
+                        enabled = auth != null,
+                        user = ctx.Items["micUser"] as string ?? "",
+                    },
                 });
             });
 
@@ -219,6 +317,7 @@ namespace MultiImageClient
                 {
                     id = j.Id,
                     prompt = j.Prompt,
+                    user = j.CreatedBy,
                     gens = j.GeneratorKeys,
                     hasImage = j.HasInputImage,
                     inputCount = j.InputImageCount,
@@ -240,6 +339,15 @@ namespace MultiImageClient
                 if (prompt.Length == 0)
                 {
                     return Results.BadRequest(new { error = "prompt is required" });
+                }
+
+                if (!TryResolveCreatorName(
+                    form["user"].ToString(),
+                    request.HttpContext.Items["micUser"] as string ?? "",
+                    out var createdBy,
+                    out var userError))
+                {
+                    return Results.BadRequest(new { error = userError });
                 }
 
                 var genKeys = (form["generators"].ToString() ?? "")
@@ -361,6 +469,7 @@ namespace MultiImageClient
                 var job = new UiJob
                 {
                     Prompt = prompt,
+                    CreatedBy = createdBy,
                     InputImagePaths = inputPaths,
                     InputImageWidth = inputImageWidth,
                     InputImageHeight = inputImageHeight,
@@ -434,6 +543,14 @@ namespace MultiImageClient
                 }
 
                 var form = await request.ReadFormAsync();
+                if (!TryResolveCreatorName(
+                    form["user"].ToString(),
+                    request.HttpContext.Items["micUser"] as string ?? "",
+                    out var videoCreatedBy,
+                    out var videoUserError))
+                {
+                    return Results.BadRequest(new { error = videoUserError });
+                }
                 var sourceJobId = (form["sourceJobId"].ToString() ?? "").Trim();
                 var sourceGenerator = (form["sourceGenerator"].ToString() ?? "").Trim();
                 if (!int.TryParse(form["sourceIndex"].ToString(), out var sourceIndex) || sourceIndex < 0)
@@ -506,6 +623,7 @@ namespace MultiImageClient
                 var job = new UiJob
                 {
                     Prompt = prompt,
+                    CreatedBy = videoCreatedBy,
                     InputImagePaths = new[] { inputImagePath },
                     InputImageWidth = inputImageWidth,
                     InputImageHeight = inputImageHeight,
@@ -693,6 +811,61 @@ namespace MultiImageClient
                 return Results.Json(new { images });
             });
 
+            // ---- day archive ----
+            // The live envelope feed only carries today's jobs (multi-day
+            // history would otherwise replay through every page load). Older
+            // jobs are grouped by day and fetched lazily: the day list first,
+            // then one day's complete jobs+events on expand. The payload uses
+            // the same job metadata + event JSON as the live feed so the
+            // frontend renders archived cards through the identical path.
+            app.MapGet("/api/archive/days", (HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                var days = jobs.ListArchivedDays().Select(d => new
+                {
+                    day = d.Day,
+                    label = DateTime.ParseExact(d.Day, "yyyy-MM-dd", null).ToString("dddd, MMM d, yyyy"),
+                    count = d.Count,
+                });
+                return Results.Json(new { days });
+            });
+
+            app.MapGet("/api/archive/days/{day}", (string day, HttpContext ctx) =>
+            {
+                if (!DateTime.TryParseExact(day, "yyyy-MM-dd", null, System.Globalization.DateTimeStyles.None, out var parsedDay))
+                {
+                    return Results.BadRequest(new { error = "day must be yyyy-MM-dd" });
+                }
+                var dayJobs = jobs.ListArchivedDay(parsedDay);
+                // Hand-assembled like /api/events/poll: job metadata and each
+                // event are already-serialized JSON strings.
+                var sb = new StringBuilder();
+                sb.Append("{\"jobs\":[");
+                for (var i = 0; i < dayJobs.Count; i++)
+                {
+                    if (i > 0) sb.Append(',');
+                    var job = dayJobs[i];
+                    var (events, _) = job.ReadFrom(0);
+                    sb.Append("{\"job\":");
+                    sb.Append(UiJobRegistry.SerializeJobMetadata(job));
+                    sb.Append(",\"events\":[");
+                    sb.Append(string.Join(",", events));
+                    sb.Append("]}");
+                }
+                sb.Append("]}");
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Text(sb.ToString(), "application/json");
+            });
+
+            // Every creator name seen across live + archived history, for the
+            // person filter bar. "" groups jobs from before attribution.
+            app.MapGet("/api/users", (HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                var users = jobs.ListUsers().Select(u => new { user = u.User, count = u.Count });
+                return Results.Json(new { users });
+            });
+
             // Same zero-persistent-connection rule as /api/events/poll: the
             // logs panel used to hold an SSE connection per window, which
             // counted against the same 6-connection browser pool.
@@ -734,6 +907,121 @@ namespace MultiImageClient
                 }
             }
         }
+
+        /// Creator-name policy: every job is created under a display username
+        /// (shared site, no privacy — attribution only). The submitted name
+        /// wins; with the access gate on and no name submitted, the login
+        /// name is the declared pre-operation default. No gate + no name is
+        /// a 400. Names are trimmed, inner whitespace collapsed, 1-32 chars,
+        /// letters/digits/space/._- only.
+        private static bool TryResolveCreatorName(string? submitted, string authUser, out string name, out string error)
+        {
+            name = System.Text.RegularExpressions.Regex.Replace((submitted ?? "").Trim(), @"\s+", " ");
+            if (name.Length == 0)
+            {
+                name = authUser;
+            }
+            if (name.Length == 0)
+            {
+                error = "choose a username first (top of the page) — every job is created under a name";
+                return false;
+            }
+            if (name.Length > 32)
+            {
+                error = "username must be 32 characters or fewer";
+                return false;
+            }
+            if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z0-9 ._-]+$"))
+            {
+                error = "username may only contain letters, digits, spaces, and . _ -";
+                return false;
+            }
+            error = "";
+            return true;
+        }
+
+        // The failed-login throttle keys on the caller's address. Behind the
+        // nginx deployment every connection arrives from loopback, so trust
+        // X-Forwarded-For (nginx always sets it) only for loopback peers.
+        private static string ClientIpForThrottle(HttpContext ctx)
+        {
+            var remote = ctx.Connection.RemoteIpAddress;
+            if (remote != null && System.Net.IPAddress.IsLoopback(remote))
+            {
+                var forwarded = ctx.Request.Headers["X-Forwarded-For"].ToString();
+                if (!string.IsNullOrWhiteSpace(forwarded))
+                {
+                    return forwarded.Split(',')[0].Trim();
+                }
+            }
+            return remote?.ToString() ?? "unknown";
+        }
+
+        private static bool IsEffectivelyHttps(HttpContext ctx)
+        {
+            if (ctx.Request.IsHttps)
+            {
+                return true;
+            }
+            return string.Equals(
+                ctx.Request.Headers["X-Forwarded-Proto"].ToString(),
+                "https",
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Served inline (no static file) so the gate has zero anonymous
+        // surface beyond this page and the login POST. Posts to the RELATIVE
+        // api path so it works behind any reverse-proxy prefix.
+        private const string LoginPageHtml = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>MultiImageClient — log in</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #f5f2ea; color: #1a1a1a;
+         display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; }
+  form { background: #fff; border: 1px solid #d8d2c4; border-radius: 8px; padding: 28px 32px;
+         display: flex; flex-direction: column; gap: 12px; min-width: 280px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  input { font-size: 15px; padding: 7px 9px; border: 1px solid #c9c2b2; border-radius: 5px; }
+  button { font-size: 15px; padding: 8px; border: none; border-radius: 5px;
+           background: #2456b8; color: #fff; cursor: pointer; }
+  #err { color: #b00020; font-size: 13px; min-height: 1.2em; margin: 0; }
+</style>
+</head>
+<body>
+<form id="f">
+  <h1>MultiImageClient</h1>
+  <label>username <input id="u" autocomplete="username" autofocus></label>
+  <label>password <input id="p" type="password" autocomplete="current-password"></label>
+  <button type="submit">log in</button>
+  <p id="err"></p>
+</form>
+<script>
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("err");
+  err.textContent = "";
+  const form = new FormData();
+  form.append("username", document.getElementById("u").value);
+  form.append("password", document.getElementById("p").value);
+  try {
+    const resp = await fetch("api/auth/login", { method: "POST", body: form });
+    const body = await resp.json();
+    if (!resp.ok) { err.textContent = body.error || ("HTTP " + resp.status); return; }
+    location.reload();
+  } catch (ex) {
+    err.textContent = String(ex);
+  }
+});
+</script>
+</body>
+</html>
+""";
 
         // Prefer the source tree copies (live-editable during dev: tweak
         // app.js, refresh the browser) over the build-output copy.

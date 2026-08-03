@@ -3,9 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The shared site lives behind a secret URL path; never leak it through
+     the Referer header of outbound links (error-hint links, new tabs). -->
+<meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260802-unified-settings">
-<link rel="stylesheet" href="spellwell/spellwell.css?v=20260802-unified-settings">
+<link rel="stylesheet" href="style.css?v=20260803-shared-site">
+<link rel="stylesheet" href="spellwell/spellwell.css?v=20260803-shared-site">
 </head>
 <body>
 <header>
@@ -15,7 +18,23 @@
     title="hide night mode — hide any job whose prompt contains a word from the hidden-word list (edit the list in settings)">&#9790;</button>
   <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel" title="Settings (stored in this browser only)">settings</button>
   <button id="logs-toggle" type="button" aria-expanded="false" aria-controls="logs-panel">logs</button>
+  <button id="logout" type="button" hidden title="Log out of this shared site on this browser">log out</button>
 </header>
+
+<!-- Shared-site people bar: who you create as, and whose work is shown.
+     Everything everyone makes is visible to everyone — that's the point. -->
+<div id="people-bar">
+  <label id="username-control" title="Every job you create is attributed to this name, visible to everyone on this site">
+    <span>creating as</span>
+    <input id="username-input" maxlength="32" autocomplete="off" spellcheck="false"
+      placeholder="choose a username">
+  </label>
+  <div id="user-filters" aria-label="Filter jobs by creator">
+    <span id="user-filters-label">show</span>
+    <button type="button" class="user-chip selected" data-user="*">everyone</button>
+    <!-- one chip per known creator, injected -->
+  </div>
+</div>
 
 <div id="settings-panel" hidden aria-label="Settings">
   <div class="settings-head">
@@ -190,6 +209,14 @@
   </section>
 
   <section id="jobs"></section>
+
+  <!-- Day archive: everything from earlier days, grouped by day and loaded
+       only when a day is expanded. Archived cards behave exactly like live
+       ones (copy prompt, set active, viewer, video follow-ups). -->
+  <section id="archive" hidden aria-label="Older generations by day">
+    <h2 id="archive-title">archive — earlier days</h2>
+    <div id="archive-days"></div>
+  </section>
 </main>
 
 <div id="image-viewer" hidden role="dialog" aria-modal="true" aria-label="Generated image viewer">
@@ -271,8 +298,8 @@
   </form>
 </dialog>
 
-<script src="spellwell/vendor/typo/typo.min.js?v=20260802-unified-settings"></script>
-<script src="spellwell/spellwell.js?v=20260802-unified-settings"></script>
-<script src="app.js?v=20260802-unified-settings"></script>
+<script src="spellwell/vendor/typo/typo.min.js?v=20260803-shared-site"></script>
+<script src="spellwell/spellwell.js?v=20260803-shared-site"></script>
+<script src="app.js?v=20260803-shared-site"></script>
 </body>
 </html>

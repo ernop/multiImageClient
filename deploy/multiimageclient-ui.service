@@ -1,0 +1,32 @@
+# systemd unit for the shared-site web UI. Install:
+#   sudo cp multiimageclient-ui.service /etc/systemd/system/
+#   (edit User/paths)  sudo systemctl daemon-reload
+#   sudo systemctl enable --now multiimageclient-ui
+#
+# The app skips auto-opening a browser under systemd (INVOCATION_ID check).
+[Unit]
+Description=MultiImageClient shared web UI
+After=network.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser/multiImageClient
+# settings.json (with UiAuthFilePath set) must sit in WorkingDirectory or
+# WorkingDirectory/MultiImageClient/. Use the published binary or dotnet run:
+ExecStart=/home/youruser/.dotnet/dotnet run --project MultiImageClient/MultiImageClient.csproj -c Release --no-build -- --ui
+Restart=on-failure
+RestartSec=5
+
+# Containment: the process needs no privileges beyond its own files.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# Allow writes ONLY where the app actually writes (adjust to your settings):
+ReadWritePaths=/home/youruser/multiImageClient
+# If ImageDownloadBaseFolder / LogFilePath live elsewhere, add them:
+# ReadWritePaths=/home/youruser/multiImageClient /path/to/saves /path/to/logs
+
+[Install]
+WantedBy=multi-user.target

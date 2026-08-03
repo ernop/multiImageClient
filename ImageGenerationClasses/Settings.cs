@@ -106,6 +106,16 @@ namespace MultiImageClient
         /// remain on disk; the database stores metadata, hashes, and paths.
         public bool EnableGenerationArchive { get; set; } = true;
 
+        /// Optional web-UI access control file for shared deployments. Blank
+        /// (the default) means the UI runs open, as before, for local use.
+        /// When set, the file must exist and parse; it holds
+        /// { "enabled": true, "secret": "...", "accounts": [{"username","password"}] }.
+        /// Login issues a long-lived HMAC cookie derived from the account's
+        /// password + the shared secret, so removing an account or changing
+        /// its password (or the secret) immediately invalidates the cookies
+        /// it produced. The server never writes this file.
+        public string UiAuthFilePath { get; set; } = "";
+
         /// unused yet we always do RIGHT
         public string AnnotationSide { get; set; } = "bottom";
 

@@ -1396,8 +1396,87 @@ body.image-viewer-open { overflow: hidden; }
   max-height: none;
 }
 
+/* ---------- shared-site people bar (username + person filters) ---------- */
+
+#people-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin: 10px 24px 0;
+  padding: 8px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 13px;
+}
+#username-control { display: flex; align-items: center; gap: 7px; font-weight: 700; color: var(--accent-dark); }
+#username-input {
+  font: inherit;
+  width: 160px;
+  padding: 4px 8px;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+}
+#username-input:placeholder-shown { border-color: var(--err); }
+#user-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#user-filters-label { font-weight: 700; color: var(--accent-dark); font-size: 12px; }
+.user-chip {
+  padding: 3px 11px;
+  font: 700 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--accent-dark);
+  background: #eef0fa;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.user-chip:hover { color: #fff; background: var(--accent); }
+.user-chip.selected { color: #fff; background: var(--accent); }
+.user-chip.self { border-width: 2px; }
+#logout {
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  cursor: pointer;
+}
+#logout:hover { color: #fff; background: var(--accent); }
+
+/* Creator name on each job card: same visual weight family as the cost
+   line — secondary through size, never through gray. */
+.job-user { font-weight: 800; color: var(--accent); }
+.job.user-filter-hidden { display: none; }
+
+/* ---------- day archive ---------- */
+
+#archive { margin-top: 26px; }
+#archive-title { margin: 0 0 8px; font-size: 15px; color: var(--accent-dark); }
+.archive-day { margin-bottom: 8px; }
+.archive-day-toggle {
+  width: 100%;
+  text-align: left;
+  padding: 8px 14px;
+  font: 700 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.archive-day-toggle:hover, .archive-day-toggle.open { color: #fff; background: var(--accent); }
+.archive-day-toggle:disabled { opacity: 0.6; cursor: progress; }
+.archive-day-jobs { margin-top: 6px; }
+.archive-day-jobs[hidden] { display: none; }
+.archive-day-error { margin: 4px 0; color: var(--err); font-size: 13px; font-weight: 700; }
+
 @media (max-width: 700px) {
   .tagline { display: none; }
+  #people-bar { margin: 8px 10px 0; }
   #logs-columns, .log-row {
     grid-template-columns: 92px minmax(90px, 125px) 34px minmax(0, 1fr);
     column-gap: 7px;
@@ -1411,3 +1490,4 @@ body.image-viewer-open { overflow: hidden; }
   #image-viewer-window { min-width: 300px; min-height: 260px; }
   #image-viewer-prompt { max-height: 64px; }
 }
+

@@ -34,6 +34,10 @@ namespace MultiImageClient
     {
         public string Id { get; init; } = Guid.NewGuid().ToString("N")[..12];
         public required string Prompt { get; init; }
+        /// Display username the job was created under (shared-site
+        /// attribution; deliberately not an access-control concept). Empty on
+        /// jobs persisted before usernames existed.
+        public string CreatedBy { get; init; } = "";
         public IReadOnlyList<string> InputImagePaths { get; init; } = Array.Empty<string>();
         public int InputImageWidth { get; init; }
         public int InputImageHeight { get; init; }
@@ -280,6 +284,7 @@ namespace MultiImageClient
                 {
                     Id = job.Id,
                     Prompt = job.Prompt,
+                    CreatedBy = job.CreatedBy,
                     InputImagePath = job.InputImagePath,
                     InputImagePaths = job.InputImagePaths.ToList(),
                     InputImageWidth = job.InputImageWidth,
@@ -408,6 +413,7 @@ namespace MultiImageClient
                     {
                         Id = metadata.Id,
                         Prompt = metadata.Prompt,
+                        CreatedBy = metadata.CreatedBy ?? "",
                         InputImagePaths = ResolvePersistedInputPaths(metadata),
                         InputImageWidth = metadata.InputImageWidth,
                         InputImageHeight = metadata.InputImageHeight,
@@ -487,6 +493,7 @@ namespace MultiImageClient
         {
             public string Id { get; set; } = "";
             public string Prompt { get; set; } = "";
+            public string CreatedBy { get; set; } = "";
             public string InputImagePath { get; set; } = "";
             public List<string> InputImagePaths { get; set; } = new();
             public int InputImageWidth { get; set; }
@@ -523,9 +530,17 @@ namespace MultiImageClient
         private readonly object _envelopeLock = new();
         private readonly List<string> _envelopes = new();
 
+        // Jobs whose card + events ride the live envelope feed. Jobs restored
+        // from earlier days stay out of the feed (a multi-day history would
+        // otherwise replay through every page load) and are served through
+        // the /api/archive endpoints instead.
+        private readonly HashSet<string> _liveFeedJobIds = new();
+
         public UiJobRegistry(Settings settings)
         {
             _historyRoot = Path.Combine(settings.ImageDownloadBaseFolder, "UiHistory");
+            var today = DateTime.Now.Date;
+            var archivedCount = 0;
             foreach (var job in UiJobStorage.LoadAll(_historyRoot).OrderBy(j => j.CreatedAt))
             {
                 if (job.IsDone)
@@ -534,12 +549,20 @@ namespace MultiImageClient
                 }
                 _jobs[job.Id] = job;
                 _ordered.Add(job);
-                AppendJobKnown(job);
-                job.AttachEmitCallback(AppendEventEnvelope);
+                if (job.CreatedAt.Date == today)
+                {
+                    _liveFeedJobIds.Add(job.Id);
+                    AppendJobKnown(job);
+                    job.AttachEmitCallback(AppendEventEnvelope);
+                }
+                else
+                {
+                    archivedCount++;
+                }
             }
             if (_ordered.Count > 0)
             {
-                Logger.Log($"UI history: restored {_ordered.Count} job(s) from disk.");
+                Logger.Log($"UI history: restored {_ordered.Count} job(s) from disk ({archivedCount} in the day archive).");
             }
         }
 
@@ -549,6 +572,7 @@ namespace MultiImageClient
             storage.Initialize(job);
             _jobs[job.Id] = job;
             lock (_orderLock) _ordered.Add(job);
+            lock (_envelopeLock) _liveFeedJobIds.Add(job.Id);
             AppendJobKnown(job);
             job.AttachEmitCallback(AppendEventEnvelope);
         }
@@ -561,18 +585,26 @@ namespace MultiImageClient
             lock (_orderLock) return _ordered.ToList();
         }
 
-        private void AppendJobKnown(UiJob job)
+        /// Card metadata for the frontend, shared by the live job-known
+        /// envelope and the archive payloads so both render identically.
+        public static string SerializeJobMetadata(UiJob job)
         {
-            var metadata = JsonSerializer.Serialize(new
+            return JsonSerializer.Serialize(new
             {
                 id = job.Id,
                 prompt = job.Prompt,
+                user = job.CreatedBy,
                 gens = job.GeneratorKeys,
                 hasImage = job.HasInputImage,
                 inputCount = job.InputImageCount,
                 createdAt = job.CreatedAt.ToString("HH:mm:ss"),
                 createdAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
             });
+        }
+
+        private void AppendJobKnown(UiJob job)
+        {
+            var metadata = SerializeJobMetadata(job);
             lock (_envelopeLock)
             {
                 _envelopes.Add($"{{\"jobId\":\"{job.Id}\",\"kind\":\"job-known\",\"job\":{metadata}}}");
@@ -599,6 +631,43 @@ namespace MultiImageClient
                 var batch = _envelopes.GetRange(start, _envelopes.Count - start);
                 return (batch, _envelopes.Count);
             }
+        }
+
+        private bool IsInLiveFeed(string jobId)
+        {
+            lock (_envelopeLock) return _liveFeedJobIds.Contains(jobId);
+        }
+
+        /// Archived days (jobs not in the live feed), newest day first.
+        public List<(string Day, int Count)> ListArchivedDays()
+        {
+            return ListChronological()
+                .Where(j => !IsInLiveFeed(j.Id))
+                .GroupBy(j => j.CreatedAt.Date)
+                .OrderByDescending(g => g.Key)
+                .Select(g => (g.Key.ToString("yyyy-MM-dd"), g.Count()))
+                .ToList();
+        }
+
+        /// One archived day's jobs, chronological. Day format yyyy-MM-dd.
+        public List<UiJob> ListArchivedDay(DateTime day)
+        {
+            return ListChronological()
+                .Where(j => !IsInLiveFeed(j.Id) && j.CreatedAt.Date == day.Date)
+                .OrderBy(j => j.CreatedAt)
+                .ToList();
+        }
+
+        /// Every distinct creator username across all history (live + archive)
+        /// with job counts, most prolific first. Empty usernames (jobs from
+        /// before attribution existed) are reported under "".
+        public List<(string User, int Count)> ListUsers()
+        {
+            return ListChronological()
+                .GroupBy(j => j.CreatedBy ?? "")
+                .OrderByDescending(g => g.Count())
+                .Select(g => (g.Key, g.Count()))
+                .ToList();
         }
     }
 

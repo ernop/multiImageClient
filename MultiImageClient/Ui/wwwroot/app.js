@@ -1,5 +1,14 @@
 "use strict";
 
+// ---------- reverse-proxy-safe URLs ----------
+
+// The shared-site deployment serves the app behind a secret nginx path
+// prefix, so nothing may reference the origin root. Every API URL — including
+// server-generated ones persisted inside events as "/api/..." — resolves
+// through this helper against the page's own directory.
+const appBase = location.pathname.replace(/[^/]*$/, "");
+const apiUrl = (path) => appBase + String(path).replace(/^\//, "");
+
 // ---------- state ----------
 
 // Ordered composer attachments. gpt-image-2 /edits receives every entry;
@@ -19,6 +28,19 @@ const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
 // the key bump retires stored copies of the old default so every browser
 // re-prefills from the current server default.
 const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
+// Shared-site identity + filters. The creator name is browser-local state
+// (localStorage) sent with every job; auth (when the server gate is on)
+// seeds it with the login name. Filter selection persists per browser.
+let authInfo = { enabled: false, user: "" };
+const UsernameKey = "mic_username";
+const UserFilterKey = "mic_user_filter_v1";
+let knownUsers = new Map();  // user -> job count (live-accumulated)
+let selectedUserFilter = new Set();  // empty = show everyone
+try {
+  for (const u of JSON.parse(localStorage.getItem(UserFilterKey) || "[]")) {
+    selectedUserFilter.add(String(u));
+  }
+} catch { /* corrupted filter state just resets to everyone */ }
 let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
 let imageViewerRenderVersion = 0;
 let imageViewerHelpOpen = false;
@@ -168,7 +190,8 @@ async function pollLogs() {
     logsPollTimer = null;
   }
   try {
-    const resp = await fetch(`/api/logs/poll?after=${lastLogSequence}`);
+    const resp = await fetch(apiUrl(`api/logs/poll?after=${lastLogSequence}`));
+    if (resp.status === 401) { location.reload(); return; }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const body = await resp.json();
     for (const entry of body.entries) appendLogLine(entry);
@@ -209,7 +232,8 @@ document.addEventListener("keydown", (e) => {
 // ---------- config / generator toggles ----------
 
 async function loadConfig() {
-  const resp = await fetch("/api/config");
+  const resp = await fetch(apiUrl("api/config"));
+  if (resp.status === 401) { location.reload(); return; }
   if (!resp.ok) {
     // A 502 from the reverse proxy (server not running) has an empty body, so
     // resp.json() would throw the opaque "unexpected end of data" -- report the
@@ -225,6 +249,8 @@ async function loadConfig() {
   if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
     maxInputImages = cfg.maxInputImages;
   }
+  authInfo = cfg.auth || authInfo;
+  applyAuthState();
   initGpt2Guidance();
 
   const fillSelect = (selectEl, entries) => {
@@ -523,7 +549,7 @@ function applyNightMode() {
   nightToggle.classList.toggle("on", uiSettings.nightHideEnabled);
   nightToggle.setAttribute("aria-pressed", String(uiSettings.nightHideEnabled));
   nightHideEnabledBox.checked = uiSettings.nightHideEnabled;
-  for (const card of jobsSection.querySelectorAll(".job")) applyNightModeToCard(card);
+  for (const card of document.querySelectorAll("#jobs .job, #archive .job")) applyNightModeToCard(card);
   // If the viewer is on an image from a now-hidden job, re-rendering makes it
   // report "no longer available" instead of displaying hidden content.
   if (!imageViewer.hidden) renderImageViewer();
@@ -753,7 +779,7 @@ function closeInputLibrary() {
 }
 
 async function attachLibraryImage(item) {
-  const resp = await fetch(item.url);
+  const resp = await fetch(apiUrl(item.url));
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const blob = await resp.blob();
   if (!blob.type.startsWith("image/")) {
@@ -776,7 +802,7 @@ async function openInputLibrary() {
 
   let images;
   try {
-    const resp = await fetch("/api/input-images");
+    const resp = await fetch(apiUrl("api/input-images"));
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     images = (await resp.json()).images;
   } catch (err) {
@@ -800,7 +826,7 @@ async function openInputLibrary() {
     const when = item.createdAtUnixMs ? new Date(item.createdAtUnixMs).toLocaleString() : "";
     button.title = `${item.width}×${item.height} · first used ${when}\n${item.prompt}`;
     const img = document.createElement("img");
-    img.src = `${item.url}?thumb=1`;
+    img.src = apiUrl(`${item.url}?thumb=1`);
     img.loading = "lazy";
     img.alt = "Previously uploaded input image";
     button.appendChild(img);
@@ -1126,6 +1152,118 @@ document.addEventListener("pointerdown", (event) => {
 });
 loadInspirationState();
 
+// ---------- shared-site identity: username + person filters ----------
+
+// Every job is created under a display name (attribution, not privacy —
+// everyone sees everyone's work by design). The name lives in this browser's
+// localStorage; when the server's access gate is on, the login name seeds it.
+const usernameInput = el("username-input");
+const logoutBtn = el("logout");
+usernameInput.value = localStorage.getItem(UsernameKey) || "";
+
+function currentUsername() {
+  return usernameInput.value.trim().replace(/\s+/g, " ");
+}
+
+usernameInput.addEventListener("change", () => {
+  localStorage.setItem(UsernameKey, currentUsername());
+});
+
+function applyAuthState() {
+  logoutBtn.hidden = !authInfo.enabled;
+  if (authInfo.enabled && authInfo.user && !currentUsername()) {
+    usernameInput.value = authInfo.user;
+    localStorage.setItem(UsernameKey, authInfo.user);
+  }
+}
+
+logoutBtn.addEventListener("click", async () => {
+  try {
+    await fetch(apiUrl("api/auth/logout"), { method: "POST" });
+  } finally {
+    location.reload();
+  }
+});
+
+// Person filter chips: "everyone" plus one chip per creator name seen in
+// history (seeded from /api/users, then live-accumulated from job-known
+// envelopes). Chips multi-select; an empty selection means show everyone.
+const userFiltersBar = el("user-filters");
+
+function userFilterAllows(user) {
+  return selectedUserFilter.size === 0 || selectedUserFilter.has(user || "");
+}
+
+function applyUserFilterToCard(card) {
+  card.classList.toggle("user-filter-hidden", !userFilterAllows(card.dataset.user || ""));
+}
+
+function applyUserFilterAll() {
+  for (const card of document.querySelectorAll("#jobs .job, #archive .job")) {
+    applyUserFilterToCard(card);
+  }
+  if (!imageViewer.hidden) renderImageViewer();
+}
+
+function persistUserFilter() {
+  localStorage.setItem(UserFilterKey, JSON.stringify([...selectedUserFilter]));
+}
+
+function renderUserChips() {
+  // Keep the static "everyone" chip; rebuild the per-person chips after it.
+  for (const chip of userFiltersBar.querySelectorAll(".user-chip:not([data-user='*'])")) {
+    chip.remove();
+  }
+  const everyone = userFiltersBar.querySelector("[data-user='*']");
+  everyone.classList.toggle("selected", selectedUserFilter.size === 0);
+  const names = [...knownUsers.keys()].sort((a, b) =>
+    (a || "~").localeCompare(b || "~", undefined, { sensitivity: "base" }));
+  for (const name of names) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "user-chip";
+    chip.dataset.user = name;
+    chip.textContent = name === "" ? "(unnamed)" : name;
+    if (name !== "" && name === currentUsername()) chip.classList.add("self");
+    chip.title = `${knownUsers.get(name)} job${knownUsers.get(name) === 1 ? "" : "s"}`;
+    chip.classList.toggle("selected", selectedUserFilter.has(name));
+    chip.addEventListener("click", () => {
+      if (selectedUserFilter.has(name)) selectedUserFilter.delete(name);
+      else selectedUserFilter.add(name);
+      persistUserFilter();
+      renderUserChips();
+      applyUserFilterAll();
+    });
+    userFiltersBar.appendChild(chip);
+  }
+}
+
+userFiltersBar.querySelector("[data-user='*']").addEventListener("click", () => {
+  selectedUserFilter.clear();
+  persistUserFilter();
+  renderUserChips();
+  applyUserFilterAll();
+});
+
+// Ensure a creator seen in the live feed has a chip. Counts come from
+// /api/users (tooltip only); envelope replays must not inflate them.
+function registerUser(name) {
+  const key = name || "";
+  if (knownUsers.has(key)) return;
+  knownUsers.set(key, 1);
+  renderUserChips();
+}
+
+async function loadKnownUsers() {
+  try {
+    const resp = await fetch(apiUrl("api/users"));
+    if (!resp.ok) return;
+    const body = await resp.json();
+    knownUsers = new Map(body.users.map((u) => [u.user || "", u.count]));
+    renderUserChips();
+  } catch { /* the filter bar fills in from live events regardless */ }
+}
+
 // ---------- submit ----------
 
 function checkedGeneratorKeys() {
@@ -1138,9 +1276,16 @@ async function submit() {
   if (!prompt) { sendError.textContent = "prompt is empty"; return; }
   const gens = checkedGeneratorKeys();
   if (gens.length === 0) { sendError.textContent = "pick at least one generator"; return; }
+  const user = currentUsername();
+  if (!user) {
+    sendError.textContent = "choose a username first (top of the page) — everything here is created under a name";
+    usernameInput.focus();
+    return;
+  }
 
   const form = new FormData();
   form.append("prompt", prompt);
+  form.append("user", user);
   form.append("generators", gens.join(","));
   form.append("shape", el("opt-shape").value);
   form.append("detail", el("opt-detail").value);
@@ -1158,10 +1303,10 @@ async function submit() {
 
   sendBtn.disabled = true;
   try {
-    const resp = await fetch("/api/jobs", { method: "POST", body: form });
+    const resp = await fetch(apiUrl("api/jobs"), { method: "POST", body: form });
     const body = await resp.json();
     if (!resp.ok) { sendError.textContent = body.error || `HTTP ${resp.status}`; return; }
-    addJobCard(body.id, prompt, gens, inputImageItems.length > 0, null, Date.now(), inputImageItems.length);
+    addJobCard(body.id, prompt, gens, inputImageItems.length > 0, null, Date.now(), inputImageItems.length, { user });
   } catch (err) {
     sendError.textContent = String(err);
   } finally {
@@ -1205,7 +1350,7 @@ async function fixSpelling() {
   try {
     const form = new FormData();
     form.append("prompt", original);
-    const resp = await fetch("/api/prompt/spellfix", { method: "POST", body: form });
+    const resp = await fetch(apiUrl("api/prompt/spellfix"), { method: "POST", body: form });
     const body = await resp.json();
     if (!resp.ok) {
       sendError.textContent = body.error || `HTTP ${resp.status}`;
@@ -1374,6 +1519,7 @@ el("video-form").addEventListener("submit", async (e) => {
   form.append("sourceGenerator", videoSource.generator);
   form.append("sourceIndex", String(videoSource.index));
   form.append("prompt", prompt);
+  form.append("user", currentUsername());
   form.append("mode", el("video-mode").value);
   form.append("duration", el("video-duration").value);
   form.append("resolution", el("video-resolution").value);
@@ -1382,14 +1528,14 @@ el("video-form").addEventListener("submit", async (e) => {
   submitButton.disabled = true;
   error.textContent = "";
   try {
-    const resp = await fetch("/api/video-jobs", { method: "POST", body: form });
+    const resp = await fetch(apiUrl("api/video-jobs"), { method: "POST", body: form });
     const body = await resp.json();
     if (!resp.ok) {
       error.textContent = body.error || `HTTP ${resp.status}`;
       return;
     }
     videoDialog.close();
-    addJobCard(body.id, prompt, ["grok-web-video"], true, null, Date.now());
+    addJobCard(body.id, prompt, ["grok-web-video"], true, null, Date.now(), 1, { user: currentUsername() });
   } catch (err) {
     error.textContent = String(err);
   } finally {
@@ -1599,9 +1745,15 @@ window.addEventListener("resize", () => {
 
 function getImageViewerPrompts() {
   const prompts = [];
-  for (const card of jobsSection.querySelectorAll(".job")) {
-    // Night-hidden jobs are invisible to the viewer's keyboard walk too.
+  // Live jobs first (newest at top), then any expanded archive days, so the
+  // keyboard walk covers everything currently on screen in page order.
+  for (const card of document.querySelectorAll("#jobs .job, #archive .job")) {
+    // Night-hidden and person-filtered jobs are invisible to the viewer's
+    // keyboard walk too, as are jobs inside a collapsed archive day.
     if (card.classList.contains("night-hidden")) continue;
+    if (card.classList.contains("user-filter-hidden")) continue;
+    const dayContainer = card.closest(".archive-day-jobs");
+    if (dayContainer && dayContainer.hidden) continue;
     const items = [...card.querySelectorAll('a[data-viewer-image="true"]')].map((link) => ({
       jobId: card.id.substring("job-".length),
       generator: link.dataset.generator,
@@ -1749,7 +1901,7 @@ function applyImageViewerCompare(current) {
   imageViewerInputLabel.hidden = !active;
   imageViewerOutputLabel.hidden = !active;
   if (active) {
-    const inputUrl = `/api/jobs/${encodeURIComponent(current.item.jobId)}/images/input/0`;
+    const inputUrl = apiUrl(`api/jobs/${encodeURIComponent(current.item.jobId)}/images/input/0`);
     if (!imageViewerInputImage.src.endsWith(inputUrl)) imageViewerInputImage.src = inputUrl;
   } else {
     imageViewerInputImage.removeAttribute("src");
@@ -2095,7 +2247,9 @@ function closeImageViewer() {
   }
 }
 
-jobsSection.addEventListener("click", (event) => {
+// Document-level so result images inside archived day sections open the
+// viewer exactly like live ones.
+document.addEventListener("click", (event) => {
   const link = event.target.closest('a[data-viewer-image="true"]');
   if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
@@ -2263,19 +2417,24 @@ function updateCostTotals() {
   const perGen = new Map(); // gen key -> { cost, images }
   let grand = 0;
   let grandImages = 0;
-  for (const card of jobsSection.querySelectorAll(".job")) {
+  // Archived cards get their per-job cost label too, but only live-feed
+  // jobs count toward the session spend summary.
+  for (const card of document.querySelectorAll("#jobs .job, #archive .job")) {
+    const inLiveFeed = card.parentElement === jobsSection;
     let jobTotal = 0;
     for (const cell of card.querySelectorAll(".cell")) {
       const images = Number(cell.dataset.imgCount || 0);
       if (images === 0) continue;
       const cost = Number(cell.dataset.cost || 0);
       jobTotal += cost;
-      grand += cost;
-      grandImages += images;
-      const agg = perGen.get(cell.dataset.gen) || { cost: 0, images: 0 };
-      agg.cost += cost;
-      agg.images += images;
-      perGen.set(cell.dataset.gen, agg);
+      if (inLiveFeed) {
+        grand += cost;
+        grandImages += images;
+        const agg = perGen.get(cell.dataset.gen) || { cost: 0, images: 0 };
+        agg.cost += cost;
+        agg.images += images;
+        perGen.set(cell.dataset.gen, agg);
+      }
     }
     card.querySelector(".job-cost").textContent = jobTotal > 0 ? `est. ${formatCost(jobTotal)}` : "";
   }
@@ -2335,7 +2494,7 @@ async function setActiveFromJob(id, card) {
   if (inputCount > 0) {
     const blobs = [];
     for (let i = 0; i < inputCount; i++) {
-      const resp = await fetch(`/api/jobs/${encodeURIComponent(id)}/images/input/${i}`);
+      const resp = await fetch(apiUrl(`api/jobs/${encodeURIComponent(id)}/images/input/${i}`));
       if (!resp.ok) {
         if (i === 0) throw new Error(`input image fetch returned HTTP ${resp.status}`);
         break;
@@ -2374,7 +2533,10 @@ async function setActiveFromJob(id, card) {
   promptBox.focus({ preventScroll: true });
 }
 
-function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inputCount) {
+// opts: { user, container }. user is the creator display name (shared-site
+// attribution + filter target); container is where the card renders — the
+// live feed by default, an archive day section otherwise.
+function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inputCount, opts = {}) {
   const existing = el(`job-${id}`);
   if (existing) return existing;
 
@@ -2387,6 +2549,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inpu
   card.id = `job-${id}`;
   card.dataset.state = "queued";
   card.dataset.createdAt = String(createdAtUnixMs || Date.now());
+  card.dataset.user = opts.user || "";
   // Read by the image viewer's input-comparison mode (`c`).
   card.dataset.hasInputImage = String(!!hasImage || resolvedInputCount > 0);
   card.dataset.inputCount = String(resolvedInputCount);
@@ -2397,7 +2560,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inpu
     // Served through the job store; completed jobs also survive server restarts.
     // Primary (index 0) is the card thumb; a badge shows when more were attached.
     const thumbLink = document.createElement("a");
-    thumbLink.href = `/api/jobs/${id}/images/input/0`;
+    thumbLink.href = apiUrl(`api/jobs/${id}/images/input/0`);
     thumbLink.target = "_blank";
     const thumb = document.createElement("img");
     thumb.className = "job-input-thumb";
@@ -2457,11 +2620,13 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inpu
   const meta = document.createElement("div");
   meta.className = "job-meta";
   meta.innerHTML = `
+    <span class="job-user"></span>
     <span class="job-created"></span>
     <span class="job-progress">0/${gens.length} finished</span>
     <span class="job-elapsed">elapsed 0s</span>
     <span class="job-cost"></span>
     <span class="job-connection">connecting…</span>`;
+  meta.querySelector(".job-user").textContent = opts.user || "";
   meta.querySelector(".job-created").textContent = createdAt || new Date().toLocaleTimeString();
   // Video jobs aren't composer setups, so they get no set-active button.
   if (!gens.includes("grok-web-video")) {
@@ -2518,7 +2683,9 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inpu
   card.appendChild(cells);
 
   applyNightModeToCard(card);
-  jobsSection.prepend(card);
+  applyUserFilterToCard(card);
+  registerUser(opts.user || "");
+  (opts.container || jobsSection).prepend(card);
   return card;
 }
 
@@ -2553,7 +2720,8 @@ async function pollJobEvents() {
     jobsPollTimer = null;
   }
   try {
-    const resp = await fetch(`/api/events/poll?cursor=${jobsPollCursor}`);
+    const resp = await fetch(apiUrl(`api/events/poll?cursor=${jobsPollCursor}`));
+    if (resp.status === 401) { location.reload(); return; }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const body = await resp.json();
     // A cursor lower than ours means the server restarted and resynced us
@@ -2562,7 +2730,7 @@ async function pollJobEvents() {
     for (const envelope of body.envelopes) {
       if (envelope.kind === "job-known") {
         const j = envelope.job;
-        addJobCard(j.id, j.prompt, j.gens, j.hasImage, j.createdAt, j.createdAtUnixMs, j.inputCount);
+        addJobCard(j.id, j.prompt, j.gens, j.hasImage, j.createdAt, j.createdAtUnixMs, j.inputCount, { user: j.user });
         continue;
       }
       const card = el(`job-${envelope.jobId}`);
@@ -2658,8 +2826,8 @@ function applyJobEvent(id, card, evt) {
       a.appendChild(img);
       images.appendChild(a);
     }
-    img.parentElement.href = `${evt.url}?v=${evt.partialIndex}`;
-    img.src = `${evt.url}?v=${evt.partialIndex}`;
+    img.parentElement.href = apiUrl(`${evt.url}?v=${evt.partialIndex}`);
+    img.src = apiUrl(`${evt.url}?v=${evt.partialIndex}`);
   } else if (evt.type === "gen-result") {
     const cell = card.querySelector(`.cell[data-gen="${evt.gen}"]`);
     if (!cell) return;
@@ -2689,7 +2857,10 @@ function applyJobEvent(id, card, evt) {
       cell.dataset.imgCount = String(evt.images.length);
       cell.querySelector(".cell-cost").textContent = formatCost(evt.cost);
       status.textContent = "";
-      for (const [imageIndex, url] of evt.images.entries()) {
+      for (const [imageIndex, rawUrl] of evt.images.entries()) {
+        // Event URLs are persisted server-side as "/api/..."; resolve them
+        // against the page's base so they work behind the proxy prefix.
+        const url = apiUrl(rawUrl);
         if (evt.mediaType && evt.mediaType.startsWith("video/")) {
           const result = document.createElement("div");
           result.className = "media-result";
@@ -2707,7 +2878,7 @@ function applyJobEvent(id, card, evt) {
           }
           redo.addEventListener("click", () => {
             const priorPrompt = card.querySelector(".job-prompt").textContent;
-            const sourceUrl = `/api/jobs/${encodeURIComponent(id)}/images/input/0`;
+            const sourceUrl = apiUrl(`api/jobs/${encodeURIComponent(id)}/images/input/0`);
             openVideoDialog(id, "input", 0, sourceUrl, priorPrompt, {
               mode: evt.videoMode,
               durationSeconds: evt.videoDurationSeconds,
@@ -2799,7 +2970,7 @@ function applyJobEvent(id, card, evt) {
       card.appendChild(link);
     }
     const a = link.querySelector("a");
-    a.href = evt.url;
+    a.href = apiUrl(evt.url);
     a.textContent = "combined contact sheet";
     // The on-disk path is tooltip-only; the clickable link is what matters.
     a.title = `saved: ${evt.path}`;
@@ -2833,14 +3004,102 @@ setInterval(() => {
   }
 }, 1000);
 
+// ---------- day archive ----------
+
+// The live feed only carries today's jobs; everything older lives in the
+// archive as a list of days. Expanding a day fetches its complete jobs +
+// event history once and renders them through the exact same card pipeline
+// as live jobs, so copy-prompt, set-active, the viewer, video follow-ups,
+// and the person filters all work identically on archived work.
+const archiveSection = el("archive");
+const archiveDaysEl = el("archive-days");
+
+async function loadArchiveDays() {
+  let days;
+  try {
+    const resp = await fetch(apiUrl("api/archive/days"));
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    days = (await resp.json()).days;
+  } catch (err) {
+    // Non-fatal: the live feed still works; say so instead of hiding it.
+    archiveSection.hidden = false;
+    archiveDaysEl.textContent = `could not list archived days: ${err}`;
+    return;
+  }
+  if (!days.length) return;
+  archiveSection.hidden = false;
+  archiveDaysEl.replaceChildren(...days.map(buildArchiveDayRow));
+}
+
+function relativeDayName(dayIso) {
+  const toIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  return dayIso === toIso(yesterday) ? "yesterday" : "";
+}
+
+function buildArchiveDayRow(d) {
+  const wrap = document.createElement("div");
+  wrap.className = "archive-day";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "archive-day-toggle";
+  const relative = relativeDayName(d.day);
+  btn.textContent = `${relative ? relative + " — " : ""}${d.label} · ${d.count} job${d.count === 1 ? "" : "s"}`;
+  const container = document.createElement("div");
+  container.className = "archive-day-jobs";
+  container.hidden = true;
+  btn.addEventListener("click", async () => {
+    if (!container.dataset.loaded) {
+      btn.disabled = true;
+      try {
+        await loadArchiveDay(d.day, container);
+        container.dataset.loaded = "true";
+      } catch (err) {
+        const msg = document.createElement("p");
+        msg.className = "archive-day-error";
+        msg.textContent = `could not load ${d.day}: ${err}`;
+        container.replaceChildren(msg);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+    container.hidden = !container.hidden;
+    btn.classList.toggle("open", !container.hidden);
+  });
+  wrap.append(btn, container);
+  return wrap;
+}
+
+async function loadArchiveDay(day, container) {
+  const resp = await fetch(apiUrl(`api/archive/days/${encodeURIComponent(day)}`));
+  if (resp.status === 401) { location.reload(); return; }
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const body = await resp.json();
+  for (const item of body.jobs) {
+    const j = item.job;
+    const card = addJobCard(
+      j.id, j.prompt, j.gens, j.hasImage, j.createdAt, j.createdAtUnixMs, j.inputCount,
+      { user: j.user, container });
+    for (const evt of item.events) {
+      applyJobEvent(j.id, card, evt);
+    }
+  }
+}
+
 // ---------- boot ----------
 
 // Every window is a view over durable server-side job history. The first
-// poll (cursor=0) hydrates it: jobs are announced chronologically (prepend
-// => newest on top) and each job's full event history replays, so finished
-// jobs render completely and running ones resume live.
+// poll (cursor=0) hydrates TODAY's jobs: they are announced chronologically
+// (prepend => newest on top) and each job's full event history replays, so
+// finished jobs render completely and running ones resume live. Older days
+// hydrate lazily through the archive section below the feed.
 loadConfig()
-  .then(pollJobEvents)
+  .then(() => {
+    pollJobEvents();
+    loadKnownUsers();
+    loadArchiveDays();
+  })
   .catch((err) => {
     sendError.textContent = `config load failed: ${err}`;
   });

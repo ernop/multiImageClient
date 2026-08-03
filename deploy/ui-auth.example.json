@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "secret": "GENERATE-A-LONG-RANDOM-STRING-AND-KEEP-IT-STABLE (rotating it logs everyone out)",
+  "accounts": [
+    { "username": "you", "password": "a-long-passphrase-you-hand-out" },
+    { "username": "friend1", "password": "another-long-passphrase" }
+  ]
+}
