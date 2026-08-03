@@ -1,5 +1,15 @@
 # SpellWell — drop-in textarea spellcheck for any web project
 
+> **This is a consumer copy (v1.0.0). Canonical home: `C:\proj\mcphee`**
+> (the library was renamed SpellWell → McPhee at v2.0.0; this copy predates
+> the rename and keeps the old global/class/file names until re-copied)
+> (git repo with CHANGELOG, DESIGN.md, demo page). To catch up to master,
+> re-copy that folder over this one and read the changelog diff. v1.1.0 added
+> rule profiles, undo-preserving fixes, an issues panel, and form gating;
+> v1.2.0 reworked space-run policy (sentence-separator double spaces are
+> legitimate, violations render as one joined rectangle) — all
+> backward-compatible with this copy's wiring.
+
 Dictionary-based (offline, free, instant) spell highlighting and one-click
 local fixes for plain `<textarea>`s. No build step, no framework, no server
 component: copy this folder into any project and serve it as static files.

@@ -410,18 +410,7 @@ function updatePromptLimitNotice() {
 
 promptBox.addEventListener("input", updatePromptLimitNotice);
 
-// ---------- settings modal (browser-local, localStorage only) ----------
-
-const settingsDialog = el("settings-dialog");
-el("settings-toggle").addEventListener("click", () => settingsDialog.showModal());
-el("settings-close").addEventListener("click", () => settingsDialog.close());
-// Clicking the backdrop closes; clicks inside the dialog land on child
-// elements, so target === dialog only for the backdrop area.
-settingsDialog.addEventListener("click", (event) => {
-  if (event.target === settingsDialog) settingsDialog.close();
-});
-
-// ---------- gpt-image-2 anti-murk guidance (lives in the settings modal) ----------
+// ---------- gpt-image-2 anti-murk guidance (lives in the settings panel) ----------
 
 // gpt-image-2 habitually drifts into dark, murky, underexposed output, so a
 // default-on toggle appends corrective guidance (editable below it) to every
@@ -467,6 +456,130 @@ el("gpt2-guidance-reset").addEventListener("click", () => {
   gpt2GuidanceTextBox.value = gpt2Guidance.defaultText;
   localStorage.removeItem(Gpt2GuidanceTextKey);
 });
+
+// ---------- settings & hide night mode ----------
+
+// UI preferences live client-side in one localStorage JSON object; the server
+// never sees them. "Hide night mode" hides entire job cards (prompt + result
+// images) whose prompt matches a user-editable wordlist. The wordlist itself
+// is only revealed by an explicit click inside the settings panel, and is
+// blanked again whenever the panel closes.
+const UiSettingsKey = "mic_ui_settings_v1";
+
+function loadUiSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(UiSettingsKey) || "{}");
+    return {
+      nightHideEnabled: saved.nightHideEnabled === true,
+      nightWords: typeof saved.nightWords === "string" ? saved.nightWords : "",
+    };
+  } catch {
+    return { nightHideEnabled: false, nightWords: "" };
+  }
+}
+
+const uiSettings = loadUiSettings();
+
+function saveUiSettings() {
+  localStorage.setItem(UiSettingsKey, JSON.stringify(uiSettings));
+}
+
+const settingsToggle = el("settings-toggle");
+const settingsPanel = el("settings-panel");
+const nightToggle = el("night-toggle");
+const nightHideEnabledBox = el("night-hide-enabled");
+const nightWordsEditor = el("night-words-editor");
+const nightWordsBox = el("night-words");
+
+let nightMatchers = null; // compiled lazily, invalidated when the list changes
+
+function getNightMatchers() {
+  if (nightMatchers) return nightMatchers;
+  nightMatchers = [];
+  for (const raw of uiSettings.nightWords.split("\n")) {
+    const term = raw.trim();
+    if (!term) continue;
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // A single word matches at a word start so "cat" also hides "cats"
+    // (better to over-hide than leak); multi-word phrases match anywhere.
+    nightMatchers.push(/^[\w']+$/.test(term)
+      ? new RegExp(`\\b${escaped}`, "i")
+      : new RegExp(escaped, "i"));
+  }
+  return nightMatchers;
+}
+
+function promptIsNightHidden(prompt) {
+  if (!uiSettings.nightHideEnabled || !prompt) return false;
+  return getNightMatchers().some((re) => re.test(prompt));
+}
+
+function applyNightModeToCard(card) {
+  const prompt = card.querySelector(".job-prompt").textContent;
+  card.classList.toggle("night-hidden", promptIsNightHidden(prompt));
+}
+
+function applyNightMode() {
+  nightToggle.classList.toggle("on", uiSettings.nightHideEnabled);
+  nightToggle.setAttribute("aria-pressed", String(uiSettings.nightHideEnabled));
+  nightHideEnabledBox.checked = uiSettings.nightHideEnabled;
+  for (const card of jobsSection.querySelectorAll(".job")) applyNightModeToCard(card);
+  // If the viewer is on an image from a now-hidden job, re-rendering makes it
+  // report "no longer available" instead of displaying hidden content.
+  if (!imageViewer.hidden) renderImageViewer();
+}
+
+function setNightHideEnabled(enabled) {
+  uiSettings.nightHideEnabled = enabled;
+  saveUiSettings();
+  applyNightMode();
+}
+
+nightToggle.addEventListener("click", () => setNightHideEnabled(!uiSettings.nightHideEnabled));
+nightHideEnabledBox.addEventListener("change", () => setNightHideEnabled(nightHideEnabledBox.checked));
+
+nightWordsBox.addEventListener("input", () => {
+  uiSettings.nightWords = nightWordsBox.value;
+  nightMatchers = null;
+  saveUiSettings();
+  applyNightMode();
+});
+
+function setSettingsOpen(open) {
+  settingsPanel.hidden = !open;
+  settingsToggle.setAttribute("aria-expanded", String(open));
+  settingsToggle.classList.toggle("open", open);
+  if (!open) {
+    // Reopening always requires the explicit "modify list" click again, and
+    // the closed panel keeps no readable copy of the list in the DOM.
+    nightWordsEditor.hidden = true;
+    nightWordsBox.value = "";
+  }
+}
+
+settingsToggle.addEventListener("click", () => setSettingsOpen(settingsPanel.hidden));
+el("settings-close").addEventListener("click", () => setSettingsOpen(false));
+el("night-words-toggle").addEventListener("click", () => {
+  nightWordsEditor.hidden = !nightWordsEditor.hidden;
+  if (!nightWordsEditor.hidden) {
+    nightWordsBox.value = uiSettings.nightWords;
+    nightWordsBox.focus();
+  } else {
+    nightWordsBox.value = "";
+  }
+});
+document.addEventListener("pointerdown", (event) => {
+  if (!settingsPanel.hidden &&
+      !settingsPanel.contains(event.target) &&
+      !settingsToggle.contains(event.target)) {
+    setSettingsOpen(false);
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !settingsPanel.hidden) setSettingsOpen(false);
+});
+
+applyNightMode();
 
 function setAllGenerators(mode) {
   for (const cb of gensRow.querySelectorAll("input:not(:disabled)")) {
@@ -671,6 +784,9 @@ async function openInputLibrary() {
     return;
   }
   if (inputLibraryPanel.hidden) return;
+  // Night mode also filters the past-input picker, whose tiles carry the
+  // original prompt as their tooltip.
+  images = images.filter((item) => !promptIsNightHidden(item.prompt));
   if (images.length === 0) {
     showMessage("No uploaded input images yet — paste or drop one to start the collection.");
     return;
@@ -1484,6 +1600,8 @@ window.addEventListener("resize", () => {
 function getImageViewerPrompts() {
   const prompts = [];
   for (const card of jobsSection.querySelectorAll(".job")) {
+    // Night-hidden jobs are invisible to the viewer's keyboard walk too.
+    if (card.classList.contains("night-hidden")) continue;
     const items = [...card.querySelectorAll('a[data-viewer-image="true"]')].map((link) => ({
       jobId: card.id.substring("job-".length),
       generator: link.dataset.generator,
@@ -2399,6 +2517,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inpu
   }
   card.appendChild(cells);
 
+  applyNightModeToCard(card);
   jobsSection.prepend(card);
   return card;
 }

@@ -4,16 +4,54 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260731-settings-modal">
-<link rel="stylesheet" href="spellwell/spellwell.css?v=20260731-settings-modal">
+<link rel="stylesheet" href="style.css?v=20260802-unified-settings">
+<link rel="stylesheet" href="spellwell/spellwell.css?v=20260802-unified-settings">
 </head>
 <body>
 <header>
   <h1>MultiImageClient</h1>
   <span class="tagline">paste image(s), write a prompt, fan out</span>
-  <button id="settings-toggle" type="button" title="Settings (stored in this browser only)">settings</button>
+  <button id="night-toggle" type="button" aria-pressed="false"
+    title="hide night mode — hide any job whose prompt contains a word from the hidden-word list (edit the list in settings)">&#9790;</button>
+  <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel" title="Settings (stored in this browser only)">settings</button>
   <button id="logs-toggle" type="button" aria-expanded="false" aria-controls="logs-panel">logs</button>
 </header>
+
+<div id="settings-panel" hidden aria-label="Settings">
+  <div class="settings-head">
+    <strong>Settings</strong>
+    <button id="settings-close" type="button" aria-label="Close settings">&times;</button>
+  </div>
+  <label class="settings-row">
+    <input id="night-hide-enabled" type="checkbox">
+    <span><strong>hide night mode</strong> — hide entire jobs (prompt and result images) from this page
+      whenever the prompt contains any word from the hidden-word list.
+      The &#9790; button in the header toggles this too.</span>
+  </label>
+  <div class="settings-words">
+    <button id="night-words-toggle" type="button">modify hidden-word list…</button>
+    <div id="night-words-editor" hidden>
+      <p>One word or phrase per line, case-insensitive. A single word also matches at word starts
+        ("cat" hides "cats"); a phrase matches anywhere in the prompt.
+        The list stays out of sight until you open this editor.</p>
+      <textarea id="night-words" rows="7" spellcheck="false" autocomplete="off"
+        aria-label="Hidden words, one per line"></textarea>
+    </div>
+  </div>
+  <div id="gpt2-guidance-row">
+    <label id="gpt2-guidance-toggle"
+      title="gpt-image-2 habitually drifts into dark, murky, underexposed output. While this is on, the text below is appended to the prompt sent to gpt-image-2 on every job (and only to gpt-image-2 — other generators get your prompt untouched).">
+      <input id="gpt2-guidance-enabled" type="checkbox" checked>
+      include special guidance to gpt-image-2 to not produce such dark murky images
+    </label>
+    <button id="gpt2-guidance-reset" type="button"
+      title="Restore the default guidance text">reset text</button>
+    <textarea id="gpt2-guidance-text" rows="4" spellcheck="false"
+      aria-label="Guidance text appended to every gpt-image-2 prompt"></textarea>
+  </div>
+  <p class="settings-note">Stored only in this browser (localStorage). Hidden jobs still exist on the
+    server and on disk; other browsers keep their own settings.</p>
+</div>
 
 <section id="logs-panel" hidden aria-label="Live application logs">
   <div id="logs-head">
@@ -182,27 +220,6 @@
   </div>
 </div>
 
-<dialog id="settings-dialog">
-  <div class="settings-dialog-head">
-    <h2>Settings</h2>
-    <button id="settings-close" type="button" aria-label="Close settings">&times;</button>
-  </div>
-  <div class="settings-dialog-body">
-    <div id="gpt2-guidance-row">
-      <label id="gpt2-guidance-toggle"
-        title="gpt-image-2 habitually drifts into dark, murky, underexposed output. While this is on, the text below is appended to the prompt sent to gpt-image-2 on every job (and only to gpt-image-2 — other generators get your prompt untouched).">
-        <input id="gpt2-guidance-enabled" type="checkbox" checked>
-        include special guidance to gpt-image-2 to not produce such dark murky images
-      </label>
-      <button id="gpt2-guidance-reset" type="button"
-        title="Restore the default guidance text">reset text</button>
-      <textarea id="gpt2-guidance-text" rows="4" spellcheck="false"
-        aria-label="Guidance text appended to every gpt-image-2 prompt"></textarea>
-    </div>
-    <p class="settings-note">Settings are saved in this browser only (localStorage).</p>
-  </div>
-</dialog>
-
 <dialog id="video-dialog">
   <form method="dialog" id="video-form">
     <div class="video-dialog-head">
@@ -254,8 +271,8 @@
   </form>
 </dialog>
 
-<script src="spellwell/vendor/typo/typo.min.js?v=20260731-settings-modal"></script>
-<script src="spellwell/spellwell.js?v=20260731-settings-modal"></script>
-<script src="app.js?v=20260731-settings-modal"></script>
+<script src="spellwell/vendor/typo/typo.min.js?v=20260802-unified-settings"></script>
+<script src="spellwell/spellwell.js?v=20260802-unified-settings"></script>
+<script src="app.js?v=20260802-unified-settings"></script>
 </body>
 </html>
