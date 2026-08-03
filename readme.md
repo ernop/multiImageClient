@@ -46,8 +46,7 @@ Describers (for RoundTripWorkflow, see `MultiImageClient/Describers/`):
 
 ## Requirements
 
-- **.NET 9 SDK.** Projects target `net9.0` (and `net9.0-windows` for the main app, because it uses Windows Forms for compositing). Check with `dotnet --list-sdks`; install with `winget install Microsoft.DotNet.SDK.9` if missing.
-- Windows (the main project is `net9.0-windows` + `UseWindowsForms`). The three API-client projects are plain `net9.0` and portable, but `MultiImageClient.csproj` itself is Windows-only.
+- **.NET 9 SDK.** All projects target plain `net9.0` and are cross-platform (compositing uses ImageSharp/Magick.NET). Check with `dotnet --list-sdks`; install with `winget install Microsoft.DotNet.SDK.9` if missing (on Windows).
 - **Visual Studio 2022** (17.9+) works, or just `dotnet` CLI.
 - For the Imagen 4 path: a Google Cloud project with Vertex AI enabled and a service-account JSON key.
 - For the local InternVL describer: Python 3.10+, PyTorch with CUDA, `transformers`, `flask`, `pillow`, `torchvision`.
@@ -99,7 +98,7 @@ Cosmetic flags: `SaveJsonLog`, `EnableLogging`, `AnnotationSide`.
 ## Project layout
 
 ```
-MultiImageClient/            main console app (net9.0-windows)
+MultiImageClient/            main console app (net9.0, cross-platform)
   Program.cs                 entry point
   Workflows/                 BatchWorkflow, RoundTripWorkflow, GeneratorGroups
   ImageGenerators/           one file per provider (BFL, Ideogram, Recraft, GPT-Image-1/2, Gemini, Imagen 4)
