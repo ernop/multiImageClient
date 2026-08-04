@@ -162,11 +162,13 @@ namespace MultiImageClient
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
+                await RetireBrowserAfterFaultAsync("request timeout");
                 throw new GrokWebException(
                     $"Grok web browser request timed out after {_options.Timeout.TotalSeconds:0} seconds.");
             }
             catch (PlaywrightException ex)
             {
+                await RetireBrowserAfterFaultAsync("Playwright transport failure");
                 throw new GrokWebException($"Grok web browser transport failed: {ex.Message}");
             }
             finally
@@ -484,14 +486,16 @@ namespace MultiImageClient
                 body = "";
                 Logger.Log(
                     "Grok web browser: app-chat returned headers but left its streaming body open; "
-                    + "continuing with whatever partial body was already collected / media-post polling.");
+                    + "retiring the browser to cancel the abandoned body read, then continuing with media-post polling.");
+                await RetireBrowserAfterFaultAsync("streaming response body timeout");
             }
             catch (PlaywrightException ex)
             {
                 body = "";
                 Logger.Log(
                     $"Grok web browser: could not read the accepted app-chat stream ({ex.Message}); "
-                    + "continuing with media-post polling.");
+                    + "retiring the browser, then continuing with media-post polling.");
+                await RetireBrowserAfterFaultAsync("streaming response body failure");
             }
 
             return new GrokWebBrowserResponse
@@ -624,25 +628,54 @@ namespace MultiImageClient
             }
         }
 
+        private async Task RetireBrowserAfterFaultAsync(string reason)
+        {
+            Logger.Log($"Grok web browser: retiring Chromium after {reason}.");
+            await CloseBrowserCoreAsync();
+        }
+
         private async Task CloseBrowserCoreAsync()
         {
+            var page = _page;
+            var context = _context;
+            var browser = _browser;
+            var playwright = _playwright;
+
             _page = null;
-            if (_context != null)
+            _context = null;
+            _browser = null;
+            _playwright = null;
+
+            if (page != null)
             {
-                try { await _context.CloseAsync(); }
-                catch (Exception ex) { Logger.Log($"Grok web browser: context close: {ex.Message}"); }
-                _context = null;
+                await CloseWithTimeoutAsync(
+                    page.CloseAsync(new PageCloseOptions { RunBeforeUnload = false }),
+                    "page");
             }
-            if (_browser != null)
+            if (context != null)
             {
-                try { await _browser.CloseAsync(); }
-                catch (Exception ex) { Logger.Log($"Grok web browser: browser close: {ex.Message}"); }
-                _browser = null;
+                await CloseWithTimeoutAsync(context.CloseAsync(), "context");
             }
-            if (_playwright != null)
+            if (browser != null)
             {
-                _playwright.Dispose();
-                _playwright = null;
+                await CloseWithTimeoutAsync(browser.CloseAsync(), "browser");
+            }
+            playwright?.Dispose();
+        }
+
+        private static async Task CloseWithTimeoutAsync(Task closeTask, string component)
+        {
+            try
+            {
+                await closeTask.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (TimeoutException)
+            {
+                Logger.Log($"Grok web browser: {component} close exceeded 5 seconds; forcing driver disposal.");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Grok web browser: {component} close: {ex.Message}");
             }
         }
 
