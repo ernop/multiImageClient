@@ -190,8 +190,15 @@ install -d -o root -g root -m 0755 \
     /var/www/letsencrypt/.well-known/acme-challenge
 printf '%s' "$probe" \
     >"/var/www/letsencrypt/.well-known/acme-challenge/$probe"
-served_probe=$(curl -sS -H "Host: $host" \
-    "http://127.0.0.1/.well-known/acme-challenge/$probe")
+served_probe=
+for _ in $(seq 1 10); do
+    served_probe=$(curl -sS -H "Host: $host" \
+        "http://127.0.0.1/.well-known/acme-challenge/$probe" || true)
+    [[ $served_probe == "$probe" ]] && break
+    # nginx reload is graceful and briefly leaves retiring workers able to
+    # receive a request with the previous routing table.
+    sleep 1
+done
 rm -f "/var/www/letsencrypt/.well-known/acme-challenge/$probe"
 [[ $served_probe == "$probe" ]] || die "isolated ACME vhost probe failed"
 
