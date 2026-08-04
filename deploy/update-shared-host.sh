@@ -16,6 +16,34 @@ die() {
 
 [[ $EUID -eq 0 ]] || die "run with sudo"
 
+# Optional: disk usage for deploy + generated images (passwordless via the
+# agent helper). Does not install or restart anything.
+if [[ "${1:-}" == "disk-report" ]]; then
+    echo "=== filesystem ==="
+    df -h /
+    echo
+    echo "=== deploy (/opt/multiimageclient) ==="
+    du -sh /opt/multiimageclient
+    du -sh /opt/multiimageclient/.playwright 2>/dev/null || true
+    echo
+    echo "=== data (/var/lib/multiimageclient) ==="
+    du -sh /var/lib/multiimageclient
+    du -sh /var/lib/multiimageclient/* 2>/dev/null | sort -h
+    echo
+    if [[ -d /var/lib/multiimageclient/saves ]]; then
+        echo "=== saves top-level ==="
+        du -sh /var/lib/multiimageclient/saves/* 2>/dev/null | sort -h | tail -40
+        echo
+        if [[ -d /var/lib/multiimageclient/saves/UiHistory ]]; then
+            echo "=== UiHistory ==="
+            du -sh /var/lib/multiimageclient/saves/UiHistory
+            find /var/lib/multiimageclient/saves/UiHistory -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+                | wc -l | awk '{print "job folders: "$1}'
+        fi
+    fi
+    exit 0
+fi
+
 owner=${SUDO_USER:-tparkour}
 owner_home=$(getent passwd "$owner" | cut -d: -f6)
 [[ -n $owner_home && -d $owner_home ]] || die "cannot resolve deploying user's home"

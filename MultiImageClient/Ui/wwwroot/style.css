@@ -457,11 +457,37 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 #prompt:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
-/* Prompt-fixing actions share one line with the bulk generator buttons:
-   Enable all etc. left, spelling tools pushed to the far right. */
-#prompt-tools {
-  display: inline-flex;
+/* McPhee's detailed checks stay folded into the prompt area until requested.
+   The textarea overlay remains live while this panel is closed. */
+#mcphee-panel {
+  max-height: min(430px, 55vh);
+  padding: 10px 12px;
+  overflow: auto;
+  color: var(--ink);
+  background: #f8f9ff;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+}
+#mcphee-panel[hidden] { display: none; }
+#mcphee-panel .mcphee-panel { min-width: 430px; }
+/* Secondary McPhee text uses the site's semantic accent, never gray text. */
+#mcphee-panel .mcphee-panel-recheck,
+#mcphee-panel .mcphee-panel-ignore,
+#mcphee-panel .mcphee-panel-dictcount { color: var(--accent-dark); }
+
+/* Bulk generator actions and prompt-scoped actions share the row immediately
+   below the prompt, with each group adjacent to the side it acts from. */
+#compose-actions {
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+#prompt-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 7px;
   margin-left: auto;
 }
@@ -744,6 +770,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 #gpt2-guidance-text:disabled { opacity: 0.45; }
 
 #send-row { display: flex; align-items: center; gap: 12px; }
+#prompt-tools #mcphee-enabled-toggle,
+#prompt-tools #mcphee-panel-toggle,
 #prompt-tools #spellfix,
 #prompt-tools #spellfix-undo,
 #prompt-tools #spellfix-local {
@@ -757,9 +785,19 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   padding: 5px 12px;
   cursor: pointer;
 }
+#prompt-tools #mcphee-enabled-toggle:hover:not(:disabled),
+#prompt-tools #mcphee-panel-toggle:hover:not(:disabled),
 #prompt-tools #spellfix:hover:not(:disabled),
 #prompt-tools #spellfix-undo:hover,
 #prompt-tools #spellfix-local:hover:not(:disabled) { color: #fff; background: var(--accent); }
+#prompt-tools #mcphee-enabled-toggle[aria-pressed="true"],
+#prompt-tools #mcphee-panel-toggle[aria-expanded="true"] { color: #fff; background: var(--accent); }
+#prompt-tools #mcphee-enabled-toggle[aria-pressed="false"] {
+  color: var(--err);
+  border-color: var(--err);
+}
+#prompt-tools #mcphee-enabled-toggle:disabled,
+#prompt-tools #mcphee-panel-toggle:disabled,
 #prompt-tools #spellfix:disabled,
 #prompt-tools #spellfix-local:disabled { opacity: 0.5; cursor: default; }
 /* Local-fix change report: persistent (until dismissed), one change per line. */

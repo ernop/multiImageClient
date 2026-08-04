@@ -76,7 +76,7 @@ namespace MultiImageClient
 
             for (var ii = 0; ii < ImageCreationLimit * 2; ii++)
             {
-                var usingCountToInclude=Random.Shared.Next(1, countToInclude);
+                var usingCountToInclude = Random.Shared.Next(1, countToInclude);
                 var onlyFirstNChars = totalLengthCount / countToInclude;
                 var allthem = new List<string>();
                 for (var jj = 0; jj < usingCountToInclude; jj++)

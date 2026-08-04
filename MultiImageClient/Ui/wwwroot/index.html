@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
 <link rel="stylesheet" href="style.css?v=20260804-resident-ram">
-<link rel="stylesheet" href="spellwell/spellwell.css?v=20260803-shared-site">
+<link rel="stylesheet" href="mcphee/mcphee.css?v=20260804-mcphee-toggle">
 </head>
 <body>
 <header>
@@ -129,21 +129,28 @@
         <div id="spellfix-report-lines"></div>
         <button id="spellfix-report-close" type="button" aria-label="Dismiss fix report">&times;</button>
       </div>
+      <div id="mcphee-panel" hidden></div>
 
-      <div id="gen-controls">
-        <button id="gens-enable-all" type="button">Enable all</button>
-        <button id="gens-disable-all" type="button">Disable all</button>
-        <button id="gens-toggle-all" type="button">Toggle all</button>
-        <button id="gens-enable-image-capable" type="button" class="image-only-action" hidden
-          title="Enable every available endpoint that accepts the attached image">Enable image-capable</button>
-        <button id="gens-disable-text-only" type="button" class="image-only-action" hidden
-          title="Disable endpoints that can't accept the attached image (they'd run from the prompt text only)">Disable text-only</button>
-        <span id="prompt-tools">
+      <div id="compose-actions">
+        <div id="gen-controls">
+          <button id="gens-enable-all" type="button">Enable all</button>
+          <button id="gens-disable-all" type="button">Disable all</button>
+          <button id="gens-toggle-all" type="button">Toggle all</button>
+          <button id="gens-enable-image-capable" type="button" class="image-only-action" hidden
+            title="Enable every available endpoint that accepts the attached image">Enable image-capable</button>
+          <button id="gens-disable-text-only" type="button" class="image-only-action" hidden
+            title="Disable endpoints that can't accept the attached image (they'd run from the prompt text only)">Disable text-only</button>
+        </div>
+        <div id="prompt-tools">
+          <button id="mcphee-enabled-toggle" type="button" disabled aria-pressed="true"
+            title="Turn McPhee's local writing highlights and checks on or off">McPhee: on</button>
+          <button id="mcphee-panel-toggle" type="button" disabled aria-expanded="false"
+            aria-controls="mcphee-panel" title="Open McPhee spelling and writing findings">McPhee details</button>
           <button id="spellfix-local" type="button" disabled
-            title="Dictionary-based local fix (offline, free): collapse double spaces and apply confident corrections to highlighted misspellings; ambiguous words stay highlighted">fix typos (local)</button>
+            title="Apply McPhee's high-confidence typo and accidental-space fixes locally; ambiguous words stay highlighted">auto-fix typos</button>
           <button id="spellfix" type="button" title="Fix spelling mistakes in the prompt (Claude, spelling only — no rephrasing; costs a fraction of a cent)">fix spelling (Claude)</button>
           <button id="spellfix-undo" type="button" hidden title="Restore the prompt as it was before the last fix">undo fix</button>
-        </span>
+        </div>
       </div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
 
@@ -304,8 +311,8 @@
   </form>
 </dialog>
 
-<script src="spellwell/vendor/typo/typo.min.js?v=20260803-shared-site"></script>
-<script src="spellwell/spellwell.js?v=20260803-shared-site"></script>
-<script src="app.js?v=20260804-resident-ram"></script>
+<script src="mcphee/vendor/typo/typo.min.js?v=20260804-mcphee-toggle"></script>
+<script src="mcphee/mcphee.js?v=20260804-mcphee-toggle"></script>
+<script src="app.js?v=20260804-mcphee-toggle"></script>
 </body>
 </html>

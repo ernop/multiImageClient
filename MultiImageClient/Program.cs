@@ -9,6 +9,7 @@ using IdeogramAPIClient;
 //using RecraftAPIClient;
 
 using System;
+using System.IO;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Memory;
 //using System.Collections.Generic;
@@ -27,6 +28,21 @@ namespace MultiImageClient
     {
         static async Task Main(string[] args)
         {
+            // Production publishes carry the Playwright revision they were
+            // built against. Point Playwright at that immutable payload before
+            // either the Grok or Meta browser client is initialized.
+            var bundledPlaywrightBrowsers = Path.Combine(
+                AppContext.BaseDirectory,
+                ".playwright-browsers");
+            if (string.IsNullOrWhiteSpace(
+                    Environment.GetEnvironmentVariable("PLAYWRIGHT_BROWSERS_PATH"))
+                && Directory.Exists(bundledPlaywrightBrowsers))
+            {
+                Environment.SetEnvironmentVariable(
+                    "PLAYWRIGHT_BROWSERS_PATH",
+                    bundledPlaywrightBrowsers);
+            }
+
             var options = RunOptions.Parse(args);
 
             if (options.Ui)
@@ -47,8 +63,8 @@ namespace MultiImageClient
 
             if (options.PlaywrightInstall)
             {
-                // One-time browser download for --meta-web. Exits with the
-                // installer's own status; no settings.json needed.
+                // One-time browser download for --meta-web and grok-web video.
+                // Exits with the installer's own status; no settings needed.
                 Environment.Exit(Microsoft.Playwright.Program.Main(new[] { "install", "chromium" }));
             }
 

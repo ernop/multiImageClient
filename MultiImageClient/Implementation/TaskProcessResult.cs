@@ -69,6 +69,12 @@ namespace MultiImageClient
         public string GetSavedRawImagePath(int n)
             => _savedRawImagePaths.TryGetValue(n, out var path) ? path : "";
 
+        public IReadOnlyList<string> GetSavedRawImagePaths()
+            => _savedRawImagePaths
+                .OrderBy(kvp => kvp.Key)
+                .Select(kvp => kvp.Value)
+                .ToList();
+
         public void SetSavedImagePaths(int n, Dictionary<SaveType, string> paths)
         {
             _savedImagePaths[n] = new Dictionary<SaveType, string>(paths);

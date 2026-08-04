@@ -1,6 +1,10 @@
 # Code Style and Organization Preferences
 
 ## Communication Style
+- Follow `.cursor/rules/user-facing-communication.mdc` for all chat, UI copy, user-facing documentation, release notes, and issue/PR prose
+- Speech that manages the agent-user relationship instead of conveying task content is prohibited: no praise, validation, reassurance, verdicts, sympathy filler, servile offers, or agent self-presentation
+- Preserve the epistemic status of the user's words; never grade or diminish their statements, questions, claims, or observations
+- NEVER use "honest", "honestly", "genuine", or "genuinely" as framing, self-description, or empty emphasis
 - NEVER use congratulatory or praising language like "you were absolutely right", "great call", etc.
 - Keep responses direct and focused on the technical work
 - Avoid unnecessary enthusiasm or validation language
@@ -25,7 +29,7 @@
 ## Code Organization Philosophy
 - Prefer keeping related functionality together rather than over-abstracting
 - Constants that appear in multiple places might indicate files should be merged
-- Only create shared utilities when there's genuine reuse across different functional areas
+- Only create shared utilities when there's reuse across different functional areas
 - Branding text and similar elements that appear throughout the app are good candidates for centralization
 
 ## Fail Closed — No Fallbacks
@@ -45,4 +49,3 @@
 - Explicitly avoid dim, murky, grimy, muddy, gloomy, shadow-choked, underexposed, dusk-like, night-like, or dark results.
 - Prefer readable, coherent, visually organized images with clean composition, clear separation of subjects or groups, concise high-contrast text when text is needed, and attractive balanced color.
 - For OpenAI image models such as `gpt-image-2`, include this preference directly in the prompt text because the model tends to drift into dark cinematic drama.
-

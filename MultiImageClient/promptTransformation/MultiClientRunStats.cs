@@ -22,7 +22,7 @@ namespace MultiImageClient
         public int ClaudeRewroteCount { get; set; }
 
         public int GptImageOneRequestCount { get; set; }
-        public int GptImageOneRefusedCount  { get; set; }
+        public int GptImageOneRefusedCount { get; set; }
 
         public int GptImage2RequestCount { get; set; }
         public int GptImage2RefusedCount { get; set; }

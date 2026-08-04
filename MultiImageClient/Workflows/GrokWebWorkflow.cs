@@ -79,68 +79,68 @@ namespace MultiImageClient
             switch (mode)
             {
                 case "image":
-                {
-                    generator = new GrokWebImagineGenerator(
-                        client,
-                        maxConcurrency: 1,
-                        stats,
-                        pro: options.GrokWebPro,
-                        aspectRatio: options.GrokWebAspectRatio,
-                        enableSideBySide: options.GrokWebSideBySide,
-                        settings: settings,
-                        captureSessions: options.GrokWebCapture);
-                    sheetHeader = options.GrokWebPro
-                        ? "Grok Web Imagine Pro"
-                        : "Grok Web Imagine";
-                    break;
-                }
+                    {
+                        generator = new GrokWebImagineGenerator(
+                            client,
+                            maxConcurrency: 1,
+                            stats,
+                            pro: options.GrokWebPro,
+                            aspectRatio: options.GrokWebAspectRatio,
+                            enableSideBySide: options.GrokWebSideBySide,
+                            settings: settings,
+                            captureSessions: options.GrokWebCapture);
+                        sheetHeader = options.GrokWebPro
+                            ? "Grok Web Imagine Pro"
+                            : "Grok Web Imagine";
+                        break;
+                    }
                 case "video":
-                {
-                    generator = new GrokWebImagineVideoGenerator(
-                        client,
-                        settings,
-                        stats,
-                        maxConcurrency: 1,
-                        sourceAsset: null,
-                        aspectRatio: options.GrokWebAspectRatio,
-                        resolution: options.GrokWebVideoResolution,
-                        durationSeconds: options.GrokWebVideoLength,
-                        enableSideBySide: options.GrokWebSideBySide,
-                        videoMode: options.GrokWebVideoMode);
-                    sheetHeader = "Grok Web Imagine Video";
-                    break;
-                }
+                    {
+                        generator = new GrokWebImagineVideoGenerator(
+                            client,
+                            settings,
+                            stats,
+                            maxConcurrency: 1,
+                            sourceAsset: null,
+                            aspectRatio: options.GrokWebAspectRatio,
+                            resolution: options.GrokWebVideoResolution,
+                            durationSeconds: options.GrokWebVideoLength,
+                            enableSideBySide: options.GrokWebSideBySide,
+                            videoMode: options.GrokWebVideoMode);
+                        sheetHeader = "Grok Web Imagine Video";
+                        break;
+                    }
                 case "video-from-image":
-                {
-                    generator = await GrokWebImagineVideoGenerator.CreateFromImageAsync(
-                        client,
-                        settings,
-                        stats,
-                        options.InputImagePath,
-                        maxConcurrency: 1,
-                        aspectRatio: options.GrokWebAspectRatio,
-                        resolution: options.GrokWebVideoResolution,
-                        durationSeconds: options.GrokWebVideoLength,
-                        enableSideBySide: options.GrokWebSideBySide,
-                        videoMode: options.GrokWebVideoMode);
-                    sheetHeader = "Grok Web Imagine Video (from image)";
-                    break;
-                }
+                    {
+                        generator = await GrokWebImagineVideoGenerator.CreateFromImageAsync(
+                            client,
+                            settings,
+                            stats,
+                            options.InputImagePath,
+                            maxConcurrency: 1,
+                            aspectRatio: options.GrokWebAspectRatio,
+                            resolution: options.GrokWebVideoResolution,
+                            durationSeconds: options.GrokWebVideoLength,
+                            enableSideBySide: options.GrokWebSideBySide,
+                            videoMode: options.GrokWebVideoMode);
+                        sheetHeader = "Grok Web Imagine Video (from image)";
+                        break;
+                    }
                 case "edit":
-                {
-                    generator = await GrokWebImagineEditGenerator.CreateAsync(
-                        client,
-                        options.InputImagePath,
-                        maxConcurrency: 1,
-                        stats,
-                        pro: options.GrokWebPro,
-                        aspectRatio: options.GrokWebAspectRatio,
-                        enableSideBySide: options.GrokWebSideBySide,
-                        settings: settings,
-                        captureSessions: options.GrokWebCapture);
-                    sheetHeader = "Grok Web Imagine Edit";
-                    break;
-                }
+                    {
+                        generator = await GrokWebImagineEditGenerator.CreateAsync(
+                            client,
+                            options.InputImagePath,
+                            maxConcurrency: 1,
+                            stats,
+                            pro: options.GrokWebPro,
+                            aspectRatio: options.GrokWebAspectRatio,
+                            enableSideBySide: options.GrokWebSideBySide,
+                            settings: settings,
+                            captureSessions: options.GrokWebCapture);
+                        sheetHeader = "Grok Web Imagine Edit";
+                        break;
+                    }
                 default:
                     Console.Error.WriteLine($"Grok web aborted: unknown --grok-web-mode '{options.GrokWebMode}'. Use image, video, video-from-image, or edit.");
                     return null;

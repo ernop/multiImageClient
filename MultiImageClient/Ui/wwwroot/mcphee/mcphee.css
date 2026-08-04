@@ -1,0 +1,344 @@
+/* McPhee overlay — see mcphee.js for the drop-in contract.
+   The backdrop mirrors the textarea's text invisibly; only mark backgrounds
+   show through the (now transparent) textarea. */
+
+.mcphee-host {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.mcphee-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* width/height are set from the textarea's client box in mcphee.js so a
+     vertical scrollbar can't skew the wrap width. */
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  color: transparent;
+  border-style: solid;
+  border-color: transparent;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.mcphee-textarea {
+  position: relative;
+  z-index: 1;
+  background: transparent !important;
+  width: 100%;
+}
+
+.mcphee-backdrop mark {
+  /* Geometry reset. Host pages commonly style `mark` (Bootstrap's reboot
+     adds horizontal padding), and ANY box perturbation makes the backdrop
+     wrap differently than the textarea — with hundreds of marks the drift
+     compounds into whole extra lines, the wrap-parity check fails, and the
+     overlay fail-closes to hidden. A mark must occupy exactly its text.
+     NO background here: this selector (class + element) outweighs the
+     single-class category rules below, so a background set here would
+     silently blank every category color. Every mark always carries a
+     category class, whose background also overrides any host `mark`
+     color. */
+  padding: 0;
+  margin: 0;
+  border: 0;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  word-spacing: inherit;
+  white-space: inherit;
+  color: transparent;
+  border-radius: 3px;
+}
+
+/* Misspelled non-real word: light red/pink block background. */
+.mcphee-mark-misspelled { background: #ffd6dc; }
+
+/* Unknown word (Capitalized / ALLCAPS / camelCase, not in dictionary):
+   light blue block background. */
+.mcphee-mark-unknown { background: #d7e6ff; }
+
+/* An illegitimate extra-space run: one joined yellow rectangle with a grey
+   outline and no internal divisions. Legitimate sentence-separator double
+   spaces and line-leading indentation are never marked. */
+.mcphee-mark-doublespace {
+  background: #ffe98a;
+  box-shadow: inset 0 0 0 1px #6b7280;
+  border-radius: 2px;
+}
+
+/* Lowercase sentence-start dictionary word (strict profile only). */
+.mcphee-mark-capitalization { background: #ffe1c2; }
+
+/* Missing terminal punctuation (strict profile only): last character boxed. */
+.mcphee-mark-punctuation {
+  background: #ffe1c2;
+  box-shadow: inset 0 0 0 1px #d97706;
+  border-radius: 2px;
+}
+
+/* Echo: the same content word reused nearby — both occurrences lavender. */
+.mcphee-mark-echo { background: #e6d9f7; }
+
+/* Obscure repeat: a rare word used more than once in the text — light green. */
+.mcphee-mark-obscure { background: #d5efd5; }
+
+/* Culture: lowercase nation/group/language/religion name — gentle teal. */
+.mcphee-mark-culture { background: #c9ecea; }
+
+/* Hover highlight: while the pointer is on a panel row, every occurrence of
+   that row's issue gets this solid saturated background — a plain full-word
+   color change. NO animation and NO transition, ever: the class is added on
+   mouseenter and removed on mouseleave, and the color changes on those exact
+   instants. */
+.mcphee-mark-hover {
+  background: #ffb020;
+  animation: none;
+  transition: none;
+}
+
+/* ---------- issues panel (attachPanel) ---------- */
+
+.mcphee-panel {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mcphee-panel-header {
+  font-weight: 600;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Force-regenerate: full overlay + panel rebuild. */
+.mcphee-panel-recheck { color: #374151; border-color: #d1d5db; }
+.mcphee-panel-recheck:hover { background: #f3f4f6; }
+
+.mcphee-panel-headerbtns {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Formality chooser: three always-visible button-shaped choices plus the
+   rule-config toggle. The selected level is a thick-bordered, obviously
+   different button — never an underline. */
+.mcphee-formality {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mcphee-formality-btn,
+.mcphee-formality-config {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.mcphee-formality-selected,
+.mcphee-formality-selected:hover {
+  border: 3px solid #2563eb;
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-weight: 700;
+}
+
+/* Config + ignored-list sections. */
+.mcphee-config {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  background: #fafafa;
+}
+
+.mcphee-config-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.mcphee-config-line input[type="number"] {
+  width: 72px;
+  font-size: 12px;
+  padding: 1px 4px;
+}
+
+/* Transient "undo ignore" chip, self-removes after 3 seconds. */
+.mcphee-undo-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  background: #fffbeb;
+  font-size: 12px;
+}
+
+/* Four fixed slots — content | ignore | dict-action | select — so every
+   action column aligns vertically across rows. */
+.mcphee-panel-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px 62px 52px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid #e5e7eb;
+  cursor: pointer;
+}
+
+.mcphee-panel-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mcphee-panel-main > * { flex-shrink: 0; }
+
+/* Hovering a row scrolls the textarea to the issue's location. */
+.mcphee-panel-item:hover { background: #f3f7fc; }
+
+/* Scroll linkage: rows whose every occurrence is off screen are dimmed, so
+   the readable rows always correspond to text you can currently see. */
+.mcphee-panel-item-offscreen { opacity: 0.45; }
+.mcphee-panel-item-offscreen:hover { opacity: 1; }
+
+/* Caret linkage: the row nearest the caret in the text. */
+.mcphee-panel-item-current {
+  background: #eef6ff;
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.mcphee-panel-word { font-weight: 600; }
+.mcphee-panel-word-misspelled { background: #ffd6dc; padding: 0 4px; border-radius: 3px; }
+.mcphee-panel-word-unknown { background: #d7e6ff; padding: 0 4px; border-radius: 3px; }
+.mcphee-panel-word-capitalization { background: #ffe1c2; padding: 0 4px; border-radius: 3px; }
+.mcphee-panel-word-doublespace { background: #ffe98a; padding: 0 4px; border-radius: 3px; }
+.mcphee-panel-word-echo { background: #e6d9f7; padding: 0 4px; border-radius: 3px; }
+.mcphee-panel-word-obscure { background: #d5efd5; padding: 0 4px; border-radius: 3px; }
+.mcphee-panel-word-culture { background: #c9ecea; padding: 0 4px; border-radius: 3px; }
+
+.mcphee-panel-note { color: #92400e; }
+
+.mcphee-panel-btn {
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 3px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.mcphee-panel-btn:hover { background: #f3f4f6; }
+.mcphee-panel-adddict { border-style: dashed; }
+
+/* The ignore/dict/dismiss/select buttons fill their grid slots so the
+   columns read as clean vertical lines. */
+.mcphee-panel-item > .mcphee-panel-adddict,
+.mcphee-panel-item > .mcphee-panel-ignore,
+.mcphee-panel-item > .mcphee-panel-select {
+  width: 100%;
+  padding-left: 0;
+  padding-right: 0;
+  text-align: center;
+}
+
+/* "Move cursor here": selects the issue's text in the textarea. */
+.mcphee-panel-select { color: #2563eb; border-color: #93c5fd; }
+.mcphee-panel-select:hover { background: #eff6ff; }
+
+/* Persistent per-word mute. */
+.mcphee-panel-ignore { color: #6b7280; border-color: #d1d5db; }
+.mcphee-panel-ignore:hover { background: #f3f4f6; }
+
+.mcphee-panel-dictcount {
+  margin-top: 6px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+/* ---------- dock (batteries-included layout) ---------- */
+
+/* Inline mode: the textarea keeps ~70% of its row; the panel docks beside
+   it and rides along with page scrolling (sticky). */
+.mcphee-dock {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.mcphee-dock-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mcphee-dock-side {
+  min-width: 300px;
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+}
+
+/* Mode-toggle chrome above the panel in either home. */
+.mcphee-dock-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+/* Drawer mode: the panel slides in from the right screen edge. */
+.mcphee-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(430px, 92vw);
+  background: #fff;
+  border-left: 1px solid #d1d5db;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+  padding: 12px;
+  overflow-y: auto;
+  transform: translateX(100%);
+  transition: transform 0.18s ease;
+  z-index: 9999;
+  box-sizing: border-box;
+}
+
+.mcphee-drawer-open { transform: translateX(0); }
+
+/* Floating opener shown while the drawer is closed (drawer mode only). */
+.mcphee-drawer-handle {
+  position: fixed;
+  right: 0;
+  bottom: 24px;
+  z-index: 9998;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid #d1d5db;
+  border-right: none;
+  border-radius: 6px 0 0 6px;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: -2px 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.mcphee-drawer-handle:hover { background: #f3f4f6; }

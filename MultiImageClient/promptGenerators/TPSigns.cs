@@ -37,7 +37,7 @@ namespace MultiImageClient
             }
 
         }
-                public override IEnumerable<PromptDetails> Prompts => GetPrompts().OrderBy(el=>Random.Shared.Next());
+        public override IEnumerable<PromptDetails> Prompts => GetPrompts().OrderBy(el => Random.Shared.Next());
 
     }
 }

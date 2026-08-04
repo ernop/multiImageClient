@@ -68,7 +68,7 @@ namespace MultiImageClient
                 }
                 else if (_style == RecraftStyle.vector_illustration)
                 {
-                    usingSubstyle = "\n"+_substyleVector.ToString();
+                    usingSubstyle = "\n" + _substyleVector.ToString();
                 }
                 else if (_style == RecraftStyle.any)
                 {
@@ -79,7 +79,7 @@ namespace MultiImageClient
                     throw new Exception("x");
                 }
                 var alpart = "";
-                if (!string.IsNullOrEmpty(_artistic_level) && _artistic_level != "0" )
+                if (!string.IsNullOrEmpty(_artistic_level) && _artistic_level != "0")
                 {
                     alpart = $"\nartistic level {_artistic_level}";
                 }

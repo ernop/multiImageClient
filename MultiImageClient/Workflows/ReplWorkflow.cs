@@ -76,7 +76,14 @@ namespace MultiImageClient
         // "grok-api" = official api.x.ai key version. The consumer-cookie
         // grok-web path is workflow-level (--grok-web) and not a REPL slot.
         private static readonly string[] KnownGenerators =
-            { "gpt2", "grok-api", "grok-api-pro", "ideogram", "recraft", "bfl", "google", "googlepro", "imagen4" };
+            {
+                "gpt2", "grok-api", "grok-api-pro",
+                "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
+                "recraft", "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
+                "bfl-klein9-preview", "bfl-klein9", "bfl-kontext-pro", "bfl-kontext-max",
+                "bfl-1.1-ultra", "bfl-1.1", "bfl-flux-pro", "bfl-dev",
+                "google", "googlepro", "imagen4"
+            };
 
         private class InFlight
         {
@@ -746,11 +753,26 @@ namespace MultiImageClient
                 // "dalle3" removed: OpenAI retired dall-e-3 on 2026-05-12.
 
                 case "ideogram":
+                case "ideogram-v4":
                     RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", "ideogram");
+                    return new IdeogramV4Generator(
+                        _settings.IdeogramApiKey, _concurrency,
+                        "2048x2048", IdeogramRenderingSpeed.DEFAULT,
+                        _stats, "repl");
+
+                case "ideogram-v3":
+                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", "ideogram-v3");
                     return new IdeogramV3Generator(_settings.IdeogramApiKey, _concurrency,
                         IdeogramV3StyleType.AUTO, IdeogramMagicPromptOption.ON,
-                        IdeogramAspectRatio.ASPECT_16_10, IdeogramRenderingSpeed.QUALITY,
+                        IdeogramAspectRatio.ASPECT_1_1, IdeogramRenderingSpeed.QUALITY,
                         "", _stats, "repl");
+
+                case "ideogram-v2":
+                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", "ideogram-v2");
+                    return new IdeogramGenerator(
+                        _settings.IdeogramApiKey, _concurrency,
+                        IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_1_1,
+                        null, "", IdeogramModel.V_2, _stats, "repl-v2");
 
                 case "recraft":
                     RequireKey(_settings.RecraftApiKey, "RecraftApiKey", "recraft");
@@ -759,10 +781,21 @@ namespace MultiImageClient
                         _stats, "repl");
 
                 case "bfl":
-                    RequireKey(_settings.BFLApiKey, "BFLApiKey", "bfl");
-                    return new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra,
-                        _settings.BFLApiKey, _concurrency, "1:1", false, 1024, 1024,
-                        _stats, "repl");
+                case "bfl-pro":
+                case "bfl-max":
+                case "bfl-flex":
+                case "bfl-klein4":
+                case "bfl-klein9-preview":
+                case "bfl-klein9":
+                case "bfl-kontext-pro":
+                case "bfl-kontext-max":
+                case "bfl-1.1-ultra":
+                case "bfl-1.1":
+                case "bfl-flux-pro":
+                case "bfl-dev":
+                    RequireKey(_settings.BFLApiKey, "BFLApiKey", name);
+                    return new GeneratorGroups(_settings, _concurrency, _stats)
+                        .BuildByShortName(name);
 
                 case "google":
                 case "nanobanana":
@@ -901,7 +934,7 @@ namespace MultiImageClient
             Console.WriteLine("  :n N                     set gpt-image-2 images-per-call (default 1). N>10 requires confirmation.");
             Console.WriteLine("  :concurrency N           max prompts in flight (applies to subsequent dispatches)");
             Console.WriteLine("  :gens list               list active generators");
-            Console.WriteLine("  :gens add <name>         add a generator: gpt2 grok-api grok-api-pro ideogram recraft bfl google googlepro imagen4(dead 06-24)");
+            Console.WriteLine($"  :gens add <name>         add a generator: {string.Join(' ', KnownGenerators)}");
             Console.WriteLine("  :gens remove <name>      remove a generator from the active set");
             Console.WriteLine("  :gens reset              back to defaults (gpt2 + grok-api when XAIGrokApiKey is set)");
             Console.WriteLine("  :status                  list in-flight jobs");

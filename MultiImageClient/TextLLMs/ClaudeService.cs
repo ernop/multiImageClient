@@ -70,7 +70,7 @@ namespace MultiImageClient
                 promptDetails.AddStep("Claude wouldn't have touched this prompt", TransformationType.ClaudeWouldRefuseRewrite);
                 Logger.Log($"\t\tClaude would have refused to rewrite: {promptDetails.Show()}");
                 stats.ClaudeWouldRefuseCount++;
-                return new TaskProcessResult { ImageGeneratorDescription="Claude?", IsSuccess = false, ErrorMessage = "Claude wouldn't have touched this prompt", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude, GenericImageErrorType = GenericImageGenerationErrorType.RequestModerated};
+                return new TaskProcessResult { ImageGeneratorDescription = "Claude?", IsSuccess = false, ErrorMessage = "Claude wouldn't have touched this prompt", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude, GenericImageErrorType = GenericImageGenerationErrorType.RequestModerated };
             }
             await _claudeSemaphore.WaitAsync();
             try
@@ -97,7 +97,13 @@ namespace MultiImageClient
                 {
                     stats.ClaudeRefusedCount++;
                     Logger.Log($"\t\tClaude was unhappy about\n\t\t\t{promptDetails.Show()}\n\t\t\t{claudeResponse}");
-                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = $"Claude was unhappy about the prompt and refused to rewrite it. {claudeResponse}", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude, GenericTextErrorType = GenericTextGenerationErrorType.RequestModerated,
+                    return new TaskProcessResult
+                    {
+                        IsSuccess = false,
+                        ErrorMessage = $"Claude was unhappy about the prompt and refused to rewrite it. {claudeResponse}",
+                        PromptDetails = promptDetails,
+                        TextGenerator = TextGeneratorApiType.Claude,
+                        GenericTextErrorType = GenericTextGenerationErrorType.RequestModerated,
                         ImageGeneratorDescription = "ClaudeGeneratorDescription",
                     };
                 }
@@ -107,7 +113,12 @@ namespace MultiImageClient
                     promptDetails.ReplacePrompt(claudeResponse, claudeResponse, TransformationType.ClaudeRewrite);
                     stats.ClaudeRewroteCount++;
 
-                    return new TaskProcessResult { IsSuccess = true, ErrorMessage = "", PromptDetails = promptDetails, TextGenerator = TextGeneratorApiType.Claude,
+                    return new TaskProcessResult
+                    {
+                        IsSuccess = true,
+                        ErrorMessage = "",
+                        PromptDetails = promptDetails,
+                        TextGenerator = TextGeneratorApiType.Claude,
                         ImageGeneratorDescription = "ClaudeGeneratorDescription",
                     };
                 }

@@ -30,6 +30,6 @@ namespace MultiImageClient
             pd.ReplacePrompt(rawText, "the full text of the story", TransformationType.InitialPrompt);
             yield return pd;
         }
-        public override IEnumerable<PromptDetails> Prompts => GetPrompts().OrderBy(el=>Random.Shared.Next());
+        public override IEnumerable<PromptDetails> Prompts => GetPrompts().OrderBy(el => Random.Shared.Next());
     }
 }

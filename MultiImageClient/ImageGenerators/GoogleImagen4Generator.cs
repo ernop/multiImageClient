@@ -238,33 +238,33 @@ namespace MultiImageClient
                 if (response?.Predictions != null && response.Predictions.Any())
                 {
                     foreach (var prediction in response.Predictions)
+                    {
+                        if (prediction?.StructValue?.Fields != null)
                         {
-                            if (prediction?.StructValue?.Fields != null)
+                            var predictionFields = prediction.StructValue.Fields;
+                            if (predictionFields.ContainsKey("bytesBase64Encoded") && predictionFields.ContainsKey("mimeType"))
                             {
-                                var predictionFields = prediction.StructValue.Fields;
-                                if (predictionFields.ContainsKey("bytesBase64Encoded") && predictionFields.ContainsKey("mimeType"))
+                                var imageData = predictionFields["bytesBase64Encoded"].StringValue;
+                                var newPrompt = predictionFields["prompt"].StringValue;
+                                var currentMimeType = predictionFields["mimeType"].StringValue;
+
+                                if (!string.IsNullOrEmpty(imageData))
                                 {
-                                    var imageData = predictionFields["bytesBase64Encoded"].StringValue;
-                                    var newPrompt = predictionFields["prompt"].StringValue;
-                                    var currentMimeType = predictionFields["mimeType"].StringValue;
-
-                                    if (!string.IsNullOrEmpty(imageData))
+                                    var bd = new CreatedBase64Image
                                     {
-                                        var bd = new CreatedBase64Image
-                                        {
-                                            bytesBase64 = imageData,
-                                            newPrompt = newPrompt,
-                                        };
+                                        bytesBase64 = imageData,
+                                        newPrompt = newPrompt,
+                                    };
 
-                                        base64Images.Add(bd);
-                                        if (!string.IsNullOrEmpty(currentMimeType) && (commonMimeType == "image/png"))
-                                        {
-                                            commonMimeType = currentMimeType; // Use the first valid mime type found if default
-                                        }
+                                    base64Images.Add(bd);
+                                    if (!string.IsNullOrEmpty(currentMimeType) && (commonMimeType == "image/png"))
+                                    {
+                                        commonMimeType = currentMimeType; // Use the first valid mime type found if default
                                     }
                                 }
                             }
                         }
+                    }
                 }
 
                 if (base64Images.Count == 0)

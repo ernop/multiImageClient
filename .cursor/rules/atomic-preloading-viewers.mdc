@@ -1,0 +1,15 @@
+---
+description: Preloading viewers must never expose stale media or metadata for a newly selected item
+alwaysApply: true
+---
+
+# Atomic preloading viewer presentation
+
+Apply these requirements to every quick/preloading image, video, document, or asset viewer:
+
+- Treat the visible media and all item-specific chrome as one atomic presentation: prompt, caption, title, generator, dimensions, badges, guidance, labels, comparison source, counters, and similar metadata must identify the same item as the visible media.
+- Before opening a hidden viewer for a new selection, clear every retained presentational field while the viewer is still hidden. Never reveal the previous item's pixels or metadata during the new item's fetch/decode delay.
+- During navigation in an already-open viewer, it is acceptable to keep the previous fully coherent presentation visible while the next item preloads. Swap the media and all associated metadata together only after the target media is ready and its request identity is still current.
+- Guard asynchronous completion with a selection/version identity so a late preload cannot overwrite a newer selection.
+- On close, clear media sources, comparison sources, item-specific text, dimensions, badges, and accessibility text. Cancel or discard obsolete preload work according to the viewer's cache policy.
+- Loading and failure states must be neutral or explicitly identify the pending target; they must never appear beside stale content in a way that implies the stale content belongs to the new selection.

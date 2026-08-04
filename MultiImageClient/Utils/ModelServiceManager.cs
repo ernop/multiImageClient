@@ -25,7 +25,7 @@ namespace MultiImageClient
             return await StartInternVLServiceAsync(baseUrl);
         }
 
-		public static async Task<bool> EnsureOllamaServiceIsRunningAsync(string baseUrl = "http://127.0.0.1:11434", string modelName = "qwen2-vl:latest")
+        public static async Task<bool> EnsureOllamaServiceIsRunningAsync(string baseUrl = "http://127.0.0.1:11434", string modelName = "qwen2-vl:latest")
         {
             if (!await IsOllamaRunningAsync(baseUrl))
             {
@@ -70,27 +70,27 @@ namespace MultiImageClient
             }
         }
 
-		private static async Task<bool> EnsureOllamaModelIsLoadedAsync(string baseUrl, string modelName, int timeoutSeconds = 120)
+        private static async Task<bool> EnsureOllamaModelIsLoadedAsync(string baseUrl, string modelName, int timeoutSeconds = 120)
         {
             try
             {
-				Logger.Log($"Checking if Ollama model '{modelName}' is loaded (chat)...");
+                Logger.Log($"Checking if Ollama model '{modelName}' is loaded (chat)...");
 
-				var requestBody = System.Text.Json.JsonSerializer.Serialize(new
-				{
-					model = modelName,
-					messages = new[]
-					{
-						new { role = "user", content = "ping" }
-					},
-					stream = false
-				});
+                var requestBody = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    model = modelName,
+                    messages = new[]
+                    {
+                        new { role = "user", content = "ping" }
+                    },
+                    stream = false
+                });
 
-				var content = new System.Net.Http.StringContent(requestBody, System.Text.Encoding.UTF8, "application/json");
+                var content = new System.Net.Http.StringContent(requestBody, System.Text.Encoding.UTF8, "application/json");
 
-				httpClient.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
-				var response = await httpClient.PostAsync($"{baseUrl}/api/chat", content);
-				httpClient.Timeout = TimeSpan.FromSeconds(5);
+                httpClient.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+                var response = await httpClient.PostAsync($"{baseUrl}/api/chat", content);
+                httpClient.Timeout = TimeSpan.FromSeconds(5);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -111,7 +111,7 @@ namespace MultiImageClient
             }
         }
 
-		private static async Task<bool> StartInternVLServiceAsync(string baseUrl, int maxWaitSeconds = 600)
+        private static async Task<bool> StartInternVLServiceAsync(string baseUrl, int maxWaitSeconds = 600)
         {
             try
             {
@@ -129,21 +129,21 @@ namespace MultiImageClient
                     return false;
                 }
 
-				Logger.Log($"Starting InternVL Flask server from: {flaskScriptPath}");
-				Logger.Log($"Using Python: {pythonPath}");
+                Logger.Log($"Starting InternVL Flask server from: {flaskScriptPath}");
+                Logger.Log($"Using Python: {pythonPath}");
 
-				var pythonExecutable = Path.Combine(Path.GetDirectoryName(pythonPath) ?? string.Empty, "pythonw.exe");
-				if (!File.Exists(pythonExecutable))
-				{
-					pythonExecutable = pythonPath; // fallback to console python if pythonw not present
-				}
+                var pythonExecutable = Path.Combine(Path.GetDirectoryName(pythonPath) ?? string.Empty, "pythonw.exe");
+                if (!File.Exists(pythonExecutable))
+                {
+                    pythonExecutable = pythonPath; // fallback to console python if pythonw not present
+                }
 
                 var startInfo = new ProcessStartInfo
                 {
-					FileName = pythonExecutable,
+                    FileName = pythonExecutable,
                     Arguments = $"\"{flaskScriptPath}\"",
-					UseShellExecute = false,
-					CreateNoWindow = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
                     WorkingDirectory = Path.GetDirectoryName(flaskScriptPath)
                 };
 
@@ -172,38 +172,38 @@ namespace MultiImageClient
             }
         }
 
-		private static async Task<bool> StartOllamaServiceAsync(string baseUrl, int maxWaitSeconds = 120)
+        private static async Task<bool> StartOllamaServiceAsync(string baseUrl, int maxWaitSeconds = 120)
         {
             try
             {
-				Logger.Log("Attempting to start Ollama service...");
+                Logger.Log("Attempting to start Ollama service...");
 
-				Uri uri;
-				if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out uri))
-				{
-					Logger.Log($"WARNING: Invalid Ollama base URL: {baseUrl}");
-					return false;
-				}
+                Uri uri;
+                if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out uri))
+                {
+                    Logger.Log($"WARNING: Invalid Ollama base URL: {baseUrl}");
+                    return false;
+                }
 
-				var hostPort = ($"{uri.Host}:{uri.Port}");
-				var startInfo = new ProcessStartInfo
-				{
-					FileName = "ollama",
-					Arguments = "serve",
-					UseShellExecute = false,
-					CreateNoWindow = true
-				};
-				startInfo.EnvironmentVariables["OLLAMA_HOST"] = hostPort;
+                var hostPort = ($"{uri.Host}:{uri.Port}");
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "ollama",
+                    Arguments = "serve",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                startInfo.EnvironmentVariables["OLLAMA_HOST"] = hostPort;
 
-				var process = Process.Start(startInfo);
+                var process = Process.Start(startInfo);
                 if (process == null)
                 {
                     Logger.Log("WARNING: Could not start Ollama process. It may already be running.");
                 }
-				else
-				{
-					Logger.Log($"Started 'ollama serve' with OLLAMA_HOST={hostPort}");
-				}
+                else
+                {
+                    Logger.Log($"Started 'ollama serve' with OLLAMA_HOST={hostPort}");
+                }
 
                 Logger.Log("Waiting for Ollama service to become ready...");
                 var stopwatch = Stopwatch.StartNew();

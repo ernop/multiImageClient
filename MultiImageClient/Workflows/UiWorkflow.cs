@@ -184,7 +184,7 @@ namespace MultiImageClient
             }
 
             app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = new PhysicalFileProvider(wwwroot) });
-            // SpellWell's Hunspell dictionary files use extensions the default
+            // McPhee's Hunspell dictionary files use extensions the default
             // content-type map doesn't know; without these entries the static
             // middleware would 404 them.
             var contentTypes = new FileExtensionContentTypeProvider();
@@ -217,8 +217,21 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api pro", detail = "api.x.ai pro tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
                     new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0 text-to-image, 2K-native (detail tier has no effect). The v4 endpoint takes no input image, so on image jobs it runs from the prompt alone. It also currently ignores num_images and returns 1." },
                     new { key = UiJobRunner.KeyIdeogramV3, label = "Ideogram V3", detail = "Ideogram 3.0. A pasted image is used as a style reference and the default AR matches the source; explicit AR choices and n up to 8 are honored. Without an image it runs text-to-image (auto = square)." },
+                    new { key = UiJobRunner.KeyIdeogramV2, label = "Ideogram V2", detail = "Ideogram 2.0 through the legacy text-to-image endpoint. Shape and Magic Prompt are honored; detail and n have no effect. An attached image is not sent." },
                     new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1. A pasted image runs image-to-image and inherently keeps the source dimensions. That endpoint exposes no size override, so Recraft is unavailable for image jobs with an explicit output AR. n up to 6." },
-                    new { key = UiJobRunner.KeyBfl, label = "FLUX.2 Pro Preview", detail = "Black Forest Labs FLUX.2 Pro preview. With an input, the default derives an explicit source-matching WxH; explicit shape + detail map to ~1 MP standard or ~4 MP high/max. No n support." },
+                    new { key = UiJobRunner.KeyBfl, label = "FLUX.2 Pro Preview", detail = "BFL's latest Pro improvements. Generation and up to 8-reference editing; this UI sends its primary input. Shape + detail map to ~1 MP or ~4 MP. No n support." },
+                    new { key = UiJobRunner.KeyBflFlux2Pro, label = "FLUX.2 Pro (pinned)", detail = "Fixed FLUX.2 Pro snapshot for reproducible workflows. Same request contract as Pro Preview; generation and image editing." },
+                    new { key = UiJobRunner.KeyBflFlux2Max, label = "FLUX.2 Max", detail = "BFL's highest-quality FLUX.2 model with strongest prompt following, editing consistency, and grounding search." },
+                    new { key = UiJobRunner.KeyBflFlux2Flex, label = "FLUX.2 Flex", detail = "Typography and small-detail specialist with adjustable inference steps and guidance. This integration uses 40 steps and guidance 4.5." },
+                    new { key = UiJobRunner.KeyBflFlux2Klein4b, label = "FLUX.2 Klein 4B", detail = "Fastest and least expensive hosted FLUX.2 model. Supports generation and up to 4 references; this UI sends its primary input." },
+                    new { key = UiJobRunner.KeyBflFlux2Klein9bPreview, label = "FLUX.2 Klein 9B Preview", detail = "Latest Klein 9B improvements with KV-cached inference. Supports generation and image editing." },
+                    new { key = UiJobRunner.KeyBflFlux2Klein9b, label = "FLUX.2 Klein 9B (pinned)", detail = "Fixed Klein 9B snapshot for reproducible fast generation and image editing." },
+                    new { key = UiJobRunner.KeyBflKontextPro, label = "FLUX.1 Kontext Pro", detail = "Previous-generation generation/editing model. BFL recommends FLUX.2 Pro for new integrations." },
+                    new { key = UiJobRunner.KeyBflKontextMax, label = "FLUX.1 Kontext Max", detail = "Previous-generation maximum-quality Kontext generation/editing model. BFL recommends FLUX.2 for new integrations." },
+                    new { key = UiJobRunner.KeyBflFlux11Ultra, label = "FLUX1.1 Pro Ultra", detail = "Previous-generation up-to-4MP endpoint with optional image remix. Shape is honored; detail is model-controlled." },
+                    new { key = UiJobRunner.KeyBflFlux11, label = "FLUX1.1 Pro", detail = "Previous-generation text-to-image endpoint with optional image remix. Output edges are capped at 1440." },
+                    new { key = UiJobRunner.KeyBflFluxPro, label = "FLUX.1 Pro (compatibility)", detail = "BFL still lists /flux-pro in its available-endpoints guide, but it is absent from the current OpenAPI. Kept as an explicitly unverified compatibility target; text-to-image only in this UI." },
+                    new { key = UiJobRunner.KeyBflFluxDev, label = "FLUX.1 Dev", detail = "Older hosted FLUX.1 Dev endpoint with optional image prompt and explicit dimensions up to 1440." },
                     new { key = UiJobRunner.KeyGoogle, label = "Nano Banana 2", detail = "Google gemini-3.1-flash-image. With an input, the default uses the nearest Gemini-supported AR; explicit shape overrides it and detail maps to 1K/2K/4K. No n support." },
                     new { key = UiJobRunner.KeyGooglePro, label = "Nano Banana Pro", detail = "Google gemini-3-pro-image. With an input, the default uses the nearest Gemini-supported AR; explicit shape overrides it and detail maps to 1K/2K/4K. No n support." },
                     new { key = UiJobRunner.KeyGpt1, label = "gpt-image-1", detail = "OpenAI image generation. Shape, quality, moderation, and n honored. Text-to-image in this UI." },
@@ -241,11 +254,12 @@ namespace MultiImageClient
                     // at the provider send stage (grok-web: GrokWebClient).
                     maxPromptChars = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptChars : null,
                     // Default-on set for new windows: gpt-image-2, Recraft V4.1,
-                    // grok-web pro, Ideogram V4, Nano Banana 2.
+                    // grok-web pro, Ideogram V4, FLUX.2 Pro Preview, Nano Banana 2.
                     defaultOn = g.key is UiJobRunner.KeyGpt2
                         or UiJobRunner.KeyRecraft
                         or UiJobRunner.KeyGrokWeb
                         or UiJobRunner.KeyIdeogram
+                        or UiJobRunner.KeyBfl
                         or UiJobRunner.KeyGoogle,
                 })
                 // Stable sort: available targets keep the intent order above,

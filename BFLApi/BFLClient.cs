@@ -31,21 +31,25 @@ namespace BFLAPIClient
             DefaultPollingIntervalMs = defaultPollingIntervalMs;
         }
 
-        /// Polls whichever URL BFL gave us back in the submit response.
-        /// Falls back to the legacy /v1/get_result?id= path only if no polling_url
-        /// was supplied (older endpoints / cached responses).
-        private async Task<GenerationResponse> GetResultAsync(string pollingUrl, string id)
+        /// Polls the exact cluster URL BFL returned for this request.
+        private async Task<GenerationResponse> GetResultAsync(
+            string pollingUrl,
+            string id,
+            CancellationToken cancellationToken)
         {
-            var url = !string.IsNullOrEmpty(pollingUrl)
-                ? pollingUrl
-                : $"{BaseUrl}/v1/get_result?id={id}";
+            if (string.IsNullOrWhiteSpace(pollingUrl))
+            {
+                throw new InvalidOperationException(
+                    $"BFL generation {id} did not provide the required polling_url.");
+            }
+            var url = pollingUrl;
             var startedAtUtc = DateTime.UtcNow;
             HttpResponseMessage response = null;
             string responseContent = null;
             Exception error = null;
             try
             {
-                response = await _httpClient.GetAsync(url);
+                response = await _httpClient.GetAsync(url, cancellationToken);
                 responseContent = await response.Content.ReadAsStringAsync();
                 response.EnsureSuccessStatusCode();
                 return JsonConvert.DeserializeObject<GenerationResponse>(responseContent);
@@ -73,6 +77,12 @@ namespace BFLAPIClient
 
         private async Task<GenerationResponse> GenerateAndWaitForResultAsync<TRequest>(string endpoint, TRequest request)
         {
+            var webhookUrl = typeof(TRequest).GetProperty("WebhookUrl")?.GetValue(request) as string;
+            if (!string.IsNullOrWhiteSpace(webhookUrl))
+            {
+                throw new NotSupportedException(
+                    $"BFL endpoint {endpoint}: webhook_url cannot be used with a generate-and-wait method.");
+            }
             var initial = await GenerateAsync(endpoint, request);
             if (initial == null || string.IsNullOrWhiteSpace(initial.Id))
             {
@@ -80,15 +90,21 @@ namespace BFLAPIClient
             }
             var id = initial.Id;
             var pollingUrl = initial.PollingUrl;
+            if (string.IsNullOrWhiteSpace(pollingUrl))
+            {
+                throw new HttpRequestException(
+                    $"BFL submit response for generation {id} did not contain the required polling_url. "
+                    + "Webhook submissions are not supported by the generate-and-wait methods.");
+            }
             using var timeoutCts = new CancellationTokenSource(PollingTimeout);
 
             try
             {
-                var current = await GetResultAsync(pollingUrl, id);
-                while (string.Equals(current?.Status, "Pending", StringComparison.OrdinalIgnoreCase))
+                var current = await GetResultAsync(pollingUrl, id, timeoutCts.Token);
+                while (IsInProgressStatus(current?.Status))
                 {
                     await Task.Delay(DefaultPollingIntervalMs, timeoutCts.Token);
-                    current = await GetResultAsync(pollingUrl, id);
+                    current = await GetResultAsync(pollingUrl, id, timeoutCts.Token);
                 }
 
                 if (current == null)
@@ -106,6 +122,14 @@ namespace BFLAPIClient
                 throw new TimeoutException(
                     $"BFL generation {id} remained pending for {PollingTimeout.TotalMinutes:0.#} minutes.");
             }
+        }
+
+        private static bool IsInProgressStatus(string status)
+        {
+            return status is not null
+                && (status.Equals("Pending", StringComparison.OrdinalIgnoreCase)
+                    || status.Equals("Reasoning", StringComparison.OrdinalIgnoreCase)
+                    || status.Equals("Generating", StringComparison.OrdinalIgnoreCase));
         }
 
         private async Task<GenerationResponse> GenerateAsync<TRequest>(string endpoint, TRequest request)
@@ -206,22 +230,28 @@ namespace BFLAPIClient
         }
 
         /// Typography specialist with adjustable steps (up to 50) and guidance (1.5-10).
-        /// Fixed $0.06/image regardless of resolution.
-        public Task<GenerationResponse> GenerateFlux2FlexAsync(Flux2Request request)
+        /// Megapixel-priced from $0.05.
+        public Task<GenerationResponse> GenerateFlux2FlexAsync(Flux2FlexRequest request)
         {
             return GenerateAndWaitForResultAsync("flux-2-flex", request);
         }
 
         /// Fastest / cheapest. 4B variant. Sub-second inference, $0.014/image.
-        public Task<GenerationResponse> GenerateFlux2Klein4bAsync(Flux2Request request)
+        public Task<GenerationResponse> GenerateFlux2Klein4bAsync(Flux2KleinRequest request)
         {
             return GenerateAndWaitForResultAsync("flux-2-klein-4b", request);
         }
 
         /// Balanced klein. 9B variant, $0.015/image.
-        public Task<GenerationResponse> GenerateFlux2Klein9bAsync(Flux2Request request)
+        public Task<GenerationResponse> GenerateFlux2Klein9bAsync(Flux2KleinRequest request)
         {
             return GenerateAndWaitForResultAsync("flux-2-klein-9b", request);
+        }
+
+        /// Latest klein 9B improvements, including KV-cached inference.
+        public Task<GenerationResponse> GenerateFlux2Klein9bPreviewAsync(Flux2KleinRequest request)
+        {
+            return GenerateAndWaitForResultAsync("flux-2-klein-9b-preview", request);
         }
 
         // ---------- FLUX.1 Kontext (text + image editing) ----------

@@ -13,8 +13,8 @@ namespace MultiImageClient
     ///
     /// Generator selection (--gens, comma-separated short names — same
     /// vocabulary as the REPL, plus grok-web and meta-web):
-    ///   gpt2, grok-api, grok-api-pro, grok-web, meta-web, ideogram,
-    ///   recraft, bfl, google, googlepro, local-klein, local-zimage
+    /// See GeneratorGroups.ShortNames for the complete current list, including
+    /// each individually addressable BFL and Ideogram model generation.
     /// Without --gens it runs the standard batch set (GeneratorGroups.GetAll),
     /// i.e. "whatever models we're currently using".
     ///

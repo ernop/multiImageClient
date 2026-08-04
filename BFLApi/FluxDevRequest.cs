@@ -15,8 +15,11 @@ namespace BFLAPIClient
         [JsonProperty("height")]
         public int Height { get; set; }
 
-        [JsonProperty("num_steps")]
-        public int? NumSteps { get; set; }
+        [JsonProperty("image_prompt")]
+        public string ImagePrompt { get; set; }
+
+        [JsonProperty("steps")]
+        public int? Steps { get; set; }
 
         [JsonProperty("prompt_upsampling")]
         public bool PromptUpsampling { get; set; }
@@ -29,5 +32,8 @@ namespace BFLAPIClient
 
         [JsonProperty("safety_tolerance")]
         public int SafetyTolerance { get; set; }
+
+        [JsonProperty("output_format")]
+        public string OutputFormat { get; set; } = "png";
     }
 }

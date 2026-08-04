@@ -17,6 +17,7 @@ namespace MultiImageClient
             return new
             {
                 workingSetBytes = proc.WorkingSet64,
+                peakWorkingSetBytes = proc.PeakWorkingSet64,
                 privateMemoryBytes = proc.PrivateMemorySize64,
                 managedHeapBytes = GC.GetTotalMemory(false),
                 cgroupCurrentBytes = ReadCgroupBytes(cgroupDir, "memory.current"),

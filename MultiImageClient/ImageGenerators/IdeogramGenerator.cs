@@ -95,7 +95,7 @@ namespace MultiImageClient
             }
 
 
-            var res = $"ideogram_{verpart}{_name}_magic_{_magicPrompt.ToString().ToLowerInvariant()} {_aspectRatio.ToString().ToLowerInvariant().Replace("aspect_","ar").Replace("_","x")} {stylepart}{neg}";
+            var res = $"ideogram_{verpart}{_name}_magic_{_magicPrompt.ToString().ToLowerInvariant()} {_aspectRatio.ToString().ToLowerInvariant().Replace("aspect_", "ar").Replace("_", "x")} {stylepart}{neg}";
 
             return res;
         }
@@ -156,7 +156,7 @@ namespace MultiImageClient
                 var ideogramOptions = new IdeogramOptions
                 {
                     AspectRatio = _aspectRatio,
-                    Model = IdeogramModel.V_2,
+                    Model = _model,
                     MagicPromptOption = _magicPrompt,
                     StyleType = _ideoGramStyleType
                 };
@@ -206,7 +206,7 @@ namespace MultiImageClient
                 {
                     errorMessage = ex.Message;
                 }
-                    return new TaskProcessResult { IsSuccess = false, ErrorMessage = errorMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, GenericImageErrorType = GenericImageGenerationErrorType.Unknown, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
+                return new TaskProcessResult { IsSuccess = false, ErrorMessage = errorMessage, PromptDetails = promptDetails, ImageGenerator = ImageGeneratorApiType.Ideogram, GenericImageErrorType = GenericImageGenerationErrorType.Unknown, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
             }
             finally
             {

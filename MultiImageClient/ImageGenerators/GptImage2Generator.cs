@@ -447,68 +447,68 @@ namespace MultiImageClient
                         switch (type)
                         {
                             case "image_generation.partial_image":
-                            {
-                                var pidx = root.TryGetProperty("partial_image_index", out var iEl) ? iEl.GetInt32() : -1;
-                                var imgIdx = ExtractImageIndex(root);
-                                var imgTag = _imageCount > 1 ? $" img{imgIdx}" : "";
-                                Logger.Log($"    [{genTag}] partial #{pidx}{imgTag} at {nowMs} ms (+{sinceLast} ms since last event)");
-                                if ((!string.IsNullOrEmpty(_partialSaveFolder) || _partialImageCallback != null)
-                                    && root.TryGetProperty("b64_json", out var pbEl)
-                                    && pbEl.ValueKind == JsonValueKind.String)
                                 {
-                                    TryPublishPartial(pbEl.GetString(), pidx, imgIdx, promptDetails, genTag);
+                                    var pidx = root.TryGetProperty("partial_image_index", out var iEl) ? iEl.GetInt32() : -1;
+                                    var imgIdx = ExtractImageIndex(root);
+                                    var imgTag = _imageCount > 1 ? $" img{imgIdx}" : "";
+                                    Logger.Log($"    [{genTag}] partial #{pidx}{imgTag} at {nowMs} ms (+{sinceLast} ms since last event)");
+                                    if ((!string.IsNullOrEmpty(_partialSaveFolder) || _partialImageCallback != null)
+                                        && root.TryGetProperty("b64_json", out var pbEl)
+                                        && pbEl.ValueKind == JsonValueKind.String)
+                                    {
+                                        TryPublishPartial(pbEl.GetString(), pidx, imgIdx, promptDetails, genTag);
+                                    }
+                                    break;
                                 }
-                                break;
-                            }
                             case "image_generation.completed":
-                            {
-                                var imgIdx = ExtractImageIndex(root);
-                                if (imgIdx < 0 && _imageCount == 1)
                                 {
-                                    imgIdx = 0;
-                                }
-                                if (imgIdx < 0 || imgIdx >= _imageCount)
-                                {
-                                    streamErrorMessage =
-                                        $"gpt-image-2 completed event had invalid image index {imgIdx} "
-                                        + $"for requested n={_imageCount}";
-                                    Logger.Log($"    [{genTag}] ERROR: {streamErrorMessage}");
+                                    var imgIdx = ExtractImageIndex(root);
+                                    if (imgIdx < 0 && _imageCount == 1)
+                                    {
+                                        imgIdx = 0;
+                                    }
+                                    if (imgIdx < 0 || imgIdx >= _imageCount)
+                                    {
+                                        streamErrorMessage =
+                                            $"gpt-image-2 completed event had invalid image index {imgIdx} "
+                                            + $"for requested n={_imageCount}";
+                                        Logger.Log($"    [{genTag}] ERROR: {streamErrorMessage}");
+                                        break;
+                                    }
+                                    if (finalImages.ContainsKey(imgIdx))
+                                    {
+                                        streamErrorMessage =
+                                            $"gpt-image-2 returned duplicate completed image index {imgIdx}";
+                                        Logger.Log($"    [{genTag}] ERROR: {streamErrorMessage}");
+                                        break;
+                                    }
+
+                                    string b64 = root.TryGetProperty("b64_json", out var bEl) ? bEl.GetString() : null;
+                                    string revisedPrompt = root.TryGetProperty("revised_prompt", out var rpEl) ? rpEl.GetString() : null;
+                                    if (!string.IsNullOrEmpty(b64))
+                                    {
+                                        finalImages[imgIdx] = (b64, revisedPrompt);
+                                    }
+
+                                    string usageSummary = ExtractUsageSummary(root);
+                                    var imgTag = _imageCount > 1 ? $" img{imgIdx}" : "";
+                                    Logger.Log($"    [{genTag}] completed{imgTag} at {nowMs} ms (+{sinceLast} ms since last event).{usageSummary}");
+
+                                    if (!string.IsNullOrEmpty(revisedPrompt))
+                                    {
+                                        Logger.Log($"    [{genTag}] revised_prompt{imgTag}: {revisedPrompt}");
+                                    }
                                     break;
                                 }
-                                if (finalImages.ContainsKey(imgIdx))
-                                {
-                                    streamErrorMessage =
-                                        $"gpt-image-2 returned duplicate completed image index {imgIdx}";
-                                    Logger.Log($"    [{genTag}] ERROR: {streamErrorMessage}");
-                                    break;
-                                }
-
-                                string b64 = root.TryGetProperty("b64_json", out var bEl) ? bEl.GetString() : null;
-                                string revisedPrompt = root.TryGetProperty("revised_prompt", out var rpEl) ? rpEl.GetString() : null;
-                                if (!string.IsNullOrEmpty(b64))
-                                {
-                                    finalImages[imgIdx] = (b64, revisedPrompt);
-                                }
-
-                                string usageSummary = ExtractUsageSummary(root);
-                                var imgTag = _imageCount > 1 ? $" img{imgIdx}" : "";
-                                Logger.Log($"    [{genTag}] completed{imgTag} at {nowMs} ms (+{sinceLast} ms since last event).{usageSummary}");
-
-                                if (!string.IsNullOrEmpty(revisedPrompt))
-                                {
-                                    Logger.Log($"    [{genTag}] revised_prompt{imgTag}: {revisedPrompt}");
-                                }
-                                break;
-                            }
                             case "error":
                             case "image_generation.error":
-                            {
-                                var (msg, code) = ExtractErrorDetails(root);
-                                streamErrorMessage = msg ?? payload;
-                                var codePart = string.IsNullOrEmpty(code) ? "" : $" [code={code}]";
-                                Logger.Log($"    [{genTag}] ERROR event at {nowMs} ms{codePart}: {streamErrorMessage}");
-                                break;
-                            }
+                                {
+                                    var (msg, code) = ExtractErrorDetails(root);
+                                    streamErrorMessage = msg ?? payload;
+                                    var codePart = string.IsNullOrEmpty(code) ? "" : $" [code={code}]";
+                                    Logger.Log($"    [{genTag}] ERROR event at {nowMs} ms{codePart}: {streamErrorMessage}");
+                                    break;
+                                }
                             default:
                                 // Unknown event types: log the type so we notice but don't dump payload.
                                 Logger.Log($"    [{genTag}] event '{type}' at {nowMs} ms (no handler)");
@@ -667,14 +667,14 @@ namespace MultiImageClient
             switch (value.ValueKind)
             {
                 case JsonValueKind.Object:
-                {
-                    var result = new Dictionary<string, object>();
-                    foreach (var property in value.EnumerateObject())
                     {
-                        result[property.Name] = SummarizeSseValue(property.Value, property.Name);
+                        var result = new Dictionary<string, object>();
+                        foreach (var property in value.EnumerateObject())
+                        {
+                            result[property.Name] = SummarizeSseValue(property.Value, property.Name);
+                        }
+                        return result;
                     }
-                    return result;
-                }
                 case JsonValueKind.Array:
                     return value.EnumerateArray().Select(item => SummarizeSseValue(item)).ToList();
                 case JsonValueKind.String:

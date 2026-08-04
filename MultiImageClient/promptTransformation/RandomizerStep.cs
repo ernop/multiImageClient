@@ -14,9 +14,9 @@ namespace MultiImageClient
         public List<string> Options = new List<string>();
         public double Probability { get; set; } = 0.23;
         public string Name { get; set; }
-        public Func<string,string> Formatter { get; set; }
+        public Func<string, string> Formatter { get; set; }
 
-        public Alias(string name, Func<string,string> formatter, string values)
+        public Alias(string name, Func<string, string> formatter, string values)
         {
             Name = name;
             Options.AddRange(values.Split(',').ToList().Select(el => el.Trim()));
@@ -26,7 +26,7 @@ namespace MultiImageClient
         public string GetRandomAlias(bool? force = false)
         {
             var rndval = Random.Shared.NextDouble();
-            if ((force.HasValue && force.Value ) || rndval < Probability)
+            if ((force.HasValue && force.Value) || rndval < Probability)
             {
                 var val = Options[new Random().Next(Options.Count)];
                 return Formatter(val);

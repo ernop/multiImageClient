@@ -31,6 +31,14 @@ rm -rf "$staging"
 [[ -f $staging/MultiImageClient.dll ]] || die "publish produced no dll"
 [[ -f $staging/Ui/wwwroot/index.html ]] || die "publish missing wwwroot"
 
+# Bundle the Chromium revision pinned by this publish. The systemd service
+# cannot use a browser installed in the deploying user's home, and /opt is
+# read-only at runtime.
+PLAYWRIGHT_BROWSERS_PATH="$staging/.playwright-browsers" \
+    "$dotnet" "$staging/MultiImageClient.dll" --playwright-install
+[[ -d $staging/.playwright-browsers ]] \
+    || die "Playwright reported success but produced no bundled browser"
+
 # Ensure Playwright driver bits stay executable for the non-root service user
 # after rsync + chown root:root (and force a content touch so rsync won't skip
 # a same-mtime stale 764 mode left from an older deploy).
@@ -39,6 +47,10 @@ if [[ -d $staging/.playwright ]]; then
     find "$staging/.playwright" -type f \( -name node -o -name chrome -o -name chromium -o -name 'chrome-headless-shell' -o -name ffmpeg \) \
         -exec chmod a+x {} + -exec touch {} +
 fi
+chmod -R a+rX "$staging/.playwright-browsers"
+find "$staging/.playwright-browsers" -type f \
+    \( -name chrome -o -name chromium -o -name 'chrome-headless-shell' -o -name ffmpeg \) \
+    -exec chmod a+x {} + -exec touch {} +
 
 # Only the pinned helper is NOPASSWD (not sudo in general). -n avoids hanging
 # BatchMode SSH on a password prompt when the install step was never run.

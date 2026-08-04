@@ -1110,6 +1110,8 @@ function insertPromptText(text) {
   const caret = before.length + separator.length + text.length;
   promptBox.focus();
   promptBox.setSelectionRange(caret, caret);
+  if (mcpheeCtl) mcpheeCtl.refresh();
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
   updatePromptLimitNotice();
 }
 
@@ -1394,7 +1396,7 @@ async function fixSpelling() {
     spellfixPrevious = original;
     promptBox.value = body.corrected;
     spellfixUndoBtn.hidden = false;
-    if (spellwellCtl) spellwellCtl.refresh();
+    if (mcpheeCtl) mcpheeCtl.refresh();
     updatePromptLimitNotice();
   } catch (err) {
     sendError.textContent = String(err);
@@ -1413,66 +1415,119 @@ spellfixUndoBtn.addEventListener("click", () => {
   // The report describes changes that no longer exist once undone.
   const report = el("spellfix-report");
   if (report) report.hidden = true;
-  if (spellwellCtl) spellwellCtl.refresh();
+  if (mcpheeCtl) mcpheeCtl.refresh();
   updatePromptLimitNotice();
   promptBox.focus();
 });
 
-// ---------- SpellWell: local dictionary highlighting + local fix ----------
+// ---------- McPhee: local writing checks, corrections panel, and fixes ----------
 
-// Complements the Claude button with a fully offline pass: live block
-// highlights behind the prompt (pink = misspelled, blue = unknown word,
-// yellow/grey boxes = double spaces) plus a free one-click fix. The module
-// lives in spellwell/ as a self-contained drop-in shared across projects.
-let spellwell = null;     // SpellWell checker instance (null until loaded)
-let spellwellCtl = null;  // overlay controller for the prompt textarea
+// McPhee stays entirely in the browser: its verified overlay marks spelling,
+// spacing, capitalization, and repetition issues, while its optional panel
+// explains each finding without crowding the prompt field.
+let mcphee = null;
+let mcpheeCtl = null;
+let mcpheePanel = null;
 const spellfixLocalBtn = el("spellfix-local");
+const mcpheeEnabledToggle = el("mcphee-enabled-toggle");
+const mcpheePanelToggle = el("mcphee-panel-toggle");
+const mcpheePanelContainer = el("mcphee-panel");
+const mcpheeEnabledStorageKey = "mic_mcphee_enabled";
 
 // Provider/model jargon that appears in prompts constantly and must never
 // light up as a misspelling.
-const spellwellJargon = [
+const mcpheeJargon = [
   "grok", "xai", "recraft", "ideogram", "bfl", "gpt", "openai", "midjourney",
   "dalle", "webp", "png", "jpeg", "screenshot", "screenshots", "hyperrealistic",
   "photoreal", "photorealistic", "cinematic", "bokeh", "vaporwave", "cyberpunk",
 ];
 
-async function initSpellwell() {
+async function initMcphee() {
   try {
-    spellwell = await SpellWell.create({
-      affUrl: "spellwell/vendor/typo/en_US.aff",
-      dicUrl: "spellwell/vendor/typo/en_US.dic",
-      extraWords: spellwellJargon,
+    mcphee = await McPhee.create({
+      affUrl: "mcphee/vendor/typo/en_US.aff",
+      dicUrl: "mcphee/vendor/typo/en_US.dic",
+      freqUrl: "mcphee/vendor/wordfreq/en-30k.txt",
+      extraWords: mcpheeJargon,
+      // Keep the established key so existing personal dictionaries carry
+      // forward exactly through the SpellWell -> McPhee rename.
       customDictStorageKey: "mic_spellwell_custom_dict",
+      profile: "standard",
     });
-    spellwellCtl = spellwell.attach(promptBox);
-    spellfixLocalBtn.disabled = false;
+    if (!(mcphee.freqRank instanceof Map) || mcphee.freqRank.size < 10000) {
+      throw new Error("McPhee frequency data is missing or malformed");
+    }
+    mcpheeCtl = mcphee.attach(promptBox);
+    mcpheePanel = mcphee.attachPanel({
+      textarea: promptBox,
+      container: mcpheePanelContainer,
+      controller: mcpheeCtl,
+      formalityStorageKey: "mic_mcphee_formality",
+      ruleOverridesStorageKey: "mic_mcphee_rule_overrides",
+    });
+    mcpheeEnabledToggle.disabled = false;
+    const storedEnabled = localStorage.getItem(mcpheeEnabledStorageKey);
+    setMcpheeEnabled(storedEnabled !== "false", false);
   } catch (err) {
-    // No dictionary means no local spellcheck, plainly reported — the Claude
-    // button and native browser spellcheck still work.
+    // Missing or malformed McPhee data is a hard failure for the local tools;
+    // the independent Claude spelling action remains available.
     console.error(err);
     spellfixLocalBtn.title = `Local fix unavailable: ${err.message || err}`;
+    mcpheeEnabledToggle.title = `McPhee unavailable: ${err.message || err}`;
+    mcpheePanelToggle.title = `McPhee unavailable: ${err.message || err}`;
   }
 }
 
+function setMcpheeEnabled(enabled, persist = true) {
+  if (!mcpheeCtl) return;
+  mcpheeCtl.setEnabled(enabled);
+  mcpheeEnabledToggle.textContent = enabled ? "McPhee: on" : "McPhee: off";
+  mcpheeEnabledToggle.setAttribute("aria-pressed", String(enabled));
+  mcpheePanelToggle.disabled = !enabled;
+  spellfixLocalBtn.disabled = !enabled;
+  if (!enabled) {
+    mcpheePanelContainer.hidden = true;
+    mcpheePanelToggle.setAttribute("aria-expanded", "false");
+  }
+  if (persist) localStorage.setItem(mcpheeEnabledStorageKey, String(enabled));
+}
+
+mcpheeEnabledToggle.addEventListener("click", () => {
+  if (!mcpheeCtl) return;
+  const enabled = mcpheeEnabledToggle.getAttribute("aria-pressed") !== "true";
+  setMcpheeEnabled(enabled);
+});
+
+mcpheePanelToggle.addEventListener("click", () => {
+  if (!mcpheePanel) return;
+  const willOpen = mcpheePanelContainer.hidden;
+  mcpheePanelContainer.hidden = !willOpen;
+  mcpheePanelToggle.setAttribute("aria-expanded", String(willOpen));
+  if (willOpen) {
+    mcpheeCtl.refresh(true);
+    mcpheePanel.refresh();
+  }
+});
+
 spellfixLocalBtn.addEventListener("click", () => {
-  if (!spellwell) return;
+  if (!mcphee) return;
   const original = promptBox.value;
   if (!original.trim()) {
     sendError.textContent = "prompt is empty";
     return;
   }
   sendError.textContent = "";
-  const fix = spellwell.localFix(original);
-  const idleLabel = "fix typos (local)";
-  if (fix.text === original) {
+  const fix = mcphee.applyFixes(promptBox);
+  const idleLabel = "auto-fix typos";
+  if (!fix.applied) {
     spellfixLocalBtn.textContent = "no changes";
     setTimeout(() => { spellfixLocalBtn.textContent = idleLabel; }, 1600);
     return;
   }
   spellfixPrevious = original;
-  promptBox.value = fix.text;
   spellfixUndoBtn.hidden = false;
-  if (spellwellCtl) spellwellCtl.refresh();
+  mcpheeCtl.refresh();
+  if (!mcpheePanelContainer.hidden) mcpheePanel.refresh();
   updatePromptLimitNotice();
   // Persistent report, one change per line, visible until dismissed — so a
   // bad correction can't flash past unnoticed (undo fix restores everything).
@@ -1493,7 +1548,7 @@ el("spellfix-report-close").addEventListener("click", () => {
   el("spellfix-report").hidden = true;
 });
 
-initSpellwell();
+initMcphee();
 
 // ---------- options help popover ----------
 
@@ -2075,6 +2130,20 @@ function renderImageViewerGuidance(current) {
   }
 }
 
+// A hidden viewer is not allowed to retain presentable content. A later open
+// may wait on the network/decode path, and exposing the old image's chrome
+// during that wait falsely associates it with the newly selected image.
+function clearImageViewerPresentation() {
+  imageViewerImage.removeAttribute("src");
+  imageViewerImage.alt = "";
+  imageViewerPrompt.textContent = "";
+  renderImageViewerGuidance(null);
+  imageViewerGenerator.textContent = "";
+  imageViewerDimensions.textContent = "";
+  imageViewerContentAr = null;
+  applyImageViewerCompare(null);
+}
+
 async function renderImageViewer() {
   if (imageViewer.hidden || !imageViewerState) return;
   const prompts = getImageViewerPrompts();
@@ -2372,6 +2441,9 @@ function getImageViewerFocusables() {
 function openImageViewer(link) {
   imageViewerFocusBeforeOpen =
     document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // Clear while still hidden. The selected frame and all of its chrome will
+  // paint together only after that frame's preload has decoded.
+  clearImageViewerPresentation();
   imageViewerState = {
     jobId: link.dataset.jobId,
     generator: link.dataset.generator,
@@ -2386,7 +2458,6 @@ function openImageViewer(link) {
   // open pre-sizes to the viewport (content unknown while loading); later
   // opens keep the previous shrink-wrapped size until the new image decodes
   // and fitImageViewerWindow refits, avoiding a full-screen flash.
-  imageViewerContentAr = null;
   if (imageViewerWindow.dataset.userSized) clampImageViewerWindow();
   else if (!imageViewerWindow.style.width) sizeImageViewerWindow();
   else clampImageViewerWindow();
@@ -2402,8 +2473,7 @@ function closeImageViewer() {
   imageViewerRenderVersion++;
   imageViewerWheelAccumulator = 0;
   imageViewerNavDelta = 0;
-  imageViewerImage.removeAttribute("src");
-  applyImageViewerCompare(null);
+  clearImageViewerPresentation();
   for (const [url, entry] of imageViewerCache) discardImageViewerCacheEntry(url, entry);
   const restore = imageViewerFocusBeforeOpen;
   imageViewerFocusBeforeOpen = null;
@@ -2676,6 +2746,8 @@ async function setActiveFromJob(id, card) {
   }
 
   promptBox.value = card.querySelector(".job-prompt").textContent;
+  if (mcpheeCtl) mcpheeCtl.refresh();
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
   const recorded = card.dataset;
   if (recorded.optShape) el("opt-shape").value = recorded.optShape;
   if (recorded.optDetail) el("opt-detail").value = recorded.optDetail;
@@ -3254,6 +3326,9 @@ async function loadArchiveDay(day, container) {
 
 // ---------- server RAM status ----------
 
+const ramStatusSamples = [];
+const RamStatusSampleLimit = 20; // Five minutes at the 15-second poll interval.
+
 function formatBytesShort(n) {
   if (!(n > 0)) return "?";
   if (n < 1024) return `${n}B`;
@@ -3276,7 +3351,16 @@ async function pollRamStatus() {
     const high = s.cgroupHighBytes || 0;
     const max = s.cgroupMaxBytes || 0;
     const limit = high || max;
+    ramStatusSamples.push(used);
+    if (ramStatusSamples.length > RamStatusSampleLimit) ramStatusSamples.shift();
+    const recentPeak = Math.max(...ramStatusSamples);
+    const oldest = ramStatusSamples[0] || used;
+    const changeRatio = oldest > 0 ? (used - oldest) / oldest : 0;
+    const trend = changeRatio >= 0.05 ? "↑" : changeRatio <= -0.05 ? "↓" : "→";
     let text = `RAM ${formatBytesShort(used)}`;
+    if (ramStatusSamples.length > 1) {
+      text += ` · 5m peak ${formatBytesShort(recentPeak)} ${trend}`;
+    }
     if (limit) text += ` (limit ${formatBytesShort(limit)})`;
     else text += ` (no cgroup cap)`;
     if (high && max && high !== max) text += ` hard ${formatBytesShort(max)}`;
@@ -3293,6 +3377,10 @@ async function pollRamStatus() {
     node.title = [
       `in use (cgroup) ${formatBytesShort(s.cgroupCurrentBytes || used)}`,
       `working set ${formatBytesShort(s.workingSetBytes)}`,
+      `process peak working set ${formatBytesShort(s.peakWorkingSetBytes)}`,
+      ramStatusSamples.length > 1
+        ? `this window: ${ramStatusSamples.length} samples · recent peak ${formatBytesShort(recentPeak)} · change ${trend}`
+        : null,
       `managed heap ${formatBytesShort(s.managedHeapBytes)}`,
       s.cgroupHighBytes != null ? `systemd MemoryHigh (soft limit) ${formatBytesShort(s.cgroupHighBytes)}` : null,
       s.cgroupMaxBytes != null ? `systemd MemoryMax (hard limit) ${formatBytesShort(s.cgroupMaxBytes)}` : "cgroup max unlimited/unknown",

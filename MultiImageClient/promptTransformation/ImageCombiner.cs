@@ -121,44 +121,47 @@ namespace MultiImageClient
 
                 try
                 {
-                    foreach (var imageBytes in result.GetAllImages)
+                    var savedPaths = result.GetSavedRawImagePaths();
+                    if (savedPaths.Count > 0)
                     {
-                        if (imageBytes != null && imageBytes.Length > 0)
+                        foreach (var path in savedPaths)
                         {
-                            var image = Image.Load<Rgba32>(imageBytes);
-
-                            var sourceWidth = image.Width;
-                            var sourceHeight = image.Height;
-
-                            // Resize if height > 1300px, keeping proportions and max height of 1024px
-                            if (image.Height > 1300)
+                            if (!File.Exists(path))
                             {
-                                var aspectRatio = (float)image.Width / image.Height;
-                                var newHeight = 1024;
-                                var newWidth = (int)(newHeight * aspectRatio);
-
-                                Logger.Log($"Resizing image from {image.Width}x{image.Height} to {newWidth}x{newHeight} for combining");
-                                image.Mutate(x => x.Resize(newWidth, newHeight));
+                                throw new FileNotFoundException(
+                                    $"Saved raw image required for grid is missing: {path}",
+                                    path);
                             }
-
-                            loadedImages.Add(new LoadedImage
-                            {
-                                Success = true,
-                                Result = result.IsSuccess ? "successX" : result.ErrorMessage ?? "missing error",
-                                Generator = result.ImageGeneratorDescription,
-                                PromptText = GetDisplayPrompt(result),
-                                TimingLabel = FormatTiming(result.CreateTotalMs + result.DownloadTotalMs),
-                                SourceResolutionLabel = $"{sourceWidth}x{sourceHeight}",
-                                Image = image,
-                                Width = image.Width,
-                                Height = image.Height
-                            });
+                            using var stream = new FileStream(
+                                path,
+                                FileMode.Open,
+                                FileAccess.Read,
+                                FileShare.Read,
+                                bufferSize: 64 * 1024,
+                                FileOptions.SequentialScan);
+                            loadedImages.Add(PrepareLoadedResultImage(
+                                Image.Load<Rgba32>(stream),
+                                result));
                         }
-                        else
+                    }
+                    else
+                    {
+                        var foundBytes = false;
+                        foreach (var imageBytes in result.GetAllImages)
                         {
-                            // Success but no bytes somehow
-                            Logger.Log($"No image bytes for successful result from {result.ImageGenerator}");
-                            loadedImages.Add(GetPlaceholder(result));
+                            if (imageBytes == null || imageBytes.Length == 0)
+                            {
+                                continue;
+                            }
+                            foundBytes = true;
+                            loadedImages.Add(PrepareLoadedResultImage(
+                                Image.Load<Rgba32>(imageBytes),
+                                result));
+                        }
+                        if (!foundBytes)
+                        {
+                            throw new InvalidOperationException(
+                                $"Successful result from {result.ImageGenerator} has no saved path or image bytes.");
                         }
                     }
                 }
@@ -171,6 +174,45 @@ namespace MultiImageClient
             }
 
             return loadedImages;
+        }
+
+        private static LoadedImage PrepareLoadedResultImage(
+            Image<Rgba32> image,
+            TaskProcessResult result)
+        {
+            try
+            {
+                var sourceWidth = image.Width;
+                var sourceHeight = image.Height;
+                if (image.Height > 1300)
+                {
+                    var aspectRatio = (float)image.Width / image.Height;
+                    var newHeight = 1024;
+                    var newWidth = (int)(newHeight * aspectRatio);
+                    Logger.Log(
+                        $"Resizing image from {image.Width}x{image.Height} "
+                        + $"to {newWidth}x{newHeight} for combining");
+                    image.Mutate(x => x.Resize(newWidth, newHeight));
+                }
+
+                return new LoadedImage
+                {
+                    Success = true,
+                    Result = "successX",
+                    Generator = result.ImageGeneratorDescription,
+                    PromptText = GetDisplayPrompt(result),
+                    TimingLabel = FormatTiming(result.CreateTotalMs + result.DownloadTotalMs),
+                    SourceResolutionLabel = $"{sourceWidth}x{sourceHeight}",
+                    Image = image,
+                    Width = image.Width,
+                    Height = image.Height
+                };
+            }
+            catch
+            {
+                image.Dispose();
+                throw;
+            }
         }
 
         private static Image<Rgba32> RenderHorizontalLayout(IEnumerable<LoadedImage> loadedImages, Font generatorFont)

@@ -254,12 +254,12 @@ namespace MultiImageClient
                         },
                     },
                 };
-            traceRequest = new
-            {
-                reset = resetPayload,
-                generate = generatePayload,
-                timeoutSeconds = timeout.TotalSeconds,
-            };
+                traceRequest = new
+                {
+                    reset = resetPayload,
+                    generate = generatePayload,
+                    timeoutSeconds = timeout.TotalSeconds,
+                };
                 capture?.LogOutbound(generatePayload);
                 await SendJsonAsync(ws, generatePayload, cancellationToken);
 

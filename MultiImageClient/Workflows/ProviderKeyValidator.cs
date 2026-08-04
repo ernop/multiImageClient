@@ -54,9 +54,11 @@ namespace MultiImageClient
                 ImageGeneratorApiType.Ideogram or ImageGeneratorApiType.IdeogramV3 or ImageGeneratorApiType.IdeogramV4
                     => ("IdeogramApiKey", settings.IdeogramApiKey),
                 ImageGeneratorApiType.BFLv11 or ImageGeneratorApiType.BFLv11Ultra
+                    or ImageGeneratorApiType.BFLFluxPro or ImageGeneratorApiType.BFLFluxDev
                     or ImageGeneratorApiType.BFLFlux2Pro or ImageGeneratorApiType.BFLFlux2Max
                     or ImageGeneratorApiType.BFLFlux2Flex or ImageGeneratorApiType.BFLFlux2Klein4b
-                    or ImageGeneratorApiType.BFLFlux2Klein9b or ImageGeneratorApiType.BFLFluxKontextPro
+                    or ImageGeneratorApiType.BFLFlux2Klein9b or ImageGeneratorApiType.BFLFlux2Klein9bPreview
+                    or ImageGeneratorApiType.BFLFluxKontextPro
                     or ImageGeneratorApiType.BFLFluxKontextMax or ImageGeneratorApiType.BFLFlux2ProPreview
                     => ("BFLApiKey", settings.BFLApiKey),
                 ImageGeneratorApiType.Recraft or ImageGeneratorApiType.RecraftV4

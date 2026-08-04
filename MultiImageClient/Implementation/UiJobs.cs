@@ -1671,6 +1671,35 @@ namespace MultiImageClient
             };
         }
 
+        /// FLUX.1 [pro]/[dev]/1.1 endpoints cap each edge at 1440 and require
+        /// multiples of 32. Their API has no separate detail tier.
+        public static (int Width, int Height) BflLegacySize(
+            string shape,
+            int inputWidth = 0,
+            int inputHeight = 0)
+        {
+            var normalizedShape = Norm(shape, Shapes);
+            if (normalizedShape == "auto" && (inputWidth != 0 || inputHeight != 0))
+            {
+                return SizeMatchingInput(
+                    inputWidth,
+                    inputHeight,
+                    targetPixels: 1048576,
+                    multiple: 32,
+                    maxPixels: 1440 * 1440,
+                    maxEdgeExclusive: 1441,
+                    maxLongShortRatio: 1440.0 / 256.0);
+            }
+            return normalizedShape switch
+            {
+                "landscape" => (1248, 832),
+                "portrait" => (832, 1248),
+                "wide" => (1344, 768),
+                "tall" => (768, 1344),
+                _ => (1024, 1024),
+            };
+        }
+
         /// Gemini imageConfig.aspectRatio. With no input image, auto omits the
         /// field so the model decides. With input dimensions, auto maps to the
         /// closest ratio in Gemini's supported set.
@@ -1809,8 +1838,23 @@ namespace MultiImageClient
         public const string KeyGpt1Mini = "gpt1-mini";
         public const string KeyIdeogram = "ideogram";
         public const string KeyIdeogramV3 = "ideogram-v3";
+        public const string KeyIdeogramV2 = "ideogram-v2";
         public const string KeyRecraft = "recraft";
+        // Historical "bfl" key remains FLUX.2 Pro Preview so persisted jobs and
+        // browser selections keep working.
         public const string KeyBfl = "bfl";
+        public const string KeyBflFlux2Pro = "bfl-flux2-pro";
+        public const string KeyBflFlux2Max = "bfl-flux2-max";
+        public const string KeyBflFlux2Flex = "bfl-flux2-flex";
+        public const string KeyBflFlux2Klein4b = "bfl-flux2-klein-4b";
+        public const string KeyBflFlux2Klein9bPreview = "bfl-flux2-klein-9b-preview";
+        public const string KeyBflFlux2Klein9b = "bfl-flux2-klein-9b";
+        public const string KeyBflKontextPro = "bfl-kontext-pro";
+        public const string KeyBflKontextMax = "bfl-kontext-max";
+        public const string KeyBflFlux11Ultra = "bfl-flux11-ultra";
+        public const string KeyBflFlux11 = "bfl-flux11";
+        public const string KeyBflFluxPro = "bfl-flux-pro";
+        public const string KeyBflFluxDev = "bfl-flux-dev";
         public const string KeyGoogle = "google";
         public const string KeyGooglePro = "googlepro";
         public const string KeyLocalKlein = "local-klein";
@@ -1839,6 +1883,17 @@ namespace MultiImageClient
             KeyGoogle,
             KeyGooglePro,
             KeyBfl,
+            KeyBflFlux2Pro,
+            KeyBflFlux2Max,
+            KeyBflFlux2Flex,
+            KeyBflFlux2Klein4b,
+            KeyBflFlux2Klein9bPreview,
+            KeyBflFlux2Klein9b,
+            KeyBflKontextPro,
+            KeyBflKontextMax,
+            KeyBflFlux11Ultra,
+            KeyBflFlux11,
+            KeyBflFluxDev,
             KeyIdeogramV3,
             KeyRecraft,
         };
@@ -1857,7 +1912,12 @@ namespace MultiImageClient
         {
             KeyGpt2 or KeyGrokWeb or KeyGrokApi or KeyGrokApiPro => "edit source",
             KeyRecraft => "image-to-image source",
-            KeyGoogle or KeyGooglePro or KeyBfl or KeyIdeogramV3 => "style/reference image",
+            KeyBfl or KeyBflFlux2Pro
+                or KeyBflFlux2Max or KeyBflFlux2Flex or KeyBflFlux2Klein4b
+                or KeyBflFlux2Klein9bPreview or KeyBflFlux2Klein9b
+                or KeyBflKontextPro or KeyBflKontextMax => "edit/reference source",
+            KeyBflFlux11Ultra or KeyBflFlux11 or KeyBflFluxDev => "image remix/reference source",
+            KeyGoogle or KeyGooglePro or KeyIdeogramV3 => "style/reference image",
             KeyGrokWebVideo => "video source",
             _ => "NOT sent (text-only target, prompt only)",
         };
@@ -1973,9 +2033,14 @@ namespace MultiImageClient
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV4, _settings),
             KeyIdeogramV3
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV3, _settings),
+            KeyIdeogramV2
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.Ideogram, _settings),
             KeyRecraft
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.RecraftV41, _settings),
-            KeyBfl
+            KeyBfl or KeyBflFlux2Pro or KeyBflFlux2Max or KeyBflFlux2Flex
+                or KeyBflFlux2Klein4b or KeyBflFlux2Klein9bPreview or KeyBflFlux2Klein9b
+                or KeyBflKontextPro or KeyBflKontextMax or KeyBflFlux11Ultra
+                or KeyBflFlux11 or KeyBflFluxPro or KeyBflFluxDev
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.BFLFlux2ProPreview, _settings),
             KeyGoogle or KeyGooglePro
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GoogleNanoBananaPro, _settings),
@@ -2182,6 +2247,7 @@ namespace MultiImageClient
                 ImageGeneratorDescription = key,
                 ContentType = "image/png",
             };
+            string firstImagePath = null;
             byte[] firstImageBytes = null;
             var mediaType = "";
             decimal totalCost = 0m;
@@ -2193,6 +2259,7 @@ namespace MultiImageClient
             {
                 GrokWebClient? grokWebClient = null;
                 PromptDetails? copy = null;
+                TaskProcessResult? attemptResult = null;
                 try
                 {
                     IImageGenerator generator;
@@ -2261,7 +2328,7 @@ namespace MultiImageClient
                     var costEstimate = generator.GetCost();
                     var attemptTag = want > 1 ? $"  [{attempt + 1}/{want}]" : "";
                     Logger.Log($"[ui #{job.Id}]   -> {generator.GetGeneratorSpecPart()} (~${costEstimate:0.###}){attemptTag}");
-                    var result = await GenerationArchive.ExecuteAndSaveAsync(
+                    attemptResult = await GenerationArchive.ExecuteAndSaveAsync(
                         generator,
                         copy,
                         _imageManager,
@@ -2277,6 +2344,7 @@ namespace MultiImageClient
                         // per image multiply decode/render RAM, CPU, and disk
                         // without adding information to the web product.
                         saveAnnotatedVariants: false);
+                    var result = attemptResult;
 
                     if (result.IsSuccess
                         && !string.IsNullOrEmpty(result.GeneratedMediaPath)
@@ -2296,7 +2364,6 @@ namespace MultiImageClient
                         int i = 0;
                         foreach (var bytes in result.GetAllImages)
                         {
-                            firstImageBytes ??= bytes;
                             var idx = urls.Count;
                             var rawPath = result.GetSavedRawImagePath(i);
                             // Prefer path-only when ImageManager already wrote the file;
@@ -2304,6 +2371,8 @@ namespace MultiImageClient
                             if (!string.IsNullOrWhiteSpace(rawPath) && File.Exists(rawPath))
                             {
                                 job.StoreImagePath(key, idx, rawPath, result.ContentType ?? "image/png");
+                                firstImagePath ??= rawPath;
+                                merged.SetSavedRawImagePath(idx, rawPath);
                             }
                             else
                             {
@@ -2313,9 +2382,9 @@ namespace MultiImageClient
                                     bytes,
                                     result.ContentType ?? "image/png",
                                     rawPath);
+                                firstImageBytes ??= bytes;
+                                merged.SetImageBytes(idx, bytes);
                             }
-                            merged.SetImageBytes(idx, bytes);
-                            merged.SetSavedRawImagePath(idx, rawPath);
                             urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
                             i++;
                         }
@@ -2356,6 +2425,7 @@ namespace MultiImageClient
                 }
                 finally
                 {
+                    attemptResult?.ReleaseImageData();
                     grokWebClient?.Dispose();
                 }
             }
@@ -2372,7 +2442,11 @@ namespace MultiImageClient
             // a 2:3 request makes the mismatch visible. The frontend keeps
             // the catalog display name as the cell title and demotes this
             // provider spec label to a tooltip.
-            var actualSize = firstImageBytes != null ? ReadImageSize(firstImageBytes) : null;
+            var actualSize = firstImagePath != null
+                ? ReadImageSize(firstImagePath)
+                : firstImageBytes != null
+                    ? ReadImageSize(firstImageBytes)
+                    : null;
             // When N>1, show how many of the requested images actually came back.
             if (want > 1 && urls.Count > 0)
             {
@@ -2483,6 +2557,24 @@ namespace MultiImageClient
                 videoMode: spec.VideoMode);
         }
 
+        private static ImageGeneratorApiType BflApiTypeForKey(string key) => key switch
+        {
+            KeyBfl => ImageGeneratorApiType.BFLFlux2ProPreview,
+            KeyBflFlux2Pro => ImageGeneratorApiType.BFLFlux2Pro,
+            KeyBflFlux2Max => ImageGeneratorApiType.BFLFlux2Max,
+            KeyBflFlux2Flex => ImageGeneratorApiType.BFLFlux2Flex,
+            KeyBflFlux2Klein4b => ImageGeneratorApiType.BFLFlux2Klein4b,
+            KeyBflFlux2Klein9bPreview => ImageGeneratorApiType.BFLFlux2Klein9bPreview,
+            KeyBflFlux2Klein9b => ImageGeneratorApiType.BFLFlux2Klein9b,
+            KeyBflKontextPro => ImageGeneratorApiType.BFLFluxKontextPro,
+            KeyBflKontextMax => ImageGeneratorApiType.BFLFluxKontextMax,
+            KeyBflFlux11Ultra => ImageGeneratorApiType.BFLv11Ultra,
+            KeyBflFlux11 => ImageGeneratorApiType.BFLv11,
+            KeyBflFluxPro => ImageGeneratorApiType.BFLFluxPro,
+            KeyBflFluxDev => ImageGeneratorApiType.BFLFluxDev,
+            _ => throw new ArgumentException($"Unknown BFL generator key '{key}'.", nameof(key)),
+        };
+
         // enablePartials: emit mid-stream preview images for gpt-image-2. Only
         // valid for a single-image request; RunOneAsync turns it off for N>1
         // (each generator is always built single-image and invoked N times).
@@ -2497,210 +2589,253 @@ namespace MultiImageClient
             switch (key)
             {
                 case KeyGpt2:
-                {
-                    RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", key);
-                    if (!Enum.TryParse<OpenAIGPTImageOneQuality>(spec.Quality, true, out var quality))
                     {
-                        quality = OpenAIGPTImageOneQuality.high;
-                    }
-                    var size = UiShapeMapping.Gpt2Size(
-                        spec.Shape,
-                        spec.Detail,
-                        job.InputImageWidth,
-                        job.InputImageHeight);
-                    if (job.HasInputImage)
-                    {
-                        return new GptImage2EditGenerator(
-                            _settings.OpenAIApiKey, maxConcurrency: 2,
-                            job.InputImagePaths,
-                            size, quality, _stats, "ui",
-                            imageCount: 1);
-                    }
-                    return new GptImage2Generator(
-                        _settings.OpenAIApiKey, maxConcurrency: 2,
-                        sizePool: new[] { size },
-                        moderation: spec.Moderation,
-                        qualityPool: new[] { quality },
-                        stats: _stats, name: "ui",
-                        partialSaveFolder: _settings.ImageDownloadBaseFolder,
-                        popUpPartials: false,
-                        imageCount: 1,
-                        partialImageCallback: !enablePartials ? null : (partialIndex, imageIndex, bytes) =>
+                        RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", key);
+                        if (!Enum.TryParse<OpenAIGPTImageOneQuality>(spec.Quality, true, out var quality))
                         {
-                            var outputIndex = Math.Max(0, imageIndex);
-                            // Preview and final bytes deliberately share one stable
-                            // URL. Each partial replaces the previous bytes, then
-                            // RunOneAsync replaces them with the completed image.
-                            job.StoreImage(key, outputIndex, bytes, "image/png");
-                            job.Emit(new
+                            quality = OpenAIGPTImageOneQuality.high;
+                        }
+                        var size = UiShapeMapping.Gpt2Size(
+                            spec.Shape,
+                            spec.Detail,
+                            job.InputImageWidth,
+                            job.InputImageHeight);
+                        if (job.HasInputImage)
+                        {
+                            return new GptImage2EditGenerator(
+                                _settings.OpenAIApiKey, maxConcurrency: 2,
+                                job.InputImagePaths,
+                                size, quality, _stats, "ui",
+                                imageCount: 1);
+                        }
+                        return new GptImage2Generator(
+                            _settings.OpenAIApiKey, maxConcurrency: 2,
+                            sizePool: new[] { size },
+                            moderation: spec.Moderation,
+                            qualityPool: new[] { quality },
+                            stats: _stats, name: "ui",
+                            partialSaveFolder: _settings.ImageDownloadBaseFolder,
+                            popUpPartials: false,
+                            imageCount: 1,
+                            partialImageCallback: !enablePartials ? null : (partialIndex, imageIndex, bytes) =>
                             {
-                                type = "gen-partial",
-                                gen = key,
-                                partialIndex,
-                                imageIndex = outputIndex,
-                                url = $"/api/jobs/{job.Id}/images/{key}/{outputIndex}",
-                                at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                var outputIndex = Math.Max(0, imageIndex);
+                                // Preview and final bytes deliberately share one stable
+                                // URL. Each partial replaces the previous bytes, then
+                                // RunOneAsync replaces them with the completed image.
+                                job.StoreImage(key, outputIndex, bytes, "image/png");
+                                job.Emit(new
+                                {
+                                    type = "gen-partial",
+                                    gen = key,
+                                    partialIndex,
+                                    imageIndex = outputIndex,
+                                    url = $"/api/jobs/{job.Id}/images/{key}/{outputIndex}",
+                                    at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                                });
                             });
-                        });
-                }
+                    }
 
                 case KeyGpt1:
                 case KeyGpt1Mini:
-                {
-                    // Text-only target: on image jobs it runs from the prompt
-                    // alone (see ImageCapableKeys).
-                    if (!Enum.TryParse<OpenAIGPTImageOneQuality>(spec.Quality, true, out var quality))
                     {
-                        quality = OpenAIGPTImageOneQuality.high;
+                        // Text-only target: on image jobs it runs from the prompt
+                        // alone (see ImageCapableKeys).
+                        if (!Enum.TryParse<OpenAIGPTImageOneQuality>(spec.Quality, true, out var quality))
+                        {
+                            quality = OpenAIGPTImageOneQuality.high;
+                        }
+                        return new GptImageOneGenerator(
+                            _settings.OpenAIApiKey,
+                            maxConcurrency: 2,
+                            size: UiShapeMapping.Gpt1Size(spec.Shape),
+                            moderation: spec.Moderation,
+                            quality,
+                            apiType: key == KeyGpt1 ? ImageGeneratorApiType.GptImage1 : ImageGeneratorApiType.GptImage1Mini,
+                            _stats,
+                            name: $"{key} ui",
+                            imageCount: 1);
                     }
-                    return new GptImageOneGenerator(
-                        _settings.OpenAIApiKey,
-                        maxConcurrency: 2,
-                        size: UiShapeMapping.Gpt1Size(spec.Shape),
-                        moderation: spec.Moderation,
-                        quality,
-                        apiType: key == KeyGpt1 ? ImageGeneratorApiType.GptImage1 : ImageGeneratorApiType.GptImage1Mini,
-                        _stats,
-                        name: $"{key} ui",
-                        imageCount: 1);
-                }
 
                 case KeyGrokApi:
                 case KeyGrokApiPro:
-                {
-                    RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", key);
-                    var pro = key == KeyGrokApiPro;
-                    var mappedAr = UiShapeMapping.GrokAspect(
-                        spec.Shape,
-                        job.InputImageWidth,
-                        job.InputImageHeight);
-                    if (job.HasInputImage)
                     {
-                        return new GrokImagineEditGenerator(
-                            _settings.XAIGrokApiKey, maxConcurrency: 1, _stats, _settings,
-                            inputImage: job.InputImagePath, pro: pro, aspectRatio: mappedAr);
+                        RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", key);
+                        var pro = key == KeyGrokApiPro;
+                        var mappedAr = UiShapeMapping.GrokAspect(
+                            spec.Shape,
+                            job.InputImageWidth,
+                            job.InputImageHeight);
+                        if (job.HasInputImage)
+                        {
+                            return new GrokImagineEditGenerator(
+                                _settings.XAIGrokApiKey, maxConcurrency: 1, _stats, _settings,
+                                inputImage: job.InputImagePath, pro: pro, aspectRatio: mappedAr);
+                        }
+                        return new GrokImagineGenerator(
+                            _settings.XAIGrokApiKey, 1,
+                            pro ? ImageGeneratorApiType.GrokImaginePro : ImageGeneratorApiType.GrokImagine,
+                            _stats, "ui",
+                            aspectRatio: mappedAr == "" ? "auto" : mappedAr,
+                            quality: "high",
+                            resolution: UiShapeMapping.GrokResolution(spec.Detail),
+                            settings: _settings,
+                            imageCount: 1);
                     }
-                    return new GrokImagineGenerator(
-                        _settings.XAIGrokApiKey, 1,
-                        pro ? ImageGeneratorApiType.GrokImaginePro : ImageGeneratorApiType.GrokImagine,
-                        _stats, "ui",
-                        aspectRatio: mappedAr == "" ? "auto" : mappedAr,
-                        quality: "high",
-                        resolution: UiShapeMapping.GrokResolution(spec.Detail),
-                        settings: _settings,
-                        imageCount: 1);
-                }
 
                 case KeyGoogle:
                 case KeyGooglePro:
-                {
-                    // Gemini honors aspectRatio + imageSize; a pasted image rides
-                    // along as a reference part (Gemini is natively multimodal).
-                    // No n equivalent — Gemini returns what it returns.
-                    RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
-                    var googleApiType = key == KeyGooglePro
-                        ? ImageGeneratorApiType.GoogleNanoBananaPro
-                        : ImageGeneratorApiType.GoogleNanoBanana;
-                    var googleAspect = UiShapeMapping.GoogleAspect(
-                        spec.Shape,
-                        job.InputImageWidth,
-                        job.InputImageHeight);
-                    return new GoogleGenerator(
-                        googleApiType, _settings.GoogleGeminiApiKey, maxConcurrency: 2,
-                        _stats, name: $"{key} ui",
-                        aspectRatio: googleAspect == "" ? null : googleAspect,
-                        imageSize: UiShapeMapping.GoogleImageSize(spec.Detail),
-                        inputImagePath: job.HasInputImage ? job.InputImagePath : null);
-                }
-
-                case KeyBfl:
-                {
-                    // FLUX.2 takes explicit width/height (shape+detail mapped, ~4 MP
-                    // ceiling) and optional input_image conditioning for a pasted
-                    // image. No n parameter exists on the BFL API — n is ignored.
-                    RequireKey(_settings.BFLApiKey, "BFLApiKey", key);
-                    var (bflWidth, bflHeight) = UiShapeMapping.BflSize(
-                        spec.Shape,
-                        spec.Detail,
-                        job.InputImageWidth,
-                        job.InputImageHeight);
-                    return new BFLGenerator(
-                        ImageGeneratorApiType.BFLFlux2ProPreview, _settings.BFLApiKey,
-                        maxConcurrency: 2, "1:1", false, bflWidth, bflHeight, _stats, "bfl ui",
-                        inputImagePath: job.HasInputImage ? job.InputImagePath : null);
-                }
-
-                case KeyIdeogram:
-                {
-                    // V4 is a dedicated text-only target now (split from V3 on
-                    // 2026-07-28 at the user's request): the v4 endpoint is
-                    // JSON-only with no reference-image support, so on image
-                    // jobs it runs from the prompt alone (see ImageCapableKeys)
-                    // — Ideogram's text-to-image is good enough to want even
-                    // when an image is attached. v4 is 2K-native: shape maps to
-                    // a documented resolution (detail has no effect).
-                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
-                    return new IdeogramV4Generator(
-                        _settings.IdeogramApiKey, maxConcurrency: 1,
-                        UiShapeMapping.IdeogramV4Resolution(spec.Shape),
-                        IdeogramRenderingSpeed.DEFAULT,
-                        _stats, "ideogram ui",
-                        imageCount: Math.Clamp(spec.ImageCount, 1, 8));
-                }
-
-                case KeyIdeogramV3:
-                {
-                    // V3 is the image-capable Ideogram target: a pasted image
-                    // rides along as a style reference; without one it's plain
-                    // text-to-image on the same endpoint.
-                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
-                    return new IdeogramV3Generator(
-                        _settings.IdeogramApiKey, maxConcurrency: 1,
-                        IdeogramV3StyleType.AUTO, IdeogramMagicPromptOption.ON,
-                        UiShapeMapping.IdeogramV3Aspect(
+                    {
+                        // Gemini honors aspectRatio + imageSize; a pasted image rides
+                        // along as a reference part (Gemini is natively multimodal).
+                        // No n equivalent — Gemini returns what it returns.
+                        RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
+                        var googleApiType = key == KeyGooglePro
+                            ? ImageGeneratorApiType.GoogleNanoBananaPro
+                            : ImageGeneratorApiType.GoogleNanoBanana;
+                        var googleAspect = UiShapeMapping.GoogleAspect(
                             spec.Shape,
                             job.InputImageWidth,
-                            job.InputImageHeight),
-                        IdeogramRenderingSpeed.QUALITY,
-                        "", _stats, "ideogram-v3 ui",
-                        inputImagePath: job.HasInputImage ? job.InputImagePath : null,
-                        imageCount: Math.Clamp(spec.ImageCount, 1, 8));
-                }
+                            job.InputImageHeight);
+                        return new GoogleGenerator(
+                            googleApiType, _settings.GoogleGeminiApiKey, maxConcurrency: 2,
+                            _stats, name: $"{key} ui",
+                            aspectRatio: googleAspect == "" ? null : googleAspect,
+                            imageSize: UiShapeMapping.GoogleImageSize(spec.Detail),
+                            inputImagePath: job.HasInputImage ? job.InputImagePath : null);
+                    }
+
+                case KeyBfl:
+                case KeyBflFlux2Pro:
+                case KeyBflFlux2Max:
+                case KeyBflFlux2Flex:
+                case KeyBflFlux2Klein4b:
+                case KeyBflFlux2Klein9bPreview:
+                case KeyBflFlux2Klein9b:
+                case KeyBflKontextPro:
+                case KeyBflKontextMax:
+                case KeyBflFlux11Ultra:
+                case KeyBflFlux11:
+                case KeyBflFluxPro:
+                case KeyBflFluxDev:
+                    {
+                        RequireKey(_settings.BFLApiKey, "BFLApiKey", key);
+                        var apiType = BflApiTypeForKey(key);
+                        var legacyDimensions = apiType is ImageGeneratorApiType.BFLv11
+                            or ImageGeneratorApiType.BFLFluxPro
+                            or ImageGeneratorApiType.BFLFluxDev;
+                        var (bflWidth, bflHeight) = legacyDimensions
+                            ? UiShapeMapping.BflLegacySize(
+                                spec.Shape,
+                                job.InputImageWidth,
+                                job.InputImageHeight)
+                            : UiShapeMapping.BflSize(
+                                spec.Shape,
+                                spec.Detail,
+                                job.InputImageWidth,
+                                job.InputImageHeight);
+                        var bflAspect = UiShapeMapping.GrokAspect(
+                            spec.Shape,
+                            job.InputImageWidth,
+                            job.InputImageHeight);
+                        if (string.IsNullOrEmpty(bflAspect))
+                        {
+                            bflAspect = "1:1";
+                        }
+                        return new BFLGenerator(
+                            apiType, _settings.BFLApiKey,
+                            maxConcurrency: 2, bflAspect, false, bflWidth, bflHeight, _stats, $"{key} ui",
+                            inputImagePath: job.HasInputImage && IsImageCapable(key) ? job.InputImagePath : null);
+                    }
+
+                case KeyIdeogram:
+                    {
+                        // V4 is a dedicated text-only target now (split from V3 on
+                        // 2026-07-28 at the user's request): the v4 endpoint is
+                        // JSON-only with no reference-image support, so on image
+                        // jobs it runs from the prompt alone (see ImageCapableKeys)
+                        // — Ideogram's text-to-image is good enough to want even
+                        // when an image is attached. v4 is 2K-native: shape maps to
+                        // a documented resolution (detail has no effect).
+                        RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
+                        return new IdeogramV4Generator(
+                            _settings.IdeogramApiKey, maxConcurrency: 1,
+                            UiShapeMapping.IdeogramV4Resolution(spec.Shape),
+                            IdeogramRenderingSpeed.DEFAULT,
+                            _stats, "ideogram ui",
+                            imageCount: Math.Clamp(spec.ImageCount, 1, 8));
+                    }
+
+                case KeyIdeogramV3:
+                    {
+                        // V3 is the image-capable Ideogram target: a pasted image
+                        // rides along as a style reference; without one it's plain
+                        // text-to-image on the same endpoint.
+                        RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
+                        return new IdeogramV3Generator(
+                            _settings.IdeogramApiKey, maxConcurrency: 1,
+                            IdeogramV3StyleType.AUTO, IdeogramMagicPromptOption.ON,
+                            UiShapeMapping.IdeogramV3Aspect(
+                                spec.Shape,
+                                job.InputImageWidth,
+                                job.InputImageHeight),
+                            IdeogramRenderingSpeed.QUALITY,
+                            "", _stats, "ideogram-v3 ui",
+                            inputImagePath: job.HasInputImage ? job.InputImagePath : null,
+                            imageCount: Math.Clamp(spec.ImageCount, 1, 8));
+                    }
+
+                case KeyIdeogramV2:
+                    {
+                        // V2 remains available through Ideogram's legacy JSON
+                        // /generate endpoint. It is text-only in this UI and returns
+                        // one image; detail and n therefore have no effect.
+                        RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
+                        return new IdeogramGenerator(
+                            _settings.IdeogramApiKey, maxConcurrency: 1,
+                            IdeogramMagicPromptOption.ON,
+                            UiShapeMapping.IdeogramV3Aspect(spec.Shape),
+                            styleType: null,
+                            negativePrompt: "",
+                            model: IdeogramModel.V_2,
+                            stats: _stats,
+                            name: $"{key} ui");
+                    }
 
                 case KeyRecraft:
-                {
-                    RequireKey(_settings.RecraftApiKey, "RecraftApiKey", key);
-                    if (job.HasInputImage && !spec.Shape.Equals("auto", StringComparison.OrdinalIgnoreCase))
                     {
-                        throw new NotSupportedException(
-                            "Recraft image-to-image always follows the source dimensions and cannot override output aspect ratio.");
+                        RequireKey(_settings.RecraftApiKey, "RecraftApiKey", key);
+                        if (job.HasInputImage && !spec.Shape.Equals("auto", StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new NotSupportedException(
+                                "Recraft image-to-image always follows the source dimensions and cannot override output aspect ratio.");
+                        }
+                        // Recraft text-to-image accepts the same "w:h" aspect strings
+                        // as Grok. Its image-to-image endpoint takes no size field and
+                        // inherently follows the source dimensions.
+                        var recraftAspect = UiShapeMapping.GrokAspect(spec.Shape);
+                        var recraftN = Math.Clamp(spec.ImageCount, 1, 6);
+                        // With an input image, RecraftGenerator runs image-to-image
+                        // (V4.1-native reference path; output size follows the source).
+                        return new RecraftGenerator(
+                            _settings.RecraftApiKey, maxConcurrency: 1,
+                            RecraftImageSize._1024x1024, RecraftStyle.any,
+                            null, null, null, _stats, "recraft ui",
+                            model: RecraftModel.recraftv4_1,
+                            inputImagePath: job.HasInputImage ? job.InputImagePath : null,
+                            sizeOverride: recraftAspect,
+                            imageCount: recraftN);
                     }
-                    // Recraft text-to-image accepts the same "w:h" aspect strings
-                    // as Grok. Its image-to-image endpoint takes no size field and
-                    // inherently follows the source dimensions.
-                    var recraftAspect = UiShapeMapping.GrokAspect(spec.Shape);
-                    var recraftN = Math.Clamp(spec.ImageCount, 1, 6);
-                    // With an input image, RecraftGenerator runs image-to-image
-                    // (V4.1-native reference path; output size follows the source).
-                    return new RecraftGenerator(
-                        _settings.RecraftApiKey, maxConcurrency: 1,
-                        RecraftImageSize._1024x1024, RecraftStyle.any,
-                        null, null, null, _stats, "recraft ui",
-                        model: RecraftModel.recraftv4_1,
-                        inputImagePath: job.HasInputImage ? job.InputImagePath : null,
-                        sizeOverride: recraftAspect,
-                        imageCount: recraftN);
-                }
 
                 case KeyLocalKlein:
                 case KeyLocalZImage:
-                {
-                    if (job.HasInputImage)
                     {
-                        throw new NotSupportedException($"{key} is text-to-image only in the local UI; remove the input image");
+                        if (job.HasInputImage)
+                        {
+                            throw new NotSupportedException($"{key} is text-to-image only in the local UI; remove the input image");
+                        }
+                        return _generatorGroups.BuildByShortName(key);
                     }
-                    return _generatorGroups.BuildByShortName(key);
-                }
 
                 default:
                     throw new ArgumentException($"unknown generator '{key}'");
@@ -2710,6 +2845,22 @@ namespace MultiImageClient
         // Minimal PNG/JPEG dimension reader for the display label. Returns "WxH",
         // or null for anything it doesn't recognize — no decode, no exceptions used
         // for control flow. PNG and JPEG cover every provider the UI shows.
+        private static string ReadImageSize(string path)
+        {
+            try
+            {
+                var info = Image.Identify(path);
+                return info.Width > 0 && info.Height > 0
+                    ? $"{info.Width}x{info.Height}"
+                    : null;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Could not identify saved result dimensions for {path}: {ex.Message}");
+                return null;
+            }
+        }
+
         private static string ReadImageSize(byte[] b)
         {
             if (b == null) return null;

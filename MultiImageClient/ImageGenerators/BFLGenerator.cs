@@ -50,9 +50,14 @@ namespace MultiImageClient
                 case ImageGeneratorApiType.BFLFlux2Flex:
                 case ImageGeneratorApiType.BFLFlux2Klein4b:
                 case ImageGeneratorApiType.BFLFlux2Klein9b:
+                case ImageGeneratorApiType.BFLFlux2Klein9bPreview:
+                case ImageGeneratorApiType.BFLFluxPro:
+                case ImageGeneratorApiType.BFLFluxDev:
                     res = $"{res}_{_height}x{_width}{upsamplingPart}";
                     break;
                 case ImageGeneratorApiType.BFLv11Ultra:
+                case ImageGeneratorApiType.BFLFluxKontextPro:
+                case ImageGeneratorApiType.BFLFluxKontextMax:
                     res = $"{res}_{_aspectRatio}{upsamplingPart}";
                     break;
                 default:
@@ -83,32 +88,40 @@ namespace MultiImageClient
         public List<string> GetRightParts()
         {
             var upsamplingPart = _promptUpsampling ? "prompt rewritten." : "";
-            var rightsideContents = new List<string>() { _apiType.ToString(), upsamplingPart};
+            var rightsideContents = new List<string>() { _apiType.ToString(), upsamplingPart };
             return rightsideContents;
         }
 
         // https://docs.bfl.ai/quick_start/pricing
         public decimal GetCost()
         {
+            var outputMegapixels = Math.Max(1m, (decimal)_width * _height / 1_000_000m);
             switch (_apiType)
             {
                 case ImageGeneratorApiType.BFLv11:
                     return 0.04m;
                 case ImageGeneratorApiType.BFLv11Ultra:
                     return 0.06m;
-                // FLUX.2 is megapixel-priced; the numbers below are the headline
-                // rate at 1 MP output and will under-report for larger sizes.
+                case ImageGeneratorApiType.BFLFluxPro:
+                    return 0.05m;
+                case ImageGeneratorApiType.BFLFluxDev:
+                    return 0.025m;
+                case ImageGeneratorApiType.BFLFluxKontextPro:
+                    return 0.04m;
+                case ImageGeneratorApiType.BFLFluxKontextMax:
+                    return 0.08m;
                 case ImageGeneratorApiType.BFLFlux2Pro:
                 case ImageGeneratorApiType.BFLFlux2ProPreview:
-                    return 0.03m;
+                    return outputMegapixels * (string.IsNullOrEmpty(_inputImagePath) ? 0.03m : 0.045m);
                 case ImageGeneratorApiType.BFLFlux2Max:
-                    return 0.07m;
+                    return outputMegapixels * 0.07m;
                 case ImageGeneratorApiType.BFLFlux2Flex:
-                    return 0.06m;
+                    return outputMegapixels * 0.05m;
                 case ImageGeneratorApiType.BFLFlux2Klein4b:
-                    return 0.014m;
+                    return 0.014m + Math.Max(0m, outputMegapixels - 1m) * 0.001m;
                 case ImageGeneratorApiType.BFLFlux2Klein9b:
-                    return 0.015m;
+                case ImageGeneratorApiType.BFLFlux2Klein9bPreview:
+                    return 0.015m + Math.Max(0m, outputMegapixels - 1m) * 0.002m;
                 default:
                     throw new Exception($"BFLGenerator: no cost entry for {_apiType}");
             }
@@ -133,72 +146,123 @@ namespace MultiImageClient
                 switch (_apiType)
                 {
                     case ImageGeneratorApiType.BFLv11:
-                    {
-                        var request = new FluxPro11Request
                         {
-                            Prompt = promptDetails.Prompt,
-                            Width = _width,
-                            Height = _height,
-                            PromptUpsampling = _promptUpsampling,
-                            SafetyTolerance = MaxPermissiveSafetyTolerance
-                        };
-                        generationResponse = await _bflClient.GenerateFluxPro11Async(request);
-                        break;
-                    }
+                            var request = new FluxPro11Request
+                            {
+                                Prompt = promptDetails.Prompt,
+                                ImagePrompt = ReadInputImageBase64(),
+                                Width = _width,
+                                Height = _height,
+                                PromptUpsampling = _promptUpsampling,
+                                SafetyTolerance = MaxPermissiveSafetyTolerance
+                            };
+                            generationResponse = await _bflClient.GenerateFluxPro11Async(request);
+                            break;
+                        }
                     case ImageGeneratorApiType.BFLv11Ultra:
-                    {
-                        var request = new FluxPro11UltraRequest
                         {
-                            Prompt = promptDetails.Prompt,
-                            AspectRatio = _aspectRatio,
-                            PromptUpsampling = _promptUpsampling,
-                            Width = _width,
-                            Height = _height,
-                            SafetyTolerance = MaxPermissiveSafetyTolerance
-                        };
-                        generationResponse = await _bflClient.GenerateFluxPro11UltraAsync(request);
-                        break;
-                    }
+                            var request = new FluxPro11UltraRequest
+                            {
+                                Prompt = promptDetails.Prompt,
+                                ImagePrompt = ReadInputImageBase64(),
+                                ImagePromptStrength = string.IsNullOrEmpty(_inputImagePath) ? null : 0.1f,
+                                AspectRatio = _aspectRatio,
+                                PromptUpsampling = _promptUpsampling,
+                                SafetyTolerance = MaxPermissiveSafetyTolerance
+                            };
+                            generationResponse = await _bflClient.GenerateFluxPro11UltraAsync(request);
+                            break;
+                        }
+                    case ImageGeneratorApiType.BFLFluxPro:
+                        {
+                            var request = new FluxProRequest
+                            {
+                                Prompt = promptDetails.Prompt,
+                                Width = _width,
+                                Height = _height,
+                                PromptUpsampling = _promptUpsampling,
+                                SafetyTolerance = MaxPermissiveSafetyTolerance
+                            };
+                            generationResponse = await _bflClient.GenerateFluxProAsync(request);
+                            break;
+                        }
+                    case ImageGeneratorApiType.BFLFluxDev:
+                        {
+                            var request = new FluxDevRequest
+                            {
+                                Prompt = promptDetails.Prompt,
+                                ImagePrompt = ReadInputImageBase64(),
+                                Width = _width,
+                                Height = _height,
+                                PromptUpsampling = _promptUpsampling,
+                                SafetyTolerance = MaxPermissiveSafetyTolerance
+                            };
+                            generationResponse = await _bflClient.GenerateFluxDevAsync(request);
+                            break;
+                        }
+                    case ImageGeneratorApiType.BFLFluxKontextPro:
+                    case ImageGeneratorApiType.BFLFluxKontextMax:
+                        {
+                            var request = new FluxKontextRequest
+                            {
+                                Prompt = promptDetails.Prompt,
+                                InputImage = ReadInputImageBase64(),
+                                AspectRatio = _aspectRatio,
+                                PromptUpsampling = _promptUpsampling,
+                                SafetyTolerance = MaxPermissiveSafetyTolerance
+                            };
+                            generationResponse = _apiType == ImageGeneratorApiType.BFLFluxKontextPro
+                                ? await _bflClient.GenerateFluxKontextProAsync(request)
+                                : await _bflClient.GenerateFluxKontextMaxAsync(request);
+                            break;
+                        }
                     case ImageGeneratorApiType.BFLFlux2Pro:
                     case ImageGeneratorApiType.BFLFlux2ProPreview:
                     case ImageGeneratorApiType.BFLFlux2Max:
-                    case ImageGeneratorApiType.BFLFlux2Flex:
-                    case ImageGeneratorApiType.BFLFlux2Klein4b:
-                    case ImageGeneratorApiType.BFLFlux2Klein9b:
-                    {
-                        promptDetails.RuntimeMeta["endpoint"] = GetFlux2Endpoint(_apiType);
-                        var request = new Flux2Request
                         {
-                            Prompt = promptDetails.Prompt,
-                            Width = _width,
-                            Height = _height,
-                            PromptUpsampling = _promptUpsampling,
-                            SafetyTolerance = MaxPermissiveSafetyTolerance,
-                        };
-                        if (!string.IsNullOrEmpty(_inputImagePath))
-                        {
-                            request.InputImage = Convert.ToBase64String(File.ReadAllBytes(_inputImagePath));
-                            promptDetails.RuntimeMeta["input_image"] = Path.GetFileName(_inputImagePath);
+                            promptDetails.RuntimeMeta["endpoint"] = GetFlux2Endpoint(_apiType);
+                            var request = BuildFlux2Request<Flux2Request>(
+                                promptDetails,
+                                MaxPermissiveSafetyTolerance);
+                            request.DisablePromptUpsampling = !_promptUpsampling;
+                            generationResponse = _apiType switch
+                            {
+                                ImageGeneratorApiType.BFLFlux2Pro => await _bflClient.GenerateFlux2ProAsync(request),
+                                ImageGeneratorApiType.BFLFlux2ProPreview => await _bflClient.GenerateFlux2ProPreviewAsync(request),
+                                ImageGeneratorApiType.BFLFlux2Max => await _bflClient.GenerateFlux2MaxAsync(request),
+                                _ => throw new Exception("unreachable"),
+                            };
+                            break;
                         }
-                        // flex lets you steer denoising; keep it permissive by default.
-                        if (_apiType == ImageGeneratorApiType.BFLFlux2Flex)
+                    case ImageGeneratorApiType.BFLFlux2Flex:
                         {
+                            promptDetails.RuntimeMeta["endpoint"] = GetFlux2Endpoint(_apiType);
+                            var request = BuildFlux2Request<Flux2FlexRequest>(
+                                promptDetails,
+                                MaxPermissiveSafetyTolerance);
+                            request.PromptUpsampling = _promptUpsampling;
                             request.Steps = 40;
                             request.Guidance = 4.5f;
+                            generationResponse = await _bflClient.GenerateFlux2FlexAsync(request);
+                            break;
                         }
-
-                        generationResponse = _apiType switch
+                    case ImageGeneratorApiType.BFLFlux2Klein4b:
+                    case ImageGeneratorApiType.BFLFlux2Klein9b:
+                    case ImageGeneratorApiType.BFLFlux2Klein9bPreview:
                         {
-                            ImageGeneratorApiType.BFLFlux2Pro => await _bflClient.GenerateFlux2ProAsync(request),
-                            ImageGeneratorApiType.BFLFlux2ProPreview => await _bflClient.GenerateFlux2ProPreviewAsync(request),
-                            ImageGeneratorApiType.BFLFlux2Max => await _bflClient.GenerateFlux2MaxAsync(request),
-                            ImageGeneratorApiType.BFLFlux2Flex => await _bflClient.GenerateFlux2FlexAsync(request),
-                            ImageGeneratorApiType.BFLFlux2Klein4b => await _bflClient.GenerateFlux2Klein4bAsync(request),
-                            ImageGeneratorApiType.BFLFlux2Klein9b => await _bflClient.GenerateFlux2Klein9bAsync(request),
-                            _ => throw new Exception("unreachable"),
-                        };
-                        break;
-                    }
+                            promptDetails.RuntimeMeta["endpoint"] = GetFlux2Endpoint(_apiType);
+                            var request = BuildFlux2Request<Flux2KleinRequest>(
+                                promptDetails,
+                                MaxPermissiveSafetyTolerance);
+                            generationResponse = _apiType switch
+                            {
+                                ImageGeneratorApiType.BFLFlux2Klein4b => await _bflClient.GenerateFlux2Klein4bAsync(request),
+                                ImageGeneratorApiType.BFLFlux2Klein9b => await _bflClient.GenerateFlux2Klein9bAsync(request),
+                                ImageGeneratorApiType.BFLFlux2Klein9bPreview => await _bflClient.GenerateFlux2Klein9bPreviewAsync(request),
+                                _ => throw new Exception("unreachable"),
+                            };
+                            break;
+                        }
                     default:
                         throw new Exception($"BFLGenerator: unsupported api type {_apiType}");
                 }
@@ -267,6 +331,35 @@ namespace MultiImageClient
             }
         }
 
+        private TRequest BuildFlux2Request<TRequest>(
+            PromptDetails promptDetails,
+            int safetyTolerance)
+            where TRequest : Flux2RequestBase, new()
+        {
+            var request = new TRequest
+            {
+                Prompt = promptDetails.Prompt,
+                Width = _width,
+                Height = _height,
+                SafetyTolerance = safetyTolerance,
+            };
+            if (!string.IsNullOrEmpty(_inputImagePath))
+            {
+                request.InputImage = ReadInputImageBase64();
+                promptDetails.RuntimeMeta["input_image"] = Path.GetFileName(_inputImagePath);
+            }
+            return request;
+        }
+
+        private string ReadInputImageBase64()
+        {
+            if (string.IsNullOrEmpty(_inputImagePath))
+            {
+                return null;
+            }
+            return Convert.ToBase64String(File.ReadAllBytes(_inputImagePath));
+        }
+
         private static string GetFlux2Endpoint(ImageGeneratorApiType apiType)
         {
             return apiType switch
@@ -277,6 +370,7 @@ namespace MultiImageClient
                 ImageGeneratorApiType.BFLFlux2Flex => "flux-2-flex",
                 ImageGeneratorApiType.BFLFlux2Klein4b => "flux-2-klein-4b",
                 ImageGeneratorApiType.BFLFlux2Klein9b => "flux-2-klein-9b",
+                ImageGeneratorApiType.BFLFlux2Klein9bPreview => "flux-2-klein-9b-preview",
                 _ => throw new Exception($"Not a FLUX.2 endpoint: {apiType}"),
             };
         }

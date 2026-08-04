@@ -64,7 +64,8 @@ namespace MultiImageClient
                     ("OpenAI", "OpenAIApiKey",
                      "https://platform.openai.com/settings/organization/billing/overview",
                      "https://platform.openai.com/api-keys"),
-                UiJobRunner.KeyIdeogram or UiJobRunner.KeyIdeogramV3 =>
+                UiJobRunner.KeyIdeogram or UiJobRunner.KeyIdeogramV3
+                    or UiJobRunner.KeyIdeogramV2 =>
                     ("Ideogram", "IdeogramApiKey",
                      "https://ideogram.ai/manage-api",
                      "https://ideogram.ai/manage-api"),

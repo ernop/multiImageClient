@@ -117,6 +117,21 @@ public class UiShapeMappingTests
         AssertRatioClose(inputWidth, inputHeight, dimensions.Width, dimensions.Height, 0.035);
     }
 
+    [Theory]
+    [InlineData(1600, 900)]
+    [InlineData(900, 1600)]
+    [InlineData(1200, 1200)]
+    public void BflLegacyAutoMatchesInputWithinLegacyLimits(int inputWidth, int inputHeight)
+    {
+        var dimensions = UiShapeMapping.BflLegacySize("auto", inputWidth, inputHeight);
+
+        Assert.Equal(0, dimensions.Width % 32);
+        Assert.Equal(0, dimensions.Height % 32);
+        Assert.InRange(dimensions.Width, 256, 1440);
+        Assert.InRange(dimensions.Height, 256, 1440);
+        AssertRatioClose(inputWidth, inputHeight, dimensions.Width, dimensions.Height, 0.035);
+    }
+
     [Fact]
     public void MissingInputDimensionsFailClosed()
     {

@@ -176,7 +176,14 @@ namespace MultiImageClient
         /// a cookie client and per-run flags, so ShowcaseWorkflow builds them
         /// itself. They are listed for help/validation completeness only.
         public static readonly string[] ShortNames =
-            { "gpt2", "grok-api", "grok-api-pro", "grok-web", "meta-web", "ideogram", "recraft", "bfl", "google", "googlepro", "local-klein", "local-zimage" };
+            {
+                "gpt2", "grok-api", "grok-api-pro", "grok-web", "meta-web",
+                "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
+                "recraft", "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
+                "bfl-klein9-preview", "bfl-klein9", "bfl-kontext-pro", "bfl-kontext-max",
+                "bfl-1.1-ultra", "bfl-1.1", "bfl-flux-pro", "bfl-dev",
+                "google", "googlepro", "local-klein", "local-zimage"
+            };
 
         public IImageGenerator BuildByShortName(string name)
         {
@@ -185,9 +192,23 @@ namespace MultiImageClient
                 case "gpt2": return GptImage2RandomMinimalSafety();
                 case "grok-api": case "grok": return GrokImagine_Square();
                 case "grok-api-pro": case "grokpro": return GrokImaginePro_Square();
-                case "ideogram": return IdeogramV4_Square();
+                case "ideogram": case "ideogram-v4": return IdeogramV4_Square();
+                case "ideogram-v3": return IdeogramV3_Square();
+                case "ideogram-v2": return IdeogramV2_Square();
                 case "recraft": return RecraftV41AnyStyle();
                 case "bfl": return BFLFlux2ProPreview_Square();
+                case "bfl-pro": return BFLFlux2Pro_Square();
+                case "bfl-max": return BFLFlux2Max_Square();
+                case "bfl-flex": return BFLFlux2Flex_Square();
+                case "bfl-klein4": return BFLFlux2Klein4b_Square();
+                case "bfl-klein9-preview": return BFLFlux2Klein9bPreview_Square();
+                case "bfl-klein9": return BFLFlux2Klein9b_Square();
+                case "bfl-kontext-pro": return BFLKontextPro_Square();
+                case "bfl-kontext-max": return BFLKontextMax_Square();
+                case "bfl-1.1-ultra": return BFLv11Ultra_1_1();
+                case "bfl-1.1": return BFLv11_3_2();
+                case "bfl-flux-pro": return BFLFluxPro_Square();
+                case "bfl-dev": return BFLFluxDev_Square();
                 case "google": case "nanobanana": return GeminiNanoBanana();
                 case "googlepro": case "nanobananapro": return GeminiNanoBananaPro();
                 case "local-klein": return LocalFlux2Klein_Custom();
@@ -332,6 +353,8 @@ namespace MultiImageClient
                 "2560x1440", "low", OpenAIGPTImageOneQuality.high, _stats, "");
 
         // ---------- Ideogram ----------
+        // V1 is intentionally not exposed: a live /generate request using V_1
+        // returned "selected model version is no longer supported" on 2026-08-04.
 
         private IdeogramGenerator Ideogram_V2_Design_16_10() =>
             new IdeogramGenerator(_settings.IdeogramApiKey, _concurrency,
@@ -342,6 +365,17 @@ namespace MultiImageClient
             new IdeogramGenerator(_settings.IdeogramApiKey, _concurrency,
                 IdeogramMagicPromptOption.OFF, IdeogramAspectRatio.ASPECT_1_1,
                 null, "", IdeogramModel.V_2_TURBO, _stats, "");
+
+        private IdeogramGenerator IdeogramV2_Square() =>
+            new IdeogramGenerator(_settings.IdeogramApiKey, _concurrency,
+                IdeogramMagicPromptOption.ON, IdeogramAspectRatio.ASPECT_1_1,
+                null, "", IdeogramModel.V_2, _stats, "v2");
+
+        private IdeogramV3Generator IdeogramV3_Square() =>
+            new IdeogramV3Generator(_settings.IdeogramApiKey, _concurrency,
+                IdeogramV3StyleType.AUTO, IdeogramMagicPromptOption.ON,
+                IdeogramAspectRatio.ASPECT_1_1, IdeogramRenderingSpeed.QUALITY,
+                "", _stats, "v3");
 
         private IdeogramV3Generator Ideogram_V3_Wide_Quality() =>
             new IdeogramV3Generator(_settings.IdeogramApiKey, _concurrency,
@@ -382,6 +416,22 @@ namespace MultiImageClient
             new BFLGenerator(ImageGeneratorApiType.BFLv11Ultra, _settings.BFLApiKey,
                 _concurrency, "3:2", true, 1024, 1024, _stats, "");
 
+        private BFLGenerator BFLFluxPro_Square() =>
+            new BFLGenerator(ImageGeneratorApiType.BFLFluxPro, _settings.BFLApiKey,
+                _concurrency, "1:1", false, 1024, 1024, _stats, "");
+
+        private BFLGenerator BFLFluxDev_Square() =>
+            new BFLGenerator(ImageGeneratorApiType.BFLFluxDev, _settings.BFLApiKey,
+                _concurrency, "1:1", false, 1024, 1024, _stats, "");
+
+        private BFLGenerator BFLKontextPro_Square() =>
+            new BFLGenerator(ImageGeneratorApiType.BFLFluxKontextPro, _settings.BFLApiKey,
+                _concurrency, "1:1", false, 1024, 1024, _stats, "");
+
+        private BFLGenerator BFLKontextMax_Square() =>
+            new BFLGenerator(ImageGeneratorApiType.BFLFluxKontextMax, _settings.BFLApiKey,
+                _concurrency, "1:1", false, 1024, 1024, _stats, "");
+
         // ---------- Black Forest Labs (FLUX.2 — current generation) ----------
         //
         // FLUX.2 is megapixel-priced. 1024x1024 is roughly 1 MP so the per-image
@@ -419,6 +469,10 @@ namespace MultiImageClient
 
         private BFLGenerator BFLFlux2Klein9b_Square() =>
             new BFLGenerator(ImageGeneratorApiType.BFLFlux2Klein9b, _settings.BFLApiKey,
+                _concurrency, "1:1", false, 1024, 1024, _stats, "");
+
+        private BFLGenerator BFLFlux2Klein9bPreview_Square() =>
+            new BFLGenerator(ImageGeneratorApiType.BFLFlux2Klein9bPreview, _settings.BFLApiKey,
                 _concurrency, "1:1", false, 1024, 1024, _stats, "");
 
         // ---------- Local ComfyUI: FLUX.2 Klein and Z-Image ----------

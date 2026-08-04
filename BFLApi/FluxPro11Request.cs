@@ -9,6 +9,9 @@ namespace BFLAPIClient
         [JsonProperty("prompt")]
         public string Prompt { get; set; }
 
+        [JsonProperty("image_prompt")]
+        public string ImagePrompt { get; set; }
+
         [JsonProperty("width")]
         public int Width { get; set; }
 

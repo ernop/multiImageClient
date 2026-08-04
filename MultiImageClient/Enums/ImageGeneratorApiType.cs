@@ -90,6 +90,12 @@ namespace MultiImageClient
         // GraphQL, best-effort. See MetaWebClient.
         MetaWebImagine = 38,
 
+        // Remaining public BFL model endpoints. Appended to preserve numeric
+        // identities in existing generation archives.
+        BFLFlux2Klein9bPreview = 39,
+        BFLFluxPro = 40,
+        BFLFluxDev = 41,
+
         WorkflowMock = 1000,
     }
 }

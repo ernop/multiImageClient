@@ -93,9 +93,8 @@ namespace MultiImageClient
         public bool Showcase { get; set; }
 
         /// Comma-separated generator short names for --showcase. Same
-        /// vocabulary as the REPL plus grok-web: gpt2, grok-api, grok-api-pro,
-        /// grok-web, ideogram, recraft, bfl, google, googlepro,
-        /// local-klein, local-zimage. grok-web honors the --grok-web-* flags
+        /// vocabulary as the REPL plus grok-web. The complete current list is
+        /// GeneratorGroups.ShortNames. grok-web honors the --grok-web-* flags
         /// (cookies, aspect ratio, pro/fast tier).
         public string Gens { get; set; } = "";
 
@@ -525,7 +524,7 @@ namespace MultiImageClient
             Console.WriteLine("  --repl-concurrency N  Max prompts in flight simultaneously in REPL mode (default 5). Change at runtime with :concurrency N.");
             Console.WriteLine("  --repl-n N            REPL session default n (images per gpt-image-2 call, default 1). Change at runtime with :n N, or per-prompt via [n=N] in the override prefix.");
             Console.WriteLine("  --showcase            Generic one-shot: run ALL prompts from the active prompt source (--prompt/--prompt-file/PromptFiles, honoring --limit; no default cap) through the selected generators and compose one contact sheet per generator (pops open only with --open-images).");
-            Console.WriteLine("  --gens csv            Pair with --showcase to pick generators by short name: gpt2 grok-api grok-api-pro grok-web meta-web ideogram recraft bfl google googlepro local-klein local-zimage. Without --gens the standard batch set runs. grok-web honors the --grok-web-* flags; meta-web honors the --meta-web-* flags.");
+            Console.WriteLine($"  --gens csv            Pair with --showcase to pick generators by short name: {string.Join(' ', GeneratorGroups.ShortNames)}. Without --gens the standard batch set runs. grok-web honors the --grok-web-* flags; meta-web honors the --meta-web-* flags.");
             Console.WriteLine("Grok naming: grok-api = official api.x.ai key version (public/GDPR ruleset); grok-web = consumer grok.com cookie-session version (web-app ruleset).");
             Console.WriteLine("  --grok-api-showcase   One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at grok-api in parallel, and compose a single combined grid image (pops open only with --open-images). Default --limit for this mode is 10.");
             Console.WriteLine("  --grok-api-pro        Pair with --grok-api-showcase to route through grok-imagine-image-pro at 2k resolution ($0.07/img, 30 rpm) instead of grok-imagine-image at 1k ($0.02/img, 300 rpm).");
