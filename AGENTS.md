@@ -9,6 +9,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 ## Also Read
 
 - [.cursorrules](.cursorrules) — communication style, XML docs policy, namespace rules, constants philosophy
+- [.cursor/rules/shared-site-resident-memory.mdc](.cursor/rules/shared-site-resident-memory.mdc) — **production `--ui` on fuseki is a resident daemon**: disk is source of truth, bound RAM/caches, no process-lifetime full image retention. Say **"shared-site resident"** or **"production UI memory"** to force this + clear the listed debt.
 - [docs/fail-closed-policy.md](docs/fail-closed-policy.md) — mandatory no-fallback policy: preserve exact identity, fix upstream, and fail hard on ambiguity or incomplete output
 - [docs/ideation-mode-prd.md](docs/ideation-mode-prd.md) — **core top-level product need (not yet implemented)**: Claude-powered Ideation Mode for the `--ui` web app. User briefs Claude (text and/or pasted images), Claude returns N highly-variable structured concept proposals via forced tool use (guaranteed-parseable JSON), user curates idea cards individually or auto-fans-out all N ideas × M generators. Keep this in mind when touching the UI; hone toward it.
 - [docs/grok-web-video-browser-transport.md](docs/grok-web-video-browser-transport.md) — grok-web video product contract and live browser protocol findings; motion prompt optional, method required, and Playwright must trigger Grok's real integrity-signed Make Video action.
