@@ -134,7 +134,7 @@ namespace MultiImageClient
                 UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini => LaneOpenAi,
                 UiJobRunner.KeyGrokApi or UiJobRunner.KeyGrokApiPro => LaneXaiApi,
                 UiJobRunner.KeyGrokWebVideo => LaneGrokWebBrowser,
-                UiJobRunner.KeyGrokWeb => hasInputImage ? LaneGrokWebBrowser : LaneGrokWebWs,
+                UiJobRunner.KeyGrokWeb => LaneGrokWebWs,
                 UiJobRunner.KeyMetaWeb => LaneMetaWeb,
                 UiJobRunner.KeyGoogle or UiJobRunner.KeyGooglePro => LaneGoogle,
                 UiJobRunner.KeyBfl or UiJobRunner.KeyBflFlux2Pro

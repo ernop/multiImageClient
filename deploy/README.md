@@ -48,8 +48,6 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
      "openai": 2,
      "xai-api": 1,
      "grok-web-ws": 1,
-     "grok-web-browser": 1,
-     "meta-web": 1,
      "google": 2,
      "bfl": 2,
      "ideogram": 1,
@@ -104,7 +102,7 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
   per-person) control whose jobs are shown; multi-select works.
 - The feed shows today's jobs live; the archive below lists earlier days
   (yesterday, then dated) and loads a day's full history on click — with
-  working copy-prompt, set-active, image viewer, and video follow-ups.
+  working copy-prompt, set-active, and image viewer.
 
 ## Operational notes
 

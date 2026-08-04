@@ -3103,27 +3103,25 @@ function applyJobEvent(id, card, evt) {
           result.className = "media-result";
           result.appendChild(createVideoPlayer(url));
 
-          const redo = document.createElement("button");
-          redo.type = "button";
-          redo.className = "make-video make-video-redo";
-          redo.setAttribute("aria-label", "Redo Grok video");
-          redo.title = "Redo Grok video";
-          redo.textContent = "redo grok video";
-          redo.disabled = !videoGeneration.available;
-          if (!videoGeneration.available) {
-            redo.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
-          }
-          redo.addEventListener("click", () => {
-            const priorPrompt = card.querySelector(".job-prompt").textContent;
-            const sourceUrl = apiUrl(`api/jobs/${encodeURIComponent(id)}/images/input/0`);
-            openVideoDialog(id, "input", 0, sourceUrl, priorPrompt, {
-              mode: evt.videoMode,
-              durationSeconds: evt.videoDurationSeconds,
-              resolution: evt.videoResolution,
-              aspectRatio: evt.videoAspectRatio,
+          if (videoGeneration.available) {
+            const redo = document.createElement("button");
+            redo.type = "button";
+            redo.className = "make-video make-video-redo";
+            redo.setAttribute("aria-label", "Redo Grok video");
+            redo.title = "Redo Grok video";
+            redo.textContent = "redo grok video";
+            redo.addEventListener("click", () => {
+              const priorPrompt = card.querySelector(".job-prompt").textContent;
+              const sourceUrl = apiUrl(`api/jobs/${encodeURIComponent(id)}/images/input/0`);
+              openVideoDialog(id, "input", 0, sourceUrl, priorPrompt, {
+                mode: evt.videoMode,
+                durationSeconds: evt.videoDurationSeconds,
+                resolution: evt.videoResolution,
+                aspectRatio: evt.videoAspectRatio,
+              });
             });
-          });
-          result.appendChild(redo);
+            result.appendChild(redo);
+          }
           images.appendChild(result);
           continue;
         }
@@ -3154,21 +3152,19 @@ function applyJobEvent(id, card, evt) {
         }
         a.appendChild(img);
         result.appendChild(a);
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "make-video make-video-add";
-        button.setAttribute("aria-label", "Make Grok video from this image");
-        button.title = "Make Grok video from this image";
-        button.textContent = "grok video";
-        button.disabled = !videoGeneration.available;
-        if (!videoGeneration.available) {
-          button.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
+        if (videoGeneration.available) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "make-video make-video-add";
+          button.setAttribute("aria-label", "Make Grok video from this image");
+          button.title = "Make Grok video from this image";
+          button.textContent = "grok video";
+          button.addEventListener("click", () => {
+            const sourcePrompt = card.querySelector(".job-prompt").textContent;
+            openVideoDialog(id, evt.gen, imageIndex, url, sourcePrompt);
+          });
+          result.appendChild(button);
         }
-        button.addEventListener("click", () => {
-          const sourcePrompt = card.querySelector(".job-prompt").textContent;
-          openVideoDialog(id, evt.gen, imageIndex, url, sourcePrompt);
-        });
-        result.appendChild(button);
         images.appendChild(result);
       }
       if (!imageViewer.hidden) renderImageViewer();

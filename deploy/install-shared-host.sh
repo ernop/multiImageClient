@@ -112,8 +112,6 @@ jq \
          "openai": 2,
          "xai-api": 1,
          "grok-web-ws": 1,
-         "grok-web-browser": 1,
-         "meta-web": 1,
          "google": 2,
          "bfl": 2,
          "ideogram": 1,

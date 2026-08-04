@@ -1935,8 +1935,7 @@ namespace MultiImageClient
         // Single source of truth for which UI targets accept an input image.
         // Exposed to the frontend via /api/config (per-generator imageCapable
         // flag) and consulted in BuildGenerator, so the two can't drift.
-        // grok-web edits use browser app-chat (imagine-image-edit). Everything
-        // NOT in this set still runs when a job carries an input image — it
+        // Everything NOT in this set still runs when a job carries an input image — it
         // just receives the prompt text only. That "sans image" behavior is a
         // user-specified product requirement (2026-07-28): keep every target
         // usable on image jobs, and let the UI badge the ones that won't see
@@ -1944,7 +1943,6 @@ namespace MultiImageClient
         public static readonly string[] ImageCapableKeys =
         {
             KeyGpt2,
-            KeyGrokWeb,
             KeyGrokApi,
             KeyGrokApiPro,
             KeyGoogle,
@@ -1995,7 +1993,7 @@ namespace MultiImageClient
         // (user-specified attachment policy, 2026-07-28).
         private static string DescribeInputImageFunction(string key) => key switch
         {
-            KeyGpt2 or KeyGrokWeb or KeyGrokApi or KeyGrokApiPro => "edit source",
+            KeyGpt2 or KeyGrokApi or KeyGrokApiPro => "edit source",
             KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
                 or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
                 or KeyRecraftV4Pro => "image-to-image source",
@@ -2022,11 +2020,10 @@ namespace MultiImageClient
         private readonly RunOptions _options;
         private readonly ImageManager _imageManager;
         private readonly GeneratorGroups _generatorGroups;
-        private readonly GrokWebBrowserClient? _grokWebBrowserClient;
-        private readonly string? _grokWebBrowserStartupProblem;
-        private readonly MetaWebClientOptions _metaWebOptions;
-        private readonly MetaWebClient? _metaWebClient;
-        private readonly string? _metaWebStartupProblem;
+        private const string GrokWebBrowserDisabledProblem =
+            "Chromium-backed grok-web image editing and video are disabled in the UI";
+        private const string MetaWebDisabledProblem =
+            "Chromium-backed meta-web is disabled in the UI";
         private readonly object _comfyProbeLock = new();
         private DateTime _comfyProbeExpiresAt;
         private string? _cachedComfyProbeProblem;
@@ -2040,10 +2037,10 @@ namespace MultiImageClient
         private readonly int _maxPendingJobs;
         private int _pendingJobs;
 
-        public bool IsGrokBrowserWarm => _grokWebBrowserClient?.IsBrowserWarm == true;
-        public bool IsMetaBrowserWarm => _metaWebClient?.IsBrowserWarm == true;
-        public bool GrokBrowserConfigured => _grokWebBrowserClient != null;
-        public bool MetaBrowserConfigured => _metaWebClient != null;
+        public bool IsGrokBrowserWarm => false;
+        public bool IsMetaBrowserWarm => false;
+        public bool GrokBrowserConfigured => false;
+        public bool MetaBrowserConfigured => false;
 
         public UiJobRunner(Settings settings, MultiClientRunStats stats, RunOptions options)
         {
@@ -2058,44 +2055,6 @@ namespace MultiImageClient
             _maxPendingJobs = ValidatePendingJobLimit(settings.UiMaxPendingJobs);
             _imageManager = new ImageManager(settings, stats);
             _generatorGroups = new GeneratorGroups(settings, concurrency: 1, stats);
-            var grokWebCookiePath = ResolveGrokWebCookiePath();
-            if (grokWebCookiePath != null)
-            {
-                try
-                {
-                    // Video + image-edit app-chat calls share one real browser
-                    // for the UI lifetime and serialize inside GrokWebBrowserClient.
-                    _grokWebBrowserClient = new GrokWebBrowserClient(
-                        GrokWebBrowserClient.BuildOptions(
-                            settings,
-                            grokWebCookiePath,
-                            headedOverride: options.GrokWebHeaded));
-                }
-                catch (Exception ex)
-                {
-                    _grokWebBrowserStartupProblem = ex.Message;
-                    Logger.Log($"Grok web browser (video/edit) unavailable: {ex.Message}");
-                }
-            }
-            _metaWebOptions = MetaWebClient.BuildOptions(
-                settings,
-                cookieOverride: options.MetaWebCookies,
-                headedOverride: options.MetaWebHeaded);
-            if (MetaWebClient.DescribeAvailabilityProblem(_metaWebOptions) == null)
-            {
-                try
-                {
-                    // One browser context for the whole UI lifetime. MetaWebClient
-                    // serializes page use internally, so concurrent UI jobs cannot
-                    // type into the same Meta composer at once.
-                    _metaWebClient = new MetaWebClient(_metaWebOptions);
-                }
-                catch (Exception ex)
-                {
-                    _metaWebStartupProblem = ex.Message;
-                    Logger.Log($"Meta web unavailable: {ex.Message}");
-                }
-            }
         }
 
         private static int ValidateUiConcurrency(string settingName, int value)
@@ -2224,18 +2183,15 @@ namespace MultiImageClient
                 => DescribeComfyAvailability(ImageGeneratorApiType.LocalFlux2Klein),
             KeyLocalZImage
                 => DescribeComfyAvailability(ImageGeneratorApiType.LocalZImage),
-            // Text-to-image only needs cookies (imagine WS). Edit-with-image
-            // additionally needs the Playwright browser; that is enforced at
-            // job build time when an input image is attached.
+            // The UI exposes only the browser-free imagine WebSocket path.
+            // Attached images are not sent to grok-web.
             KeyGrokWeb => ResolveGrokWebCookiePath() == null
                 ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
                 : null,
-            KeyGrokWebVideo => ResolveGrokWebCookiePath() == null
-                ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
-                : _grokWebBrowserStartupProblem,
+            KeyGrokWebVideo => GrokWebBrowserDisabledProblem,
             KeyGrokApi or KeyGrokApiPro
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GrokImagine, _settings),
-            KeyMetaWeb => _metaWebStartupProblem ?? MetaWebClient.DescribeAvailabilityProblem(_metaWebOptions),
+            KeyMetaWeb => MetaWebDisabledProblem,
             _ => $"unknown generator '{key}'",
         };
 
@@ -2455,31 +2411,18 @@ namespace MultiImageClient
                     IImageGenerator generator;
                     if (key is KeyGrokWeb or KeyGrokWebVideo)
                     {
+                        if (key == KeyGrokWebVideo)
+                        {
+                            throw new InvalidOperationException(GrokWebBrowserDisabledProblem);
+                        }
                         var cookiePath = ResolveGrokWebCookiePath()
                             ?? throw new InvalidOperationException("grok-web cookie file not found (settings.json GrokWebCookiePath or --grok-web-cookies)");
-                        // Image edit and video both need the integrity-signed
-                        // browser app-chat path. Text-to-image stays on the WS.
-                        var needsAppChatBrowser = key == KeyGrokWebVideo
-                            || (key == KeyGrokWeb && job.HasInputImage);
-                        var appChatBrowser = needsAppChatBrowser
-                            ? _grokWebBrowserClient ?? throw new InvalidOperationException(
-                                _grokWebBrowserStartupProblem
-                                ?? "grok-web browser client is unavailable (required for edit-with-image and video; run --playwright-install once)")
-                            : null;
-                        grokWebClient = GrokWebClient.FromCookieFile(cookiePath, appChatBrowser);
-                        generator = key == KeyGrokWebVideo
-                            ? await BuildGrokWebVideoAsync(grokWebClient, job, spec)
-                            : await BuildGrokWebAsync(grokWebClient, job, spec);
+                        grokWebClient = GrokWebClient.FromCookieFile(cookiePath);
+                        generator = BuildGrokWeb(grokWebClient, spec);
                     }
                     else if (key == KeyMetaWeb)
                     {
-                        // Text-only target: on image jobs it runs from the prompt
-                        // alone (see ImageCapableKeys).
-                        generator = new MetaWebImagineGenerator(
-                            _metaWebClient ?? throw new InvalidOperationException(
-                                DescribeAvailabilityProblem(KeyMetaWeb) ?? "meta-web browser client is unavailable"),
-                            maxConcurrency: 1,
-                            _stats);
+                        throw new InvalidOperationException(MetaWebDisabledProblem);
                     }
                     else
                     {
@@ -2682,27 +2625,8 @@ namespace MultiImageClient
             return merged;
         }
 
-        // grok-web is async-built because the edit path uploads the source
-        // image to grok.com before the generator exists.
-        private async Task<IImageGenerator> BuildGrokWebAsync(GrokWebClient client, UiJob job, UiJobSpec spec)
+        private IImageGenerator BuildGrokWeb(GrokWebClient client, UiJobSpec spec)
         {
-            if (job.HasInputImage)
-            {
-                // Edit uses browser-backed app-chat (imagine-image-edit with
-                // mediaGenInput.imageToImage.inputAssets). The WS image_uri
-                // path silently ignores the source. Auto AR resolves from the
-                // validated source dimensions before the provider call.
-                var editAspect = UiShapeMapping.GrokAspect(
-                    spec.Shape,
-                    job.InputImageWidth,
-                    job.InputImageHeight);
-                return await GrokWebImagineEditGenerator.CreateAsync(
-                    client, job.InputImagePath, maxConcurrency: 1, _stats,
-                    pro: _options.GrokWebPro,
-                    aspectRatio: editAspect,
-                    enableSideBySide: _options.GrokWebSideBySide,
-                    settings: _settings);
-            }
             var mapped = UiShapeMapping.GrokAspect(spec.Shape);
             // Unlike the official API, the consumer transport has no working
             // prompt-aware auto mode: live tests (2026-07-20) showed both
@@ -2710,8 +2634,7 @@ namespace MultiImageClient
             // native 2:3 default regardless of the prompt. 2:3 is a poor
             // universal shape, so an unspecified shape requests square 1:1
             // instead (a declared input default chosen before the call, not a
-            // fallback). Explicit shapes map as usual; edit-with-image auto
-            // still derives the source's ratio above.
+            // fallback). Explicit shapes map as usual.
             var ar = mapped == "" ? "1:1" : mapped;
             return new GrokWebImagineGenerator(
                 client, maxConcurrency: 1, _stats,
@@ -2720,31 +2643,6 @@ namespace MultiImageClient
                 enableSideBySide: _options.GrokWebSideBySide,
                 settings: _settings,
                 captureSessions: false);
-        }
-
-        private async Task<IImageGenerator> BuildGrokWebVideoAsync(
-            GrokWebClient client,
-            UiJob job,
-            UiJobSpec spec)
-        {
-            if (!job.HasInputImage)
-            {
-                throw new InvalidOperationException("grok-web image-to-video requires a source image");
-            }
-            var aspectRatio = spec.VideoAspectRatio == "source"
-                ? UiShapeMapping.GrokAspectForInput(job.InputImageWidth, job.InputImageHeight)
-                : spec.VideoAspectRatio;
-            return await GrokWebImagineVideoGenerator.CreateFromImageAsync(
-                client,
-                _settings,
-                _stats,
-                job.InputImagePath,
-                maxConcurrency: 1,
-                aspectRatio: aspectRatio,
-                resolution: spec.VideoResolution,
-                durationSeconds: spec.VideoDurationSeconds,
-                enableSideBySide: false,
-                videoMode: spec.VideoMode);
         }
 
         private static ImageGeneratorApiType BflApiTypeForKey(string key) => key switch
@@ -3132,17 +3030,10 @@ namespace MultiImageClient
             return null;
         }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
-            if (_grokWebBrowserClient != null)
-            {
-                await _grokWebBrowserClient.DisposeAsync();
-            }
-            if (_metaWebClient != null)
-            {
-                await _metaWebClient.DisposeAsync();
-            }
             _finalizationLimit.Dispose();
+            return ValueTask.CompletedTask;
         }
 
         private static string Truncate(string s, int max)
