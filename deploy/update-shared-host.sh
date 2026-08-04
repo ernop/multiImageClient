@@ -25,10 +25,22 @@ publish_staging="$owner_home/multiimageclient-publish-staging"
 rsync -a --delete "$publish_staging/" /opt/multiimageclient/
 chown -R root:root /opt/multiimageclient
 
-systemctl restart multiimageclient-ui
+# Under memory pressure the old process often ignores SIGTERM and leaves
+# systemd stuck in deactivating — kill hard, then start clean.
+systemctl kill -s SIGKILL multiimageclient-ui 2>/dev/null || true
 sleep 1
+systemctl reset-failed multiimageclient-ui 2>/dev/null || true
+systemctl start multiimageclient-ui
+sleep 2
 systemctl is-active multiimageclient-ui >/dev/null \
     || die "multiimageclient-ui failed to become active"
 
 rm -rf "$publish_staging"
 printf 'MultiImageClient updated in /opt and multiimageclient-ui restarted.\n'
+printf 'service=%s pid=%s\n' \
+    "$(systemctl is-active multiimageclient-ui)" \
+    "$(systemctl show -p MainPID --value multiimageclient-ui)"
+timeout 5 curl -sS -o /dev/null -w 'http=%{http_code} t=%{time_total}\n' http://127.0.0.1:5960/ \
+    || printf 'http probe failed (may still be warming up)\n'
+grep -c ram-status /opt/multiimageclient/Ui/wwwroot/index.html \
+    || printf 'WARN: ram-status marker missing from wwwroot\n'
