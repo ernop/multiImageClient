@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260803-shared-site">
+<link rel="stylesheet" href="style.css?v=20260804-hide-costs">
 <link rel="stylesheet" href="spellwell/spellwell.css?v=20260803-shared-site">
 </head>
 <body>
@@ -57,6 +57,11 @@
         aria-label="Hidden words, one per line"></textarea>
     </div>
   </div>
+  <label class="settings-row">
+    <input id="show-costs" type="checkbox">
+    <span><strong>show estimated costs</strong> — per-result, per-job, and session spend estimates.
+      Off by default; estimates are still computed server-side either way.</span>
+  </label>
   <div id="gpt2-guidance-row">
     <label id="gpt2-guidance-toggle"
       title="gpt-image-2 habitually drifts into dark, murky, underexposed output. While this is on, the text below is appended to the prompt sent to gpt-image-2 on every job (and only to gpt-image-2 — other generators get your prompt untouched).">
@@ -300,6 +305,6 @@
 
 <script src="spellwell/vendor/typo/typo.min.js?v=20260803-shared-site"></script>
 <script src="spellwell/spellwell.js?v=20260803-shared-site"></script>
-<script src="app.js?v=20260803-shared-site"></script>
+<script src="app.js?v=20260804-hide-costs"></script>
 </body>
 </html>

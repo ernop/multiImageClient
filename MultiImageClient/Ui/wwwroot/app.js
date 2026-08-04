@@ -498,9 +498,12 @@ function loadUiSettings() {
     return {
       nightHideEnabled: saved.nightHideEnabled === true,
       nightWords: typeof saved.nightWords === "string" ? saved.nightWords : "",
+      // Costs off by default so casual/shared-site visitors never see $ estimates
+      // unless they opt in. Explicit true/false both stick; missing key = off.
+      showCosts: saved.showCosts === true,
     };
   } catch {
-    return { nightHideEnabled: false, nightWords: "" };
+    return { nightHideEnabled: false, nightWords: "", showCosts: false };
   }
 }
 
@@ -514,6 +517,7 @@ const settingsToggle = el("settings-toggle");
 const settingsPanel = el("settings-panel");
 const nightToggle = el("night-toggle");
 const nightHideEnabledBox = el("night-hide-enabled");
+const showCostsBox = el("show-costs");
 const nightWordsEditor = el("night-words-editor");
 const nightWordsBox = el("night-words");
 
@@ -564,6 +568,22 @@ function setNightHideEnabled(enabled) {
 nightToggle.addEventListener("click", () => setNightHideEnabled(!uiSettings.nightHideEnabled));
 nightHideEnabledBox.addEventListener("change", () => setNightHideEnabled(nightHideEnabledBox.checked));
 
+function applyShowCosts() {
+  showCostsBox.checked = uiSettings.showCosts;
+  document.body.classList.toggle("show-costs", uiSettings.showCosts);
+}
+
+function setShowCosts(enabled) {
+  uiSettings.showCosts = enabled;
+  saveUiSettings();
+  applyShowCosts();
+  // User toggled after page init — restore or clear the session bar now.
+  if (enabled) renderCostSummary();
+  else el("cost-summary").hidden = true;
+}
+
+showCostsBox.addEventListener("change", () => setShowCosts(showCostsBox.checked));
+
 nightWordsBox.addEventListener("input", () => {
   uiSettings.nightWords = nightWordsBox.value;
   nightMatchers = null;
@@ -606,6 +626,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 applyNightMode();
+applyShowCosts();
 
 function setAllGenerators(mode) {
   for (const cb of gensRow.querySelectorAll("input:not(:disabled)")) {
@@ -2388,7 +2409,7 @@ let costBreakdown = "";
 
 function renderCostSummary() {
   const bar = el("cost-summary");
-  if (!costHeadline) {
+  if (!uiSettings.showCosts || !costHeadline) {
     bar.hidden = true;
     return;
   }

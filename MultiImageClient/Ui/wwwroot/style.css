@@ -859,6 +859,9 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .job-connection { font-weight: 700; color: var(--ok); }
 .job-connection.err { color: var(--err); }
 .job-cost { font-weight: 700; color: var(--accent-dark); }
+body:not(.show-costs) .job-cost,
+body:not(.show-costs) .cell-cost,
+body:not(.show-costs) #cost-summary { display: none !important; }
 .job-set-active {
   padding: 3px 9px;
   color: var(--accent-dark);
