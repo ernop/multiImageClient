@@ -17,6 +17,7 @@ namespace MultiImageClient
         private static readonly TimeSpan ProbeInterval = TimeSpan.FromSeconds(30);
         private const int ProbeTimeoutMicroseconds = 5_000_000;
         private const int FailuresBeforeExit = 3;
+        private const int MemoryPressureSamplesBeforeExit = 2;
 
         private readonly int _port;
         private readonly ManualResetEventSlim _stop = new(false);
@@ -55,6 +56,7 @@ namespace MultiImageClient
             }
 
             var consecutiveFailures = 0;
+            var consecutiveMemoryPressureSamples = 0;
             while (!_stop.IsSet)
             {
                 if (Probe())
@@ -77,6 +79,30 @@ namespace MultiImageClient
                             $"Kestrel failed {FailuresBeforeExit} consecutive loopback probes; "
                             + "terminating so the service manager can restart the UI.");
                     }
+                }
+
+                var cgroup = UiProcessMemory.ReadCgroupMemory();
+                if (cgroup.CurrentBytes.HasValue
+                    && cgroup.HighBytes.HasValue
+                    && cgroup.HighBytes.Value > 0
+                    && cgroup.CurrentBytes.Value >= cgroup.HighBytes.Value)
+                {
+                    consecutiveMemoryPressureSamples++;
+                    Logger.Log(
+                        $"UI liveness guard: cgroup memory remains above memory.high "
+                        + $"({cgroup.CurrentBytes.Value} >= {cgroup.HighBytes.Value}, "
+                        + $"{consecutiveMemoryPressureSamples}/{MemoryPressureSamplesBeforeExit}).");
+                    if (consecutiveMemoryPressureSamples >= MemoryPressureSamplesBeforeExit)
+                    {
+                        Environment.FailFast(
+                            $"Cgroup memory remained at or above memory.high for "
+                            + $"{MemoryPressureSamplesBeforeExit} consecutive probes; "
+                            + "terminating before reclaim pressure makes the UI unavailable.");
+                    }
+                }
+                else
+                {
+                    consecutiveMemoryPressureSamples = 0;
                 }
 
                 if (_stop.Wait(ProbeInterval))

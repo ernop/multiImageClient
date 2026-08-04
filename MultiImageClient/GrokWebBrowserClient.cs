@@ -56,6 +56,9 @@ namespace MultiImageClient
         // idle so the UI process does not hold a warm browser forever. The
         // client object + gate stay alive; EnsureStartedAsync relaunches.
         private static readonly TimeSpan BrowserIdleTimeout = TimeSpan.FromMinutes(5);
+        // This browser phase only submits app-chat and reads its initial stream;
+        // the longer image/video result polling happens outside Playwright.
+        private static readonly TimeSpan MaxBrowserOperationTimeout = TimeSpan.FromMinutes(4);
         private DateTime _lastUseUtc = DateTime.MinValue;
         private Timer? _idleTimer;
         private int _idleReleaseRunning;
@@ -91,8 +94,11 @@ namespace MultiImageClient
             GrokWebAppChatTrigger trigger = GrokWebAppChatTrigger.None,
             CancellationToken cancellationToken = default)
         {
+            var operationTimeout = _options.Timeout <= MaxBrowserOperationTimeout
+                ? _options.Timeout
+                : MaxBrowserOperationTimeout;
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(_options.Timeout);
+            timeoutCts.CancelAfter(operationTimeout);
             var ct = timeoutCts.Token;
             var gateAcquired = false;
             FatalOperationDeadline? hardDeadline = null;
@@ -102,7 +108,7 @@ namespace MultiImageClient
                 gateAcquired = true;
                 NoteBrowserActivity();
                 hardDeadline = new FatalOperationDeadline(
-                    _options.Timeout + TimeSpan.FromSeconds(30),
+                    operationTimeout + TimeSpan.FromSeconds(30),
                     "Grok web Playwright operation");
                 await EnsureStartedAsync(ct);
                 await PrepareImaginePageAsync(triggerPostId, ct);
@@ -155,7 +161,7 @@ namespace MultiImageClient
                     new
                     {
                         payloadJson,
-                        timeoutMs = (int)_options.Timeout.TotalMilliseconds,
+                        timeoutMs = (int)operationTimeout.TotalMilliseconds,
                     });
                 var result = await responseTask.WaitAsync(ct);
                 return new GrokWebBrowserResponse
@@ -169,7 +175,7 @@ namespace MultiImageClient
             {
                 await RetireBrowserAfterFaultAsync("request timeout");
                 throw new GrokWebException(
-                    $"Grok web browser request timed out after {_options.Timeout.TotalSeconds:0} seconds.");
+                    $"Grok web browser request timed out after {operationTimeout.TotalSeconds:0} seconds.");
             }
             catch (PlaywrightException ex)
             {

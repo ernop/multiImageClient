@@ -13,7 +13,7 @@ namespace MultiImageClient
             using var proc = Process.GetCurrentProcess();
             proc.Refresh();
             var (previewEntries, previewBytes) = UiCardPreviewCache.Snapshot();
-            var cgroupDir = ResolveProcessCgroupDir();
+            var cgroup = ReadCgroupMemory();
             var scheduler = runner?.SchedulerSnapshot();
             return new
             {
@@ -21,9 +21,9 @@ namespace MultiImageClient
                 peakWorkingSetBytes = proc.PeakWorkingSet64,
                 privateMemoryBytes = proc.PrivateMemorySize64,
                 managedHeapBytes = GC.GetTotalMemory(false),
-                cgroupCurrentBytes = ReadCgroupBytes(cgroupDir, "memory.current"),
-                cgroupHighBytes = ReadCgroupBytes(cgroupDir, "memory.high"),
-                cgroupMaxBytes = ReadCgroupBytes(cgroupDir, "memory.max"),
+                cgroupCurrentBytes = cgroup.CurrentBytes,
+                cgroupHighBytes = cgroup.HighBytes,
+                cgroupMaxBytes = cgroup.MaxBytes,
                 cardPreviewCacheEntries = previewEntries,
                 cardPreviewCacheBytes = previewBytes,
                 liveJobCount = jobs?.LiveJobCount ?? 0,
@@ -41,6 +41,15 @@ namespace MultiImageClient
                 metaBrowserConfigured = runner?.MetaBrowserConfigured ?? false,
                 metaBrowserWarm = runner?.IsMetaBrowserWarm ?? false,
             };
+        }
+
+        internal static UiCgroupMemorySnapshot ReadCgroupMemory()
+        {
+            var cgroupDir = ResolveProcessCgroupDir();
+            return new UiCgroupMemorySnapshot(
+                ReadCgroupBytes(cgroupDir, "memory.current"),
+                ReadCgroupBytes(cgroupDir, "memory.high"),
+                ReadCgroupBytes(cgroupDir, "memory.max"));
         }
 
         // Prefer this process's cgroup (from /proc/self/cgroup). Never read the
@@ -93,4 +102,9 @@ namespace MultiImageClient
             return null;
         }
     }
+
+    internal readonly record struct UiCgroupMemorySnapshot(
+        long? CurrentBytes,
+        long? HighBytes,
+        long? MaxBytes);
 }
