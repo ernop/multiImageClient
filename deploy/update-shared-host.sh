@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 # Redeploy a pre-built publish staging tree into /opt and restart the UI.
 # Run after: git pull && dotnet publish … -o ~/multiimageclient-publish-staging
-# Usage: sudo bash deploy/update-shared-host.sh
+# Usage: sudo bash ~/update-shared-host.sh
 
 die() {
     printf 'ERROR: %s\n' "$*" >&2
@@ -21,14 +21,27 @@ publish_staging="$owner_home/multiimageclient-publish-staging"
     || die "missing staged publish at $publish_staging (dotnet publish first)"
 [[ -f $publish_staging/Ui/wwwroot/index.html ]] \
     || die "staged publish is missing Ui/wwwroot"
+grep -q ram-status "$publish_staging/Ui/wwwroot/index.html" \
+    || die "staged publish is missing ram-status marker — wrong build?"
 
+printf 'Installing staged publish into /opt/multiimageclient …\n'
 rsync -a --delete "$publish_staging/" /opt/multiimageclient/
 chown -R root:root /opt/multiimageclient
 
-# Under memory pressure the old process often ignores SIGTERM and leaves
-# systemd stuck in deactivating — kill hard, then start clean.
-systemctl kill -s SIGKILL multiimageclient-ui 2>/dev/null || true
-sleep 1
+# Wedged-under-memory processes often ignore SIGTERM. systemctl kill -s SIGKILL
+# also sometimes prints "failed to send signal SIGKILL to auxiliary processes:
+# Invalid argument" even when the main PID dies — ignore that and kill by PID.
+old_pid=$(systemctl show -p MainPID --value multiimageclient-ui 2>/dev/null || true)
+systemctl stop multiimageclient-ui 2>/dev/null || true
+if [[ -n ${old_pid:-} && $old_pid != 0 ]] && kill -0 "$old_pid" 2>/dev/null; then
+    kill -9 "$old_pid" 2>/dev/null || true
+    sleep 1
+fi
+# Catch anything still bound to the port.
+if ss -lntp 2>/dev/null | grep -q ':5960'; then
+    fuser -k 5960/tcp 2>/dev/null || true
+    sleep 1
+fi
 systemctl reset-failed multiimageclient-ui 2>/dev/null || true
 systemctl start multiimageclient-ui
 sleep 2
@@ -36,11 +49,12 @@ systemctl is-active multiimageclient-ui >/dev/null \
     || die "multiimageclient-ui failed to become active"
 
 rm -rf "$publish_staging"
-printf 'MultiImageClient updated in /opt and multiimageclient-ui restarted.\n'
-printf 'service=%s pid=%s\n' \
+
+printf 'OK.\n'
+printf '  service=%s pid=%s\n' \
     "$(systemctl is-active multiimageclient-ui)" \
     "$(systemctl show -p MainPID --value multiimageclient-ui)"
-timeout 5 curl -sS -o /dev/null -w 'http=%{http_code} t=%{time_total}\n' http://127.0.0.1:5960/ \
-    || printf 'http probe failed (may still be warming up)\n'
 grep -c ram-status /opt/multiimageclient/Ui/wwwroot/index.html \
-    || printf 'WARN: ram-status marker missing from wwwroot\n'
+    | awk '{print "  ram-status markers in wwwroot: "$1}'
+timeout 5 curl -sS -o /dev/null -w '  http=%{http_code} t=%{time_total}\n' http://127.0.0.1:5960/ \
+    || printf '  http probe failed (may still be warming up)\n'
