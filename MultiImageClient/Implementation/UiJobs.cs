@@ -23,8 +23,10 @@ namespace MultiImageClient
     /// One web-UI generation job: (optional input image(s), prompt, generator
     /// set, options). Holds an append-only event log that SSE subscribers
     /// replay from any index (so a page refresh mid-job still sees the full
-    /// history), plus a live byte cache and durable references to saved result
-    /// files so completed cards survive a server restart.
+    /// history), plus durable path references for saved results. Full image
+    /// bytes are not retained in RAM once on disk; only streaming partials
+    /// briefly live in memory until a durable path replaces them. Completed
+    /// cards survive a server restart via images.json paths + disk files.
     ///
     /// Multiple input images (up to UiJobRunner.MaxInputImages) are ordered;
     /// index 0 is the primary used for AR matching, compare-with-input, and
@@ -109,6 +111,12 @@ namespace MultiImageClient
             }
         }
 
+        /// Registers image bytes for serving. When <paramref name="durablePath"/>
+        /// points at a file on disk, that path is the source of truth and full
+        /// bytes are NOT retained in RAM (the shared host OOM'd keeping every
+        /// result for the process lifetime). Ephemeral bytes — gpt-image-2
+        /// streaming partials with no path yet — still live in <see cref="_images"/>
+        /// until a later call replaces them with a durable path.
         public void StoreImage(
             string genKey,
             int n,
@@ -117,11 +125,27 @@ namespace MultiImageClient
             string durablePath = "")
         {
             var key = $"{genKey}/{n}";
-            _images[key] = (bytes, contentType);
-            if (!string.IsNullOrWhiteSpace(durablePath))
+            if (!string.IsNullOrWhiteSpace(durablePath)
+                && _storage != null
+                && _storage.SaveImageReference(key, durablePath, contentType))
             {
-                _storage?.SaveImageReference(key, durablePath, contentType);
+                // Drop any prior partial / in-memory copy; serve via disk.
+                _images.TryRemove(key, out _);
+                return;
             }
+
+            if (bytes == null || bytes.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"UI job {Id}: StoreImage({key}) has no durable path and no bytes — nothing to serve.");
+            }
+            _images[key] = (bytes, contentType);
+        }
+
+        /// Path-only register: never loads the file into the job's RAM cache.
+        public void StoreImagePath(string genKey, int n, string durablePath, string contentType)
+        {
+            StoreImage(genKey, n, Array.Empty<byte>(), contentType, durablePath);
         }
 
         public bool TryGetImage(string genKey, int n, out byte[] bytes, out string contentType)
@@ -320,14 +344,16 @@ namespace MultiImageClient
             }
         }
 
-        public void SaveImageReference(string key, string path, string contentType)
+        /// Returns true only when the path exists and was recorded in images.json.
+        /// Callers must not drop in-memory bytes unless this returns true.
+        public bool SaveImageReference(string key, string path, string contentType)
         {
             try
             {
                 var fullPath = Path.GetFullPath(path);
                 if (!File.Exists(fullPath))
                 {
-                    return;
+                    return false;
                 }
                 lock (_writeLock)
                 {
@@ -338,10 +364,12 @@ namespace MultiImageClient
                     };
                     WriteJsonAtomically(_imagesPath, _images);
                 }
+                return true;
             }
             catch (Exception ex)
             {
                 Logger.Log($"UI history: could not save image reference: {ex.Message}");
+                return false;
             }
         }
 
@@ -1370,8 +1398,7 @@ namespace MultiImageClient
                         inputImageRole: job.HasInputImage ? BuildInputImageRoleText(spec.GeneratorKeys) : null);
                     if (!string.IsNullOrEmpty(combined) && File.Exists(combined))
                     {
-                        var bytes = await File.ReadAllBytesAsync(combined);
-                        job.StoreImage("grid", 0, bytes, "image/png", combined);
+                        job.StoreImagePath("grid", 0, combined, "image/png");
                         job.Emit(new { type = "grid", url = $"/api/jobs/{job.Id}/images/grid/0", path = combined });
                     }
                     Logger.Log($"[ui #{job.Id}] grid saved: {combined}");
@@ -1511,12 +1538,11 @@ namespace MultiImageClient
                         && !string.IsNullOrEmpty(result.GeneratedMediaPath)
                         && File.Exists(result.GeneratedMediaPath))
                     {
-                        var mediaBytes = await File.ReadAllBytesAsync(result.GeneratedMediaPath);
                         mediaType = string.IsNullOrWhiteSpace(result.GeneratedMediaContentType)
                             ? "application/octet-stream"
                             : result.GeneratedMediaContentType;
                         var idx = urls.Count;
-                        job.StoreImage(key, idx, mediaBytes, mediaType, result.GeneratedMediaPath);
+                        job.StoreImagePath(key, idx, result.GeneratedMediaPath, mediaType);
                         urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
                         merged.GeneratedMediaPath = result.GeneratedMediaPath;
                         merged.GeneratedMediaContentType = result.GeneratedMediaContentType;
@@ -1528,14 +1554,24 @@ namespace MultiImageClient
                         {
                             firstImageBytes ??= bytes;
                             var idx = urls.Count;
-                            job.StoreImage(
-                                key,
-                                idx,
-                                bytes,
-                                result.ContentType ?? "image/png",
-                                result.GetSavedRawImagePath(i));
+                            var rawPath = result.GetSavedRawImagePath(i);
+                            // Prefer path-only when ImageManager already wrote the file;
+                            // otherwise keep bytes in RAM until something persists them.
+                            if (!string.IsNullOrWhiteSpace(rawPath) && File.Exists(rawPath))
+                            {
+                                job.StoreImagePath(key, idx, rawPath, result.ContentType ?? "image/png");
+                            }
+                            else
+                            {
+                                job.StoreImage(
+                                    key,
+                                    idx,
+                                    bytes,
+                                    result.ContentType ?? "image/png",
+                                    rawPath);
+                            }
                             merged.SetImageBytes(idx, bytes);
-                            merged.SetSavedRawImagePath(idx, result.GetSavedRawImagePath(i));
+                            merged.SetSavedRawImagePath(idx, rawPath);
                             urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
                             i++;
                         }
