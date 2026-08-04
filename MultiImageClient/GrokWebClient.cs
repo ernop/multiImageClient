@@ -179,7 +179,23 @@ namespace MultiImageClient
 
             try
             {
-                await ws.ConnectAsync(new Uri(ImagineListenWebSocket), cancellationToken);
+                try
+                {
+                    await ws.ConnectAsync(new Uri(ImagineListenWebSocket), cancellationToken);
+                }
+                catch (WebSocketException ex) when (LooksLikeCloudflareEdgeFailure(ex.Message))
+                {
+                    // Cloudflare 521/522/525 mean the edge never completed the
+                    // WebSocket upgrade to 101 — usually transient origin/edge
+                    // trouble or a datacenter IP getting a bad CF response, not
+                    // a cookie/prompt bug in this client.
+                    throw new InvalidOperationException(
+                        "grok-web could not open wss://grok.com/ws/imagine/listen: "
+                        + "Cloudflare returned an edge error instead of HTTP 101 Switching Protocols "
+                        + $"({ex.Message}). Retry; if it keeps failing from this host, use grok-api "
+                        + "or run grok-web from a residential network.",
+                        ex);
+                }
 
                 var resetPayload = new
                 {
@@ -2200,6 +2216,22 @@ namespace MultiImageClient
                 return "mp4";
             }
             return "unknown";
+        }
+
+        private static bool LooksLikeCloudflareEdgeFailure(string message)
+        {
+            if (string.IsNullOrEmpty(message)) return false;
+            // ClientWebSocket: "The server returned status code '521' when status code '101' was expected."
+            foreach (var code in new[] { "521", "522", "523", "524", "525", "526", "530" })
+            {
+                if (message.Contains($"'{code}'", StringComparison.Ordinal)
+                    || message.Contains($"\"{code}\"", StringComparison.Ordinal)
+                    || message.Contains($" {code} ", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static async Task SendJsonAsync(ClientWebSocket ws, object payload, CancellationToken cancellationToken)
