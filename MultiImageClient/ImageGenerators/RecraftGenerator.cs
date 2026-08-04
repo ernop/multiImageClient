@@ -47,9 +47,11 @@ namespace MultiImageClient
         private static ImageGeneratorApiType ApiTypeFor(RecraftModel model) => model switch
         {
             RecraftModel.recraftv4 => ImageGeneratorApiType.RecraftV4,
-            RecraftModel.recraftv4pro => ImageGeneratorApiType.RecraftV4Pro,
+            RecraftModel.recraftv4_pro => ImageGeneratorApiType.RecraftV4Pro,
             RecraftModel.recraftv4_1 => ImageGeneratorApiType.RecraftV41,
             RecraftModel.recraftv4_1_pro => ImageGeneratorApiType.RecraftV41Pro,
+            RecraftModel.recraftv4_1_utility => ImageGeneratorApiType.RecraftV41Utility,
+            RecraftModel.recraftv4_1_vector => ImageGeneratorApiType.RecraftV41Vector,
             _ => ImageGeneratorApiType.Recraft,
         };
 
@@ -151,19 +153,18 @@ namespace MultiImageClient
         // https://www.recraft.ai/docs/api-reference/pricing
         public decimal GetCost()
         {
-            // Pro tiers charge a flat premium regardless of raster/vector style.
-            // V4.1 Pro is assumed to match V4 Pro until Recraft publishes a delta.
-            if (_model == RecraftModel.recraftv4pro || _model == RecraftModel.recraftv4_1_pro)
-            {
-                return (_style == RecraftStyle.vector_illustration ? 0.30m : 0.25m) * _imageCount;
-            }
-
-            // V2 / V3 / V4 / V4.1 raster: $0.04 (V2: $0.022); vector: $0.08 (V2: $0.044).
-            var isVector = _style == RecraftStyle.vector_illustration;
+            var legacyVectorStyle = _style == RecraftStyle.vector_illustration;
             var perImage = _model switch
             {
-                RecraftModel.recraftv2 => isVector ? 0.044m : 0.022m,
-                _ => isVector ? 0.08m : 0.04m,
+                RecraftModel.recraftv2 => legacyVectorStyle ? 0.044m : 0.022m,
+                RecraftModel.recraftv3 => legacyVectorStyle ? 0.08m : 0.04m,
+                RecraftModel.recraftv4 => 0.04m,
+                RecraftModel.recraftv4_pro => 0.25m,
+                RecraftModel.recraftv4_1 => 0.035m,
+                RecraftModel.recraftv4_1_utility => 0.035m,
+                RecraftModel.recraftv4_1_pro => 0.21m,
+                RecraftModel.recraftv4_1_vector => 0.08m,
+                _ => throw new InvalidOperationException($"No Recraft price is configured for {_model}."),
             };
             return perImage * _imageCount;
         }
@@ -383,7 +384,9 @@ namespace MultiImageClient
                     traceError = new HttpRequestException(
                         $"Recraft image content-type probe returned HTTP {(int)response.StatusCode}.");
                 }
-                return response.Content.Headers.ContentType?.MediaType;
+                return RequireSupportedContentType(
+                    response.Content.Headers.ContentType?.MediaType,
+                    "content-type probe");
             }
             catch (Exception ex)
             {
@@ -421,7 +424,11 @@ namespace MultiImageClient
                 response = await _httpClient.GetAsync(url);
                 response.EnsureSuccessStatusCode();
                 bytes = await response.Content.ReadAsByteArrayAsync();
-                return (bytes, response.Content.Headers.ContentType?.MediaType);
+                return (
+                    bytes,
+                    RequireSupportedContentType(
+                        response.Content.Headers.ContentType?.MediaType,
+                        "image download"));
             }
             catch (Exception ex)
             {
@@ -454,6 +461,17 @@ namespace MultiImageClient
                     ? ""
                     : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(),
             };
+
+        private static string RequireSupportedContentType(string contentType, string operation)
+        {
+            if (contentType is "image/png" or "image/jpeg" or "image/webp" or "image/svg+xml")
+            {
+                return contentType;
+            }
+
+            throw new InvalidDataException(
+                $"Recraft {operation} returned unsupported or missing content type '{contentType ?? "(missing)"}'.");
+        }
 
         public string GetFullStyleName(string style, string substyle)
         {

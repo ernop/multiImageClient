@@ -40,6 +40,8 @@ namespace MultiImageClient
                 ImageGeneratorApiType.RecraftV4Pro => ".png",
                 ImageGeneratorApiType.RecraftV41 => ".png",
                 ImageGeneratorApiType.RecraftV41Pro => ".png",
+                ImageGeneratorApiType.RecraftV41Utility => ".png",
+                ImageGeneratorApiType.RecraftV41Vector => ".svg",
                 ImageGeneratorApiType.GrokImagine => ".png",
                 ImageGeneratorApiType.GrokImaginePro => ".png",
                 ImageGeneratorApiType.GrokImagineVideo => ".mp4",
@@ -50,6 +52,9 @@ namespace MultiImageClient
                 ImageGeneratorApiType.GrokWebImagineEdit => ".png",
                 ImageGeneratorApiType.LocalFlux2Klein => ".png",
                 ImageGeneratorApiType.LocalZImage => ".png",
+                ImageGeneratorApiType.Krea2MediumTurbo => ".png",
+                ImageGeneratorApiType.Krea2Medium => ".png",
+                ImageGeneratorApiType.Krea2Large => ".png",
                 _ => throw new ArgumentException("Unknown image generator type while picking file extension:", nameof(generator))
             };
         }

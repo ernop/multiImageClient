@@ -49,7 +49,7 @@ namespace MultiImageClient
     {
         private static bool SupportsImageAspectOverride(string key)
             => UiJobRunner.IsImageCapable(key)
-                && !key.Equals(UiJobRunner.KeyRecraft, StringComparison.OrdinalIgnoreCase);
+                && !UiJobRunner.IsRecraftKey(key);
 
         // Default anti-murk guidance appended to every gpt-image-2 prompt while
         // the composer's toggle is on (which it is by default). gpt-image-2
@@ -215,10 +215,19 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = "grok.com cookie session (WebSocket). Without an input, auto requests square 1:1 (this transport has no prompt-aware auto; Grok's own default is 2:3). With an input, the default maps its dimensions to Grok's nearest supported AR; explicit AR choices override it. Side-by-side mode requests up to 4 images. Each result can launch a grok-web image-to-video follow-up." },
                     new { key = UiJobRunner.KeyGrokApi, label = "grok-api", detail = "api.x.ai standard tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
                     new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api pro", detail = "api.x.ai pro tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
+                    new { key = UiJobRunner.KeyKrea, label = "Krea 2 Medium", detail = "Krea's own foundation image model, not an aggregated third-party model. Best for expressive illustration and stable general use. An attached image is sent as a 0.6-strength style reference; auto matches its nearest native aspect ratio. The API currently accepts 1K only, so detail has no effect. n runs separate generations." },
+                    new { key = UiJobRunner.KeyKreaTurbo, label = "Krea 2 Medium Turbo", detail = "Krea's fastest and least expensive Krea 2 variant. An attached image is sent as a 0.6-strength style reference. The API currently accepts 1K only; n runs separate generations." },
+                    new { key = UiJobRunner.KeyKreaLarge, label = "Krea 2 Large", detail = "Krea's highest-fidelity Krea 2 variant, strongest for photorealism, raw texture, grain, and expressive styles. An attached image is sent as a 0.6-strength style reference. The API currently accepts 1K only; n runs separate generations." },
                     new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0 text-to-image, 2K-native (detail tier has no effect). The v4 endpoint takes no input image, so on image jobs it runs from the prompt alone. It also currently ignores num_images and returns 1." },
                     new { key = UiJobRunner.KeyIdeogramV3, label = "Ideogram V3", detail = "Ideogram 3.0. A pasted image is used as a style reference and the default AR matches the source; explicit AR choices and n up to 8 are honored. Without an image it runs text-to-image (auto = square)." },
                     new { key = UiJobRunner.KeyIdeogramV2, label = "Ideogram V2", detail = "Ideogram 2.0 through the legacy text-to-image endpoint. Shape and Magic Prompt are honored; detail and n have no effect. An attached image is not sent." },
                     new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1. A pasted image runs image-to-image and inherently keeps the source dimensions. That endpoint exposes no size override, so Recraft is unavailable for image jobs with an explicit output AR. n up to 6." },
+                    new { key = UiJobRunner.KeyRecraftV41Utility, label = "Recraft V4.1 Utility", detail = "Simpler, more predictable V4.1 raster model with flatter lighting and front-facing compositions. Standard 1MP class; n up to 6. Image-to-image follows source dimensions." },
+                    new { key = UiJobRunner.KeyRecraftV41Pro, label = "Recraft V4.1 Pro", detail = "Higher-resolution 4MP-class V4.1 raster model for print-ready output. n up to 6. Image-to-image follows source dimensions." },
+                    new { key = UiJobRunner.KeyRecraftV41Vector, label = "Recraft V4.1 Vector", detail = "Native vector generation for logos, typography, icons, and illustration. Raw results are preserved as SVG; cards and contact sheets use raster previews. n up to 6." },
+                    new { key = UiJobRunner.KeyRecraftV3, label = "Recraft V3", detail = "Previous-generation raster model (Red Panda), retained for comparison and V3-era behavior. n up to 6. Image-to-image follows source dimensions." },
+                    new { key = UiJobRunner.KeyRecraftV4, label = "Recraft V4", detail = "Previous-generation standard raster model, 1MP class. n up to 6. Image-to-image follows source dimensions." },
+                    new { key = UiJobRunner.KeyRecraftV4Pro, label = "Recraft V4 Pro", detail = "Previous-generation Pro raster model, 4MP class. n up to 6. Image-to-image follows source dimensions." },
                     new { key = UiJobRunner.KeyBfl, label = "FLUX.2 Pro Preview", detail = "BFL's latest Pro improvements. Generation and up to 8-reference editing; this UI sends its primary input. Shape + detail map to ~1 MP or ~4 MP. No n support." },
                     new { key = UiJobRunner.KeyBflFlux2Pro, label = "FLUX.2 Pro (pinned)", detail = "Fixed FLUX.2 Pro snapshot for reproducible workflows. Same request contract as Pro Preview; generation and image editing." },
                     new { key = UiJobRunner.KeyBflFlux2Max, label = "FLUX.2 Max", detail = "BFL's highest-quality FLUX.2 model with strongest prompt following, editing consistency, and grounding search." },
@@ -485,72 +494,88 @@ namespace MultiImageClient
                     gpt2GuidanceText = DefaultGpt2GuidanceText;
                 }
 
-                var job = new UiJob
+                if (!runner.TryAcquireJobAdmission(out var admission))
                 {
-                    Prompt = prompt,
-                    CreatedBy = createdBy,
-                    InputImagePaths = inputPaths,
-                    InputImageWidth = inputImageWidth,
-                    InputImageHeight = inputImageHeight,
-                    GeneratorKeys = genKeys,
-                };
-                var spec = new UiJobSpec
-                {
-                    GeneratorKeys = genKeys,
-                    Quality = (form["quality"].ToString() ?? "high").Trim().ToLowerInvariant(),
-                    Moderation = (form["moderation"].ToString() ?? "low").Trim().ToLowerInvariant(),
-                    ImageCount = n,
-                    Shape = shape,
-                    Detail = (form["detail"].ToString() ?? "standard").Trim().ToLowerInvariant(),
-                    Gpt2GuidanceEnabled = gpt2GuidanceEnabled,
-                    Gpt2GuidanceText = gpt2GuidanceText,
-                };
-                jobs.Add(job);
-                for (var i = 0; i < savedInputs.Count; i++)
-                {
-                    // Keep each input in the job's image store so reloaded pages
-                    // can show thumbnails without touching the saves/ layout.
-                    var saved = savedInputs[i];
-                    job.StoreImage("input", i, saved.Bytes, saved.ContentType, saved.Path);
+                    DeleteRejectedJobInputs(savedInputs.Select(saved => saved.Path));
+                    return Results.Json(
+                        new { error = $"The UI queue is full ({runner.MaxPendingJobs} pending jobs). Try again after a job finishes." },
+                        statusCode: 503);
                 }
-                // The full option set rides the persisted accepted event so a
-                // job card can restore this exact setup into the composer
-                // ("set active"), including after a server restart.
-                job.Emit(new
+                try
                 {
-                    type = "accepted",
-                    gens = genKeys,
-                    hasImage = job.HasInputImage,
-                    inputCount = job.InputImageCount,
-                    inputWidth = job.HasInputImage ? job.InputImageWidth : (int?)null,
-                    inputHeight = job.HasInputImage ? job.InputImageHeight : (int?)null,
-                    shape,
-                    detail = spec.Detail,
-                    quality = spec.Quality,
-                    moderation = spec.Moderation,
-                    n = spec.ImageCount,
-                    gpt2GuidanceEnabled = spec.Gpt2GuidanceEnabled,
-                    gpt2GuidanceText = spec.Gpt2GuidanceText,
-                    prompt,
-                    at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                });
-                activeJobs[job.Id] = Task.Run(async () =>
+                    var job = new UiJob
+                    {
+                        Prompt = prompt,
+                        CreatedBy = createdBy,
+                        InputImagePaths = inputPaths,
+                        InputImageWidth = inputImageWidth,
+                        InputImageHeight = inputImageHeight,
+                        GeneratorKeys = genKeys,
+                    };
+                    var spec = new UiJobSpec
+                    {
+                        GeneratorKeys = genKeys,
+                        Quality = (form["quality"].ToString() ?? "high").Trim().ToLowerInvariant(),
+                        Moderation = (form["moderation"].ToString() ?? "low").Trim().ToLowerInvariant(),
+                        ImageCount = n,
+                        Shape = shape,
+                        Detail = (form["detail"].ToString() ?? "standard").Trim().ToLowerInvariant(),
+                        Gpt2GuidanceEnabled = gpt2GuidanceEnabled,
+                        Gpt2GuidanceText = gpt2GuidanceText,
+                    };
+                    jobs.Add(job);
+                    for (var i = 0; i < savedInputs.Count; i++)
+                    {
+                        // Keep each input in the job's image store so reloaded pages
+                        // can show thumbnails without touching the saves/ layout.
+                        var saved = savedInputs[i];
+                        job.StoreImage("input", i, saved.Bytes, saved.ContentType, saved.Path);
+                    }
+                    // The full option set rides the persisted accepted event so a
+                    // job card can restore this exact setup into the composer
+                    // ("set active"), including after a server restart.
+                    job.Emit(new
+                    {
+                        type = "accepted",
+                        gens = genKeys,
+                        hasImage = job.HasInputImage,
+                        inputCount = job.InputImageCount,
+                        inputWidth = job.HasInputImage ? job.InputImageWidth : (int?)null,
+                        inputHeight = job.HasInputImage ? job.InputImageHeight : (int?)null,
+                        shape,
+                        detail = spec.Detail,
+                        quality = spec.Quality,
+                        moderation = spec.Moderation,
+                        n = spec.ImageCount,
+                        gpt2GuidanceEnabled = spec.Gpt2GuidanceEnabled,
+                        gpt2GuidanceText = spec.Gpt2GuidanceText,
+                        prompt,
+                        at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    });
+                    var ownedAdmission = admission!;
+                    activeJobs[job.Id] = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await runner.RunJobAsync(job, spec);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log($"[ui #{job.Id}] job runner failed: {ex}");
+                        }
+                        finally
+                        {
+                            ownedAdmission.Dispose();
+                            activeJobs.TryRemove(job.Id, out _);
+                        }
+                    });
+                    admission = null;
+                    return Results.Json(new { id = job.Id });
+                }
+                finally
                 {
-                    try
-                    {
-                        await runner.RunJobAsync(job, spec);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Log($"[ui #{job.Id}] job runner failed: {ex}");
-                    }
-                    finally
-                    {
-                        activeJobs.TryRemove(job.Id, out _);
-                    }
-                });
-
-                return Results.Json(new { id = job.Id });
+                    admission?.Dispose();
+                }
             });
 
             app.MapPost("/api/video-jobs", async (HttpRequest request) =>
@@ -644,60 +669,76 @@ namespace MultiImageClient
                 {
                     return Results.BadRequest(new { error = ex.Message });
                 }
-                var job = new UiJob
+                if (!runner.TryAcquireJobAdmission(out var admission))
                 {
-                    Prompt = prompt,
-                    CreatedBy = videoCreatedBy,
-                    InputImagePaths = new[] { inputImagePath },
-                    InputImageWidth = inputImageWidth,
-                    InputImageHeight = inputImageHeight,
-                    GeneratorKeys = new[] { UiJobRunner.KeyGrokWebVideo },
-                    SourceJobId = sourceJobId,
-                    SourceGenerator = sourceGenerator,
-                    SourceIndex = sourceIndex,
-                };
-                var spec = new UiJobSpec
+                    DeleteRejectedJobInputs(new[] { inputImagePath });
+                    return Results.Json(
+                        new { error = $"The UI queue is full ({runner.MaxPendingJobs} pending jobs). Try again after a job finishes." },
+                        statusCode: 503);
+                }
+                try
                 {
-                    GeneratorKeys = new List<string> { UiJobRunner.KeyGrokWebVideo },
-                    VideoMode = videoMode,
-                    VideoDurationSeconds = durationSeconds,
-                    VideoResolution = resolution,
-                    VideoAspectRatio = aspectRatio,
-                };
+                    var job = new UiJob
+                    {
+                        Prompt = prompt,
+                        CreatedBy = videoCreatedBy,
+                        InputImagePaths = new[] { inputImagePath },
+                        InputImageWidth = inputImageWidth,
+                        InputImageHeight = inputImageHeight,
+                        GeneratorKeys = new[] { UiJobRunner.KeyGrokWebVideo },
+                        SourceJobId = sourceJobId,
+                        SourceGenerator = sourceGenerator,
+                        SourceIndex = sourceIndex,
+                    };
+                    var spec = new UiJobSpec
+                    {
+                        GeneratorKeys = new List<string> { UiJobRunner.KeyGrokWebVideo },
+                        VideoMode = videoMode,
+                        VideoDurationSeconds = durationSeconds,
+                        VideoResolution = resolution,
+                        VideoAspectRatio = aspectRatio,
+                    };
 
-                jobs.Add(job);
-                job.StoreImage("input", 0, sourceBytes, sourceContentType, inputImagePath);
-                job.Emit(new
+                    jobs.Add(job);
+                    job.StoreImage("input", 0, sourceBytes, sourceContentType, inputImagePath);
+                    job.Emit(new
+                    {
+                        type = "accepted",
+                        gens = job.GeneratorKeys,
+                        hasImage = true,
+                        prompt,
+                        sourceJobId,
+                        sourceGenerator,
+                        sourceIndex,
+                        at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    });
+                    Logger.Log(
+                        $"[ui #{job.Id}] video source={sourceJobId}/{sourceGenerator}/{sourceIndex} "
+                        + $"content-type={sourceContentType} bytes={sourceBytes.Length}");
+                    var ownedAdmission = admission!;
+                    activeJobs[job.Id] = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await runner.RunJobAsync(job, spec);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log($"[ui #{job.Id}] video job runner failed: {ex}");
+                        }
+                        finally
+                        {
+                            ownedAdmission.Dispose();
+                            activeJobs.TryRemove(job.Id, out _);
+                        }
+                    });
+                    admission = null;
+                    return Results.Json(new { id = job.Id });
+                }
+                finally
                 {
-                    type = "accepted",
-                    gens = job.GeneratorKeys,
-                    hasImage = true,
-                    prompt,
-                    sourceJobId,
-                    sourceGenerator,
-                    sourceIndex,
-                    at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                });
-                Logger.Log(
-                    $"[ui #{job.Id}] video source={sourceJobId}/{sourceGenerator}/{sourceIndex} "
-                    + $"content-type={sourceContentType} bytes={sourceBytes.Length}");
-                activeJobs[job.Id] = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await runner.RunJobAsync(job, spec);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Log($"[ui #{job.Id}] video job runner failed: {ex}");
-                    }
-                    finally
-                    {
-                        activeJobs.TryRemove(job.Id, out _);
-                    }
-                });
-
-                return Results.Json(new { id = job.Id });
+                    admission?.Dispose();
+                }
             });
 
             // Spelling-only prompt correction via Claude (temperature 0, no
@@ -761,7 +802,10 @@ namespace MultiImageClient
                     if (job.TryGetCardPreviewPath(gen, n, out var thumbPath, out var thumbType))
                     {
                         // Disk-backed thumb — stream, do not buffer into heap.
-                        fileResult = Results.File(thumbPath, thumbType, enableRangeProcessing: true);
+                        fileResult = Results.File(
+                            Path.GetFullPath(thumbPath),
+                            thumbType,
+                            enableRangeProcessing: true);
                     }
                     else if (job.TryGetCardPreviewBytes(gen, n, out var bytes, out var contentType))
                     {
@@ -777,7 +821,10 @@ namespace MultiImageClient
                 {
                     // Stream from disk — do not buffer the whole file into the
                     // process heap for every concurrent viewer.
-                    fileResult = Results.File(path, pathType, enableRangeProcessing: true);
+                    fileResult = Results.File(
+                        Path.GetFullPath(path),
+                        pathType,
+                        enableRangeProcessing: true);
                 }
                 else if (job.TryGetImage(gen, n, out var memBytes, out var memType))
                 {
@@ -964,6 +1011,21 @@ namespace MultiImageClient
                 if (await Task.WhenAny(allJobs, Task.Delay(TimeSpan.FromSeconds(30))) != allJobs)
                 {
                     Logger.Log("UI shutdown: active jobs did not finish within the 30-second grace period.");
+                }
+            }
+        }
+
+        private static void DeleteRejectedJobInputs(IEnumerable<string> paths)
+        {
+            foreach (var path in paths)
+            {
+                try
+                {
+                    if (File.Exists(path)) File.Delete(path);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"Could not remove rejected UI job input '{path}': {ex.Message}");
                 }
             }
         }

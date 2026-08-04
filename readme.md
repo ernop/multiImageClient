@@ -9,7 +9,7 @@ Paste an idea — or an image — and see what today’s image generators do wit
 ## Highlights
 
 - **Side-by-side generation** — one prompt fans out across the providers you care about
-- **Web UI** — paste or drop an image, write a prompt, pick targets, watch results land live
+- **Web UI** — paste or drop an image, write a prompt, pick targets, watch results appear as each provider finishes
 - **Edit & reference** — use an attached image as edit source, image-to-image input, or style/reference
 - **Prompt craft** — randomize, stylize, or rewrite with Claude before you generate
 - **Round-trip** — describe an image, then regenerate from that caption across providers
@@ -25,6 +25,7 @@ Paste an idea — or an image — and see what today’s image generators do wit
 | **Ideogram V4** | Text-to-image with strong in-image text |
 | **Ideogram V3** | Text-to-image and style/reference from an attached image |
 | **Black Forest Labs (Flux)** | Text-to-image; optional style/reference from an attached image |
+| **Krea 2** | Krea's own Turbo, Medium, and Large models; text-to-image and style-reference generation |
 | **Recraft** | Text-to-image and image-to-image |
 | **Google Gemini image** | Text-to-image; optional style/reference from an attached image |
 | **Google Imagen 4** | Text-to-image via Vertex |
@@ -38,7 +39,7 @@ Paste an idea — or an image — and see what today’s image generators do wit
 The primary interface: a local page where you paste from the clipboard, drop a file, or pick a prior input, choose shape and detail, enable the providers you want, and generate.
 
 - Live job cards as each provider finishes
-- Honest labeling when a target is text-only (image attached but not sent)
+- A text-only badge when an attached image is not sent to a target
 - Cost totals as you work
 - Input library of previous uploads
 - Spell-fix helpers on the prompt

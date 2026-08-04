@@ -10,8 +10,8 @@
 - Avoid unnecessary enthusiasm or validation language
 
 ## XML Documentation
-- NEVER add XML summary blocks (`/// <summary>`) to any code unless you have a useful, meaningful, non-obvious comment to add.  Never add the dumb one-liner versions of them which just restate the obvious
-- But, you may add them to explain what an entire class does, and useful high-level general design information. This kind of summary is great and useful.
+- NEVER add XML summary blocks (`/// <summary>`) unless they explain useful, non-obvious behavior. Never add one-line XML summaries that restate the obvious.
+- Use class-level summaries only when they explain non-obvious design information.
 - Use regular comments (`//`) for explanations when needed
 
 ## Namespace Organization  

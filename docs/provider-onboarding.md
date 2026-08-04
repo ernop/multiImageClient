@@ -199,6 +199,27 @@ V8.1 default) is the primary surface and Discord is legacy.
   so SocialAI is capture-only (which is TOS-clean). Manual submit + SocialAI
   capture remains the zero-risk configuration.
 
+## 9. Krea 2 — implemented 2026-08-04
+
+Krea 2 is Krea's own foundation image model, trained from scratch. Krea's API
+also aggregates third-party models, but these endpoints are Krea-owned:
+
+- `POST /generate/image/krea/krea-2/medium-turbo` — $0.015/image
+- `POST /generate/image/krea/krea-2/medium` — $0.03/image
+- `POST /generate/image/krea/krea-2/large` — $0.06/image
+- Poll exact `job_id` at `GET /jobs/{job_id}` until completed, failed, or
+  cancelled. Completed output is `result.urls`.
+- Auth is `Authorization: Bearer $KREA_API_TOKEN`; create tokens at
+  <https://www.krea.ai/app/api/tokens>. API billing is separate from Krea app
+  subscriptions.
+- All three variants accept eight aspect ratios, seed, creativity, K2 sliders,
+  image-to-image, and up to ten style references. The current OpenAPI accepts
+  only `resolution: "1K"`.
+- MultiImageClient exposes `krea`, `krea-turbo`, and `krea-large`. UI
+  attachments are passed as 0.6-strength style references, not image-to-image
+  sources, because style transfer is Krea 2's distinguishing workflow.
+- Settings key: `KreaApiKey`. Scheduler lane: `krea`.
+
 ---
 
 ## Cross-cutting integration notes

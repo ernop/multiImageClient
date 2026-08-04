@@ -107,6 +107,19 @@ jq \
      | .UiAuthFilePath = $auth
      | .UiMaxConcurrentJobs = 1
      | .UiMaxConcurrentGenerators = 2
+     | .UiMaxPendingJobs = 64
+     | .UiTargetConcurrency = {
+         "openai": 2,
+         "xai-api": 1,
+         "grok-web-ws": 1,
+         "grok-web-browser": 1,
+         "meta-web": 1,
+         "google": 2,
+         "bfl": 2,
+         "ideogram": 1,
+         "recraft": 1,
+         "comfyui": 1
+       }
      | .UiMinimumFreeDiskBytes = 3221225472
      | .FlatImageMirrorPath = ""
      | .TypedPromptsAppendFile = ""' \

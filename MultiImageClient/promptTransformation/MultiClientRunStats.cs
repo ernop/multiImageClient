@@ -31,6 +31,10 @@ namespace MultiImageClient
         public int BFLImageGenerationSuccessCount { get; set; }
         public int BFLImageGenerationErrorCount { get; set; }
         
+        public int KreaImageGenerationRequestCount { get; set; }
+        public int KreaImageGenerationSuccessCount { get; set; }
+        public int KreaImageGenerationErrorCount { get; set; }
+
         public int RecraftImageGenerationRequestCount { get; set; }
         public int RecraftImageGenerationSuccessCount { get; set; }
         public int RecraftImageGenerationErrorCount { get; set; }
@@ -102,6 +106,9 @@ namespace MultiImageClient
 
             if (BFLImageGenerationRequestCount > 0 | BFLImageGenerationErrorCount > 0 | BFLImageGenerationSuccessCount > 0)
                 nonZeroStats.Add($"BFL: total:{BFLImageGenerationRequestCount}, ok:{BFLImageGenerationSuccessCount}, bad:{BFLImageGenerationErrorCount} ");
+
+            if (KreaImageGenerationRequestCount > 0 | KreaImageGenerationErrorCount > 0 | KreaImageGenerationSuccessCount > 0)
+                nonZeroStats.Add($"Krea: total:{KreaImageGenerationRequestCount}, ok:{KreaImageGenerationSuccessCount}, bad:{KreaImageGenerationErrorCount} ");
 
             if (RecraftImageGenerationRequestCount > 0 | RecraftImageGenerationErrorCount > 0 | RecraftImageGenerationSuccessCount > 0)
                 nonZeroStats.Add($"Recraft: total:{RecraftImageGenerationRequestCount}, ok:{RecraftImageGenerationSuccessCount}, bad:{RecraftImageGenerationErrorCount} ");

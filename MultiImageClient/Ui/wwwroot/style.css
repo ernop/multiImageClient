@@ -457,9 +457,9 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 }
 #prompt:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
-/* McPhee's detailed checks stay folded into the prompt area until requested.
+/* Spelling checks stay folded into the prompt area until requested.
    The textarea overlay remains live while this panel is closed. */
-#mcphee-panel {
+#spelling-panel {
   max-height: min(430px, 55vh);
   padding: 10px 12px;
   overflow: auto;
@@ -468,6 +468,20 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   border: 1px solid var(--accent);
   border-radius: 4px;
 }
+#spelling-panel[hidden] { display: none; }
+#spelling-enabled-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  margin-bottom: 10px;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+#spelling-enabled-control input { accent-color: var(--accent); }
+#spelling-enabled-control:has(input:disabled) { opacity: 0.5; cursor: default; }
 #mcphee-panel[hidden] { display: none; }
 #mcphee-panel .mcphee-panel { min-width: 430px; }
 /* Secondary McPhee text uses the site's semantic accent, never gray text. */
@@ -770,7 +784,6 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 #gpt2-guidance-text:disabled { opacity: 0.45; }
 
 #send-row { display: flex; align-items: center; gap: 12px; }
-#prompt-tools #mcphee-enabled-toggle,
 #prompt-tools #mcphee-panel-toggle,
 #prompt-tools #spellfix,
 #prompt-tools #spellfix-undo,
@@ -785,18 +798,11 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   padding: 5px 12px;
   cursor: pointer;
 }
-#prompt-tools #mcphee-enabled-toggle:hover:not(:disabled),
 #prompt-tools #mcphee-panel-toggle:hover:not(:disabled),
 #prompt-tools #spellfix:hover:not(:disabled),
 #prompt-tools #spellfix-undo:hover,
 #prompt-tools #spellfix-local:hover:not(:disabled) { color: #fff; background: var(--accent); }
-#prompt-tools #mcphee-enabled-toggle[aria-pressed="true"],
 #prompt-tools #mcphee-panel-toggle[aria-expanded="true"] { color: #fff; background: var(--accent); }
-#prompt-tools #mcphee-enabled-toggle[aria-pressed="false"] {
-  color: var(--err);
-  border-color: var(--err);
-}
-#prompt-tools #mcphee-enabled-toggle:disabled,
 #prompt-tools #mcphee-panel-toggle:disabled,
 #prompt-tools #spellfix:disabled,
 #prompt-tools #spellfix-local:disabled { opacity: 0.5; cursor: default; }
@@ -837,8 +843,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 #send:disabled { opacity: 0.5; cursor: default; }
 #send-error { color: var(--err); font-size: 13px; font-weight: 600; }
 
-/* Gentle non-blocking heads-up that the prompt exceeds a selected target's
-   hard cap and will be sent truncated to it (amber, not an error). */
+/* Non-blocking amber notice that the prompt exceeds a selected target's
+   hard cap and will be truncated for that target. */
 #prompt-limit-notice {
   padding: 6px 12px;
   font-size: 13px;

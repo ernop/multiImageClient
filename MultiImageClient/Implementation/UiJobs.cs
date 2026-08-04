@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using IdeogramAPIClient;
+using ImageMagick;
 using RecraftAPIClient;
 
 using SixLabors.ImageSharp;
@@ -254,7 +255,13 @@ namespace MultiImageClient
                 return false;
             }
 
-            if (!TryBuildAndPersistCardPreview(key, originalPath, out path, out contentType, out var previewBytes))
+            if (!TryBuildAndPersistCardPreview(
+                key,
+                originalPath,
+                originalType,
+                out path,
+                out contentType,
+                out var previewBytes))
             {
                 path = "";
                 contentType = "";
@@ -348,6 +355,7 @@ namespace MultiImageClient
         private bool TryBuildAndPersistCardPreview(
             string imageKey,
             string originalPath,
+            string originalContentType,
             out string thumbPath,
             out string contentType,
             out byte[] previewBytes)
@@ -362,8 +370,7 @@ namespace MultiImageClient
 
             try
             {
-                using var stream = File.OpenRead(originalPath);
-                using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(stream);
+                using var image = LoadCardPreviewSource(originalPath, originalContentType);
                 if (Math.Max(image.Width, image.Height) > CardPreviewMaxEdge)
                 {
                     DownscaleInPlace(image);
@@ -383,6 +390,19 @@ namespace MultiImageClient
                 Logger.Log($"UI job {Id}: could not build disk card preview for {imageKey} ({ex.Message}).");
                 return false;
             }
+        }
+
+        private static Image<Rgba32> LoadCardPreviewSource(string path, string contentType)
+        {
+            if (contentType.Equals("image/svg+xml", StringComparison.OrdinalIgnoreCase))
+            {
+                using var vector = new MagickImage(path);
+                return SixLabors.ImageSharp.Image.Load<Rgba32>(
+                    vector.ToByteArray(MagickFormat.Png));
+            }
+
+            using var stream = File.OpenRead(path);
+            return SixLabors.ImageSharp.Image.Load<Rgba32>(stream);
         }
 
         private void DownscaleInPlace(Image<Rgba32> image)
@@ -1471,6 +1491,18 @@ namespace MultiImageClient
             ("21:9", 21, 9),
         };
 
+        private static readonly (string Name, int Width, int Height)[] KreaAspects =
+        {
+            ("1:1", 1, 1),
+            ("4:3", 4, 3),
+            ("3:2", 3, 2),
+            ("16:9", 16, 9),
+            ("2.35:1", 235, 100),
+            ("4:5", 4, 5),
+            ("2:3", 2, 3),
+            ("9:16", 9, 16),
+        };
+
         private static readonly (IdeogramAPIClient.IdeogramAspectRatio Aspect, int Width, int Height)[] IdeogramV3Aspects =
         {
             (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_1_1, 1, 1),
@@ -1497,6 +1529,9 @@ namespace MultiImageClient
 
         public static string GoogleAspectForInput(int width, int height)
             => NearestAspect(width, height, GoogleAspects);
+
+        public static string KreaAspectForInput(int width, int height)
+            => NearestAspect(width, height, KreaAspects);
 
         public static IdeogramAPIClient.IdeogramAspectRatio IdeogramV3AspectForInput(int width, int height)
         {
@@ -1596,6 +1631,25 @@ namespace MultiImageClient
                 "wide" => "16:9",
                 "tall" => "9:16",
                 _ => "",
+            };
+        }
+
+        /// Krea 2 requires an explicit aspect ratio. Text-to-image auto uses
+        /// square; image jobs map auto to the nearest native Krea ratio.
+        public static string KreaAspect(string shape, int inputWidth = 0, int inputHeight = 0)
+        {
+            var normalizedShape = Norm(shape, Shapes);
+            if (normalizedShape == "auto" && (inputWidth != 0 || inputHeight != 0))
+            {
+                return KreaAspectForInput(inputWidth, inputHeight);
+            }
+            return normalizedShape switch
+            {
+                "landscape" => "3:2",
+                "portrait" => "2:3",
+                "wide" => "16:9",
+                "tall" => "9:16",
+                _ => "1:1",
             };
         }
 
@@ -1840,6 +1894,12 @@ namespace MultiImageClient
         public const string KeyIdeogramV3 = "ideogram-v3";
         public const string KeyIdeogramV2 = "ideogram-v2";
         public const string KeyRecraft = "recraft";
+        public const string KeyRecraftV41Utility = "recraft-v41-utility";
+        public const string KeyRecraftV41Pro = "recraft-v41-pro";
+        public const string KeyRecraftV41Vector = "recraft-v41-vector";
+        public const string KeyRecraftV3 = "recraft-v3";
+        public const string KeyRecraftV4 = "recraft-v4";
+        public const string KeyRecraftV4Pro = "recraft-v4-pro";
         // Historical "bfl" key remains FLUX.2 Pro Preview so persisted jobs and
         // browser selections keep working.
         public const string KeyBfl = "bfl";
@@ -1855,6 +1915,9 @@ namespace MultiImageClient
         public const string KeyBflFlux11 = "bfl-flux11";
         public const string KeyBflFluxPro = "bfl-flux-pro";
         public const string KeyBflFluxDev = "bfl-flux-dev";
+        public const string KeyKrea = "krea";
+        public const string KeyKreaTurbo = "krea-turbo";
+        public const string KeyKreaLarge = "krea-large";
         public const string KeyGoogle = "google";
         public const string KeyGooglePro = "googlepro";
         public const string KeyLocalKlein = "local-klein";
@@ -1894,12 +1957,30 @@ namespace MultiImageClient
             KeyBflFlux11Ultra,
             KeyBflFlux11,
             KeyBflFluxDev,
+            KeyKrea,
+            KeyKreaTurbo,
+            KeyKreaLarge,
             KeyIdeogramV3,
             KeyRecraft,
+            KeyRecraftV41Utility,
+            KeyRecraftV41Pro,
+            KeyRecraftV41Vector,
+            KeyRecraftV3,
+            KeyRecraftV4,
+            KeyRecraftV4Pro,
         };
 
         public static bool IsImageCapable(string key)
             => ImageCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
+
+        public static bool IsRecraftKey(string key)
+            => key is KeyRecraft
+                or KeyRecraftV41Utility
+                or KeyRecraftV41Pro
+                or KeyRecraftV41Vector
+                or KeyRecraftV3
+                or KeyRecraftV4
+                or KeyRecraftV4Pro;
 
         // States, per selected generator, exactly what function the job's
         // input image served. Rendered under the INPUT cell of the combined
@@ -1911,13 +1992,16 @@ namespace MultiImageClient
         private static string DescribeInputImageFunction(string key) => key switch
         {
             KeyGpt2 or KeyGrokWeb or KeyGrokApi or KeyGrokApiPro => "edit source",
-            KeyRecraft => "image-to-image source",
+            KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
+                or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
+                or KeyRecraftV4Pro => "image-to-image source",
             KeyBfl or KeyBflFlux2Pro
                 or KeyBflFlux2Max or KeyBflFlux2Flex or KeyBflFlux2Klein4b
                 or KeyBflFlux2Klein9bPreview or KeyBflFlux2Klein9b
                 or KeyBflKontextPro or KeyBflKontextMax => "edit/reference source",
             KeyBflFlux11Ultra or KeyBflFlux11 or KeyBflFluxDev => "image remix/reference source",
-            KeyGoogle or KeyGooglePro or KeyIdeogramV3 => "style/reference image",
+            KeyGoogle or KeyGooglePro or KeyIdeogramV3
+                or KeyKrea or KeyKreaTurbo or KeyKreaLarge => "style/reference image",
             KeyGrokWebVideo => "video source",
             _ => "NOT sent (text-only target, prompt only)",
         };
@@ -1943,11 +2027,14 @@ namespace MultiImageClient
         private DateTime _comfyProbeExpiresAt;
         private string? _cachedComfyProbeProblem;
 
-        // Two independent caps protect shared hosts: one bounds queued job
-        // execution, the other bounds aggregate cross-provider fan-out. The
-        // old fixed job limit still exists as the Settings default (4).
-        private readonly SemaphoreSlim _jobLimit;
-        private readonly SemaphoreSlim _generatorLimit;
+        // Endpoint work is scheduled independently by provider/account. The
+        // finalization gate protects ImageSharp contact-sheet memory without
+        // blocking unrelated remote targets, while admission bounds retained
+        // job tasks and queued descriptors on a resident shared host.
+        private readonly SemaphoreSlim _finalizationLimit;
+        private readonly UiTargetScheduler _targetScheduler;
+        private readonly int _maxPendingJobs;
+        private int _pendingJobs;
 
         public bool IsGrokBrowserWarm => _grokWebBrowserClient?.IsBrowserWarm == true;
         public bool IsMetaBrowserWarm => _metaWebClient?.IsBrowserWarm == true;
@@ -1959,10 +2046,12 @@ namespace MultiImageClient
             _settings = settings;
             _stats = stats;
             _options = options;
-            _jobLimit = new SemaphoreSlim(ValidateUiConcurrency(
+            _finalizationLimit = new SemaphoreSlim(ValidateUiConcurrency(
                 nameof(settings.UiMaxConcurrentJobs), settings.UiMaxConcurrentJobs));
-            _generatorLimit = new SemaphoreSlim(ValidateUiConcurrency(
-                nameof(settings.UiMaxConcurrentGenerators), settings.UiMaxConcurrentGenerators));
+            _targetScheduler = new UiTargetScheduler(
+                settings.UiMaxConcurrentGenerators,
+                settings.UiTargetConcurrency);
+            _maxPendingJobs = ValidatePendingJobLimit(settings.UiMaxPendingJobs);
             _imageManager = new ImageManager(settings, stats);
             _generatorGroups = new GeneratorGroups(settings, concurrency: 1, stats);
             var grokWebCookiePath = ResolveGrokWebCookiePath();
@@ -2015,6 +2104,58 @@ namespace MultiImageClient
             return value;
         }
 
+        private static int ValidatePendingJobLimit(int value)
+        {
+            if (value < 1 || value > 10000)
+            {
+                throw new InvalidOperationException(
+                    $"{nameof(Settings.UiMaxPendingJobs)} must be between 1 and 10000; got {value}.");
+            }
+            return value;
+        }
+
+        public bool TryAcquireJobAdmission(out IDisposable? admission)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref _pendingJobs);
+                if (current >= _maxPendingJobs)
+                {
+                    admission = null;
+                    return false;
+                }
+                if (Interlocked.CompareExchange(ref _pendingJobs, current + 1, current) == current)
+                {
+                    admission = new JobAdmission(this);
+                    return true;
+                }
+            }
+        }
+
+        internal UiTargetSchedulerSnapshot SchedulerSnapshot() => _targetScheduler.Snapshot();
+
+        public int PendingJobCount => Volatile.Read(ref _pendingJobs);
+        public int MaxPendingJobs => _maxPendingJobs;
+
+        private sealed class JobAdmission : IDisposable
+        {
+            private UiJobRunner? _owner;
+
+            public JobAdmission(UiJobRunner owner)
+            {
+                _owner = owner;
+            }
+
+            public void Dispose()
+            {
+                var owner = Interlocked.Exchange(ref _owner, null);
+                if (owner != null)
+                {
+                    Interlocked.Decrement(ref owner._pendingJobs);
+                }
+            }
+        }
+
         public string? ResolveGrokWebCookiePath()
         {
             var cookiePath = !string.IsNullOrWhiteSpace(_options.GrokWebCookies)
@@ -2024,6 +2165,30 @@ namespace MultiImageClient
             var expanded = Settings.ExpandPath(cookiePath);
             return File.Exists(expanded) ? expanded : null;
         }
+
+        private static RecraftModel RecraftModelForKey(string key) => key switch
+        {
+            KeyRecraft => RecraftModel.recraftv4_1,
+            KeyRecraftV41Utility => RecraftModel.recraftv4_1_utility,
+            KeyRecraftV41Pro => RecraftModel.recraftv4_1_pro,
+            KeyRecraftV41Vector => RecraftModel.recraftv4_1_vector,
+            KeyRecraftV3 => RecraftModel.recraftv3,
+            KeyRecraftV4 => RecraftModel.recraftv4,
+            KeyRecraftV4Pro => RecraftModel.recraftv4_pro,
+            _ => throw new ArgumentException($"Unknown Recraft generator key '{key}'.", nameof(key)),
+        };
+
+        private static ImageGeneratorApiType RecraftApiTypeForKey(string key) => key switch
+        {
+            KeyRecraft => ImageGeneratorApiType.RecraftV41,
+            KeyRecraftV41Utility => ImageGeneratorApiType.RecraftV41Utility,
+            KeyRecraftV41Pro => ImageGeneratorApiType.RecraftV41Pro,
+            KeyRecraftV41Vector => ImageGeneratorApiType.RecraftV41Vector,
+            KeyRecraftV3 => ImageGeneratorApiType.Recraft,
+            KeyRecraftV4 => ImageGeneratorApiType.RecraftV4,
+            KeyRecraftV4Pro => ImageGeneratorApiType.RecraftV4Pro,
+            _ => throw new ArgumentException($"Unknown Recraft generator key '{key}'.", nameof(key)),
+        };
 
         public string? DescribeAvailabilityProblem(string key) => key switch
         {
@@ -2035,13 +2200,20 @@ namespace MultiImageClient
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV3, _settings),
             KeyIdeogramV2
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.Ideogram, _settings),
-            KeyRecraft
-                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.RecraftV41, _settings),
+            KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
+                or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
+                or KeyRecraftV4Pro
+                => ProviderKeyValidator.DescribeKeyProblem(RecraftApiTypeForKey(key), _settings),
+            KeyBflFluxPro
+                => "disabled after the hosted compatibility endpoint returned HTTP 403",
+            KeyBflFlux2Klein4b or KeyBflFlux2Klein9bPreview or KeyBflFlux2Klein9b
+                => "disabled by operator; these hosted Klein targets are not currently usable",
             KeyBfl or KeyBflFlux2Pro or KeyBflFlux2Max or KeyBflFlux2Flex
-                or KeyBflFlux2Klein4b or KeyBflFlux2Klein9bPreview or KeyBflFlux2Klein9b
                 or KeyBflKontextPro or KeyBflKontextMax or KeyBflFlux11Ultra
-                or KeyBflFlux11 or KeyBflFluxPro or KeyBflFluxDev
+                or KeyBflFlux11 or KeyBflFluxDev
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.BFLFlux2ProPreview, _settings),
+            KeyKrea or KeyKreaTurbo or KeyKreaLarge
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.Krea2Medium, _settings),
             KeyGoogle or KeyGooglePro
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GoogleNanoBananaPro, _settings),
             KeyLocalKlein
@@ -2107,7 +2279,7 @@ namespace MultiImageClient
                 type = "job-queued",
                 at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             });
-            await _jobLimit.WaitAsync();
+            var finalizationAcquired = false;
             try
             {
                 job.Emit(new
@@ -2145,17 +2317,20 @@ namespace MultiImageClient
                 var pd = new PromptDetails();
                 pd.ReplacePrompt(job.Prompt, job.Prompt, TransformationType.InitialPrompt);
 
-                var tasks = spec.GeneratorKeys.Select(async key =>
+                var tasks = spec.GeneratorKeys.Select(key =>
                 {
-                    await _generatorLimit.WaitAsync();
-                    try
+                    var lane = UiTargetScheduler.ResolveLane(key, job.HasInputImage);
+                    job.Emit(new
                     {
-                        return await RunOneAsync(job, spec, key, pd);
-                    }
-                    finally
-                    {
-                        _generatorLimit.Release();
-                    }
+                        type = "gen-queued",
+                        gen = key,
+                        target = lane,
+                        at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    });
+                    return _targetScheduler.ScheduleAsync(
+                        lane,
+                        job.CreatedBy,
+                        () => RunOneAsync(job, spec, key, pd));
                 }).ToArray();
                 var results = await Task.WhenAll(tasks);
 
@@ -2164,6 +2339,8 @@ namespace MultiImageClient
                 // Jobs with an input image get it rendered as the sheet's
                 // first cell, with an explicit statement of what each
                 // selected generator did (or didn't do) with it.
+                await _finalizationLimit.WaitAsync();
+                finalizationAcquired = true;
                 try
                 {
                     var combined = await ImageCombiner.CreateBatchLayoutImageSquareAsync(
@@ -2193,28 +2370,28 @@ namespace MultiImageClient
             {
                 job.Emit(new { type = "job-done" });
                 job.MarkDone();
-                // Completed UI jobs no longer own any ImageSharp canvases.
-                // Drop the allocator's reusable native/pooled blocks now,
-                // rather than letting a sequence of large 2K/4K annotation
-                // and contact-sheet jobs ratchet the resident daemon toward
-                // systemd MemoryHigh. In-use blocks from another concurrent
-                // job are explicitly preserved by ImageSharp.
-                try
+                if (finalizationAcquired)
                 {
-                    Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
-                    GC.Collect(
-                        GC.MaxGeneration,
-                        GCCollectionMode.Aggressive,
-                        blocking: true,
-                        compacting: true);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log($"[ui #{job.Id}] post-job image-memory cleanup failed: {ex.Message}");
-                }
-                finally
-                {
-                    _jobLimit.Release();
+                    // Completed UI jobs no longer own any ImageSharp canvases.
+                    // Keep cleanup under the same gate as contact-sheet rendering
+                    // so concurrent jobs cannot multiply peak native allocations.
+                    try
+                    {
+                        Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
+                        GC.Collect(
+                            GC.MaxGeneration,
+                            GCCollectionMode.Aggressive,
+                            blocking: true,
+                            compacting: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"[ui #{job.Id}] post-job image-memory cleanup failed: {ex.Message}");
+                    }
+                    finally
+                    {
+                        _finalizationLimit.Release();
+                    }
                 }
                 Logger.Log($"[ui #{job.Id}] DONE");
             }
@@ -2237,7 +2414,16 @@ namespace MultiImageClient
             // preview when N>1 (OpenAI forbids streaming with n>1, and parallel
             // partials would fight over one cell). All N are saved and shown.
             // Video is inherently single-output, so grok-web-video ignores N.
-            var want = key == KeyGrokWebVideo ? 1 : Math.Clamp(spec.ImageCount, 1, 10);
+            var maxImages = key switch
+            {
+                KeyGrokWebVideo => 1,
+                KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
+                    or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
+                    or KeyRecraftV4Pro => 6,
+                KeyIdeogram or KeyIdeogramV3 => 8,
+                _ => 10,
+            };
+            var want = Math.Clamp(spec.ImageCount, 1, maxImages);
             var enablePartials = want == 1;
 
             var urls = new List<string>();
@@ -2748,6 +2934,30 @@ namespace MultiImageClient
                             inputImagePath: job.HasInputImage && IsImageCapable(key) ? job.InputImagePath : null);
                     }
 
+                case KeyKrea:
+                case KeyKreaTurbo:
+                case KeyKreaLarge:
+                    {
+                        RequireKey(_settings.KreaApiKey, "KreaApiKey", key);
+                        var variant = key switch
+                        {
+                            KeyKreaTurbo => Krea2Variant.MediumTurbo,
+                            KeyKreaLarge => Krea2Variant.Large,
+                            _ => Krea2Variant.Medium,
+                        };
+                        return new Krea2Generator(
+                            _settings.KreaApiKey,
+                            maxConcurrency: 2,
+                            variant,
+                            UiShapeMapping.KreaAspect(
+                                spec.Shape,
+                                job.InputImageWidth,
+                                job.InputImageHeight),
+                            _stats,
+                            name: $"{key} ui",
+                            inputImagePath: job.HasInputImage ? job.InputImagePath : null);
+                    }
+
                 case KeyIdeogram:
                     {
                         // V4 is a dedicated text-only target now (split from V3 on
@@ -2763,7 +2973,7 @@ namespace MultiImageClient
                             UiShapeMapping.IdeogramV4Resolution(spec.Shape),
                             IdeogramRenderingSpeed.DEFAULT,
                             _stats, "ideogram ui",
-                            imageCount: Math.Clamp(spec.ImageCount, 1, 8));
+                            imageCount: 1);
                     }
 
                 case KeyIdeogramV3:
@@ -2782,7 +2992,7 @@ namespace MultiImageClient
                             IdeogramRenderingSpeed.QUALITY,
                             "", _stats, "ideogram-v3 ui",
                             inputImagePath: job.HasInputImage ? job.InputImagePath : null,
-                            imageCount: Math.Clamp(spec.ImageCount, 1, 8));
+                            imageCount: 1);
                     }
 
                 case KeyIdeogramV2:
@@ -2803,6 +3013,12 @@ namespace MultiImageClient
                     }
 
                 case KeyRecraft:
+                case KeyRecraftV41Utility:
+                case KeyRecraftV41Pro:
+                case KeyRecraftV41Vector:
+                case KeyRecraftV3:
+                case KeyRecraftV4:
+                case KeyRecraftV4Pro:
                     {
                         RequireKey(_settings.RecraftApiKey, "RecraftApiKey", key);
                         if (job.HasInputImage && !spec.Shape.Equals("auto", StringComparison.OrdinalIgnoreCase))
@@ -2814,17 +3030,16 @@ namespace MultiImageClient
                         // as Grok. Its image-to-image endpoint takes no size field and
                         // inherently follows the source dimensions.
                         var recraftAspect = UiShapeMapping.GrokAspect(spec.Shape);
-                        var recraftN = Math.Clamp(spec.ImageCount, 1, 6);
-                        // With an input image, RecraftGenerator runs image-to-image
-                        // (V4.1-native reference path; output size follows the source).
+                        // With an input image, every exposed Recraft V3/V4 model
+                        // runs through image-to-image; output size follows the source.
                         return new RecraftGenerator(
                             _settings.RecraftApiKey, maxConcurrency: 1,
                             RecraftImageSize._1024x1024, RecraftStyle.any,
-                            null, null, null, _stats, "recraft ui",
-                            model: RecraftModel.recraftv4_1,
+                            null, null, null, _stats, $"{key} ui",
+                            model: RecraftModelForKey(key),
                             inputImagePath: job.HasInputImage ? job.InputImagePath : null,
                             sizeOverride: recraftAspect,
-                            imageCount: recraftN);
+                            imageCount: 1);
                     }
 
                 case KeyLocalKlein:
@@ -2849,6 +3064,13 @@ namespace MultiImageClient
         {
             try
             {
+                if (Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase))
+                {
+                    using var vector = new MagickImage(path);
+                    return vector.Width > 0 && vector.Height > 0
+                        ? $"{vector.Width}x{vector.Height}"
+                        : null;
+                }
                 var info = Image.Identify(path);
                 return info.Width > 0 && info.Height > 0
                     ? $"{info.Width}x{info.Height}"
@@ -2916,8 +3138,7 @@ namespace MultiImageClient
             {
                 await _metaWebClient.DisposeAsync();
             }
-            _generatorLimit.Dispose();
-            _jobLimit.Dispose();
+            _finalizationLimit.Dispose();
         }
 
         private static string Truncate(string s, int max)

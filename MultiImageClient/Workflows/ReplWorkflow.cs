@@ -82,6 +82,7 @@ namespace MultiImageClient
                 "recraft", "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
                 "bfl-klein9-preview", "bfl-klein9", "bfl-kontext-pro", "bfl-kontext-max",
                 "bfl-1.1-ultra", "bfl-1.1", "bfl-flux-pro", "bfl-dev",
+                "krea", "krea-turbo", "krea-large",
                 "google", "googlepro", "imagen4"
             };
 
@@ -794,6 +795,13 @@ namespace MultiImageClient
                 case "bfl-flux-pro":
                 case "bfl-dev":
                     RequireKey(_settings.BFLApiKey, "BFLApiKey", name);
+                    return new GeneratorGroups(_settings, _concurrency, _stats)
+                        .BuildByShortName(name);
+
+                case "krea":
+                case "krea-turbo":
+                case "krea-large":
+                    RequireKey(_settings.KreaApiKey, "KreaApiKey", name);
                     return new GeneratorGroups(_settings, _concurrency, _stats)
                         .BuildByShortName(name);
 

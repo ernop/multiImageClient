@@ -24,6 +24,7 @@ namespace MultiImageClient
         public string IdeogramApiKey { get; set; }
         public string OpenAIApiKey { get; set; }
         public string BFLApiKey { get; set; }
+        public string KreaApiKey { get; set; }
         public string AnthropicApiKey { get; set; }
         public string RecraftApiKey { get; set; }
 
@@ -116,15 +117,26 @@ namespace MultiImageClient
         /// it produced. The server never writes this file.
         public string UiAuthFilePath { get; set; } = "";
 
-        /// Maximum number of UI jobs allowed to execute at once. Jobs beyond
-        /// this limit remain queued. Keep the local default at the historical
-        /// value; resource-constrained shared deployments should set 1.
+        /// Maximum number of memory-heavy UI job finalizations (contact-sheet
+        /// rendering and cleanup) allowed at once. Endpoint requests from
+        /// different jobs are scheduled independently by target and do not
+        /// hold this permit.
         public int UiMaxConcurrentJobs { get; set; } = 4;
 
         /// Maximum number of generators executing across all active UI jobs.
-        /// This caps the cross-provider fan-out that otherwise lets one job
-        /// start every selected generator simultaneously.
-        public int UiMaxConcurrentGenerators { get; set; } = 4;
+        /// This is the aggregate cap above the per-target lane limits.
+        public int UiMaxConcurrentGenerators { get; set; } = 20;
+
+        /// Maximum accepted UI jobs that may be running or waiting in target
+        /// queues. New submissions receive HTTP 503 when this bound is full.
+        public int UiMaxPendingJobs { get; set; } = 64;
+
+        /// Optional per-provider/account concurrency overrides. Known lane
+        /// names: openai, xai-api, grok-web-ws, grok-web-browser, meta-web,
+        /// google, bfl, krea, ideogram, recraft, comfyui. Missing entries use the
+        /// scheduler's conservative defaults.
+        public Dictionary<string, int> UiTargetConcurrency { get; set; } =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         /// Optional free-space floor for accepting new UI jobs, in bytes.
         /// Zero disables the guard for local use. Shared deployments should

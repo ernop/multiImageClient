@@ -93,9 +93,9 @@ var McPhee = (function () {
   // Named rule profiles, presented in UIs as the formality ladder:
   // casual < standard ("normal") < strict ("formal"). "casual" is the
   // no-nagging mode for contexts where lowercase proper nouns ("japanese"),
-  // lowercase i, and unpunctuated prose are the author's intent; "strict"
-  // demands the full rigamarole: sentences start capitalized, text ends
-  // punctuated. Exact parameters for every rule are documented in
+  // lowercase i, and unpunctuated prose are the author's intent. "strict"
+  // also requires sentence capitalization and terminal punctuation. Exact
+  // parameters for every rule are documented in
   // docs/integration.md ("Rule catalog").
   var PROFILES = {
     standard: {
@@ -125,8 +125,8 @@ var McPhee = (function () {
 
   // ---------- culture rule: nation/group/language names ----------
   // Proper nouns of nationality, place, language, religion, and ethnicity
-  // written in lowercase ("japanese", "usa", "english") get their own
-  // gentle category instead of drowning among unknown-word flags. The list
+  // written in lowercase ("japanese", "usa", "english") use a separate
+  // category so they remain distinct from unknown-word flags. The list
   // is deliberately conservative: entries whose lowercase form is a common
   // English word (turkey, china, polish, us...) are excluded because
   // flagging them would produce constant false positives — "Black" as an
@@ -1054,8 +1054,8 @@ var McPhee = (function () {
       refresh();
     });
     resizeObserver.observe(textarea);
-    // Programmatic .value writes fire no event; a light poll keeps the
-    // overlay honest without every caller having to remember refresh().
+    // Programmatic .value writes fire no event. A periodic refresh keeps the
+    // overlay synchronized without requiring every caller to invoke refresh().
     var pollTimer = setInterval(refresh, 700);
     refresh();
 
@@ -1416,7 +1416,7 @@ var McPhee = (function () {
         if (level.id === currentProfile) b.classList.add("mcphee-formality-selected");
         bar.appendChild(b);
       });
-      var cfg = button("\u2699 config", "mcphee-formality-config", function () {
+      var cfg = button("config", "mcphee-formality-config", function () {
         showConfig = !showConfig;
         render();
       });
@@ -1577,7 +1577,7 @@ var McPhee = (function () {
       }
       // Manual escape hatch: full overlay regeneration (styles, geometry,
       // marks) plus a fresh panel, for when anything looks stale.
-      var recheckBtn = button("\u21bb recheck", "mcphee-panel-recheck", function () {
+      var recheckBtn = button("recheck", "mcphee-panel-recheck", function () {
         refreshOverlay();
         render();
       });
@@ -1936,7 +1936,7 @@ var McPhee = (function () {
       handle = document.createElement("button");
       handle.type = "button";
       handle.className = "mcphee-drawer-handle";
-      handle.textContent = "\u2713 spelling";
+      handle.textContent = "spelling";
       handle.addEventListener("click", function () { api.toggleDrawer(); });
       document.body.appendChild(handle);
     }
@@ -1963,7 +1963,7 @@ var McPhee = (function () {
     var panelContainer = document.createElement("div");
 
     function applyMode() {
-      modeBtn.textContent = mode === "inline" ? "\u21e5 side drawer" : "\u21e4 dock inline";
+      modeBtn.textContent = mode === "inline" ? "side drawer" : "dock inline";
       modeBtn.title = mode === "inline"
         ? "Move the panel into a slide-out drawer at the screen edge"
         : "Dock the panel beside the text";

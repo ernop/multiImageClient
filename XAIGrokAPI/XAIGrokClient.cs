@@ -410,9 +410,9 @@ namespace XAIGrokAPIClient
     // ---------- Request DTOs ----------
 
     /// Request body for POST /v1/images/generations. Only `Prompt` is required
-    /// per the xAI REST reference; everything else is optional. We intentionally
-    /// DO NOT expose `size` or `style` — xAI's docs mark both as unsupported and
-    /// sending them is a footgun.
+    /// per the xAI REST reference; everything else is optional. xAI documents
+    /// `size` and `style` as unsupported, so this request type does not expose
+    /// them.
     public class XAIGrokGenerateRequest
     {
         [JsonProperty("prompt")]

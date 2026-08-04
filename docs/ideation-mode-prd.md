@@ -6,11 +6,9 @@ lost between sessions.
 
 ## 1. The Insight
 
-Frontier text models (Claude Opus/Fable class) cannot make images, but they are
-*extraordinary* at inventing concepts to illustrate ideas — given a fuzzy goal, a
-frustration log, or a pile of failed attempts, they return proposals that are more
-creative and more varied than anything a person grinding on prompt wording alone
-produces. The proven manual workflow that motivated this feature:
+Frontier text models (Claude Opus/Fable class) cannot make images, but they can
+generate varied concepts from a fuzzy goal, a frustration log, or a pile of failed
+attempts. The motivating manual workflow:
 
 > "i'm trying iteratively to make a super good image to show this concept
 > \<text log w/prompt and past attempts\> — can you grind up the attached log and then
@@ -18,15 +16,16 @@ produces. The proven manual workflow that motivated this feature:
 > free completely to go way out of band for this one — by no means do they all have
 > to take the same form!"
 
-The results were consistently excellent. Ideation Mode productizes that loop inside
-the `--ui` web app.
+In the motivating manual trials, proposals varied in form and metaphor and were
+ready to convert into image prompts. Ideation Mode productizes that loop inside the
+`--ui` web app.
 
 Why it belongs in THIS app: MultiImageClient's core thesis is fan-out comparison —
 one prompt across M generators. Ideation adds fan-out on the orthogonal axis: one
 fuzzy *intent* across N *concepts*. The N×M matrix (5 wildly different concepts ×
 4 providers = 20 candidate images from a single brief) is something no provider's
-own UI can do, and it's the highest-leverage step in the whole image-making loop:
-the concept, not the renderer, is usually what's weak.
+own UI can do. Concept selection precedes renderer choice and expands the search
+space from M outputs to N×M outputs.
 
 ## 2. User-Facing Flow
 
@@ -54,11 +53,11 @@ composer. The user:
 Result cards link back to the idea that produced them (idea title shown on the job
 card), so the user can see which *concept* won, not just which provider.
 
-## 3. Parseable Output: Forced Tool Use (solved problem)
+## 3. Parseable Output Through Forced Tool Use
 
-The "can Claude return something we can parse well?" concern is fully solved by the
-Anthropic API's **forced tool use**. We define a tool whose `input_schema` is our
-idea list:
+Forced tool use requires a tool call matching the declared schema; invalid or
+incomplete output remains an error. We define a tool whose `input_schema` is our idea
+list:
 
 ```json
 {

@@ -96,6 +96,17 @@ namespace MultiImageClient
         BFLFluxPro = 40,
         BFLFluxDev = 41,
 
+        // Additional Recraft V4.1 model IDs. Appended to preserve numeric
+        // identities in existing generation archives.
+        RecraftV41Utility = 42,
+        RecraftV41Vector = 43,
+
+        // Krea's own Krea 2 foundation image model. These are direct
+        // api.krea.ai endpoints, not third-party models aggregated by Krea.
+        Krea2MediumTurbo = 44,
+        Krea2Medium = 45,
+        Krea2Large = 46,
+
         WorkflowMock = 1000,
     }
 }

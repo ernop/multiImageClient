@@ -417,7 +417,7 @@ function updateGeneratorCount() {
   updatePromptLimitNotice();
 }
 
-// ---------- prompt length limits (gentle, non-blocking) ----------
+// ---------- prompt length limits (non-blocking) ----------
 
 // Some targets hard-cap prompt length (grok-web's imagine WebSocket rejects
 // anything over 8192 chars). /api/config carries maxPromptChars per
@@ -1080,7 +1080,7 @@ function inspirationItemElement(item, index) {
   const favorite = document.createElement("button");
   favorite.type = "button";
   favorite.className = `inspiration-action${isFavorite(item) ? " is-favorite" : ""}`;
-  favorite.textContent = isFavorite(item) ? "★" : "☆";
+  favorite.textContent = isFavorite(item) ? "favorited" : "favorite";
   favorite.title = isFavorite(item) ? "Remove from favorites" : "Add to favorites";
   favorite.setAttribute("aria-label", favorite.title);
   favorite.addEventListener("click", () => toggleInspirationFavorite(item.id));
@@ -1431,6 +1431,7 @@ let mcpheePanel = null;
 const spellfixLocalBtn = el("spellfix-local");
 const mcpheeEnabledToggle = el("mcphee-enabled-toggle");
 const mcpheePanelToggle = el("mcphee-panel-toggle");
+const spellingPanelContainer = el("spelling-panel");
 const mcpheePanelContainer = el("mcphee-panel");
 const mcpheeEnabledStorageKey = "mic_mcphee_enabled";
 
@@ -1466,6 +1467,7 @@ async function initMcphee() {
       ruleOverridesStorageKey: "mic_mcphee_rule_overrides",
     });
     mcpheeEnabledToggle.disabled = false;
+    mcpheePanelToggle.disabled = false;
     const storedEnabled = localStorage.getItem(mcpheeEnabledStorageKey);
     setMcpheeEnabled(storedEnabled !== "false", false);
   } catch (err) {
@@ -1473,37 +1475,35 @@ async function initMcphee() {
     // the independent Claude spelling action remains available.
     console.error(err);
     spellfixLocalBtn.title = `Local fix unavailable: ${err.message || err}`;
-    mcpheeEnabledToggle.title = `McPhee unavailable: ${err.message || err}`;
-    mcpheePanelToggle.title = `McPhee unavailable: ${err.message || err}`;
+    mcpheeEnabledToggle.title = `Spellchecker unavailable: ${err.message || err}`;
+    mcpheePanelToggle.title = `Spellchecker unavailable: ${err.message || err}`;
   }
 }
 
 function setMcpheeEnabled(enabled, persist = true) {
   if (!mcpheeCtl) return;
   mcpheeCtl.setEnabled(enabled);
-  mcpheeEnabledToggle.textContent = enabled ? "McPhee: on" : "McPhee: off";
-  mcpheeEnabledToggle.setAttribute("aria-pressed", String(enabled));
-  mcpheePanelToggle.disabled = !enabled;
+  mcpheeEnabledToggle.checked = enabled;
+  mcpheePanelContainer.hidden = !enabled;
   spellfixLocalBtn.disabled = !enabled;
-  if (!enabled) {
-    mcpheePanelContainer.hidden = true;
-    mcpheePanelToggle.setAttribute("aria-expanded", "false");
+  if (enabled && !spellingPanelContainer.hidden) {
+    mcpheeCtl.refresh(true);
+    mcpheePanel.refresh();
   }
   if (persist) localStorage.setItem(mcpheeEnabledStorageKey, String(enabled));
 }
 
-mcpheeEnabledToggle.addEventListener("click", () => {
+mcpheeEnabledToggle.addEventListener("change", () => {
   if (!mcpheeCtl) return;
-  const enabled = mcpheeEnabledToggle.getAttribute("aria-pressed") !== "true";
-  setMcpheeEnabled(enabled);
+  setMcpheeEnabled(mcpheeEnabledToggle.checked);
 });
 
 mcpheePanelToggle.addEventListener("click", () => {
   if (!mcpheePanel) return;
-  const willOpen = mcpheePanelContainer.hidden;
-  mcpheePanelContainer.hidden = !willOpen;
+  const willOpen = spellingPanelContainer.hidden;
+  spellingPanelContainer.hidden = !willOpen;
   mcpheePanelToggle.setAttribute("aria-expanded", String(willOpen));
-  if (willOpen) {
+  if (willOpen && mcpheeEnabledToggle.checked) {
     mcpheeCtl.refresh(true);
     mcpheePanel.refresh();
   }
@@ -2870,7 +2870,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inpu
     const setActive = document.createElement("button");
     setActive.type = "button";
     setActive.className = "job-set-active";
-    setActive.textContent = "⤴ set active";
+    setActive.textContent = "set active";
     setActive.title = "Copy this job's image, prompt, generators, and options into the composer";
     setActive.addEventListener("click", async () => {
       setActive.disabled = true;
@@ -2907,7 +2907,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inpu
     cell.querySelector(".cell-name").textContent = genLabel(key);
     const genCfg = generators.find((g) => g.key === key);
     if (hasImage && genCfg && !genCfg.imageCapable) {
-      // Honest marker: this target ran from the prompt alone; the job's
+      // Text-only marker: this target ran from the prompt alone; the job's
       // attached image was never sent to it.
       const noImg = document.createElement("span");
       noImg.className = "cell-noimg";
@@ -3108,7 +3108,7 @@ function applyJobEvent(id, card, evt) {
           redo.className = "make-video make-video-redo";
           redo.setAttribute("aria-label", "Redo Grok video");
           redo.title = "Redo Grok video";
-          redo.textContent = "↻ grok video";
+          redo.textContent = "redo grok video";
           redo.disabled = !videoGeneration.available;
           if (!videoGeneration.available) {
             redo.title = videoGeneration.availabilityProblem || "Grok web video is unavailable";
@@ -3190,7 +3190,9 @@ function applyJobEvent(id, card, evt) {
           a.href = evt.errorHintUrl;
           a.target = "_blank";
           a.rel = "noopener";
-          a.textContent = new URL(evt.errorHintUrl).hostname.replace(/^www\./, "") + " ↗";
+          const hintHost = new URL(evt.errorHintUrl).hostname.replace(/^www\./, "");
+          a.textContent = hintHost;
+          a.setAttribute("aria-label", `${hintHost} (external link)`);
           hint.appendChild(a);
         }
         status.after(hint);

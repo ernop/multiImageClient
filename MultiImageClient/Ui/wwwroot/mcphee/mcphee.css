@@ -88,7 +88,7 @@
 /* Obscure repeat: a rare word used more than once in the text — light green. */
 .mcphee-mark-obscure { background: #d5efd5; }
 
-/* Culture: lowercase nation/group/language/religion name — gentle teal. */
+/* Culture: lowercase nation/group/language/religion name — teal. */
 .mcphee-mark-culture { background: #c9ecea; }
 
 /* Hover highlight: while the pointer is on a panel row, every occurrence of

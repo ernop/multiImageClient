@@ -69,7 +69,10 @@ namespace MultiImageClient
                     ("Ideogram", "IdeogramApiKey",
                      "https://ideogram.ai/manage-api",
                      "https://ideogram.ai/manage-api"),
-                UiJobRunner.KeyRecraft =>
+                UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Utility
+                    or UiJobRunner.KeyRecraftV41Pro or UiJobRunner.KeyRecraftV41Vector
+                    or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4
+                    or UiJobRunner.KeyRecraftV4Pro =>
                     ("Recraft", "RecraftApiKey",
                      "https://www.recraft.ai/profile/api",
                      "https://www.recraft.ai/profile/api"),
@@ -77,6 +80,10 @@ namespace MultiImageClient
                     ("Black Forest Labs", "BFLApiKey",
                      "https://dashboard.bfl.ai",
                      "https://dashboard.bfl.ai"),
+                UiJobRunner.KeyKrea or UiJobRunner.KeyKreaTurbo or UiJobRunner.KeyKreaLarge =>
+                    ("Krea", "KreaApiKey",
+                     "https://www.krea.ai/app/api",
+                     "https://www.krea.ai/app/api/tokens"),
                 UiJobRunner.KeyGoogle or UiJobRunner.KeyGooglePro =>
                     ("Google AI Studio", "GoogleGeminiApiKey",
                      "https://aistudio.google.com/apikey",

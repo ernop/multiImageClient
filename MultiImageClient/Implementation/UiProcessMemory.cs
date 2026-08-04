@@ -14,6 +14,7 @@ namespace MultiImageClient
             proc.Refresh();
             var (previewEntries, previewBytes) = UiCardPreviewCache.Snapshot();
             var cgroupDir = ResolveProcessCgroupDir();
+            var scheduler = runner?.SchedulerSnapshot();
             return new
             {
                 workingSetBytes = proc.WorkingSet64,
@@ -29,6 +30,12 @@ namespace MultiImageClient
                 hydratedJobCount = jobs?.HydratedJobCount ?? 0,
                 indexedJobCount = jobs?.IndexedJobCount ?? 0,
                 envelopeCount = jobs?.EnvelopeCount ?? 0,
+                pendingJobCount = runner?.PendingJobCount ?? 0,
+                maxPendingJobs = runner?.MaxPendingJobs ?? 0,
+                queuedTargetRequests = scheduler?.Queued ?? 0,
+                runningTargetRequests = scheduler?.Running ?? 0,
+                maxConcurrentTargetRequests = scheduler?.GlobalLimit ?? 0,
+                targetLanes = scheduler?.Lanes ?? Array.Empty<UiTargetLaneSnapshot>(),
                 grokBrowserConfigured = runner?.GrokBrowserConfigured ?? false,
                 grokBrowserWarm = runner?.IsGrokBrowserWarm ?? false,
                 metaBrowserConfigured = runner?.MetaBrowserConfigured ?? false,

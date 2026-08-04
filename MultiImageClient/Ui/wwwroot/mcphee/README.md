@@ -29,7 +29,7 @@ there.
 | `mcphee-mark-punctuation` | text ends without terminal punctuation (strict profile) | orange-outlined box on the last character |
 | `mcphee-mark-echo` | the same content word reused within 50 words (both occurrences) | light lavender block |
 | `mcphee-mark-obscure` | a rare word (outside the top 10,000 by frequency) used 2+ times in the text | light green block |
-| `mcphee-mark-culture` | a proper name written lowercase ("japanese", "usa", "jupiter") | gentle teal block |
+| `mcphee-mark-culture` | a proper name written lowercase ("japanese", "usa", "jupiter") | teal block |
 
 ## Setup
 
@@ -83,7 +83,7 @@ const ctl = sw.attach(document.querySelector("textarea"));
 ctl.refresh();            // after programmatic .value writes (also auto-polled)
 ctl.refresh(true);        // force full regeneration: styles re-mirrored,
                           // geometry re-synced, marks rebuilt (the panel's
-                          // "↻ recheck" button calls this)
+                          // "recheck" button calls this)
 ctl.scrollToOffset(120);  // scroll the textarea to a character offset
 ctl.hoverStart([120]);    // solidly highlight marks at offsets (no animation,
                           // no transition); hoverStop() clears instantly
@@ -97,10 +97,10 @@ ctl.detach();
 // Hovering a row scrolls the textarea to the issue and solidly recolors
 // EVERY occurrence (repeat rows recolor both uses at once) for exactly as
 // long as the pointer stays — a plain background change, no animation or
-// transition; clicking anywhere on the row selects the issue's text. The header's "↻ recheck" button
+// transition; clicking anywhere on the row selects the issue's text. The header's "recheck" button
 // force-regenerates the overlay and the panel. A formality chooser
 // (casual/normal/formal -> the three profiles) is always visible, persisted
-// per origin; its ⚙ config opens per-rule checkboxes and the repetition
+// per origin; its config button opens per-rule checkboxes and the repetition
 // knobs, also persisted per origin. With a controller the panel stays
 // linked to the text both ways: rows whose occurrences are all scrolled off
 // screen dim (followViewport), and the row nearest the caret is highlighted
@@ -221,14 +221,14 @@ formal; the selected level persists per origin.
 | `casual` ("casual") | on | off | on | off | off | off | off | off |
 
 `casual` is the mode for contexts where lowercase proper nouns, lowercase
-i, and unpunctuated prose are intentional, so only genuine non-words and
-double spaces are flagged. `strict` is the full rigamarole: complete
+i, and unpunctuated prose are intentional, so only non-words and
+double spaces are flagged. `strict` enables all checks: complete
 sentences, capitalized sentence starts, terminal punctuation.
 
 Every entry point (`create`, `attach`, `attachPanel`, `analyze`, `localFix`,
 `applyFixes`, `guardForm`) accepts `{ profile }` and/or per-rule `{ rules }`
 overrides; rules win over the profile, the profile wins over the instance
-default. The panel's ⚙ config writes per-origin overrides on top of the
+default. The panel's config button writes per-origin overrides on top of the
 chosen profile (localStorage `mcphee_rule_overrides`). Word lists
 (extraWords, personal dictionary, ignore list) apply regardless of profile —
 that layering follows cSpell's model (word lists union; settings override).
@@ -246,7 +246,7 @@ that layering follows cSpell's model (word lists union; settings override).
   overlay hides itself rather than display misplaced highlights, and keeps
   retrying in the background until it verifies. Full analysis in DESIGN.md
   ("Overlay correctness").
-- Classification is deliberately heuristic and predictable, not clever:
+- Classification uses explicit deterministic heuristics:
   anything capitalized/ALLCAPS/camelCase that the dictionary doesn't know is
   "unknown" (blue), on the theory that names and jargon shouldn't nag. A
   lowercase word whose Capitalized form is in the dictionary is surfaced as

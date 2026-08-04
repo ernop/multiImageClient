@@ -61,9 +61,14 @@ namespace MultiImageClient
                     or ImageGeneratorApiType.BFLFluxKontextPro
                     or ImageGeneratorApiType.BFLFluxKontextMax or ImageGeneratorApiType.BFLFlux2ProPreview
                     => ("BFLApiKey", settings.BFLApiKey),
+                ImageGeneratorApiType.Krea2MediumTurbo or ImageGeneratorApiType.Krea2Medium
+                    or ImageGeneratorApiType.Krea2Large
+                    => ("KreaApiKey", settings.KreaApiKey),
                 ImageGeneratorApiType.Recraft or ImageGeneratorApiType.RecraftV4
                     or ImageGeneratorApiType.RecraftV4Pro or ImageGeneratorApiType.RecraftV41
                     or ImageGeneratorApiType.RecraftV41Pro
+                    or ImageGeneratorApiType.RecraftV41Utility
+                    or ImageGeneratorApiType.RecraftV41Vector
                     => ("RecraftApiKey", settings.RecraftApiKey),
                 ImageGeneratorApiType.GrokImagine or ImageGeneratorApiType.GrokImaginePro
                     or ImageGeneratorApiType.GrokImagineVideo

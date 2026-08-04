@@ -7,15 +7,15 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260804-resident-ram">
-<link rel="stylesheet" href="mcphee/mcphee.css?v=20260804-mcphee-toggle">
+<link rel="stylesheet" href="style.css?v=20260804-spelling-panel">
+<link rel="stylesheet" href="mcphee/mcphee.css?v=20260804-spelling-panel">
 </head>
 <body>
 <header>
   <h1>MultiImageClient</h1>
   <span class="tagline">paste image(s), write a prompt, fan out</span>
   <button id="night-toggle" type="button" aria-pressed="false"
-    title="hide night mode — hide any job whose prompt contains a word from the hidden-word list (edit the list in settings)">&#9790;</button>
+    title="hide night mode — hide any job whose prompt contains a word from the hidden-word list (edit the list in settings)">night filter</button>
   <span id="ram-status" title="In-use process RAM (cgroup). The parenthetical limit is systemd MemoryHigh/Max, not usage.">RAM …</span>
   <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel" title="Settings (stored in this browser only)">settings</button>
   <button id="logs-toggle" type="button" aria-expanded="false" aria-controls="logs-panel">logs</button>
@@ -46,7 +46,7 @@
     <input id="night-hide-enabled" type="checkbox">
     <span><strong>hide night mode</strong> — hide entire jobs (prompt and result images) from this page
       whenever the prompt contains any word from the hidden-word list.
-      The &#9790; button in the header toggles this too.</span>
+      The night filter button in the header toggles this too.</span>
   </label>
   <div class="settings-words">
     <button id="night-words-toggle" type="button">modify hidden-word list…</button>
@@ -129,7 +129,13 @@
         <div id="spellfix-report-lines"></div>
         <button id="spellfix-report-close" type="button" aria-label="Dismiss fix report">&times;</button>
       </div>
-      <div id="mcphee-panel" hidden></div>
+      <div id="spelling-panel" hidden>
+        <label id="spelling-enabled-control">
+          <input id="mcphee-enabled-toggle" type="checkbox" disabled checked>
+          Enable spellchecker
+        </label>
+        <div id="mcphee-panel"></div>
+      </div>
 
       <div id="compose-actions">
         <div id="gen-controls">
@@ -142,12 +148,10 @@
             title="Disable endpoints that can't accept the attached image (they'd run from the prompt text only)">Disable text-only</button>
         </div>
         <div id="prompt-tools">
-          <button id="mcphee-enabled-toggle" type="button" disabled aria-pressed="true"
-            title="Turn McPhee's local writing highlights and checks on or off">McPhee: on</button>
           <button id="mcphee-panel-toggle" type="button" disabled aria-expanded="false"
-            aria-controls="mcphee-panel" title="Open McPhee spelling and writing findings">McPhee details</button>
+            aria-controls="spelling-panel" title="Open spelling suggestions and settings">spelling</button>
           <button id="spellfix-local" type="button" disabled
-            title="Apply McPhee's high-confidence typo and accidental-space fixes locally; ambiguous words stay highlighted">auto-fix typos</button>
+            title="Apply high-confidence typo and accidental-space fixes locally; ambiguous words stay highlighted">auto-fix typos</button>
           <button id="spellfix" type="button" title="Fix spelling mistakes in the prompt (Claude, spelling only — no rephrasing; costs a fraction of a cent)">fix spelling (Claude)</button>
           <button id="spellfix-undo" type="button" hidden title="Restore the prompt as it was before the last fix">undo fix</button>
         </div>
@@ -172,7 +176,7 @@
               <span>Use your exact text as a personal direction.</span>
               <button id="inspiration-add-custom" type="button">Add to my library</button>
             </div>
-            <p class="inspiration-note">Choose to insert · ☆ favorite · your additions, favorites, and recents stay in this browser.</p>
+            <p class="inspiration-note">Choose to insert · favorite · your additions, favorites, and recents stay in this browser.</p>
           </div>
         </div>
         <label>output AR <select id="opt-shape"></select></label>
@@ -311,8 +315,8 @@
   </form>
 </dialog>
 
-<script src="mcphee/vendor/typo/typo.min.js?v=20260804-mcphee-toggle"></script>
-<script src="mcphee/mcphee.js?v=20260804-mcphee-toggle"></script>
-<script src="app.js?v=20260804-mcphee-toggle"></script>
+<script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
+<script src="mcphee/mcphee.js?v=20260804-spelling-panel"></script>
+<script src="app.js?v=20260804-spelling-panel"></script>
 </body>
 </html>

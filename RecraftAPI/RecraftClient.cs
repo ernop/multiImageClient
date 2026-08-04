@@ -43,7 +43,13 @@ namespace RecraftAPIClient
                 body["random_seed"] = randomSeed.Value;
             }
 
-            if (!string.IsNullOrEmpty(styleId))
+            var supportsStyles = model is RecraftModel.recraftv2 or RecraftModel.recraftv3;
+            if (!supportsStyles)
+            {
+                // V4/V4.1 raster, vector, Pro, and Utility are distinct model
+                // IDs. Recraft does not support the V2/V3 style fields on them.
+            }
+            else if (!string.IsNullOrEmpty(styleId))
             {
                 // Custom style built from a reference image (see CreateStyleAsync):
                 // style_id replaces style/substyle entirely. NOTE: API-created

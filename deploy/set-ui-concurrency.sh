@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Bump shared-host UI concurrency and restart.
-# Usage: sudo bash ~/set-ui-concurrency.sh [jobs] [generators]
-# Defaults: 3 jobs, leave generators unchanged (or pass both).
+# Adjust shared-host finalization and aggregate request concurrency, then restart.
+# Usage: sudo bash ~/set-ui-concurrency.sh [finalizers] [requests]
+# Defaults: 1 finalizer, leave aggregate requests unchanged (or pass both).
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "run with sudo"
@@ -12,16 +12,16 @@ settings=/etc/multiimageclient/settings.json
 [[ -f $settings ]] || die "missing $settings"
 command -v jq >/dev/null || die "jq is required"
 
-jobs=${1:-3}
+jobs=${1:-1}
 gens=${2:-}
 
 [[ $jobs =~ ^[0-9]+$ ]] && (( jobs >= 1 && jobs <= 32 )) \
-    || die "jobs must be an integer 1..32 (got: $jobs)"
+    || die "finalizers must be an integer 1..32 (got: $jobs)"
 
 tmp=$(mktemp)
 if [[ -n $gens ]]; then
     [[ $gens =~ ^[0-9]+$ ]] && (( gens >= 1 && gens <= 32 )) \
-        || die "generators must be an integer 1..32 (got: $gens)"
+        || die "requests must be an integer 1..32 (got: $gens)"
     jq --argjson j "$jobs" --argjson g "$gens" \
         '.UiMaxConcurrentJobs = $j | .UiMaxConcurrentGenerators = $g' \
         "$settings" >"$tmp"

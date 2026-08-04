@@ -1,4 +1,5 @@
 ﻿using IdeogramAPIClient;
+using RecraftAPIClient;
 
 namespace MultiImageClient;
 
@@ -10,6 +11,7 @@ public class UiShapeMappingTests
         Assert.Equal("auto", UiShapeMapping.Gpt2Size("auto", "standard"));
         Assert.Equal("", UiShapeMapping.GrokAspect("auto"));
         Assert.Equal("", UiShapeMapping.GoogleAspect("auto"));
+        Assert.Equal("1:1", UiShapeMapping.KreaAspect("auto"));
     }
 
     [Theory]
@@ -53,6 +55,7 @@ public class UiShapeMappingTests
             UiShapeMapping.Gpt2Size("landscape", "standard", 900, 1600));
         Assert.Equal("16:9", UiShapeMapping.GrokAspect("wide", 900, 1600));
         Assert.Equal("1:1", UiShapeMapping.GoogleAspect("square", 1600, 900));
+        Assert.Equal("3:2", UiShapeMapping.KreaAspect("landscape", 900, 1600));
         Assert.Equal(
             IdeogramAspectRatio.ASPECT_2_3,
             UiShapeMapping.IdeogramV3Aspect("portrait", 1600, 900));
@@ -80,6 +83,18 @@ public class UiShapeMappingTests
         string expected)
     {
         Assert.Equal(expected, UiShapeMapping.GoogleAspect("auto", width, height));
+    }
+
+    [Theory]
+    [InlineData(2350, 1000, "2.35:1")]
+    [InlineData(800, 1000, "4:5")]
+    [InlineData(900, 1600, "9:16")]
+    public void KreaAutoUsesFullSupportedAspectSet(
+        int width,
+        int height,
+        string expected)
+    {
+        Assert.Equal(expected, UiShapeMapping.KreaAspect("auto", width, height));
     }
 
     [Theory]
@@ -168,5 +183,103 @@ public class UiShapeMappingTests
             GptImage2Generator.SizeMaxAspectRatio);
         var actual = (double)actualWidth / actualHeight;
         Assert.InRange(Math.Abs(Math.Log(actual / expected)), 0, tolerance);
+    }
+}
+
+public class Krea2GeneratorTests
+{
+    [Theory]
+    [InlineData(Krea2Variant.MediumTurbo, "0.015")]
+    [InlineData(Krea2Variant.Medium, "0.03")]
+    [InlineData(Krea2Variant.Large, "0.06")]
+    public void TextToImageCostsMatchPublishedPrices(Krea2Variant variant, string expected)
+    {
+        var generator = new Krea2Generator(
+            "unused",
+            1,
+            variant,
+            "1:1",
+            new MultiClientRunStats());
+
+        Assert.Equal(
+            decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture),
+            generator.GetCost());
+    }
+
+    [Theory]
+    [InlineData(Krea2Variant.MediumTurbo, "0.0175")]
+    [InlineData(Krea2Variant.Medium, "0.035")]
+    [InlineData(Krea2Variant.Large, "0.065")]
+    public void StyleReferenceCostsMatchPublishedPrices(Krea2Variant variant, string expected)
+    {
+        var generator = new Krea2Generator(
+            "unused",
+            1,
+            variant,
+            "1:1",
+            new MultiClientRunStats(),
+            inputImagePath: "unused.png");
+
+        Assert.Equal(
+            decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture),
+            generator.GetCost());
+    }
+}
+
+public class RecraftVariantTests
+{
+    [Theory]
+    [InlineData(RecraftModel.recraftv4_1, "recraftv4_1")]
+    [InlineData(RecraftModel.recraftv4_1_utility, "recraftv4_1_utility")]
+    [InlineData(RecraftModel.recraftv4_1_pro, "recraftv4_1_pro")]
+    [InlineData(RecraftModel.recraftv4_1_vector, "recraftv4_1_vector")]
+    [InlineData(RecraftModel.recraftv3, "recraftv3")]
+    [InlineData(RecraftModel.recraftv4, "recraftv4")]
+    [InlineData(RecraftModel.recraftv4_pro, "recraftv4_pro")]
+    public void ModelNamesMatchExactApiIds(RecraftModel model, string expected)
+    {
+        Assert.Equal(expected, model.ToString());
+    }
+
+    [Theory]
+    [InlineData(RecraftModel.recraftv4_1, "0.035")]
+    [InlineData(RecraftModel.recraftv4_1_utility, "0.035")]
+    [InlineData(RecraftModel.recraftv4_1_pro, "0.21")]
+    [InlineData(RecraftModel.recraftv4_1_vector, "0.08")]
+    [InlineData(RecraftModel.recraftv3, "0.04")]
+    [InlineData(RecraftModel.recraftv4, "0.04")]
+    [InlineData(RecraftModel.recraftv4_pro, "0.25")]
+    public void CostsMatchPublishedRasterAndVectorPrices(
+        RecraftModel model,
+        string expected)
+    {
+        var generator = new RecraftGenerator(
+            "unused",
+            1,
+            RecraftImageSize._1024x1024,
+            RecraftStyle.any,
+            null,
+            null,
+            null,
+            new MultiClientRunStats(),
+            "test",
+            model: model);
+
+        Assert.Equal(
+            decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture),
+            generator.GetCost());
+    }
+
+    [Fact]
+    public void SvgRawFilenameKeepsSvgExtension()
+    {
+        var filename = FilenameGenerator.GenerateUniqueFilename(
+            "recraft-vector",
+            0,
+            "image/svg+xml",
+            Path.GetTempPath(),
+            SaveType.Raw);
+
+        Assert.EndsWith(".svg", filename, StringComparison.Ordinal);
     }
 }

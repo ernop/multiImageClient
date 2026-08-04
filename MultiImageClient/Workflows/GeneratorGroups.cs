@@ -119,6 +119,7 @@ namespace MultiImageClient
         ///            gpt-image-1-mini
         ///   Ideogram Ideogram 4.0 (DEFAULT speed, 2048x2048)
         ///   BFL      flux-2-pro-preview (latest [pro])
+        ///   Krea     Krea 2 Medium
         ///   Recraft  V4.1 (any style)
         ///   xAI      grok-imagine-image (high, 2k)
         ///   Google   gemini-3-pro-image (Nano Banana Pro)
@@ -139,6 +140,7 @@ namespace MultiImageClient
                 new("openai.gpt-image-1-mini.low.square", "gpt-image-1-mini low square", "OpenAI", GptImageMiniLowSquare),
                 new("ideogram.v4.default.square", "Ideogram V4 DEFAULT square", "Ideogram", IdeogramV4_Square),
                 new("bfl.flux-2-pro-preview.square", "BFL Flux 2 Pro Preview square", "BFL", BFLFlux2ProPreview_Square),
+                new("krea.krea-2-medium.square", "Krea 2 Medium square", "Krea", Krea2Medium_Square),
                 new("recraft.v4-1.any.square", "Recraft V4.1 any square", "Recraft", RecraftV41AnyStyle),
                 new("xai.grok-imagine.high.2k.square", "xAI Grok Imagine high 2k square", "xAI", GrokImagine_Square),
                 new("xai.grok-imagine.high.1k.square", "xAI Grok Imagine high 1k square", "xAI", GrokImagine1k_Square),
@@ -182,6 +184,7 @@ namespace MultiImageClient
                 "recraft", "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
                 "bfl-klein9-preview", "bfl-klein9", "bfl-kontext-pro", "bfl-kontext-max",
                 "bfl-1.1-ultra", "bfl-1.1", "bfl-flux-pro", "bfl-dev",
+                "krea", "krea-turbo", "krea-large",
                 "google", "googlepro", "local-klein", "local-zimage"
             };
 
@@ -209,6 +212,9 @@ namespace MultiImageClient
                 case "bfl-1.1": return BFLv11_3_2();
                 case "bfl-flux-pro": return BFLFluxPro_Square();
                 case "bfl-dev": return BFLFluxDev_Square();
+                case "krea": case "krea-medium": return Krea2Medium_Square();
+                case "krea-turbo": return Krea2MediumTurbo_Square();
+                case "krea-large": return Krea2Large_Square();
                 case "google": case "nanobanana": return GeminiNanoBanana();
                 case "googlepro": case "nanobananapro": return GeminiNanoBananaPro();
                 case "local-klein": return LocalFlux2Klein_Custom();
@@ -230,6 +236,7 @@ namespace MultiImageClient
                 IdeogramV4_Square(),
                 RecraftV41AnyStyle(),
                 BFLFlux2ProPreview_Square(),
+                Krea2Medium_Square(),
                 LocalFlux2Klein_Custom(),
                 LocalZImageTurbo_Custom(),
                 GeminiNanoBananaPro(),
@@ -475,6 +482,20 @@ namespace MultiImageClient
             new BFLGenerator(ImageGeneratorApiType.BFLFlux2Klein9bPreview, _settings.BFLApiKey,
                 _concurrency, "1:1", false, 1024, 1024, _stats, "");
 
+        // ---------- Krea 2 (Krea's own foundation image model) ----------
+
+        private Krea2Generator Krea2MediumTurbo_Square() =>
+            new Krea2Generator(_settings.KreaApiKey, _concurrency,
+                Krea2Variant.MediumTurbo, "1:1", _stats);
+
+        private Krea2Generator Krea2Medium_Square() =>
+            new Krea2Generator(_settings.KreaApiKey, _concurrency,
+                Krea2Variant.Medium, "1:1", _stats);
+
+        private Krea2Generator Krea2Large_Square() =>
+            new Krea2Generator(_settings.KreaApiKey, _concurrency,
+                Krea2Variant.Large, "1:1", _stats);
+
         // ---------- Local ComfyUI: FLUX.2 Klein and Z-Image ----------
 
         private ComfyUIFlux2KleinGenerator LocalFlux2Klein_Custom()
@@ -563,7 +584,7 @@ namespace MultiImageClient
         // ---------- Recraft V4 (drop-in upgrade over V3) ----------
         // V4 raster is priced identically to V3 at $0.04/image and claims better
         // prompt adherence + text rendering. V4 Pro is $0.25 for high-res, print-
-        // ready output. Pass model: RecraftModel.recraftv4 or .recraftv4pro to
+        // ready output. Pass model: RecraftModel.recraftv4 or .recraftv4_pro to
         // RecraftGenerator and everything else (style/substyle/artistic_level)
         // works the same.
         //
@@ -594,12 +615,12 @@ namespace MultiImageClient
             new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
                 RecraftImageSize._2048x2048, RecraftStyle.realistic_image,
                 null, null, RecraftRealisticImageSubstyle.studio_portrait,
-                _stats, "", model: RecraftModel.recraftv4pro);
+                _stats, "", model: RecraftModel.recraftv4_pro);
 
         private RecraftGenerator RecraftV4ProAnyStyle() =>
             new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
                 RecraftImageSize._2048x2048, RecraftStyle.any, null, null, null,
-                _stats, "", model: RecraftModel.recraftv4pro);
+                _stats, "", model: RecraftModel.recraftv4_pro);
 
         // ---------- Recraft V4.1 (2026, current flagship) ----------
         // Drop-in over V4: better photorealism, new illustration styles, and

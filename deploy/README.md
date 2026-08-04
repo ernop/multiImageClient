@@ -43,8 +43,26 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
    "LogFilePath": "/var/lib/multiimageclient/logs/multiimageclient.log",
    "UiMaxConcurrentJobs": 1,
    "UiMaxConcurrentGenerators": 2,
+   "UiMaxPendingJobs": 64,
+   "UiTargetConcurrency": {
+     "openai": 2,
+     "xai-api": 1,
+     "grok-web-ws": 1,
+     "grok-web-browser": 1,
+     "meta-web": 1,
+     "google": 2,
+     "bfl": 2,
+     "ideogram": 1,
+     "recraft": 1,
+     "comfyui": 1
+   },
    "UiMinimumFreeDiskBytes": 3221225472
    ```
+   `UiMaxConcurrentGenerators` is the process-wide request cap.
+   `UiTargetConcurrency` applies provider/account caps beneath it.
+   `UiMaxConcurrentJobs` now gates only memory-heavy contact-sheet
+   finalization, so one slow job does not prevent later jobs from using
+   unrelated targets.
 2. **Auth file**: copy `ui-auth.example.json` to
    `/etc/multiimageclient/ui-auth.json`, set a
    long random `secret` (`openssl rand -hex 24`), add one account per friend.

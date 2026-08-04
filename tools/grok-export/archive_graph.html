@@ -234,7 +234,7 @@ function topPhrasesFor(text, limit=10){
   return [...phraseSet].filter(p=>lower.includes(p)).sort((a,b)=>(phraseCounts.get(b)-phraseCounts.get(a)) || b.length-a.length).slice(0,limit);
 }
 async function copyText(text, btn){
-  try{ await navigator.clipboard.writeText(text||''); if(btn){ const old=btn.textContent; btn.textContent='✓'; setTimeout(()=>btn.textContent=old,900); } }
+  try{ await navigator.clipboard.writeText(text||''); if(btn){ const old=btn.textContent; btn.textContent='copied'; setTimeout(()=>btn.textContent=old,900); } }
   catch{ if(btn) btn.textContent='Copy failed'; }
 }
 
@@ -329,7 +329,7 @@ function appendRows(){
     const title=el('div','ctitle', clusterTitle(c));
     const meta=el('div','cmeta');
     meta.appendChild(el('span','tag cnt', c.size+' items'));
-    const ec=extCount(c); if(ec) meta.appendChild(el('span','tag ext','⛓ '+ec+' ext'));
+    const ec=extCount(c); if(ec) meta.appendChild(el('span','tag ext',ec+' ext'));
     if(byId.get(c.rootId).rootUpload) meta.appendChild(el('span','tag up','upload'));
     right.appendChild(title); right.appendChild(meta);
     row.appendChild(tw); row.appendChild(right);
@@ -352,7 +352,7 @@ function renderDayRows(){
     const meta=el('div','cmeta');
     meta.appendChild(el('span','tag cnt',g.clusters.length+' lineages'));
     meta.appendChild(el('span','tag',g.videos+' videos'));
-    if(g.extensions) meta.appendChild(el('span','tag ext','⛓ '+g.extensions+' ext'));
+    if(g.extensions) meta.appendChild(el('span','tag ext',g.extensions+' ext'));
     left.appendChild(meta);
     row.appendChild(left);
     row.appendChild(el('span','tag',g.images+' source images'));
@@ -392,7 +392,7 @@ function selectDay(day,row){
     cap.appendChild(el('div','p',clusterTitle(c)));
     const m=el('div','m');
     m.appendChild(el('span','tag cnt',c.videoCount+' videos'));
-    const ec=extCount(c); if(ec)m.appendChild(el('span','tag ext','⛓ '+ec+' ext'));
+    const ec=extCount(c); if(ec)m.appendChild(el('span','tag ext',ec+' ext'));
     cap.appendChild(m);
     card.appendChild(vt); card.appendChild(cap);
     card.onclick=()=>{ state.view='lineages'; syncTabs(); renderList(); selectCluster(c.rootId); };
@@ -452,7 +452,7 @@ function videoCardWithChain(v){
   if(exts.length){
     exts.sort((a,b)=>a.t-b.t);
     const chain=el('div','chain');
-    chain.appendChild(el('div','extlabel','⛓ '+exts.length+' extension'+(exts.length===1?'':'s')));
+    chain.appendChild(el('div','extlabel',exts.length+' extension'+(exts.length===1?'':'s')));
     exts.forEach(e=>chain.appendChild(videoCardWithChain(e)));
     wrap.appendChild(chain);
   }
@@ -490,7 +490,7 @@ function videoCard(v){
   if(v.durationSec) m.appendChild(el('span','tag', fmtDur(v)));
   if(v.refType==='ORIGINAL_REF_TYPE_VIDEO_EXTENSION') m.appendChild(el('span','tag ext','ext @'+(v.extStartSec||0)+'s'));
   if(v.status!=='downloaded') m.appendChild(el('span','tag','remote'));
-  if(v.prompt){ const cp=el('button','iconBtn','⧉'); cp.title='Copy this prompt'; cp.onclick=e=>{e.stopPropagation(); copyText(v.prompt,cp);}; m.appendChild(cp); }
+  if(v.prompt){ const cp=el('button','iconBtn','copy'); cp.title='Copy this prompt'; cp.onclick=e=>{e.stopPropagation(); copyText(v.prompt,cp);}; m.appendChild(cp); }
   cap.appendChild(m);
   card.appendChild(vt); card.appendChild(cap);
   card.onclick=()=>{ document.querySelectorAll('.vcard.sel').forEach(x=>x.classList.remove('sel')); card.classList.add('sel'); showNode(v); play(v); };
@@ -556,7 +556,7 @@ applyPlayerHeight(localStorage.getItem('playerH')||48);
 function showPromptTools(n){
   const box=$('#promptTools'); box.innerHTML='';
   if(n.prompt){
-    const copy=el('button','iconBtn','⧉');
+    const copy=el('button','iconBtn','copy');
     copy.title='Copy this prompt';
     copy.onclick=()=>copyText(n.prompt,copy);
     box.appendChild(copy);
@@ -582,7 +582,7 @@ function setPromptPanel(n){
       const box=el('div','sourcePromptBox');
       const label=el('div','sourcePromptLabel');
       label.appendChild(el('span','',chain.length>1?'Source image prompt chain':'Source image prompt'));
-      const copy=el('button','iconBtn','⧉');
+      const copy=el('button','iconBtn','copy');
       copy.title='Copy source image prompt chain';
       copy.onclick=()=>copyText(promptChainText(chain),copy);
       label.appendChild(copy);
@@ -677,7 +677,7 @@ function showNode(n){
     addNav('Next image', imageLineages[idx+1]);
     d.appendChild(nav);
   }
-  d.appendChild(el('div','', n.type==='video'?'🎬 Video':'🖼 Image'));
+  d.appendChild(el('div','', n.type==='video'?'Video':'Image'));
   const kv=el('div','kv');
   const add=(k,v)=>{ if(v==null||v==='')return; kv.appendChild(el('div','k',k)); const e=el('div','v'); if(v instanceof Node)e.appendChild(v); else e.textContent=v; kv.appendChild(e); };
   const promptCell=el('div','');
@@ -693,7 +693,7 @@ function showNode(n){
       sourceCell.appendChild(document.createTextNode(' '));
       sourceCell.appendChild(renderLinkedText(step.prompt));
     });
-    const copySource=el('button','iconBtn','⧉');
+    const copySource=el('button','iconBtn','copy');
     copySource.title='Copy source image prompt chain';
     copySource.style.marginTop='6px';
     copySource.onclick=()=>copyText(promptChainText(sourceChain),copySource);
@@ -716,7 +716,7 @@ function showNode(n){
   const kids=(childrenOf.get(n.id)||[]);
   if(kids.length){ const a=el('a','', kids.length+' child item(s)'); add('Children', a); }
   // grok link
-  const gl=el('a','','open on grok.com ↗'); gl.href='https://grok.com/imagine/post/'+n.id; gl.target='_blank'; add('Link', gl);
+  const gl=el('a','','open on grok.com (external)'); gl.href='https://grok.com/imagine/post/'+n.id; gl.target='_blank'; add('Link', gl);
   if(n.file){ add('File', n.file); }
   d.appendChild(kv);
   if(n.prompt){
@@ -728,7 +728,7 @@ function showNode(n){
     }
   }
   const bt=el('div','dbtns');
-  if(n.prompt){ const cp=el('button','iconBtn','⧉'); cp.title='Copy this prompt'; cp.onclick=()=>copyText(n.prompt,cp); bt.appendChild(cp); }
+  if(n.prompt){ const cp=el('button','iconBtn','copy'); cp.title='Copy this prompt'; cp.onclick=()=>copyText(n.prompt,cp); bt.appendChild(cp); }
   const cb=el('button','','Focus this lineage'); cb.onclick=()=>{ const root=rootOf(n.id); const row=[...document.querySelectorAll('.crow')].find(r=>r.dataset.root===root); selectCluster(root,row); }; bt.appendChild(cb);
   d.appendChild(bt);
 }

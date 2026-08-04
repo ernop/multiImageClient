@@ -132,15 +132,8 @@ namespace MultiImageClient
                                     $"Saved raw image required for grid is missing: {path}",
                                     path);
                             }
-                            using var stream = new FileStream(
-                                path,
-                                FileMode.Open,
-                                FileAccess.Read,
-                                FileShare.Read,
-                                bufferSize: 64 * 1024,
-                                FileOptions.SequentialScan);
                             loadedImages.Add(PrepareLoadedResultImage(
-                                Image.Load<Rgba32>(stream),
+                                LoadResultImage(path),
                                 result));
                         }
                     }
@@ -174,6 +167,24 @@ namespace MultiImageClient
             }
 
             return loadedImages;
+        }
+
+        private static Image<Rgba32> LoadResultImage(string path)
+        {
+            if (Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase))
+            {
+                using var vector = new MagickImage(path);
+                return Image.Load<Rgba32>(vector.ToByteArray(MagickFormat.Png));
+            }
+
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                FileOptions.SequentialScan);
+            return Image.Load<Rgba32>(stream);
         }
 
         private static LoadedImage PrepareLoadedResultImage(
@@ -798,8 +809,9 @@ namespace MultiImageClient
                 Logger.Log($"Target to fill: {wrappingWidth}x{targetHeight} (85% of available)");
                 Logger.Log($"Text: {descriptionText.Length} chars with {newlineCount} newlines");
 
-                // This is all so stupid. Why can't you just call MeasureText on the text, including newlines, plus the rectangle size? I really don't get it.
-                // This whole guessing/semi-hardcoding guidance is wrong.
+                // The current sizing path estimates wrapped multiline height
+                // from width and newline count. Replace it when a
+                // rectangle-aware measurement API is available.
 
                 // Reasonable font size bounds for long text
                 var minFontSize = 12;
