@@ -1,2 +1,3 @@
 .gitattributes text eol=lf
 deploy/*.sh text eol=lf
+deploy/*.py text eol=lf
