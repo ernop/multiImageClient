@@ -116,6 +116,22 @@ namespace MultiImageClient
         /// it produced. The server never writes this file.
         public string UiAuthFilePath { get; set; } = "";
 
+        /// Maximum number of UI jobs allowed to execute at once. Jobs beyond
+        /// this limit remain queued. Keep the local default at the historical
+        /// value; resource-constrained shared deployments should set 1.
+        public int UiMaxConcurrentJobs { get; set; } = 4;
+
+        /// Maximum number of generators executing across all active UI jobs.
+        /// This caps the cross-provider fan-out that otherwise lets one job
+        /// start every selected generator simultaneously.
+        public int UiMaxConcurrentGenerators { get; set; } = 4;
+
+        /// Optional free-space floor for accepting new UI jobs, in bytes.
+        /// Zero disables the guard for local use. Shared deployments should
+        /// reserve several GiB so generated assets cannot crowd out colocated
+        /// services. This is checked before uploads are read or jobs created.
+        public long UiMinimumFreeDiskBytes { get; set; }
+
         /// unused yet we always do RIGHT
         public string AnnotationSide { get; set; } = "bottom";
 

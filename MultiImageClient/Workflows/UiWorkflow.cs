@@ -333,6 +333,11 @@ namespace MultiImageClient
 
             app.MapPost("/api/jobs", async (HttpRequest request) =>
             {
+                var diskProblem = DescribeDiskCapacityProblem(settings);
+                if (diskProblem != null)
+                {
+                    return Results.Json(new { error = diskProblem }, statusCode: 503);
+                }
                 var form = await request.ReadFormAsync();
 
                 var prompt = (form["prompt"].ToString() ?? "").Trim();
@@ -536,6 +541,11 @@ namespace MultiImageClient
 
             app.MapPost("/api/video-jobs", async (HttpRequest request) =>
             {
+                var diskProblem = DescribeDiskCapacityProblem(settings);
+                if (diskProblem != null)
+                {
+                    return Results.Json(new { error = diskProblem }, statusCode: 503);
+                }
                 var availabilityProblem = runner.DescribeAvailabilityProblem(UiJobRunner.KeyGrokWebVideo);
                 if (availabilityProblem != null)
                 {
@@ -938,6 +948,39 @@ namespace MultiImageClient
             }
             error = "";
             return true;
+        }
+
+        private static string? DescribeDiskCapacityProblem(Settings settings)
+        {
+            if (settings.UiMinimumFreeDiskBytes <= 0)
+            {
+                return null;
+            }
+            try
+            {
+                var fullPath = Path.GetFullPath(settings.ImageDownloadBaseFolder);
+                var root = Path.GetPathRoot(fullPath);
+                if (string.IsNullOrWhiteSpace(root))
+                {
+                    return $"Cannot determine the filesystem for ImageDownloadBaseFolder '{fullPath}'.";
+                }
+                var available = new DriveInfo(root).AvailableFreeSpace;
+                if (available < settings.UiMinimumFreeDiskBytes)
+                {
+                    return "New jobs are paused to protect this shared server: "
+                        + $"the output filesystem has {available / (1024 * 1024):N0} MiB free, "
+                        + $"below the configured reserve of "
+                        + $"{settings.UiMinimumFreeDiskBytes / (1024 * 1024):N0} MiB.";
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                // A configured guard must fail closed if capacity cannot be
+                // measured; otherwise a mount/permission failure could disable
+                // the exact protection the owner requested.
+                return $"Cannot verify free output space; new jobs are paused: {ex.Message}";
+            }
         }
 
         // The failed-login throttle keys on the caller's address. Behind the

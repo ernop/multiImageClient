@@ -1151,15 +1151,21 @@ namespace MultiImageClient
         private DateTime _comfyProbeExpiresAt;
         private string? _cachedComfyProbeProblem;
 
-        // Cap concurrent jobs, not generators-within-a-job: each job already
-        // fans out internally, and each generator has its own semaphore.
-        private readonly SemaphoreSlim _jobLimit = new(4);
+        // Two independent caps protect shared hosts: one bounds queued job
+        // execution, the other bounds aggregate cross-provider fan-out. The
+        // old fixed job limit still exists as the Settings default (4).
+        private readonly SemaphoreSlim _jobLimit;
+        private readonly SemaphoreSlim _generatorLimit;
 
         public UiJobRunner(Settings settings, MultiClientRunStats stats, RunOptions options)
         {
             _settings = settings;
             _stats = stats;
             _options = options;
+            _jobLimit = new SemaphoreSlim(ValidateUiConcurrency(
+                nameof(settings.UiMaxConcurrentJobs), settings.UiMaxConcurrentJobs));
+            _generatorLimit = new SemaphoreSlim(ValidateUiConcurrency(
+                nameof(settings.UiMaxConcurrentGenerators), settings.UiMaxConcurrentGenerators));
             _imageManager = new ImageManager(settings, stats);
             _generatorGroups = new GeneratorGroups(settings, concurrency: 1, stats);
             var grokWebCookiePath = ResolveGrokWebCookiePath();
@@ -1200,6 +1206,16 @@ namespace MultiImageClient
                     Logger.Log($"Meta web unavailable: {ex.Message}");
                 }
             }
+        }
+
+        private static int ValidateUiConcurrency(string settingName, int value)
+        {
+            if (value < 1 || value > 32)
+            {
+                throw new InvalidOperationException(
+                    $"{settingName} must be between 1 and 32; got {value}.");
+            }
+            return value;
         }
 
         public string? ResolveGrokWebCookiePath()
@@ -1327,7 +1343,18 @@ namespace MultiImageClient
                 var pd = new PromptDetails();
                 pd.ReplacePrompt(job.Prompt, job.Prompt, TransformationType.InitialPrompt);
 
-                var tasks = spec.GeneratorKeys.Select(key => RunOneAsync(job, spec, key, pd)).ToArray();
+                var tasks = spec.GeneratorKeys.Select(async key =>
+                {
+                    await _generatorLimit.WaitAsync();
+                    try
+                    {
+                        return await RunOneAsync(job, spec, key, pd);
+                    }
+                    finally
+                    {
+                        _generatorLimit.Release();
+                    }
+                }).ToArray();
                 var results = await Task.WhenAll(tasks);
 
                 // Build + save the standard combined contact sheet for the
@@ -1958,6 +1985,7 @@ namespace MultiImageClient
             {
                 await _metaWebClient.DisposeAsync();
             }
+            _generatorLimit.Dispose();
             _jobLimit.Dispose();
         }
 

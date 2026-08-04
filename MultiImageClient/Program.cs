@@ -201,11 +201,24 @@ namespace MultiImageClient
             }
         }
 
-        // Searches the obvious places for `settings.json`. Returns "settings.json"
-        // (i.e. relative to CWD, the legacy path) if none of the candidates exist,
-        // which preserves the old error text for anyone used to it.
+        // An explicit environment path is useful for locked-down services
+        // whose code, configuration, and writable data live in separate
+        // directories. If declared, it wins and remains fail-closed: a missing
+        // file is returned to Settings.LoadFromFile, which raises the normal
+        // configuration error instead of silently selecting another file.
+        //
+        // Without it, search the obvious places for `settings.json`. Returns
+        // "settings.json" (relative to CWD, the legacy path) when none exist.
         private static string ResolveSettingsPath()
         {
+            var configuredPath = System.Environment.GetEnvironmentVariable(
+                "MULTIIMAGECLIENT_SETTINGS");
+            if (!string.IsNullOrWhiteSpace(configuredPath))
+            {
+                return System.IO.Path.GetFullPath(
+                    Settings.ExpandPath(configuredPath.Trim()));
+            }
+
             var candidates = new[]
             {
                 "settings.json",

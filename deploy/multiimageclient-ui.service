@@ -1,32 +1,48 @@
-# systemd unit for the shared-site web UI. Install:
-#   sudo cp multiimageclient-ui.service /etc/systemd/system/
-#   (edit User/paths)  sudo systemctl daemon-reload
-#   sudo systemctl enable --now multiimageclient-ui
-#
-# The app skips auto-opening a browser under systemd (INVOCATION_ID check).
+# Hardened unit for a colocated shared server. The deploy procedure publishes
+# the app read-only under /opt, keeps secrets under /etc, and grants writes
+# only to /var/lib/multiimageclient.
 [Unit]
 Description=MultiImageClient shared web UI
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=youruser
-WorkingDirectory=/home/youruser/multiImageClient
-# settings.json (with UiAuthFilePath set) must sit in WorkingDirectory or
-# WorkingDirectory/MultiImageClient/. Use the published binary or dotnet run:
-ExecStart=/home/youruser/.dotnet/dotnet run --project MultiImageClient/MultiImageClient.csproj -c Release --no-build -- --ui
+User=multiimageclient
+Group=multiimageclient
+WorkingDirectory=/opt/multiimageclient
+Environment=DOTNET_ROOT=/home/tparkour/.dotnet
+Environment=MULTIIMAGECLIENT_SETTINGS=/etc/multiimageclient/settings.json
+ExecStart=/home/tparkour/.dotnet/dotnet /opt/multiimageclient/MultiImageClient.dll --ui --ui-port 5960 --ui-no-open
 Restart=on-failure
 RestartSec=5
+UMask=0077
 
-# Containment: the process needs no privileges beyond its own files.
+# Be a polite neighbor on a 4 GiB server. The app also limits itself to one
+# job / two generators in the production settings and reserves disk space.
+Nice=10
+CPUQuota=150%
+IOWeight=25
+MemoryHigh=1200M
+MemoryMax=1600M
+OOMScoreAdjust=500
+TasksMax=256
+
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-# Allow writes ONLY where the app actually writes (adjust to your settings):
-ReadWritePaths=/home/youruser/multiImageClient
-# If ImageDownloadBaseFolder / LogFilePath live elsewhere, add them:
-# ReadWritePaths=/home/youruser/multiImageClient /path/to/saves /path/to/logs
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/etc/multiimageclient
+ReadWritePaths=/var/lib/multiimageclient
 
 [Install]
 WantedBy=multi-user.target
