@@ -3126,24 +3126,27 @@ async function pollRamStatus() {
     if (resp.status === 401) { location.reload(); return; }
     if (!resp.ok) throw new Error(String(resp.status));
     const s = await resp.json();
+    // cgroup current = real process usage. high/max are systemd *limits*,
+    // not consumption — label them so "1.2G" is never read as "we're using 1.2G".
     const used = s.cgroupCurrentBytes || s.workingSetBytes || 0;
     const high = s.cgroupHighBytes || 0;
     const max = s.cgroupMaxBytes || 0;
     const limit = high || max;
     let text = `RAM ${formatBytesShort(used)}`;
-    if (limit) text += ` / ${formatBytesShort(limit)}`;
+    if (limit) text += ` (limit ${formatBytesShort(limit)})`;
     else text += ` (no cgroup cap)`;
-    if (high && max && high !== max) text += ` max ${formatBytesShort(max)}`;
+    if (high && max && high !== max) text += ` hard ${formatBytesShort(max)}`;
     node.textContent = text;
     const warn = limit > 0 && used / limit >= 0.85;
     node.classList.toggle("warn", warn);
     node.title = [
+      `in use (cgroup) ${formatBytesShort(s.cgroupCurrentBytes || used)}`,
       `working set ${formatBytesShort(s.workingSetBytes)}`,
       `managed heap ${formatBytesShort(s.managedHeapBytes)}`,
-      s.cgroupCurrentBytes != null ? `cgroup current ${formatBytesShort(s.cgroupCurrentBytes)}` : null,
-      s.cgroupHighBytes != null ? `cgroup high ${formatBytesShort(s.cgroupHighBytes)}` : null,
-      s.cgroupMaxBytes != null ? `cgroup max ${formatBytesShort(s.cgroupMaxBytes)}` : "cgroup max unlimited/unknown",
+      s.cgroupHighBytes != null ? `systemd MemoryHigh (soft limit) ${formatBytesShort(s.cgroupHighBytes)}` : null,
+      s.cgroupMaxBytes != null ? `systemd MemoryMax (hard limit) ${formatBytesShort(s.cgroupMaxBytes)}` : "cgroup max unlimited/unknown",
       `card preview cache ${s.cardPreviewCacheEntries || 0} · ${formatBytesShort(s.cardPreviewCacheBytes || 0)}`,
+      "VmSize/private virtual address space is not RAM — ignore huge VSZ numbers from ps.",
     ].filter(Boolean).join("\n");
   } catch {
     node.textContent = "RAM ?";

@@ -12,48 +12,68 @@ namespace MultiImageClient
             using var proc = Process.GetCurrentProcess();
             proc.Refresh();
             var (previewEntries, previewBytes) = UiCardPreviewCache.Snapshot();
+            var cgroupDir = ResolveProcessCgroupDir();
             return new
             {
                 workingSetBytes = proc.WorkingSet64,
                 privateMemoryBytes = proc.PrivateMemorySize64,
                 managedHeapBytes = GC.GetTotalMemory(false),
-                cgroupCurrentBytes = ReadCgroupBytes("memory.current"),
-                cgroupHighBytes = ReadCgroupBytes("memory.high"),
-                cgroupMaxBytes = ReadCgroupBytes("memory.max"),
+                cgroupCurrentBytes = ReadCgroupBytes(cgroupDir, "memory.current"),
+                cgroupHighBytes = ReadCgroupBytes(cgroupDir, "memory.high"),
+                cgroupMaxBytes = ReadCgroupBytes(cgroupDir, "memory.max"),
                 cardPreviewCacheEntries = previewEntries,
                 cardPreviewCacheBytes = previewBytes,
             };
         }
 
-        private static long? ReadCgroupBytes(string fileName)
+        // Prefer this process's cgroup (from /proc/self/cgroup). Never read the
+        // cgroupv2 root memory.current first — on many hosts that file is the
+        // whole-machine usage and the header would show ~host RAM as "ours".
+        private static string? ResolveProcessCgroupDir()
         {
-            foreach (var path in CandidatePaths(fileName))
+            try
             {
-                try
+                foreach (var line in File.ReadLines("/proc/self/cgroup"))
                 {
-                    if (!File.Exists(path)) continue;
-                    var text = File.ReadAllText(path).Trim();
-                    if (text.Length == 0 || text.Equals("max", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return null;
-                    }
-                    if (long.TryParse(text, out var value) && value >= 0)
-                    {
-                        return value;
-                    }
+                    // cgroup v2: "0::/system.slice/multiimageclient-ui.service"
+                    if (!line.StartsWith("0::", StringComparison.Ordinal)) continue;
+                    var rel = line.Substring(3).Trim();
+                    if (rel.Length == 0 || rel == "/") return null;
+                    var dir = Path.Combine("/sys/fs/cgroup", rel.TrimStart('/'));
+                    if (Directory.Exists(dir)) return dir;
                 }
-                catch
+            }
+            catch
+            {
+                // Not Linux, or cgroup unreadable.
+            }
+
+            var fallback = "/sys/fs/cgroup/system.slice/multiimageclient-ui.service";
+            return Directory.Exists(fallback) ? fallback : null;
+        }
+
+        private static long? ReadCgroupBytes(string? cgroupDir, string fileName)
+        {
+            if (string.IsNullOrEmpty(cgroupDir)) return null;
+            try
+            {
+                var path = Path.Combine(cgroupDir, fileName);
+                if (!File.Exists(path)) return null;
+                var text = File.ReadAllText(path).Trim();
+                if (text.Length == 0 || text.Equals("max", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Not in a cgroup, or unreadable — omit the field.
+                    return null;
                 }
+                if (long.TryParse(text, out var value) && value >= 0)
+                {
+                    return value;
+                }
+            }
+            catch
+            {
+                // Not in a cgroup, or unreadable — omit the field.
             }
             return null;
         }
-
-        private static string[] CandidatePaths(string fileName) => new[]
-        {
-            Path.Combine("/sys/fs/cgroup", fileName),
-            Path.Combine("/sys/fs/cgroup/system.slice/multiimageclient-ui.service", fileName),
-        };
     }
 }
