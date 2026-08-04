@@ -127,9 +127,16 @@ chmod 0644 "$site"
 nginx -t
 systemctl reload nginx
 
-root_code=$(curl -sS -o /dev/null -w '%{http_code}' "https://$host/")
-secret_code=$(curl -sS -o /dev/null -w '%{http_code}' \
-    "https://$host/$secret_path/")
+root_code=
+secret_code=
+for _ in $(seq 1 10); do
+    root_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+        "https://$host/" || true)
+    secret_code=$(curl -sS -o /dev/null -w '%{http_code}' \
+        "https://$host/$secret_path/" || true)
+    [[ $root_code == 404 && $secret_code == 401 ]] && break
+    sleep 1
+done
 [[ $root_code == 404 ]] || die "hostname root returned $root_code, expected 404"
 [[ $secret_code == 401 ]] \
     || die "secret-path login returned $secret_code, expected 401"
