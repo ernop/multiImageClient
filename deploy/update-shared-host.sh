@@ -32,6 +32,16 @@ printf 'Installing staged publish into /opt/multiimageclient …\n'
 rsync -a --delete "$publish_staging/" /opt/multiimageclient/
 chown -R root:root /opt/multiimageclient
 
+# Playwright's bundled node/chromium must be world-executable: the service
+# runs as multiimageclient while /opt is root:root. rsync can skip unchanged
+# files and leave a stale mode (observed: 764 → EACCES "Permission denied"
+# starting …/.playwright/node/linux-x64/node). Always re-apply after install.
+if [[ -d /opt/multiimageclient/.playwright ]]; then
+    chmod -R a+rX /opt/multiimageclient/.playwright
+    find /opt/multiimageclient/.playwright -type f \( -name node -o -name chrome -o -name chromium -o -name 'chrome-headless-shell' -o -name ffmpeg \) \
+        -exec chmod a+x {} +
+fi
+
 # Wedged-under-memory processes often ignore SIGTERM. systemctl kill -s SIGKILL
 # also sometimes prints "failed to send signal SIGKILL to auxiliary processes:
 # Invalid argument" even when the main PID dies — ignore that and kill by PID.

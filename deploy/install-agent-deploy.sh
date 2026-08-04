@@ -18,11 +18,17 @@ owner_home=$(getent passwd "$owner" | cut -d: -f6)
 src_update="$owner_home/multiImageClient/deploy/update-shared-host.sh"
 [[ -f $src_update ]] || die "missing $src_update — git pull the repo first"
 
-install -o root -g root -m 0755 "$src_update" /usr/local/sbin/multiimageclient-update
+# Thin wrapper: sudoers pins this path; body always execs the repo script so
+# agent git pulls pick up deploy fixes without re-running this installer.
 helper=/usr/local/sbin/multiimageclient-update
+cat >"$helper" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+exec bash "$src_update" "\$@"
+EOF
+chmod 0755 "$helper"
+chown root:root "$helper"
 
-# Rewrite the installed copy's shebang comment usage line only — behavior is
-# identical; the sbin path is what sudoers pins.
 sudoers_file=/etc/sudoers.d/multiimageclient-agent-deploy
 cat >"$sudoers_file" <<EOF
 # Managed by deploy/install-agent-deploy.sh — passwordless deploy for agents.

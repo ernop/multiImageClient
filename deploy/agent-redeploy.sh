@@ -31,9 +31,17 @@ rm -rf "$staging"
 [[ -f $staging/MultiImageClient.dll ]] || die "publish produced no dll"
 [[ -f $staging/Ui/wwwroot/index.html ]] || die "publish missing wwwroot"
 
-# Prefer sudo -n so BatchMode SSH / agents never hang on a password prompt.
-if ! sudo -n true 2>/dev/null; then
-    die "passwordless sudo not available — run once: ssh -t host 'sudo bash $repo/deploy/install-agent-deploy.sh'"
+# Ensure Playwright driver bits stay executable for the non-root service user
+# after rsync + chown root:root (and force a content touch so rsync won't skip
+# a same-mtime stale 764 mode left from an older deploy).
+if [[ -d $staging/.playwright ]]; then
+    chmod -R a+rX "$staging/.playwright"
+    find "$staging/.playwright" -type f \( -name node -o -name chrome -o -name chromium -o -name 'chrome-headless-shell' -o -name ffmpeg \) \
+        -exec chmod a+x {} + -exec touch {} +
 fi
 
-sudo -n "$helper"
+# Only the pinned helper is NOPASSWD (not sudo in general). -n avoids hanging
+# BatchMode SSH on a password prompt when the install step was never run.
+if ! sudo -n "$helper"; then
+    die "passwordless update failed — run once: ssh -t host 'sudo bash $repo/deploy/install-agent-deploy.sh'"
+fi
