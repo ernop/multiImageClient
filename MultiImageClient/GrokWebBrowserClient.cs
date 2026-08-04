@@ -95,10 +95,15 @@ namespace MultiImageClient
             timeoutCts.CancelAfter(_options.Timeout);
             var ct = timeoutCts.Token;
             var gateAcquired = false;
+            FatalOperationDeadline? hardDeadline = null;
             try
             {
                 await _gate.WaitAsync(ct);
                 gateAcquired = true;
+                NoteBrowserActivity();
+                hardDeadline = new FatalOperationDeadline(
+                    _options.Timeout + TimeSpan.FromSeconds(30),
+                    "Grok web Playwright operation");
                 await EnsureStartedAsync(ct);
                 await PrepareImaginePageAsync(triggerPostId, ct);
 
@@ -173,6 +178,7 @@ namespace MultiImageClient
             }
             finally
             {
+                hardDeadline?.Dispose();
                 if (gateAcquired)
                 {
                     NoteBrowserActivity();
@@ -636,6 +642,9 @@ namespace MultiImageClient
 
         private async Task CloseBrowserCoreAsync()
         {
+            using var hardDeadline = new FatalOperationDeadline(
+                TimeSpan.FromSeconds(20),
+                "Grok web browser shutdown");
             var page = _page;
             var context = _context;
             var browser = _browser;

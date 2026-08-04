@@ -226,11 +226,16 @@ namespace MultiImageClient
             timeoutCts.CancelAfter(_options.Timeout);
             var ct = timeoutCts.Token;
             var gateAcquired = false;
+            FatalOperationDeadline? hardDeadline = null;
             MetaWebSessionCapture? capture = null;
             try
             {
                 await _gate.WaitAsync(ct);
                 gateAcquired = true;
+                NoteBrowserActivity();
+                hardDeadline = new FatalOperationDeadline(
+                    _options.Timeout + TimeSpan.FromSeconds(30),
+                    "Meta web Playwright operation");
                 capture = _options.CaptureSessions
                     ? MetaWebSessionCapture.Start(_options.ImageDownloadBaseFolder, prompt, _options.Timeout)
                     : null;
@@ -302,6 +307,7 @@ namespace MultiImageClient
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 await CaptureFailureAsync(capture, "timeout");
+                await RetireBrowserAfterFaultAsync("generation timeout");
                 var error = new MetaWebException(
                     $"Meta web: generation timed out after {_options.Timeout.TotalSeconds:0}s with no new images. "
                     + "Most likely Meta answered with TEXT instead of generating an image (we prefix prompts with "
@@ -319,6 +325,7 @@ namespace MultiImageClient
             catch (PlaywrightException ex)
             {
                 await CaptureFailureAsync(capture, "playwright-error");
+                await RetireBrowserAfterFaultAsync("Playwright transport failure");
                 var error = new MetaWebException($"Meta web: browser automation failed: {ex.Message}");
                 RecordLogicalGeneration(traceRequest, startedAtUtc, error);
                 throw error;
@@ -332,6 +339,7 @@ namespace MultiImageClient
             finally
             {
                 capture?.Dispose();
+                hardDeadline?.Dispose();
                 if (gateAcquired)
                 {
                     NoteBrowserActivity();
@@ -495,22 +503,55 @@ namespace MultiImageClient
             }
         }
 
+        private async Task RetireBrowserAfterFaultAsync(string reason)
+        {
+            Logger.Log($"Meta web browser: retiring Chromium after {reason}.");
+            await CloseBrowserCoreAsync();
+        }
+
         private async Task CloseBrowserCoreAsync()
         {
+            using var hardDeadline = new FatalOperationDeadline(
+                TimeSpan.FromSeconds(20),
+                "Meta web browser shutdown");
+            var page = _page;
+            var context = _context;
+            var playwright = _playwright;
+            var profileLease = _profileLease;
+
             _page = null;
-            if (_context != null)
-            {
-                try { await _context.CloseAsync(); }
-                catch (Exception ex) { Logger.Log($"Meta web browser: context close: {ex.Message}"); }
-                _context = null;
-            }
-            if (_playwright != null)
-            {
-                _playwright.Dispose();
-                _playwright = null;
-            }
-            _profileLease?.Dispose();
+            _context = null;
+            _playwright = null;
             _profileLease = null;
+
+            if (page != null)
+            {
+                await CloseWithTimeoutAsync(
+                    page.CloseAsync(new PageCloseOptions { RunBeforeUnload = false }),
+                    "page");
+            }
+            if (context != null)
+            {
+                await CloseWithTimeoutAsync(context.CloseAsync(), "context");
+            }
+            playwright?.Dispose();
+            profileLease?.Dispose();
+        }
+
+        private static async Task CloseWithTimeoutAsync(Task closeTask, string component)
+        {
+            try
+            {
+                await closeTask.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (TimeoutException)
+            {
+                Logger.Log($"Meta web browser: {component} close exceeded 5 seconds; forcing driver disposal.");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Meta web browser: {component} close: {ex.Message}");
+            }
         }
 
         private static async Task NavigateHomeAsync(IPage page, MetaWebSessionCapture? capture, CancellationToken ct)
@@ -935,7 +976,9 @@ namespace MultiImageClient
                 return null;
             }
 
-            var bytes = await response.BodyAsync();
+            var bodyTimeout = TimeSpan.FromSeconds(
+                Math.Min(60, Math.Max(5, _options.Timeout.TotalSeconds)));
+            var bytes = await response.BodyAsync().WaitAsync(bodyTimeout, ct);
             if (!contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
                 || !LooksLikeImageBytes(bytes))
             {
@@ -1019,8 +1062,14 @@ namespace MultiImageClient
             {
                 if (_page != null)
                 {
-                    await capture.ScreenshotAsync(_page, reason);
+                    var page = _page;
+                    await capture.ScreenshotAsync(page, reason)
+                        .WaitAsync(TimeSpan.FromSeconds(5));
                 }
+            }
+            catch (TimeoutException)
+            {
+                capture.Event("screenshot-failed", new { error = "screenshot exceeded 5 seconds" });
             }
             catch (Exception ex)
             {

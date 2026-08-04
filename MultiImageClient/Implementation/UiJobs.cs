@@ -114,6 +114,10 @@ namespace MultiImageClient
                 _events.Clear();
                 _events.TrimExcess();
             }
+            // Successful finals and archived inputs are path-backed before a
+            // job completes. Any bytes left here are obsolete stream partials
+            // or failed-output remnants and must not live with hydrated history.
+            _images.Clear();
             _storage?.SaveMetadata(this);
         }
 
