@@ -113,15 +113,16 @@ namespace MultiImageClient
             // ---- access gate (shared deployments only) ----
             // Runs before static files and every endpoint. Unauthenticated
             // API calls get 401 JSON; unauthenticated page loads get the
-            // inline login page. The login endpoint itself is the only
-            // anonymous route. When auth is off (blank UiAuthFilePath) this
-            // middleware is not even registered — local behavior unchanged.
+            // inline login page. Login and the content-free loopback liveness
+            // probe are the only anonymous routes. When auth is off (blank
+            // UiAuthFilePath) this middleware is not registered.
             if (auth != null)
             {
                 app.Use(async (ctx, next) =>
                 {
                     var path = ctx.Request.Path.Value ?? "/";
-                    if (path == "/api/auth/login" && HttpMethods.IsPost(ctx.Request.Method))
+                    if ((path == "/api/auth/login" && HttpMethods.IsPost(ctx.Request.Method))
+                        || (path == "/healthz" && HttpMethods.IsGet(ctx.Request.Method)))
                     {
                         await next();
                         return;
@@ -182,6 +183,15 @@ namespace MultiImageClient
                     return Results.Json(new { ok = true });
                 });
             }
+
+            // Intentionally content-free and authentication-independent. The
+            // in-process guard calls this through a raw loopback socket to prove
+            // that Kestrel, routing, and middleware can still complete work.
+            app.MapGet("/healthz", (HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Text("ok", "text/plain");
+            });
 
             app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = new PhysicalFileProvider(wwwroot) });
             // McPhee's Hunspell dictionary files use extensions the default
@@ -1001,6 +1011,8 @@ namespace MultiImageClient
                 Logger.Log($"UI: not auto-opening browser (systemd or --ui-no-open); open {url} yourself.");
             }
 
+            using var livenessGuard = new UiLivenessGuard(options.UiPort);
+            livenessGuard.Start();
             await app.RunAsync();
 
             var remaining = activeJobs.Values.ToArray();
