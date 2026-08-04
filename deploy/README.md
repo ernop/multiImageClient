@@ -12,6 +12,25 @@ in a lazy-loaded archive, and access is gated by three independent layers.
 | App login (username/password → long-lived cookie) | Anyone without credentials you handed out | `ui-auth.json` via `UiAuthFilePath` in settings.json |
 | Loopback bind | Direct access to Kestrel; nginx is the only public listener | built-in (`127.0.0.1` only) |
 
+## Agent / passwordless redeploys
+
+After the shared site is installed, give the deploy user **one** interactive
+sudo to install a locked-down helper. Forever after, agents can redeploy
+without a password or TTY:
+
+```bash
+# ONE TIME (password prompt):
+ssh -t tpbeta 'sudo bash ~/multiImageClient/deploy/install-agent-deploy.sh'
+
+# EVERY UPDATE (no password — agents run this):
+ssh tpbeta 'bash ~/multiImageClient/deploy/agent-redeploy.sh'
+```
+
+That grants `NOPASSWD` only for `/usr/local/sbin/multiimageclient-update`
+(rsync staging → `/opt`, force-restart the unit). It does not allow arbitrary
+root commands. Re-run the installer after changing `update-shared-host.sh` so
+`/usr/local/sbin` stays in sync.
+
 ## Setup steps
 
 1. **App**: publish under `/opt/multiimageclient`; keep the private settings

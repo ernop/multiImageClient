@@ -3,7 +3,11 @@ set -Eeuo pipefail
 
 # Redeploy a pre-built publish staging tree into /opt and restart the UI.
 # Run after: git pull && dotnet publish … -o ~/multiimageclient-publish-staging
-# Usage: sudo bash ~/update-shared-host.sh
+# Usage (as root, or via passwordless sudo after install-agent-deploy.sh):
+#   sudo /usr/local/sbin/multiimageclient-update
+#   sudo bash deploy/update-shared-host.sh
+#
+# Agents: publish staging first (or run deploy/agent-redeploy.sh), then this.
 
 die() {
     printf 'ERROR: %s\n' "$*" >&2
