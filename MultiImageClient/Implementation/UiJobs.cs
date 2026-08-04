@@ -2122,6 +2122,13 @@ namespace MultiImageClient
                 _jobLimit.Release();
                 job.Emit(new { type = "job-done" });
                 job.MarkDone();
+                // Completed UI jobs no longer own any ImageSharp canvases.
+                // Drop the allocator's reusable native/pooled blocks now,
+                // rather than letting a sequence of large 2K/4K annotation
+                // and contact-sheet jobs ratchet the resident daemon toward
+                // systemd MemoryHigh. In-use blocks from another concurrent
+                // job are explicitly preserved by ImageSharp.
+                Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
                 Logger.Log($"[ui #{job.Id}] DONE");
             }
         }
