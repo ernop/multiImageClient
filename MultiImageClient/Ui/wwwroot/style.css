@@ -48,6 +48,15 @@ header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
 #logs-toggle:hover, #logs-toggle.open,
 #settings-toggle:hover, #settings-toggle.open { color: #fff; background: var(--accent); }
 
+#ram-status {
+  font: 600 11px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--accent-dark);
+  white-space: nowrap;
+  padding: 2px 6px;
+  user-select: none;
+}
+#ram-status.warn { color: var(--err); }
+
 /* Deliberately quiet: a small moon that only asserts itself while active. */
 #night-toggle {
   margin-left: auto;

@@ -50,6 +50,9 @@ namespace MultiImageClient
         public int? SourceIndex { get; init; }
 
         private readonly object _lock = new();
+        // Events live on disk (events.jsonl). An in-RAM copy is kept only while
+        // the job is still running so AttachEmitCallback can replay without a
+        // disk round-trip; MarkDone clears it. Archive views reload from disk.
         private readonly List<string> _events = new();
         private bool _done;
         private UiJobStorage? _storage;
@@ -71,7 +74,10 @@ namespace MultiImageClient
             var json = JsonSerializer.Serialize(evt);
             lock (_lock)
             {
-                _events.Add(json);
+                if (!_done)
+                {
+                    _events.Add(json);
+                }
                 _storage?.AppendEvent(json);
                 _emitCallback?.Invoke(this, json);
             }
@@ -84,7 +90,12 @@ namespace MultiImageClient
         {
             lock (_lock)
             {
-                foreach (var json in _events)
+                IEnumerable<string> prior = _events;
+                if (_events.Count == 0 && _storage != null)
+                {
+                    prior = _storage.ReadAllEvents();
+                }
+                foreach (var json in prior)
                 {
                     callback(this, json);
                 }
@@ -94,18 +105,39 @@ namespace MultiImageClient
 
         public void MarkDone()
         {
-            lock (_lock) _done = true;
+            lock (_lock)
+            {
+                _done = true;
+                // Persisted to events.jsonl already; free the running-job copy.
+                _events.Clear();
+                _events.TrimExcess();
+            }
             _storage?.SaveMetadata(this);
         }
 
-        /// Snapshot events from `fromIndex` onward plus the done flag, for the
-        /// SSE poll loop.
+        /// Snapshot events from `fromIndex` onward plus the done flag.
+        /// Finished jobs read from disk so archive payloads do not require a
+        /// process-lifetime in-RAM event list.
         public (List<string> Events, bool Done) ReadFrom(int fromIndex)
         {
             lock (_lock)
             {
-                var batch = fromIndex < _events.Count
-                    ? _events.GetRange(fromIndex, _events.Count - fromIndex)
+                List<string> all;
+                if (_events.Count > 0)
+                {
+                    all = _events;
+                }
+                else if (_storage != null)
+                {
+                    all = _storage.ReadAllEvents();
+                }
+                else
+                {
+                    all = new List<string>();
+                }
+
+                var batch = fromIndex < all.Count
+                    ? all.GetRange(fromIndex, all.Count - fromIndex)
                     : new List<string>();
                 return (batch, _done);
             }
@@ -166,27 +198,38 @@ namespace MultiImageClient
             return false;
         }
 
+        /// Resolves a durable on-disk path for streaming without loading bytes
+        /// into the job's RAM cache. Returns false for ephemeral partials that
+        /// only exist in <see cref="_images"/>.
+        public bool TryGetImagePath(string genKey, int n, out string path, out string contentType)
+        {
+            if (_storage != null && _storage.TryGetImagePath($"{genKey}/{n}", out path, out contentType))
+            {
+                return true;
+            }
+            path = "";
+            contentType = "";
+            return false;
+        }
+
         // Card previews exist because a page hydrating 200+ jobs otherwise pulls
         // every full-resolution original (2-8 MB each, gigabytes total) through
-        // the browser's ~6-socket HTTP/1.1 pool, which starves image loads AND
-        // every other same-origin tab's API calls. Cards get a <=640px preview;
-        // the viewer and open-in-new-tab keep the exact original bytes.
+        // the browser's ~6-socket HTTP/1.1 pool. Cards get a <=640px preview;
+        // the viewer keeps the exact original. Previews are cached in a
+        // process-wide byte-budget LRU — never retain multi-MB originals here.
         private const int CardPreviewMaxEdge = 640;
-        private readonly ConcurrentDictionary<string, (byte[] Bytes, string ContentType)> _cardPreviews = new();
+        private const int MaxCacheablePreviewBytes = 512 * 1024;
 
-        /// Downscaled preview of a stored image for job-card display. Returns
-        /// the ORIGINAL bytes verbatim when the image is already small enough or
-        /// cannot be decoded for resizing — that is not a data fallback: it is
-        /// the exact same resource, merely un-shrunk, and can never select
-        /// unrelated data. Returns false only when the image itself is missing
-        /// or is not an image (videos have no card preview).
+        /// Downscaled preview of a stored image for job-card display. When the
+        /// image is already small enough, or cannot be decoded for resizing,
+        /// the ORIGINAL bytes are returned for this request but are NOT entered
+        /// into the preview cache if they exceed <see cref="MaxCacheablePreviewBytes"/>
+        /// (shared-site resident rule: no process-lifetime full-image retention).
         public bool TryGetCardPreview(string genKey, int n, out byte[] bytes, out string contentType)
         {
-            var key = $"{genKey}/{n}";
-            if (_cardPreviews.TryGetValue(key, out var cached))
+            var cacheKey = $"{Id}/{genKey}/{n}";
+            if (UiCardPreviewCache.TryGet(cacheKey, out bytes, out contentType))
             {
-                bytes = cached.Bytes;
-                contentType = cached.ContentType;
                 return true;
             }
             if (!TryGetImage(genKey, n, out var original, out var originalType))
@@ -204,6 +247,7 @@ namespace MultiImageClient
 
             byte[] previewBytes;
             string previewType;
+            bool builtDownscale = false;
             try
             {
                 using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(original);
@@ -243,16 +287,24 @@ namespace MultiImageClient
                         previewType = "image/jpeg";
                     }
                     previewBytes = ms.ToArray();
+                    builtDownscale = true;
                 }
             }
             catch (Exception ex)
             {
-                Logger.Log($"UI job {Id}: could not build card preview for {key} ({ex.Message}); serving the original bytes.");
-                previewBytes = original;
-                previewType = originalType;
+                Logger.Log($"UI job {Id}: could not build card preview for {genKey}/{n} ({ex.Message}); serving the original bytes without caching them.");
+                bytes = original;
+                contentType = originalType;
+                return true;
             }
 
-            _cardPreviews[key] = (previewBytes, previewType);
+            // Only cache compact previews. Large "already small enough" PNGs and
+            // decode-fallback originals must not occupy the process heap.
+            if (builtDownscale || previewBytes.Length <= MaxCacheablePreviewBytes)
+            {
+                UiCardPreviewCache.Set(cacheKey, previewBytes, previewType);
+            }
+
             bytes = previewBytes;
             contentType = previewType;
             return true;
@@ -260,14 +312,71 @@ namespace MultiImageClient
 
         internal void AttachStorage(UiJobStorage storage) => _storage = storage;
 
-        internal void RestoreEvent(string json)
-        {
-            lock (_lock) _events.Add(json);
-        }
-
         internal void RestoreDone()
         {
             lock (_lock) _done = true;
+        }
+    }
+
+    /// Process-wide LRU for card thumbnails, capped by total cached bytes.
+    internal static class UiCardPreviewCache
+    {
+        private const long MaxTotalBytes = 48L * 1024 * 1024; // 48 MiB
+        private static readonly object Gate = new();
+        private static readonly LinkedList<string> Order = new();
+        private static readonly Dictionary<string, (LinkedListNode<string> Node, byte[] Bytes, string ContentType)> Map = new();
+        private static long _totalBytes;
+
+        public static bool TryGet(string key, out byte[] bytes, out string contentType)
+        {
+            lock (Gate)
+            {
+                if (!Map.TryGetValue(key, out var entry))
+                {
+                    bytes = Array.Empty<byte>();
+                    contentType = "";
+                    return false;
+                }
+                Order.Remove(entry.Node);
+                Order.AddFirst(entry.Node);
+                bytes = entry.Bytes;
+                contentType = entry.ContentType;
+                return true;
+            }
+        }
+
+        public static void Set(string key, byte[] bytes, string contentType)
+        {
+            if (bytes == null || bytes.Length == 0 || bytes.Length > MaxTotalBytes)
+            {
+                return;
+            }
+            lock (Gate)
+            {
+                if (Map.TryGetValue(key, out var existing))
+                {
+                    Order.Remove(existing.Node);
+                    _totalBytes -= existing.Bytes.Length;
+                    Map.Remove(key);
+                }
+                while (_totalBytes + bytes.Length > MaxTotalBytes && Order.Last != null)
+                {
+                    var evictKey = Order.Last.Value;
+                    Order.RemoveLast();
+                    if (Map.Remove(evictKey, out var evicted))
+                    {
+                        _totalBytes -= evicted.Bytes.Length;
+                    }
+                }
+                var node = Order.AddFirst(key);
+                Map[key] = (node, bytes, contentType);
+                _totalBytes += bytes.Length;
+            }
+        }
+
+        public static (int Entries, long Bytes) Snapshot()
+        {
+            lock (Gate) return (Map.Count, _totalBytes);
         }
     }
 
@@ -344,6 +453,32 @@ namespace MultiImageClient
             }
         }
 
+        public List<string> ReadAllEvents()
+        {
+            var list = new List<string>();
+            lock (_writeLock)
+            {
+                if (!File.Exists(_eventsPath))
+                {
+                    return list;
+                }
+                foreach (var line in File.ReadLines(_eventsPath))
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    try
+                    {
+                        using var _ = JsonDocument.Parse(line);
+                        list.Add(line);
+                    }
+                    catch (JsonException)
+                    {
+                        Logger.Log($"UI history: skipped malformed event in {_eventsPath}.");
+                    }
+                }
+            }
+            return list;
+        }
+
         /// Returns true only when the path exists and was recorded in images.json.
         /// Callers must not drop in-memory bytes unless this returns true.
         public bool SaveImageReference(string key, string path, string contentType)
@@ -401,6 +536,24 @@ namespace MultiImageClient
             }
         }
 
+        public bool TryGetImagePath(string key, out string path, out string contentType)
+        {
+            UiPersistedImage? image;
+            lock (_writeLock)
+            {
+                _images.TryGetValue(key, out image);
+            }
+            if (image == null || string.IsNullOrWhiteSpace(image.Path) || !File.Exists(image.Path))
+            {
+                path = "";
+                contentType = "";
+                return false;
+            }
+            path = image.Path;
+            contentType = image.ContentType;
+            return true;
+        }
+
         public static List<UiJob> LoadAll(string root)
         {
             var jobs = new List<UiJob>();
@@ -453,22 +606,8 @@ namespace MultiImageClient
                     };
                     job.AttachStorage(storage);
 
-                    if (File.Exists(storage._eventsPath))
-                    {
-                        foreach (var line in File.ReadLines(storage._eventsPath))
-                        {
-                            if (string.IsNullOrWhiteSpace(line)) continue;
-                            try
-                            {
-                                using var _ = JsonDocument.Parse(line);
-                                job.RestoreEvent(line);
-                            }
-                            catch (JsonException)
-                            {
-                                Logger.Log($"UI history: skipped malformed event for job {job.Id}.");
-                            }
-                        }
-                    }
+                    // Events stay on disk (events.jsonl). Do not hydrate a
+                    // process-lifetime in-RAM copy for every historical job.
 
                     if (metadata.Done)
                     {
@@ -557,6 +696,9 @@ namespace MultiImageClient
         // pool once a few windows were open, starving all image loads.
         private readonly object _envelopeLock = new();
         private readonly List<string> _envelopes = new();
+        // Soft cap: when exceeded, drop the oldest half. Clients whose cursor
+        // falls before the trimmed range resync from 0 (idempotent replay).
+        private const int MaxLiveEnvelopes = 8000;
 
         // Jobs whose card + events ride the live envelope feed. Jobs restored
         // from earlier days stay out of the feed (a multi-day history would
@@ -636,6 +778,7 @@ namespace MultiImageClient
             lock (_envelopeLock)
             {
                 _envelopes.Add($"{{\"jobId\":\"{job.Id}\",\"kind\":\"job-known\",\"job\":{metadata}}}");
+                TrimEnvelopesLocked();
             }
         }
 
@@ -644,7 +787,19 @@ namespace MultiImageClient
             lock (_envelopeLock)
             {
                 _envelopes.Add($"{{\"jobId\":\"{job.Id}\",\"kind\":\"event\",\"event\":{eventJson}}}");
+                TrimEnvelopesLocked();
             }
+        }
+
+        private void TrimEnvelopesLocked()
+        {
+            if (_envelopes.Count <= MaxLiveEnvelopes)
+            {
+                return;
+            }
+            var remove = _envelopes.Count / 2;
+            _envelopes.RemoveRange(0, remove);
+            Logger.Log($"UI envelope log trimmed by {remove}; {_envelopes.Count} remain (clients behind the cut resync).");
         }
 
         /// Envelopes from `fromCursor` onward plus the next cursor. A cursor

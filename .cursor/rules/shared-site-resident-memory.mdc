@@ -18,10 +18,12 @@ The `--ui` app on fuseki/tpbeta is a **long-lived multi-user daemon** on a small
 
 ## Known debt (fix when in this area)
 
-1. Cap/evict `_cardPreviews` (still process-lifetime today).
-2. Bound or spill global `_envelopes` / finished-job `_events` (persist already exists).
-3. Stream image responses instead of buffering whole files per request.
-4. Do not store full originals in the preview cache when resize is skipped or fails.
+1. ~~Cap/evict `_cardPreviews`~~ — process-wide 48 MiB LRU; do not cache multi‑MB originals.
+2. ~~Bound global `_envelopes` / finished-job `_events`~~ — envelope trim + events on disk after MarkDone.
+3. ~~Stream image responses~~ — `Results.File(path)` for durable assets.
+4. Header **RAM** status via `/api/status` (working set + cgroup high/max).
+
+When adding new UI caches, give them a byte/entry cap from day one.
 
 ## Reference phrase
 

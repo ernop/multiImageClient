@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260804-hide-costs">
+<link rel="stylesheet" href="style.css?v=20260804-resident-ram">
 <link rel="stylesheet" href="spellwell/spellwell.css?v=20260803-shared-site">
 </head>
 <body>
@@ -16,6 +16,7 @@
   <span class="tagline">paste image(s), write a prompt, fan out</span>
   <button id="night-toggle" type="button" aria-pressed="false"
     title="hide night mode — hide any job whose prompt contains a word from the hidden-word list (edit the list in settings)">&#9790;</button>
+  <span id="ram-status" title="Server process memory (working set) and cgroup high/max limits when running under systemd">RAM …</span>
   <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel" title="Settings (stored in this browser only)">settings</button>
   <button id="logs-toggle" type="button" aria-expanded="false" aria-controls="logs-panel">logs</button>
   <button id="logout" type="button" hidden title="Log out of this shared site on this browser">log out</button>
@@ -305,6 +306,6 @@
 
 <script src="spellwell/vendor/typo/typo.min.js?v=20260803-shared-site"></script>
 <script src="spellwell/spellwell.js?v=20260803-shared-site"></script>
-<script src="app.js?v=20260804-hide-costs"></script>
+<script src="app.js?v=20260804-resident-ram"></script>
 </body>
 </html>

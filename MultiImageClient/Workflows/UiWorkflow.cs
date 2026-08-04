@@ -741,13 +741,24 @@ namespace MultiImageClient
                 // ?thumb=1 asks for the <=640px card preview; without it the
                 // exact original bytes are served (viewer, new-tab, video
                 // sources, set-active restore all use the plain URL).
-                byte[] bytes;
-                string contentType;
+                IResult fileResult;
                 if (ctx.Request.Query.ContainsKey("thumb"))
                 {
-                    if (!job.TryGetCardPreview(gen, n, out bytes, out contentType)) return Results.NotFound();
+                    if (!job.TryGetCardPreview(gen, n, out var bytes, out var contentType)) return Results.NotFound();
+                    fileResult = Results.File(bytes, contentType);
                 }
-                else if (!job.TryGetImage(gen, n, out bytes, out contentType))
+                else if (job.TryGetImagePath(gen, n, out var path, out var pathType))
+                {
+                    // Stream from disk — do not buffer the whole file into the
+                    // process heap for every concurrent viewer.
+                    fileResult = Results.File(path, pathType, enableRangeProcessing: true);
+                }
+                else if (job.TryGetImage(gen, n, out var memBytes, out var memType))
+                {
+                    // Ephemeral partials (no durable path yet).
+                    fileResult = Results.File(memBytes, memType);
+                }
+                else
                 {
                     return Results.NotFound();
                 }
@@ -768,7 +779,13 @@ namespace MultiImageClient
                     ctx.Response.Headers.Pragma = "no-cache";
                     ctx.Response.Headers.Expires = "0";
                 }
-                return Results.File(bytes, contentType);
+                return fileResult;
+            });
+
+            app.MapGet("/api/status", (HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Json(UiProcessMemory.Snapshot());
             });
 
             // Every distinct user-uploaded input image, newest first, for the

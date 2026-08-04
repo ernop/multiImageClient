@@ -3108,6 +3108,48 @@ async function loadArchiveDay(day, container) {
   }
 }
 
+// ---------- server RAM status ----------
+
+function formatBytesShort(n) {
+  if (!(n > 0)) return "?";
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)}K`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(n >= 100 * 1024 * 1024 ? 0 : 1)}M`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)}G`;
+}
+
+async function pollRamStatus() {
+  const node = el("ram-status");
+  if (!node) return;
+  try {
+    const resp = await fetch(apiUrl("api/status"));
+    if (resp.status === 401) { location.reload(); return; }
+    if (!resp.ok) throw new Error(String(resp.status));
+    const s = await resp.json();
+    const used = s.cgroupCurrentBytes || s.workingSetBytes || 0;
+    const high = s.cgroupHighBytes || 0;
+    const max = s.cgroupMaxBytes || 0;
+    const limit = high || max;
+    let text = `RAM ${formatBytesShort(used)}`;
+    if (limit) text += ` / ${formatBytesShort(limit)}`;
+    else text += ` (no cgroup cap)`;
+    if (high && max && high !== max) text += ` max ${formatBytesShort(max)}`;
+    node.textContent = text;
+    const warn = limit > 0 && used / limit >= 0.85;
+    node.classList.toggle("warn", warn);
+    node.title = [
+      `working set ${formatBytesShort(s.workingSetBytes)}`,
+      `managed heap ${formatBytesShort(s.managedHeapBytes)}`,
+      s.cgroupCurrentBytes != null ? `cgroup current ${formatBytesShort(s.cgroupCurrentBytes)}` : null,
+      s.cgroupHighBytes != null ? `cgroup high ${formatBytesShort(s.cgroupHighBytes)}` : null,
+      s.cgroupMaxBytes != null ? `cgroup max ${formatBytesShort(s.cgroupMaxBytes)}` : "cgroup max unlimited/unknown",
+      `card preview cache ${s.cardPreviewCacheEntries || 0} · ${formatBytesShort(s.cardPreviewCacheBytes || 0)}`,
+    ].filter(Boolean).join("\n");
+  } catch {
+    node.textContent = "RAM ?";
+  }
+}
+
 // ---------- boot ----------
 
 // Every window is a view over durable server-side job history. The first
@@ -3120,6 +3162,8 @@ loadConfig()
     pollJobEvents();
     loadKnownUsers();
     loadArchiveDays();
+    pollRamStatus();
+    setInterval(pollRamStatus, 15000);
   })
   .catch((err) => {
     sendError.textContent = `config load failed: ${err}`;
