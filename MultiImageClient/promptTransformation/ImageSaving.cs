@@ -35,7 +35,7 @@ namespace MultiImageClient
 
         public static void ConvertWebpTopng(string inputFp)
         {
-            var im = new MagickImage(inputFp);
+            using var im = new MagickImage(inputFp);
             var newFp = Path.ChangeExtension(inputFp, ".png");
             im.Write(newFp);
         }

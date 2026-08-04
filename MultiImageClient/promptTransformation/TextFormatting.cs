@@ -174,48 +174,51 @@ namespace MultiImageClient
                         return;
                     }
                 }
-
-                // Define dimensions
-                int annotationWidth = 850;
-                float fontSize = 15;
-
-                // Create new image with space for annotations
-                using var annotatedImage = new Image<Rgba32>(originalImage.Width + annotationWidth, originalImage.Height);
-
-                annotatedImage.Mutate(ctx =>
+                using (originalImage)
                 {
-                    // Draw original image
-                    ctx.DrawImage(originalImage, new Point(0, 0), 1f);
 
-                    // Setup annotation area
-                    float leftMargin = originalImage.Width + 5;
-                    float rightMargin = annotatedImage.Width - 5;
-                    float totalWidth = rightMargin - leftMargin;
-                    float keyWidth = totalWidth * KEY_WIDTH_PROPORTION;
-                    float valueWidth = totalWidth * VALUE_WIDTH_PROPORTION;
+                    // Define dimensions
+                    int annotationWidth = 850;
+                    float fontSize = 15;
 
-                    // Fill right side with black background
-                    ctx.Fill(Color.Black, new Rectangle(originalImage.Width, 0, annotationWidth, originalImage.Height));
+                    // Create new image with space for annotations
+                    using var annotatedImage = new Image<Rgba32>(originalImage.Width + annotationWidth, originalImage.Height);
 
-                    // Draw history steps
-                    float y = 5;
-                    foreach (var historyStep in historySteps)
+                    annotatedImage.Mutate(ctx =>
                     {
-                        DrawKeyValuePair(ctx, historyStep.TransformationType.ToString(), historyStep.Explanation, fontSize, leftMargin, keyWidth, valueWidth, ref y);
-                        y += 2; // Small gap between entries
-                    }
+                        // Draw original image
+                        ctx.DrawImage(originalImage, new Point(0, 0), 1f);
 
-                    // Draw image info if available
-                    if (imageInfo.Any())
-                    {
-                        foreach (var kvp in imageInfo)
+                        // Setup annotation area
+                        float leftMargin = originalImage.Width + 5;
+                        float rightMargin = annotatedImage.Width - 5;
+                        float totalWidth = rightMargin - leftMargin;
+                        float keyWidth = totalWidth * KEY_WIDTH_PROPORTION;
+                        float valueWidth = totalWidth * VALUE_WIDTH_PROPORTION;
+
+                        // Fill right side with black background
+                        ctx.Fill(Color.Black, new Rectangle(originalImage.Width, 0, annotationWidth, originalImage.Height));
+
+                        // Draw history steps
+                        float y = 5;
+                        foreach (var historyStep in historySteps)
                         {
-                            DrawKeyValuePair(ctx, kvp.Key, kvp.Value, fontSize, leftMargin, keyWidth, valueWidth, ref y);
+                            DrawKeyValuePair(ctx, historyStep.TransformationType.ToString(), historyStep.Explanation, fontSize, leftMargin, keyWidth, valueWidth, ref y);
+                            y += 2; // Small gap between entries
                         }
-                    }
-                });
 
-                await annotatedImage.SaveAsPngAsync(outputPath);
+                        // Draw image info if available
+                        if (imageInfo.Any())
+                        {
+                            foreach (var kvp in imageInfo)
+                            {
+                                DrawKeyValuePair(ctx, kvp.Key, kvp.Value, fontSize, leftMargin, keyWidth, valueWidth, ref y);
+                            }
+                        }
+                    });
+
+                    await annotatedImage.SaveAsPngAsync(outputPath);
+                }
             }
             catch (Exception ex)
             {

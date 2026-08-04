@@ -456,31 +456,32 @@ namespace MultiImageClient
             var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
             var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
 
-            var loadedImages = LoadResultImages(results);
-
-            using var layoutImage = RenderHorizontalLayout(loadedImages, generatorFont);
-            var totalWidth = layoutImage.Width;
-
-            using var promptPanel = RenderPromptPanel(totalWidth, prompt, promptFont);
-
-            int totalHeight = layoutImage.Height + promptPanel.Height;
-            var combinedImage = ImageUtils.CreateStandardImage(layoutImage.Width, totalHeight, UIConstants.White);
-
-            combinedImage.Mutate(ctx =>
+            var loadedImages = LoadResultImages(results).ToList();
+            try
             {
-                ctx.DrawImage(layoutImage, new Point(0, 0), 1f);
-                ctx.DrawImage(promptPanel, new Point(0, layoutImage.Height), 1f);
-            });
+                using var layoutImage = RenderHorizontalLayout(loadedImages, generatorFont);
+                using var promptPanel = RenderPromptPanel(layoutImage.Width, prompt, promptFont);
+                int totalHeight = layoutImage.Height + promptPanel.Height;
+                using var combinedImage = ImageUtils.CreateStandardImage(
+                    layoutImage.Width,
+                    totalHeight,
+                    UIConstants.White);
 
+                combinedImage.Mutate(ctx =>
+                {
+                    ctx.DrawImage(layoutImage, new Point(0, 0), 1f);
+                    ctx.DrawImage(promptPanel, new Point(0, layoutImage.Height), 1f);
+                });
 
-            var outputPath = await SaveCombinedImageToDisk(combinedImage, prompt, settings);
-
-            foreach (var li in loadedImages)
-            {
-                li.Image?.Dispose();
+                return await SaveCombinedImageToDisk(combinedImage, prompt, settings);
             }
-
-            return outputPath;
+            finally
+            {
+                foreach (var li in loadedImages)
+                {
+                    li.Image?.Dispose();
+                }
+            }
         }
 
         // openWhenDone controls whether the combined grid image is popped
@@ -506,44 +507,52 @@ namespace MultiImageClient
             var generatorFont = FontUtils.CreateFont(CombinedImageGeneratorFontSize, FontStyle.Bold);
             var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
 
-            var loadedImages = LoadResultImages(results);
-            if (!string.IsNullOrEmpty(inputImagePath))
+            var loadedImages = LoadResultImages(results).ToList();
+            try
             {
-                if (string.IsNullOrWhiteSpace(inputImageRole))
+                if (!string.IsNullOrEmpty(inputImagePath))
                 {
-                    throw new ArgumentException(
-                        "inputImageRole is required when inputImagePath is provided: the sheet must state what the input image was used for.",
-                        nameof(inputImageRole));
+                    if (string.IsNullOrWhiteSpace(inputImageRole))
+                    {
+                        throw new ArgumentException(
+                            "inputImageRole is required when inputImagePath is provided: the sheet must state what the input image was used for.",
+                            nameof(inputImageRole));
+                    }
+                    loadedImages.Insert(0, LoadInputImageCell(inputImagePath, inputImageRole));
                 }
-                loadedImages = new[] { LoadInputImageCell(inputImagePath, inputImageRole) }.Concat(loadedImages);
+
+                using var layoutImage = RenderSquareLayout(
+                    loadedImages,
+                    generatorFont,
+                    promptFont,
+                    showPerImagePrompts);
+                using var promptPanel = RenderPromptPanel(layoutImage.Width, prompt, promptFont);
+                int totalHeight = layoutImage.Height + promptPanel.Height;
+                using var combinedImage = ImageUtils.CreateStandardImage(
+                    layoutImage.Width,
+                    totalHeight,
+                    UIConstants.White);
+
+                combinedImage.Mutate(ctx =>
+                {
+                    ctx.DrawImage(layoutImage, new Point(0, 0), 1f);
+                    ctx.DrawImage(promptPanel, new Point(0, layoutImage.Height), 1f);
+                });
+
+                var outputPath = await SaveCombinedImageToDisk(combinedImage, prompt, settings);
+                if (openWhenDone)
+                {
+                    OpenImageWithDefaultApplication(outputPath);
+                }
+                return outputPath;
             }
-
-            using var layoutImage = RenderSquareLayout(loadedImages, generatorFont, promptFont, showPerImagePrompts);
-            using var promptPanel = RenderPromptPanel(layoutImage.Width, prompt, promptFont);
-
-            int totalHeight = layoutImage.Height + promptPanel.Height;
-            var combinedImage = ImageUtils.CreateStandardImage(layoutImage.Width, totalHeight, UIConstants.White);
-
-            combinedImage.Mutate(ctx =>
+            finally
             {
-                ctx.DrawImage(layoutImage, new Point(0, 0), 1f);
-                ctx.DrawImage(promptPanel, new Point(0, layoutImage.Height), 1f);
-            });
-
-
-            var outputPath = await SaveCombinedImageToDisk(combinedImage, prompt, settings);
-
-            foreach (var li in loadedImages)
-            {
-                li.Image?.Dispose();
+                foreach (var li in loadedImages)
+                {
+                    li.Image?.Dispose();
+                }
             }
-
-            if (openWhenDone)
-            {
-                OpenImageWithDefaultApplication(outputPath);
-            }
-
-            return outputPath;
         }
 
 
