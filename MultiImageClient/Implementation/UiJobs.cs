@@ -2141,7 +2141,7 @@ namespace MultiImageClient
                         GC.MaxGeneration,
                         GCCollectionMode.Aggressive,
                         blocking: true,
-                        compacting: false);
+                        compacting: true);
                 }
                 catch (Exception ex)
                 {
