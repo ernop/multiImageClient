@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -7,7 +8,7 @@ namespace MultiImageClient
     /// Process + cgroup memory snapshot for the shared-site status UI.
     public static class UiProcessMemory
     {
-        public static object Snapshot()
+        public static object Snapshot(UiJobRegistry? jobs = null, UiJobRunner? runner = null)
         {
             using var proc = Process.GetCurrentProcess();
             proc.Refresh();
@@ -23,6 +24,14 @@ namespace MultiImageClient
                 cgroupMaxBytes = ReadCgroupBytes(cgroupDir, "memory.max"),
                 cardPreviewCacheEntries = previewEntries,
                 cardPreviewCacheBytes = previewBytes,
+                liveJobCount = jobs?.LiveJobCount ?? 0,
+                hydratedJobCount = jobs?.HydratedJobCount ?? 0,
+                indexedJobCount = jobs?.IndexedJobCount ?? 0,
+                envelopeCount = jobs?.EnvelopeCount ?? 0,
+                grokBrowserConfigured = runner?.GrokBrowserConfigured ?? false,
+                grokBrowserWarm = runner?.IsGrokBrowserWarm ?? false,
+                metaBrowserConfigured = runner?.MetaBrowserConfigured ?? false,
+                metaBrowserWarm = runner?.IsMetaBrowserWarm ?? false,
             };
         }
 

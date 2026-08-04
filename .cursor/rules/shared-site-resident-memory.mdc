@@ -9,10 +9,12 @@ The `--ui` app on fuseki/tpbeta is a **long-lived multi-user daemon** on a small
 
 ## Rules
 
-- **Disk is source of truth** for images, job events, and history. Process RAM is a working set + bounded caches only.
+- **Disk is source of truth** for images, job events, history, and card thumbs. Process RAM is a working set + bounded caches only.
 - **Never retain full result image/video bytes** in `UiJob` (or similar) for the process lifetime once a durable path exists. Serve via path / stream from disk (`SendFile` preferred over `ReadAllBytes` into a heap buffer for every viewer).
+- **Do not hydrate all of `UiHistory/` at startup.** Index `job.json` lightly; keep only today's jobs (live feed) resident; archive days and `Get(id)` load on demand; evict cold archive graphs (cap ~250).
 - **Caches must have caps or eviction** (LRU / max bytes / TTL). Unbounded `ConcurrentDictionary` of previews, envelopes, or event JSON is a defect.
 - **Ephemeral RAM is OK** only while an operation is in flight (e.g. gpt-image-2 streaming partials) and must be dropped when replaced by a durable artifact.
+- **Playwright Chromium** (grok-web video/edit, meta-web) must idle-release after a few minutes; keep the client object reusable, do not hold a warm browser for the process lifetime.
 - **Multi-user concurrency** shares process-wide semaphores; raising caps without fixing retention will OOM the box again.
 - When touching UI job/image/log serving, **check for unbounded growth** and fix it in the same change when practical.
 
@@ -21,7 +23,10 @@ The `--ui` app on fuseki/tpbeta is a **long-lived multi-user daemon** on a small
 1. ~~Cap/evict `_cardPreviews`~~ — process-wide 48 MiB LRU; do not cache multi‑MB originals.
 2. ~~Bound global `_envelopes` / finished-job `_events`~~ — envelope trim + events on disk after MarkDone.
 3. ~~Stream image responses~~ — `Results.File(path)` for durable assets.
-4. Header **RAM** status via `/api/status` (working set + cgroup high/max).
+4. ~~Header **RAM** status via `/api/status`~~ — working set + cgroup + job/envelope/browser warm counts.
+5. ~~Lazy archive hydration~~ — index all days; hydrate today + on-demand archive/`Get`; cold eviction.
+6. ~~Disk-backed card thumbs~~ — `UiHistory/{id}/thumbs/`; stream path; build from file stream, not full-original heap buffer.
+7. ~~Idle Chromium shutdown~~ — `GrokWebBrowserClient` / `MetaWebClient` release after 5 min idle (gate stays alive).
 
 When adding new UI caches, give them a byte/entry cap from day one.
 

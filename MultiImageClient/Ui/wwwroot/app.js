@@ -53,12 +53,21 @@ let imageViewerFocusBeforeOpen = null;
 let imageViewerWheelAccumulator = 0;
 let imageViewerWheelResetTimer = null;
 let imageViewerPreloadActive = 0;
+// Waiters are { priority, resolve, reject, entry }; lower priority runs first.
+// Re-sorted on every insert / bump so a direction change can promote the new
+// ahead-of-travel neighbors over stale far-behind fetches still queued.
 const imageViewerPreloadWaiters = [];
 const imageViewerCache = new Map();
-const ImageViewerPreloadRadius = 12;
-const ImageViewerPreloadConcurrency = 4;
+// ±10 is enough to scrub Left/Right without hitching; travel direction only
+// reorders priority inside the window (ahead first), not its shape.
+const ImageViewerPreloadAhead = 10;
+const ImageViewerPreloadBehind = 10;
+const ImageViewerPreloadConcurrency = 6;
 const ImageViewerPageJumpSize = 5;
 const ImageViewerWheelThreshold = 80;
+// Last keyboard/wheel step: -1 = toward newer/previous, +1 = toward
+// older/next, 0 = open / absolute jump with no travel bias.
+let imageViewerNavDelta = 0;
 
 const el = (id) => document.getElementById(id);
 const startsAtDefaultView = window.location.search === "" && window.location.hash === "";
@@ -1810,26 +1819,59 @@ function locateImageViewerState(prompts) {
   return { promptIndex, itemIndex, prompt: prompts[promptIndex], item: prompts[promptIndex].items[itemIndex] };
 }
 
-function acquireImageViewerPreloadSlot() {
+function sortImageViewerPreloadWaiters() {
+  imageViewerPreloadWaiters.sort((a, b) => a.priority - b.priority);
+}
+
+function enqueueImageViewerPreloadWaiter(priority, entry) {
+  return new Promise((resolve, reject) => {
+    const waiter = { priority, resolve, reject, entry };
+    entry.waiter = waiter;
+    imageViewerPreloadWaiters.push(waiter);
+    sortImageViewerPreloadWaiters();
+  });
+}
+
+async function takeImageViewerPreloadSlot(priority, entry) {
   if (imageViewerPreloadActive < ImageViewerPreloadConcurrency) {
     imageViewerPreloadActive++;
-    return Promise.resolve();
+    entry.waiter = null;
+    return;
   }
-  return new Promise((resolve) => imageViewerPreloadWaiters.push(resolve));
+  await enqueueImageViewerPreloadWaiter(priority, entry);
+  entry.waiter = null;
 }
 
 function releaseImageViewerPreloadSlot() {
   const next = imageViewerPreloadWaiters.shift();
   if (next) {
-    next();
+    if (next.entry) next.entry.waiter = null;
+    next.resolve();
     return;
   }
   imageViewerPreloadActive = Math.max(0, imageViewerPreloadActive - 1);
 }
 
+function bumpImageViewerEntryPriority(entry, priority) {
+  if (!(priority < entry.priority)) return;
+  entry.priority = priority;
+  if (!entry.waiter) return;
+  entry.waiter.priority = priority;
+  sortImageViewerPreloadWaiters();
+}
+
 function discardImageViewerCacheEntry(url, entry) {
   if (imageViewerCache.get(url) !== entry) return;
   imageViewerCache.delete(url);
+  if (entry.waiter) {
+    const idx = imageViewerPreloadWaiters.indexOf(entry.waiter);
+    if (idx >= 0) imageViewerPreloadWaiters.splice(idx, 1);
+    const waiter = entry.waiter;
+    entry.waiter = null;
+    // Never acquired a slot — reject so the async body does not pretend it
+    // holds concurrency and call release.
+    waiter.reject(new DOMException("Image preload aborted", "AbortError"));
+  }
   if (entry.controller) entry.controller.abort();
   if (entry.blobUrl) {
     URL.revokeObjectURL(entry.blobUrl);
@@ -1842,14 +1884,30 @@ function discardImageViewerCacheEntry(url, entry) {
     .catch(() => {});
 }
 
-function loadImageViewerEntry(url) {
+function imageViewerInputUrl(jobId) {
+  return apiUrl(`api/jobs/${encodeURIComponent(jobId)}/images/input/0`);
+}
+
+function loadImageViewerEntry(url, priority) {
   const existing = imageViewerCache.get(url);
-  if (existing) return existing;
+  if (existing) {
+    bumpImageViewerEntryPriority(existing, priority);
+    return existing;
+  }
 
   const controller = new AbortController();
-  const entry = { promise: null, blobUrl: null, image: null, controller };
+  const entry = {
+    promise: null,
+    blobUrl: null,
+    image: null,
+    controller,
+    priority,
+    waiter: null,
+    acquired: false,
+  };
   entry.promise = (async () => {
-    await acquireImageViewerPreloadSlot();
+    await takeImageViewerPreloadSlot(entry.priority, entry);
+    entry.acquired = true;
     try {
       if (controller.signal.aborted) {
         throw new DOMException("Image preload aborted", "AbortError");
@@ -1861,13 +1919,21 @@ function loadImageViewerEntry(url) {
         throw new Error(`image preload returned ${blob.type || "an unknown content type"}`);
       }
 
+      // Free the network slot before decode so neighbors can fetch while
+      // this frame's pixels land in the decoder.
+      entry.acquired = false;
+      releaseImageViewerPreloadSlot();
+
       entry.blobUrl = URL.createObjectURL(blob);
       entry.image = new Image();
       entry.image.src = entry.blobUrl;
       await entry.image.decode();
       return entry;
     } finally {
-      releaseImageViewerPreloadSlot();
+      if (entry.acquired) {
+        entry.acquired = false;
+        releaseImageViewerPreloadSlot();
+      }
     }
   })().catch((error) => {
     if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
@@ -1878,30 +1944,75 @@ function loadImageViewerEntry(url) {
   return entry;
 }
 
+// Build the ±10 preload window. Priority bands (lower = sooner):
+//   0     current output
+//   1     current input (compare mode)
+//   2+d   ahead-of-travel neighbor at distance d
+//   1000+d behind-travel neighbor at distance d
+// Travel bias (imageViewerNavDelta) only reorders inside the window — both
+// sides stay warm so a reverse turn does not hitch. The render path never
+// clears the previous decoded frame until the next blob is ready.
 function prepareImageViewerWindow(prompts, current) {
   const allItems = prompts.flatMap((prompt) => prompt.items);
   const currentIndex = allItems.findIndex((item) =>
     item.jobId === current.item.jobId &&
     item.generator === current.item.generator &&
     item.imageIndex === current.item.imageIndex);
-  const first = Math.max(0, currentIndex - ImageViewerPreloadRadius);
-  const last = Math.min(allItems.length, currentIndex + ImageViewerPreloadRadius + 1);
-  const wantedUrls = new Set(allItems.slice(first, last).map((item) => item.url));
+  const aheadSign = imageViewerNavDelta < 0 ? -1 : 1;
+  const promptByJobId = new Map(prompts.map((p) => [p.jobId, p]));
+  const wantedUrls = new Set();
+  const schedule = [];
+
+  const want = (url, priority) => {
+    wantedUrls.add(url);
+    schedule.push({ url, priority });
+  };
+
+  const consider = (index, priority) => {
+    if (index < 0 || index >= allItems.length) return;
+    const item = allItems[index];
+    want(item.url, priority);
+    if (!imageViewerCompareInput) return;
+    const prompt = promptByJobId.get(item.jobId);
+    if (prompt && prompt.hasInput) want(imageViewerInputUrl(item.jobId), priority + 0.5);
+  };
+
+  want(current.item.url, 0);
+  if (imageViewerCompareInput && current.prompt.hasInput) {
+    want(imageViewerInputUrl(current.item.jobId), 1);
+  }
+
+  for (let distance = 1; distance <= ImageViewerPreloadAhead; distance++) {
+    consider(currentIndex + aheadSign * distance, 2 + distance);
+  }
+  for (let distance = 1; distance <= ImageViewerPreloadBehind; distance++) {
+    consider(currentIndex - aheadSign * distance, 1000 + distance);
+  }
 
   for (const [url, entry] of imageViewerCache) {
     if (!wantedUrls.has(url)) discardImageViewerCacheEntry(url, entry);
   }
 
-  // Current image first, then fan outward by distance so Left/Right neighbors
-  // beat the far edge of the preload window for decoder slots.
-  const currentEntry = loadImageViewerEntry(current.item.url);
-  for (let distance = 1; distance <= ImageViewerPreloadRadius; distance++) {
-    for (const index of [currentIndex + distance, currentIndex - distance]) {
-      if (index < first || index >= last) continue;
-      loadImageViewerEntry(allItems[index].url).promise.catch(() => {});
-    }
+  // Stable order: first occurrence of each URL keeps the best (lowest) priority.
+  const seen = new Set();
+  let currentEntry = null;
+  for (const { url, priority } of schedule) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const entry = loadImageViewerEntry(url, priority);
+    if (url === current.item.url) currentEntry = entry;
+    else entry.promise.catch(() => {});
   }
-  return currentEntry.promise;
+  return currentEntry;
+}
+
+function showImageViewerEntry(current, entry) {
+  imageViewerImage.src = entry.blobUrl;
+  imageViewerImage.alt =
+    `${current.item.generator} image ${current.item.imageIndex + 1} of ${current.item.generatorCount}`;
+  imageViewerDimensions.textContent = `${entry.image.naturalWidth}×${entry.image.naturalHeight}`;
+  imageViewerContentAr = entry.image.naturalWidth / entry.image.naturalHeight;
+  fitImageViewerWindow();
 }
 
 function setImageViewerIdentity(item) {
@@ -1913,19 +2024,25 @@ function setImageViewerIdentity(item) {
   renderImageViewer();
 }
 
-// Left pane of the `c` comparison: the job's archived input image, straight
-// from the durable input URL (immutable-cached for finished jobs).
+// Left pane of the `c` comparison: only swap onto a decoded preload blob.
+// Never point at a raw network URL (that would paint an unloading/partial
+// frame). Until the blob lands, keep the previous input pixels up.
 function applyImageViewerCompare(current) {
   const active = !!current && imageViewerCompareInput && current.prompt.hasInput;
   imageViewerStage.classList.toggle("compare", active);
   imageViewerInputImage.hidden = !active;
   imageViewerInputLabel.hidden = !active;
   imageViewerOutputLabel.hidden = !active;
-  if (active) {
-    const inputUrl = apiUrl(`api/jobs/${encodeURIComponent(current.item.jobId)}/images/input/0`);
-    if (!imageViewerInputImage.src.endsWith(inputUrl)) imageViewerInputImage.src = inputUrl;
-  } else {
+  if (!active) {
     imageViewerInputImage.removeAttribute("src");
+    return;
+  }
+  const inputUrl = imageViewerInputUrl(current.item.jobId);
+  const cached = imageViewerCache.get(inputUrl);
+  if (cached && cached.blobUrl) {
+    if (imageViewerInputImage.getAttribute("src") !== cached.blobUrl) {
+      imageViewerInputImage.src = cached.blobUrl;
+    }
   }
 }
 
@@ -1962,41 +2079,63 @@ async function renderImageViewer() {
   if (imageViewer.hidden || !imageViewerState) return;
   const prompts = getImageViewerPrompts();
   const current = locateImageViewerState(prompts);
-  applyImageViewerCompare(current);
   if (!current) {
     imageViewerImage.removeAttribute("src");
     imageViewerPrompt.textContent = "";
     renderImageViewerGuidance(null);
     imageViewerGenerator.textContent = "selected image is no longer available";
     imageViewerDimensions.textContent = "";
+    applyImageViewerCompare(null);
     return;
   }
 
   const version = ++imageViewerRenderVersion;
-  imageViewerImage.removeAttribute("src");
-  imageViewerPrompt.textContent = current.prompt.prompt;
-  renderImageViewerGuidance(current);
-  imageViewerGenerator.textContent = genLabel(current.item.generator);
-  imageViewerDimensions.textContent = "loading…";
+  // Kick the deep ahead runway immediately. Pixels + chrome only advance
+  // together onto a fully decoded frame — never blank, never "loading…",
+  // never a new prompt sitting on the previous image.
+  const currentEntry = prepareImageViewerWindow(prompts, current);
 
-  try {
-    const entry = await prepareImageViewerWindow(prompts, current);
-    if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
+  const paint = (entry) => {
+    if (version !== imageViewerRenderVersion || imageViewer.hidden) return false;
     const latest = locateImageViewerState(getImageViewerPrompts());
     if (!latest ||
         latest.item.jobId !== current.item.jobId ||
         latest.item.generator !== current.item.generator ||
-        latest.item.imageIndex !== current.item.imageIndex) return;
-    imageViewerImage.src = entry.blobUrl;
-    imageViewerImage.alt =
-      `${current.item.generator} image ${current.item.imageIndex + 1} of ${current.item.generatorCount}`;
-    imageViewerDimensions.textContent = `${entry.image.naturalWidth}×${entry.image.naturalHeight}`;
-    imageViewerContentAr = entry.image.naturalWidth / entry.image.naturalHeight;
-    fitImageViewerWindow();
+        latest.item.imageIndex !== current.item.imageIndex) return false;
+    imageViewerPrompt.textContent = latest.prompt.prompt;
+    renderImageViewerGuidance(latest);
+    imageViewerGenerator.textContent = genLabel(latest.item.generator);
+    showImageViewerEntry(latest, entry);
+    applyImageViewerCompare(latest);
+    if (imageViewerCompareInput && latest.prompt.hasInput) {
+      const inputEntry = imageViewerCache.get(imageViewerInputUrl(latest.item.jobId));
+      if (inputEntry && !inputEntry.blobUrl) {
+        inputEntry.promise.then(() => {
+          if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
+          const still = locateImageViewerState(getImageViewerPrompts());
+          if (still) {
+            applyImageViewerCompare(still);
+            fitImageViewerWindow();
+          }
+        }).catch(() => {});
+      }
+    }
+    return true;
+  };
+
+  if (currentEntry.blobUrl && currentEntry.image) {
+    paint(currentEntry);
+    return;
+  }
+
+  try {
+    const entry = await currentEntry.promise;
+    paint(entry);
   } catch (error) {
     if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
     if (error && error.name === "AbortError") return;
-    imageViewerImage.removeAttribute("src");
+    // Keep the previous fully-loaded frame on screen; only the status line
+    // reports the miss.
     imageViewerDimensions.textContent = `load failed: ${error}`;
   }
 }
@@ -2013,6 +2152,7 @@ function navigateImageViewerImage(delta) {
   if (currentIndex < 0) return;
   const targetIndex = currentIndex + delta;
   if (targetIndex < 0 || targetIndex >= allItems.length) return;
+  imageViewerNavDelta = Math.sign(delta);
   setImageViewerIdentity(allItems[targetIndex]);
 }
 
@@ -2021,6 +2161,7 @@ function navigateImageViewerAbsolute(index) {
   if (allItems.length === 0) return;
   const targetIndex = index < 0 ? allItems.length - 1 : index;
   if (targetIndex < 0 || targetIndex >= allItems.length) return;
+  imageViewerNavDelta = 0;
   setImageViewerIdentity(allItems[targetIndex]);
 }
 
@@ -2031,6 +2172,7 @@ function navigateImageViewerPrompt(delta) {
   const targetPrompt = prompts[current.promptIndex + delta];
   // At either boundary, keep the current prompt and return to its first image.
   // Prompt navigation never guesses a different destination.
+  imageViewerNavDelta = Math.sign(delta);
   setImageViewerIdentity((targetPrompt || current.prompt).items[0]);
 }
 
@@ -2235,6 +2377,7 @@ function openImageViewer(link) {
     generator: link.dataset.generator,
     imageIndex: Number(link.dataset.imageIndex),
   };
+  imageViewerNavDelta = 0;
   hideImageViewerHelp();
   imageViewerWheelAccumulator = 0;
   imageViewer.hidden = false;
@@ -2258,6 +2401,7 @@ function closeImageViewer() {
   imageViewerState = null;
   imageViewerRenderVersion++;
   imageViewerWheelAccumulator = 0;
+  imageViewerNavDelta = 0;
   imageViewerImage.removeAttribute("src");
   applyImageViewerCompare(null);
   for (const [url, entry] of imageViewerCache) discardImageViewerCacheEntry(url, entry);
@@ -3139,13 +3283,23 @@ async function pollRamStatus() {
     node.textContent = text;
     const warn = limit > 0 && used / limit >= 0.85;
     node.classList.toggle("warn", warn);
+    const browserBits = [];
+    if (s.grokBrowserConfigured) {
+      browserBits.push(s.grokBrowserWarm ? "grok Chromium warm" : "grok Chromium idle");
+    }
+    if (s.metaBrowserConfigured) {
+      browserBits.push(s.metaBrowserWarm ? "meta Chromium warm" : "meta Chromium idle");
+    }
     node.title = [
       `in use (cgroup) ${formatBytesShort(s.cgroupCurrentBytes || used)}`,
       `working set ${formatBytesShort(s.workingSetBytes)}`,
       `managed heap ${formatBytesShort(s.managedHeapBytes)}`,
       s.cgroupHighBytes != null ? `systemd MemoryHigh (soft limit) ${formatBytesShort(s.cgroupHighBytes)}` : null,
       s.cgroupMaxBytes != null ? `systemd MemoryMax (hard limit) ${formatBytesShort(s.cgroupMaxBytes)}` : "cgroup max unlimited/unknown",
+      `jobs live ${s.liveJobCount || 0} · hydrated ${s.hydratedJobCount || 0} · indexed ${s.indexedJobCount || 0}`,
+      `envelope log ${s.envelopeCount || 0}`,
       `card preview cache ${s.cardPreviewCacheEntries || 0} · ${formatBytesShort(s.cardPreviewCacheBytes || 0)}`,
+      browserBits.length ? browserBits.join(" · ") : null,
       "VmSize/private virtual address space is not RAM — ignore huge VSZ numbers from ps.",
     ].filter(Boolean).join("\n");
   } catch {

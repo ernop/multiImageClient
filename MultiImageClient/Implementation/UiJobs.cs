@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -180,6 +181,16 @@ namespace MultiImageClient
             StoreImage(genKey, n, Array.Empty<byte>(), contentType, durablePath);
         }
 
+        public bool TryGetContentSha256(string genKey, int n, out string sha256)
+        {
+            if (_storage?.TryGetContentSha256($"{genKey}/{n}", out sha256) == true)
+            {
+                return true;
+            }
+            sha256 = "";
+            return false;
+        }
+
         public bool TryGetImage(string genKey, int n, out byte[] bytes, out string contentType)
         {
             var key = $"{genKey}/{n}";
@@ -215,99 +226,195 @@ namespace MultiImageClient
         // Card previews exist because a page hydrating 200+ jobs otherwise pulls
         // every full-resolution original (2-8 MB each, gigabytes total) through
         // the browser's ~6-socket HTTP/1.1 pool. Cards get a <=640px preview;
-        // the viewer keeps the exact original. Previews are cached in a
-        // process-wide byte-budget LRU — never retain multi-MB originals here.
+        // the viewer keeps the exact original. Durable thumbs live on disk under
+        // UiHistory/{jobId}/thumbs/; a process-wide 48 MiB LRU is only a hot cache.
         private const int CardPreviewMaxEdge = 640;
         private const int MaxCacheablePreviewBytes = 512 * 1024;
 
-        /// Downscaled preview of a stored image for job-card display. When the
-        /// image is already small enough, or cannot be decoded for resizing,
-        /// the ORIGINAL bytes are returned for this request but are NOT entered
-        /// into the preview cache if they exceed <see cref="MaxCacheablePreviewBytes"/>
-        /// (shared-site resident rule: no process-lifetime full-image retention).
-        public bool TryGetCardPreview(string genKey, int n, out byte[] bytes, out string contentType)
+        /// Prefer a durable on-disk card thumb (built once, streamed forever).
+        /// Returns false for ephemeral in-memory partials — use
+        /// <see cref="TryGetCardPreviewBytes"/> for those.
+        public bool TryGetCardPreviewPath(string genKey, int n, out string path, out string contentType)
+        {
+            var key = $"{genKey}/{n}";
+            var cacheKey = $"{Id}/{key}";
+
+            if (_storage != null
+                && _storage.TryGetCardPreviewPath(key, out path, out contentType))
+            {
+                return true;
+            }
+
+            if (_storage == null
+                || !TryGetImagePath(genKey, n, out var originalPath, out var originalType)
+                || !originalType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                path = "";
+                contentType = "";
+                return false;
+            }
+
+            if (!TryBuildAndPersistCardPreview(key, originalPath, out path, out contentType, out var previewBytes))
+            {
+                path = "";
+                contentType = "";
+                return false;
+            }
+
+            if (previewBytes.Length <= MaxCacheablePreviewBytes)
+            {
+                UiCardPreviewCache.Set(cacheKey, previewBytes, contentType);
+            }
+            return true;
+        }
+
+        /// In-memory / ephemeral preview path (streaming partials with no durable
+        /// original yet). Never enters multi-MB originals into the process LRU.
+        public bool TryGetCardPreviewBytes(string genKey, int n, out byte[] bytes, out string contentType)
         {
             var cacheKey = $"{Id}/{genKey}/{n}";
             if (UiCardPreviewCache.TryGet(cacheKey, out bytes, out contentType))
             {
                 return true;
             }
-            if (!TryGetImage(genKey, n, out var original, out var originalType))
+
+            // Durable originals should use TryGetCardPreviewPath (disk thumb).
+            if (TryGetImagePath(genKey, n, out _, out _))
             {
+                if (TryGetCardPreviewPath(genKey, n, out var thumbPath, out contentType))
+                {
+                    try
+                    {
+                        bytes = File.ReadAllBytes(thumbPath);
+                        if (bytes.Length <= MaxCacheablePreviewBytes)
+                        {
+                            UiCardPreviewCache.Set(cacheKey, bytes, contentType);
+                        }
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"UI job {Id}: could not read disk thumb {thumbPath}: {ex.Message}");
+                    }
+                }
                 bytes = Array.Empty<byte>();
                 contentType = "";
                 return false;
             }
-            if (!originalType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+
+            if (!_images.TryGetValue($"{genKey}/{n}", out var mem)
+                || mem.Bytes.Length == 0
+                || !mem.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
             {
                 bytes = Array.Empty<byte>();
                 contentType = "";
                 return false;
             }
 
-            byte[] previewBytes;
-            string previewType;
-            bool builtDownscale = false;
             try
             {
-                using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(original);
+                using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(mem.Bytes);
                 if (Math.Max(image.Width, image.Height) <= CardPreviewMaxEdge)
                 {
-                    previewBytes = original;
-                    previewType = originalType;
+                    // Ephemeral and already small — serve as-is, cache only if compact.
+                    bytes = mem.Bytes;
+                    contentType = mem.ContentType;
+                    if (bytes.Length <= MaxCacheablePreviewBytes)
+                    {
+                        UiCardPreviewCache.Set(cacheKey, bytes, contentType);
+                    }
+                    return true;
                 }
-                else
+
+                DownscaleInPlace(image);
+                var (previewBytes, previewType) = EncodeCardPreview(image);
+                if (previewBytes.Length <= MaxCacheablePreviewBytes)
                 {
-                    var scale = (double)CardPreviewMaxEdge / Math.Max(image.Width, image.Height);
-                    image.Mutate(x => x.Resize(
-                        Math.Max(1, (int)Math.Round(image.Width * scale)),
-                        Math.Max(1, (int)Math.Round(image.Height * scale))));
-
-                    bool hasAlpha = false;
-                    image.ProcessPixelRows(accessor =>
-                    {
-                        for (int y = 0; y < accessor.Height && !hasAlpha; y++)
-                        {
-                            foreach (ref var p in accessor.GetRowSpan(y))
-                            {
-                                if (p.A < 255) { hasAlpha = true; break; }
-                            }
-                        }
-                    });
-
-                    using var ms = new MemoryStream();
-                    if (hasAlpha)
-                    {
-                        image.SaveAsPng(ms);
-                        previewType = "image/png";
-                    }
-                    else
-                    {
-                        image.SaveAsJpeg(ms, new JpegEncoder { Quality = 80 });
-                        previewType = "image/jpeg";
-                    }
-                    previewBytes = ms.ToArray();
-                    builtDownscale = true;
+                    UiCardPreviewCache.Set(cacheKey, previewBytes, previewType);
                 }
+                bytes = previewBytes;
+                contentType = previewType;
+                return true;
             }
             catch (Exception ex)
             {
-                Logger.Log($"UI job {Id}: could not build card preview for {genKey}/{n} ({ex.Message}); serving the original bytes without caching them.");
-                bytes = original;
-                contentType = originalType;
+                Logger.Log($"UI job {Id}: could not build ephemeral card preview for {genKey}/{n} ({ex.Message}).");
+                bytes = Array.Empty<byte>();
+                contentType = "";
+                return false;
+            }
+        }
+
+        private bool TryBuildAndPersistCardPreview(
+            string imageKey,
+            string originalPath,
+            out string thumbPath,
+            out string contentType,
+            out byte[] previewBytes)
+        {
+            thumbPath = "";
+            contentType = "";
+            previewBytes = Array.Empty<byte>();
+            if (_storage == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                using var stream = File.OpenRead(originalPath);
+                using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(stream);
+                if (Math.Max(image.Width, image.Height) > CardPreviewMaxEdge)
+                {
+                    DownscaleInPlace(image);
+                }
+
+                var (encoded, type) = EncodeCardPreview(image);
+                if (!_storage.TrySaveCardPreview(imageKey, encoded, type, out thumbPath))
+                {
+                    return false;
+                }
+                contentType = type;
+                previewBytes = encoded;
                 return true;
             }
-
-            // Only cache compact previews. Large "already small enough" PNGs and
-            // decode-fallback originals must not occupy the process heap.
-            if (builtDownscale || previewBytes.Length <= MaxCacheablePreviewBytes)
+            catch (Exception ex)
             {
-                UiCardPreviewCache.Set(cacheKey, previewBytes, previewType);
+                Logger.Log($"UI job {Id}: could not build disk card preview for {imageKey} ({ex.Message}).");
+                return false;
             }
+        }
 
-            bytes = previewBytes;
-            contentType = previewType;
-            return true;
+        private void DownscaleInPlace(Image<Rgba32> image)
+        {
+            var scale = (double)CardPreviewMaxEdge / Math.Max(image.Width, image.Height);
+            image.Mutate(x => x.Resize(
+                Math.Max(1, (int)Math.Round(image.Width * scale)),
+                Math.Max(1, (int)Math.Round(image.Height * scale))));
+        }
+
+        private static (byte[] Bytes, string ContentType) EncodeCardPreview(Image<Rgba32> image)
+        {
+            bool hasAlpha = false;
+            image.ProcessPixelRows(accessor =>
+            {
+                for (int y = 0; y < accessor.Height && !hasAlpha; y++)
+                {
+                    foreach (ref var p in accessor.GetRowSpan(y))
+                    {
+                        if (p.A < 255) { hasAlpha = true; break; }
+                    }
+                }
+            });
+
+            using var ms = new MemoryStream();
+            if (hasAlpha)
+            {
+                image.SaveAsPng(ms);
+                return (ms.ToArray(), "image/png");
+            }
+            image.SaveAsJpeg(ms, new JpegEncoder { Quality = 80 });
+            return (ms.ToArray(), "image/jpeg");
         }
 
         internal void AttachStorage(UiJobStorage storage) => _storage = storage;
@@ -392,6 +499,7 @@ namespace MultiImageClient
         private readonly string _metadataPath;
         private readonly string _eventsPath;
         private readonly string _imagesPath;
+        private readonly string _thumbsFolder;
         private Dictionary<string, UiPersistedImage> _images = new();
 
         public UiJobStorage(string root, string jobId)
@@ -400,6 +508,7 @@ namespace MultiImageClient
             _metadataPath = Path.Combine(_folder, "job.json");
             _eventsPath = Path.Combine(_folder, "events.jsonl");
             _imagesPath = Path.Combine(_folder, "images.json");
+            _thumbsFolder = Path.Combine(_folder, "thumbs");
         }
 
         public void Initialize(UiJob job)
@@ -490,12 +599,14 @@ namespace MultiImageClient
                 {
                     return false;
                 }
+                var sha = ComputeFileSha256Hex(fullPath);
                 lock (_writeLock)
                 {
                     _images[key] = new UiPersistedImage
                     {
                         Path = fullPath,
                         ContentType = contentType,
+                        ContentSha256 = sha,
                     };
                     WriteJsonAtomically(_imagesPath, _images);
                 }
@@ -506,6 +617,106 @@ namespace MultiImageClient
                 Logger.Log($"UI history: could not save image reference: {ex.Message}");
                 return false;
             }
+        }
+
+        public bool TryGetContentSha256(string key, out string sha256)
+        {
+            UiPersistedImage? image;
+            lock (_writeLock)
+            {
+                _images.TryGetValue(key, out image);
+            }
+            if (image == null || string.IsNullOrWhiteSpace(image.Path) || !File.Exists(image.Path))
+            {
+                sha256 = "";
+                return false;
+            }
+            if (!string.IsNullOrWhiteSpace(image.ContentSha256))
+            {
+                sha256 = image.ContentSha256;
+                return true;
+            }
+            try
+            {
+                sha256 = ComputeFileSha256Hex(image.Path);
+                lock (_writeLock)
+                {
+                    if (_images.TryGetValue(key, out var current)
+                        && string.Equals(current.Path, image.Path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        current.ContentSha256 = sha256;
+                        WriteJsonAtomically(_imagesPath, _images);
+                    }
+                }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not hash {image.Path}: {ex.Message}");
+                sha256 = "";
+                return false;
+            }
+        }
+
+        private static string ThumbFileName(string key, string contentType)
+        {
+            var safe = key.Replace('/', '_').Replace('\\', '_');
+            var ext = contentType.Contains("png", StringComparison.OrdinalIgnoreCase) ? ".png" : ".jpg";
+            return safe + ext;
+        }
+
+        public bool TryGetCardPreviewPath(string key, out string path, out string contentType)
+        {
+            // Prefer recorded extension; accept either jpg or png if present.
+            var jpg = Path.Combine(_thumbsFolder, ThumbFileName(key, "image/jpeg"));
+            var png = Path.Combine(_thumbsFolder, ThumbFileName(key, "image/png"));
+            if (File.Exists(jpg))
+            {
+                path = jpg;
+                contentType = "image/jpeg";
+                return true;
+            }
+            if (File.Exists(png))
+            {
+                path = png;
+                contentType = "image/png";
+                return true;
+            }
+            path = "";
+            contentType = "";
+            return false;
+        }
+
+        public bool TrySaveCardPreview(string key, byte[] bytes, string contentType, out string path)
+        {
+            path = "";
+            if (bytes == null || bytes.Length == 0)
+            {
+                return false;
+            }
+            try
+            {
+                Directory.CreateDirectory(_thumbsFolder);
+                var dest = Path.Combine(_thumbsFolder, ThumbFileName(key, contentType));
+                var temp = dest + ".tmp";
+                File.WriteAllBytes(temp, bytes);
+                File.Move(temp, dest, true);
+                path = dest;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not save card thumb for {key}: {ex.Message}");
+                path = "";
+                return false;
+            }
+        }
+
+        private static string ComputeFileSha256Hex(string path)
+        {
+            using var stream = File.OpenRead(path);
+            var hash = SHA256.HashData(stream);
+            return Convert.ToHexString(hash);
         }
 
         public bool TryReadImage(string key, out byte[] bytes, out string contentType)
@@ -554,12 +765,12 @@ namespace MultiImageClient
             return true;
         }
 
-        public static List<UiJob> LoadAll(string root)
+        public static List<UiHistoryIndexEntry> ScanIndex(string root)
         {
-            var jobs = new List<UiJob>();
+            var entries = new List<UiHistoryIndexEntry>();
             if (!Directory.Exists(root))
             {
-                return jobs;
+                return entries;
             }
 
             foreach (var folder in Directory.EnumerateDirectories(root))
@@ -573,8 +784,6 @@ namespace MultiImageClient
                 {
                     var metadata = JsonSerializer.Deserialize<UiPersistedJob>(
                         File.ReadAllText(metadataPath), JsonOptions);
-                    // Empty prompt is legitimate (video jobs have an optional
-                    // motion prompt); only a missing id makes a record unusable.
                     if (metadata == null
                         || string.IsNullOrWhiteSpace(metadata.Id)
                         || metadata.Prompt == null)
@@ -582,53 +791,174 @@ namespace MultiImageClient
                         continue;
                     }
 
-                    var storage = new UiJobStorage(root, Path.GetFileName(folder));
-                    if (File.Exists(storage._imagesPath))
-                    {
-                        storage._images = JsonSerializer.Deserialize<Dictionary<string, UiPersistedImage>>(
-                            File.ReadAllText(storage._imagesPath), JsonOptions)
-                            ?? new Dictionary<string, UiPersistedImage>();
-                    }
-
-                    var job = new UiJob
+                    var inputPaths = ResolvePersistedInputPaths(metadata);
+                    entries.Add(new UiHistoryIndexEntry
                     {
                         Id = metadata.Id,
-                        Prompt = metadata.Prompt,
-                        CreatedBy = metadata.CreatedBy ?? "",
-                        InputImagePaths = ResolvePersistedInputPaths(metadata),
-                        InputImageWidth = metadata.InputImageWidth,
-                        InputImageHeight = metadata.InputImageHeight,
-                        GeneratorKeys = metadata.GeneratorKeys,
+                        FolderName = Path.GetFileName(folder),
                         CreatedAt = metadata.CreatedAt,
-                        SourceJobId = metadata.SourceJobId,
-                        SourceGenerator = metadata.SourceGenerator,
-                        SourceIndex = metadata.SourceIndex,
-                    };
-                    job.AttachStorage(storage);
-
-                    // Events stay on disk (events.jsonl). Do not hydrate a
-                    // process-lifetime in-RAM copy for every historical job.
-
-                    if (metadata.Done)
-                    {
-                        job.RestoreDone();
-                    }
-                    else
-                    {
-                        // A process restart cannot resume a provider request. Keep
-                        // completed cells, close the replay stream, and let the UI
-                        // mark any unfinished cells as having no result.
-                        job.Emit(new { type = "job-done", interrupted = true });
-                        job.MarkDone();
-                    }
-                    jobs.Add(job);
+                        CreatedBy = metadata.CreatedBy ?? "",
+                        SourceJobId = metadata.SourceJobId ?? "",
+                        InputImageCount = inputPaths.Count,
+                        Done = metadata.Done,
+                    });
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log($"UI history: skipped {folder}: {ex.Message}");
+                    Logger.Log($"UI history: skipped index entry {folder}: {ex.Message}");
                 }
             }
-            return jobs;
+            return entries;
+        }
+
+        public static UiJob? TryLoad(string root, string folderOrJobId)
+        {
+            if (string.IsNullOrWhiteSpace(folderOrJobId) || !Directory.Exists(root))
+            {
+                return null;
+            }
+
+            var folder = Path.Combine(root, folderOrJobId);
+            var metadataPath = Path.Combine(folder, "job.json");
+            if (!File.Exists(metadataPath))
+            {
+                return null;
+            }
+
+            try
+            {
+                var metadata = JsonSerializer.Deserialize<UiPersistedJob>(
+                    File.ReadAllText(metadataPath), JsonOptions);
+                if (metadata == null
+                    || string.IsNullOrWhiteSpace(metadata.Id)
+                    || metadata.Prompt == null)
+                {
+                    return null;
+                }
+
+                var storage = new UiJobStorage(root, Path.GetFileName(folder));
+                if (File.Exists(storage._imagesPath))
+                {
+                    storage._images = JsonSerializer.Deserialize<Dictionary<string, UiPersistedImage>>(
+                        File.ReadAllText(storage._imagesPath), JsonOptions)
+                        ?? new Dictionary<string, UiPersistedImage>();
+                }
+
+                var job = new UiJob
+                {
+                    Id = metadata.Id,
+                    Prompt = metadata.Prompt,
+                    CreatedBy = metadata.CreatedBy ?? "",
+                    InputImagePaths = ResolvePersistedInputPaths(metadata),
+                    InputImageWidth = metadata.InputImageWidth,
+                    InputImageHeight = metadata.InputImageHeight,
+                    GeneratorKeys = metadata.GeneratorKeys,
+                    CreatedAt = metadata.CreatedAt,
+                    SourceJobId = metadata.SourceJobId,
+                    SourceGenerator = metadata.SourceGenerator,
+                    SourceIndex = metadata.SourceIndex,
+                };
+                job.AttachStorage(storage);
+
+                if (metadata.Done)
+                {
+                    job.RestoreDone();
+                }
+                else
+                {
+                    // A process restart cannot resume a provider request. Keep
+                    // completed cells, close the replay stream, and let the UI
+                    // mark any unfinished cells as having no result.
+                    job.Emit(new { type = "job-done", interrupted = true });
+                    job.MarkDone();
+                }
+                return job;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not load {folder}: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// Read job.json prompt/dims without hydrating a UiJob (input library).
+        public static bool TryPeekJobSummary(
+            string root,
+            string folderName,
+            out string prompt,
+            out int width,
+            out int height,
+            out DateTime createdAt)
+        {
+            prompt = "";
+            width = 0;
+            height = 0;
+            createdAt = default;
+            var metadataPath = Path.Combine(root, folderName, "job.json");
+            if (!File.Exists(metadataPath))
+            {
+                return false;
+            }
+            try
+            {
+                var metadata = JsonSerializer.Deserialize<UiPersistedJob>(
+                    File.ReadAllText(metadataPath), JsonOptions);
+                if (metadata == null || metadata.Prompt == null)
+                {
+                    return false;
+                }
+                prompt = metadata.Prompt;
+                width = metadata.InputImageWidth;
+                height = metadata.InputImageHeight;
+                createdAt = metadata.CreatedAt;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not peek {metadataPath}: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// Resolve content SHA for an images.json key without hydrating a UiJob.
+        /// Computes and persists the hash when missing (streamed; no full buffer retained).
+        public static bool TryPeekImageSha256(string root, string folderName, string key, out string sha256)
+        {
+            sha256 = "";
+            var imagesPath = Path.Combine(root, folderName, "images.json");
+            if (!File.Exists(imagesPath))
+            {
+                return false;
+            }
+            try
+            {
+                var images = JsonSerializer.Deserialize<Dictionary<string, UiPersistedImage>>(
+                    File.ReadAllText(imagesPath), JsonOptions)
+                    ?? new Dictionary<string, UiPersistedImage>();
+                if (!images.TryGetValue(key, out var image)
+                    || string.IsNullOrWhiteSpace(image.Path)
+                    || !File.Exists(image.Path))
+                {
+                    return false;
+                }
+                if (!string.IsNullOrWhiteSpace(image.ContentSha256))
+                {
+                    sha256 = image.ContentSha256;
+                    return true;
+                }
+                sha256 = ComputeFileSha256Hex(image.Path);
+                image.ContentSha256 = sha256;
+                var tempPath = imagesPath + ".tmp";
+                File.WriteAllText(tempPath, JsonSerializer.Serialize(images, JsonOptions));
+                File.Move(tempPath, imagesPath, true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not peek hash for {folderName}/{key}: {ex.Message}");
+                sha256 = "";
+                return false;
+            }
         }
 
         private void WriteJsonAtomically<T>(string path, T value)
@@ -677,15 +1007,38 @@ namespace MultiImageClient
         {
             public string Path { get; set; } = "";
             public string ContentType { get; set; } = "application/octet-stream";
+            public string ContentSha256 { get; set; } = "";
         }
+    }
+
+    /// Lightweight on-disk history row — enough for day counts, usernames, and
+    /// the input-library filter without hydrating full UiJob graphs.
+    public sealed class UiHistoryIndexEntry
+    {
+        public required string Id { get; init; }
+        public required string FolderName { get; init; }
+        public DateTime CreatedAt { get; init; }
+        public string CreatedBy { get; init; } = "";
+        public string SourceJobId { get; init; } = "";
+        public int InputImageCount { get; init; }
+        public bool Done { get; init; }
+        public bool HasInputImage => InputImageCount > 0;
     }
 
     public class UiJobRegistry
     {
+        // Soft cap on non-live (archive) jobs kept hydrated in RAM. Expanding
+        // many archive days still works; cold ones are dropped and reloaded
+        // from disk on the next Get / day expand.
+        private const int MaxHydratedArchiveJobs = 250;
+
         private readonly ConcurrentDictionary<string, UiJob> _jobs = new();
         private readonly object _orderLock = new();
         private readonly List<UiJob> _ordered = new();
         private readonly string _historyRoot;
+        private readonly object _indexLock = new();
+        private readonly List<UiHistoryIndexEntry> _index = new();
+        private readonly ConcurrentDictionary<string, long> _archiveAccessTicks = new();
 
         // Global append-only envelope log for the polling transport: each
         // entry is a pre-serialized {"jobId","kind":"job-known"|"event",...}
@@ -706,33 +1059,72 @@ namespace MultiImageClient
         // the /api/archive endpoints instead.
         private readonly HashSet<string> _liveFeedJobIds = new();
 
+        public int LiveJobCount
+        {
+            get { lock (_envelopeLock) return _liveFeedJobIds.Count; }
+        }
+
+        public int HydratedJobCount => _jobs.Count;
+
+        public int IndexedJobCount
+        {
+            get { lock (_indexLock) return _index.Count; }
+        }
+
+        public int EnvelopeCount
+        {
+            get { lock (_envelopeLock) return _envelopes.Count; }
+        }
+
         public UiJobRegistry(Settings settings)
         {
             _historyRoot = Path.Combine(settings.ImageDownloadBaseFolder, "UiHistory");
             var today = DateTime.Now.Date;
             var archivedCount = 0;
-            foreach (var job in UiJobStorage.LoadAll(_historyRoot).OrderBy(j => j.CreatedAt))
+            var closedInterrupted = 0;
+
+            foreach (var entry in UiJobStorage.ScanIndex(_historyRoot).OrderBy(e => e.CreatedAt))
             {
-                if (job.IsDone)
+                lock (_indexLock) _index.Add(entry);
+
+                if (entry.CreatedAt.Date == today)
                 {
-                    GenerationArchive.MarkExternalJobInterrupted(job.Id);
-                }
-                _jobs[job.Id] = job;
-                _ordered.Add(job);
-                if (job.CreatedAt.Date == today)
-                {
-                    _liveFeedJobIds.Add(job.Id);
-                    AppendJobKnown(job);
-                    job.AttachEmitCallback(AppendEventEnvelope);
+                    var job = UiJobStorage.TryLoad(_historyRoot, entry.FolderName);
+                    if (job == null)
+                    {
+                        continue;
+                    }
+                    if (job.IsDone)
+                    {
+                        GenerationArchive.MarkExternalJobInterrupted(job.Id);
+                    }
+                    RegisterHydrated(job, live: true);
                 }
                 else
                 {
                     archivedCount++;
+                    if (!entry.Done)
+                    {
+                        // Close abandoned in-flight jobs from prior days without
+                        // keeping their full graphs resident.
+                        var job = UiJobStorage.TryLoad(_historyRoot, entry.FolderName);
+                        if (job != null)
+                        {
+                            GenerationArchive.MarkExternalJobInterrupted(job.Id);
+                            closedInterrupted++;
+                            UpdateIndexDone(job.Id, done: true);
+                        }
+                    }
                 }
             }
-            if (_ordered.Count > 0)
+
+            if (IndexedJobCount > 0)
             {
-                Logger.Log($"UI history: restored {_ordered.Count} job(s) from disk ({archivedCount} in the day archive).");
+                Logger.Log(
+                    $"UI history: indexed {IndexedJobCount} job(s); hydrated {HydratedJobCount} for today "
+                    + $"({archivedCount} archived on disk"
+                    + (closedInterrupted > 0 ? $", closed {closedInterrupted} interrupted" : "")
+                    + ").");
             }
         }
 
@@ -740,16 +1132,136 @@ namespace MultiImageClient
         {
             var storage = new UiJobStorage(_historyRoot, job.Id);
             storage.Initialize(job);
-            _jobs[job.Id] = job;
-            lock (_orderLock) _ordered.Add(job);
-            lock (_envelopeLock) _liveFeedJobIds.Add(job.Id);
-            AppendJobKnown(job);
-            job.AttachEmitCallback(AppendEventEnvelope);
+            lock (_indexLock)
+            {
+                _index.Add(new UiHistoryIndexEntry
+                {
+                    Id = job.Id,
+                    FolderName = job.Id,
+                    CreatedAt = job.CreatedAt,
+                    CreatedBy = job.CreatedBy ?? "",
+                    SourceJobId = job.SourceJobId ?? "",
+                    InputImageCount = job.InputImageCount,
+                    Done = job.IsDone,
+                });
+            }
+            // RegisterHydrated(live) wires the envelope callback + job-known.
+            RegisterHydrated(job, live: true);
         }
 
-        public UiJob? Get(string id) => _jobs.TryGetValue(id, out var j) ? j : null;
+        private UiJob RegisterHydrated(UiJob job, bool live)
+        {
+            if (!_jobs.TryAdd(job.Id, job))
+            {
+                return _jobs.TryGetValue(job.Id, out var existing) ? existing : job;
+            }
+            lock (_orderLock) _ordered.Add(job);
+            if (live)
+            {
+                lock (_envelopeLock) _liveFeedJobIds.Add(job.Id);
+                AppendJobKnown(job);
+                job.AttachEmitCallback(AppendEventEnvelope);
+            }
+            else
+            {
+                _archiveAccessTicks[job.Id] = Environment.TickCount64;
+                EvictColdArchiveJobsIfNeeded();
+            }
+            return job;
+        }
 
-        /// Chronological (oldest first) snapshot, for page-load hydration.
+        private void UpdateIndexDone(string jobId, bool done)
+        {
+            lock (_indexLock)
+            {
+                for (var i = 0; i < _index.Count; i++)
+                {
+                    if (!string.Equals(_index[i].Id, jobId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    var e = _index[i];
+                    _index[i] = new UiHistoryIndexEntry
+                    {
+                        Id = e.Id,
+                        FolderName = e.FolderName,
+                        CreatedAt = e.CreatedAt,
+                        CreatedBy = e.CreatedBy,
+                        SourceJobId = e.SourceJobId,
+                        InputImageCount = e.InputImageCount,
+                        Done = done,
+                    };
+                    return;
+                }
+            }
+        }
+
+        private void EvictColdArchiveJobsIfNeeded()
+        {
+            var archiveIds = _jobs.Keys.Where(id => !IsInLiveFeed(id)).ToList();
+            if (archiveIds.Count <= MaxHydratedArchiveJobs)
+            {
+                return;
+            }
+
+            var victimCount = archiveIds.Count - MaxHydratedArchiveJobs;
+            var victims = archiveIds
+                .OrderBy(id => _archiveAccessTicks.TryGetValue(id, out var t) ? t : 0L)
+                .Take(victimCount)
+                .ToList();
+            foreach (var id in victims)
+            {
+                if (_jobs.TryRemove(id, out _))
+                {
+                    lock (_orderLock) _ordered.RemoveAll(j => j.Id == id);
+                    _archiveAccessTicks.TryRemove(id, out _);
+                }
+            }
+            if (victims.Count > 0)
+            {
+                Logger.Log($"UI history: evicted {victims.Count} cold archive job(s) from RAM (cap {MaxHydratedArchiveJobs}).");
+            }
+        }
+
+        public UiJob? Get(string id)
+        {
+            if (_jobs.TryGetValue(id, out var j))
+            {
+                if (!IsInLiveFeed(id))
+                {
+                    _archiveAccessTicks[id] = Environment.TickCount64;
+                }
+                return j;
+            }
+
+            UiHistoryIndexEntry? entry;
+            lock (_indexLock)
+            {
+                entry = _index.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.Ordinal));
+            }
+            if (entry == null)
+            {
+                // Fail closed on unknown id — do not guess a "nearest" job.
+                // Still try the folder name == id convention for brand-new
+                // jobs that raced ahead of the index (should not happen).
+                var job = UiJobStorage.TryLoad(_historyRoot, id);
+                if (job == null)
+                {
+                    return null;
+                }
+                return RegisterHydrated(job, live: false);
+            }
+
+            var loaded = UiJobStorage.TryLoad(_historyRoot, entry.FolderName);
+            if (loaded == null)
+            {
+                return null;
+            }
+            return RegisterHydrated(loaded, live: false);
+        }
+
+        /// Chronological (oldest first) snapshot of *hydrated* jobs only.
+        /// Full history lives in the on-disk index + /api/archive endpoints.
         public List<UiJob> ListChronological()
         {
             lock (_orderLock) return _ordered.ToList();
@@ -824,21 +1336,41 @@ namespace MultiImageClient
         /// Archived days (jobs not in the live feed), newest day first.
         public List<(string Day, int Count)> ListArchivedDays()
         {
-            return ListChronological()
-                .Where(j => !IsInLiveFeed(j.Id))
-                .GroupBy(j => j.CreatedAt.Date)
+            List<UiHistoryIndexEntry> snapshot;
+            lock (_indexLock) snapshot = _index.ToList();
+            return snapshot
+                .Where(e => !IsInLiveFeed(e.Id))
+                .GroupBy(e => e.CreatedAt.Date)
                 .OrderByDescending(g => g.Key)
                 .Select(g => (g.Key.ToString("yyyy-MM-dd"), g.Count()))
                 .ToList();
         }
 
         /// One archived day's jobs, chronological. Day format yyyy-MM-dd.
+        /// Hydrates from disk on demand; fail-closed if a listed folder is gone.
         public List<UiJob> ListArchivedDay(DateTime day)
         {
-            return ListChronological()
-                .Where(j => !IsInLiveFeed(j.Id) && j.CreatedAt.Date == day.Date)
-                .OrderBy(j => j.CreatedAt)
-                .ToList();
+            List<UiHistoryIndexEntry> dayEntries;
+            lock (_indexLock)
+            {
+                dayEntries = _index
+                    .Where(e => !IsInLiveFeed(e.Id) && e.CreatedAt.Date == day.Date)
+                    .OrderBy(e => e.CreatedAt)
+                    .ToList();
+            }
+
+            var result = new List<UiJob>(dayEntries.Count);
+            foreach (var entry in dayEntries)
+            {
+                var job = Get(entry.Id);
+                if (job == null)
+                {
+                    Logger.Log($"UI archive: job {entry.Id} listed for {day:yyyy-MM-dd} is missing on disk; omitted.");
+                    continue;
+                }
+                result.Add(job);
+            }
+            return result;
         }
 
         /// Every distinct creator username across all history (live + archive)
@@ -846,12 +1378,29 @@ namespace MultiImageClient
         /// before attribution existed) are reported under "".
         public List<(string User, int Count)> ListUsers()
         {
-            return ListChronological()
-                .GroupBy(j => j.CreatedBy ?? "")
+            List<UiHistoryIndexEntry> snapshot;
+            lock (_indexLock) snapshot = _index.ToList();
+            return snapshot
+                .GroupBy(e => e.CreatedBy ?? "")
                 .OrderByDescending(g => g.Count())
                 .Select(g => (g.Key, g.Count()))
                 .ToList();
         }
+
+        /// Input-library candidates from the disk index (user uploads only).
+        /// Newest first. Listing peeks hashes from disk — does not hydrate
+        /// full UiJob graphs. Image URLs hydrate on demand via Get.
+        public List<UiHistoryIndexEntry> ListInputLibraryCandidates()
+        {
+            List<UiHistoryIndexEntry> snapshot;
+            lock (_indexLock) snapshot = _index.ToList();
+            return snapshot
+                .Where(e => e.HasInputImage && string.IsNullOrEmpty(e.SourceJobId))
+                .OrderByDescending(e => e.CreatedAt)
+                .ToList();
+        }
+
+        public string HistoryRoot => _historyRoot;
     }
 
     /// Per-job options parsed from the submit form. gpt-image-2 honors all of
@@ -1339,6 +1888,11 @@ namespace MultiImageClient
         // old fixed job limit still exists as the Settings default (4).
         private readonly SemaphoreSlim _jobLimit;
         private readonly SemaphoreSlim _generatorLimit;
+
+        public bool IsGrokBrowserWarm => _grokWebBrowserClient?.IsBrowserWarm == true;
+        public bool IsMetaBrowserWarm => _metaWebClient?.IsBrowserWarm == true;
+        public bool GrokBrowserConfigured => _grokWebBrowserClient != null;
+        public bool MetaBrowserConfigured => _metaWebClient != null;
 
         public UiJobRunner(Settings settings, MultiClientRunStats stats, RunOptions options)
         {

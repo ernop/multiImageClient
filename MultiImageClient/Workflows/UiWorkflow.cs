@@ -308,9 +308,9 @@ namespace MultiImageClient
                 });
             });
 
-            // Chronological job summaries so a (re)loaded page can hydrate
-            // itself: render every job's card, then let the replayable SSE
-            // stream fill in the results.
+            // Live (hydrated) job summaries. Full multi-day history is indexed
+            // on disk and served through /api/archive — this endpoint no longer
+            // returns every historical job as in-process objects.
             app.MapGet("/api/jobs", () =>
             {
                 var list = jobs.ListChronological().Select(j => new
@@ -744,8 +744,20 @@ namespace MultiImageClient
                 IResult fileResult;
                 if (ctx.Request.Query.ContainsKey("thumb"))
                 {
-                    if (!job.TryGetCardPreview(gen, n, out var bytes, out var contentType)) return Results.NotFound();
-                    fileResult = Results.File(bytes, contentType);
+                    if (job.TryGetCardPreviewPath(gen, n, out var thumbPath, out var thumbType))
+                    {
+                        // Disk-backed thumb — stream, do not buffer into heap.
+                        fileResult = Results.File(thumbPath, thumbType, enableRangeProcessing: true);
+                    }
+                    else if (job.TryGetCardPreviewBytes(gen, n, out var bytes, out var contentType))
+                    {
+                        // Ephemeral streaming partials only.
+                        fileResult = Results.File(bytes, contentType);
+                    }
+                    else
+                    {
+                        return Results.NotFound();
+                    }
                 }
                 else if (job.TryGetImagePath(gen, n, out var path, out var pathType))
                 {
@@ -785,7 +797,7 @@ namespace MultiImageClient
             app.MapGet("/api/status", (HttpContext ctx) =>
             {
                 ctx.Response.Headers.CacheControl = "no-store";
-                return Results.Json(UiProcessMemory.Snapshot());
+                return Results.Json(UiProcessMemory.Snapshot(jobs, runner));
             });
 
             // Every distinct user-uploaded input image, newest first, for the
@@ -793,31 +805,38 @@ namespace MultiImageClient
             // excluded: their stored input is a copied result image, not an
             // upload. Multi-input jobs contribute every index. Re-pastes of
             // the same image across jobs are deduped by SHA-256 of the
-            // archived bytes (hashes cached per job id + index; a job's
-            // inputs never change). Entries whose archived bytes are no
-            // longer readable are omitted and logged, never guessed at.
-            var inputImageHashes = new ConcurrentDictionary<string, string>();
+            // archived bytes (hashes live in images.json; listing peeks disk
+            // without hydrating full UiJob graphs). Entries whose archived
+            // bytes are no longer readable are omitted and logged, never guessed.
             app.MapGet("/api/input-images", () =>
             {
-                var seenHashes = new HashSet<string>();
+                var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var images = new List<object>();
-                foreach (var job in jobs.ListChronological()
-                    .Where(j => j.HasInputImage && string.IsNullOrEmpty(j.SourceJobId))
-                    .OrderByDescending(j => j.CreatedAt))
+                foreach (var entry in jobs.ListInputLibraryCandidates())
                 {
-                    for (var index = 0; index < job.InputImageCount; index++)
+                    if (!UiJobStorage.TryPeekJobSummary(
+                        jobs.HistoryRoot,
+                        entry.FolderName,
+                        out var prompt,
+                        out var width,
+                        out var height,
+                        out var createdAt))
                     {
-                        var cacheKey = $"{job.Id}:{index}";
-                        if (!inputImageHashes.TryGetValue(cacheKey, out var hash))
+                        Logger.Log(
+                            $"UI input library: job {entry.Id} metadata is unreadable; omitted.");
+                        continue;
+                    }
+                    for (var index = 0; index < entry.InputImageCount; index++)
+                    {
+                        if (!UiJobStorage.TryPeekImageSha256(
+                            jobs.HistoryRoot,
+                            entry.FolderName,
+                            $"input/{index}",
+                            out var hash))
                         {
-                            if (!job.TryGetImage("input", index, out var bytes, out _))
-                            {
-                                Logger.Log(
-                                    $"UI input library: job {job.Id} input image {index} bytes are unavailable; omitted from the listing.");
-                                continue;
-                            }
-                            hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
-                            inputImageHashes[cacheKey] = hash;
+                            Logger.Log(
+                                $"UI input library: job {entry.Id} input image {index} bytes are unavailable; omitted from the listing.");
+                            continue;
                         }
                         if (!seenHashes.Add(hash))
                         {
@@ -825,13 +844,13 @@ namespace MultiImageClient
                         }
                         images.Add(new
                         {
-                            jobId = job.Id,
+                            jobId = entry.Id,
                             index,
-                            url = $"/api/jobs/{job.Id}/images/input/{index}",
-                            width = index == 0 ? job.InputImageWidth : 0,
-                            height = index == 0 ? job.InputImageHeight : 0,
-                            prompt = job.Prompt,
-                            createdAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
+                            url = $"/api/jobs/{entry.Id}/images/input/{index}",
+                            width = index == 0 ? width : 0,
+                            height = index == 0 ? height : 0,
+                            prompt,
+                            createdAtUnixMs = new DateTimeOffset(createdAt).ToUnixTimeMilliseconds(),
                         });
                     }
                 }

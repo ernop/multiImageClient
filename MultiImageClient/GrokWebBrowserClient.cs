@@ -52,6 +52,16 @@ namespace MultiImageClient
         private IBrowserContext? _context;
         private IPage? _page;
 
+        // Shared-site resident: Chromium is hundreds of MiB. Close it after
+        // idle so the UI process does not hold a warm browser forever. The
+        // client object + gate stay alive; EnsureStartedAsync relaunches.
+        private static readonly TimeSpan BrowserIdleTimeout = TimeSpan.FromMinutes(5);
+        private DateTime _lastUseUtc = DateTime.MinValue;
+        private Timer? _idleTimer;
+        private int _idleReleaseRunning;
+
+        public bool IsBrowserWarm => _context != null;
+
         public GrokWebBrowserClient(GrokWebBrowserClientOptions options)
         {
             _options = options;
@@ -163,6 +173,7 @@ namespace MultiImageClient
             {
                 if (gateAcquired)
                 {
+                    NoteBrowserActivity();
                     _gate.Release();
                 }
             }
@@ -535,6 +546,104 @@ namespace MultiImageClient
                 Secure = true,
             }));
             _page = await _context.NewPageAsync();
+            NoteBrowserActivity();
+            ArmIdleTimer();
+        }
+
+        private void NoteBrowserActivity()
+        {
+            _lastUseUtc = DateTime.UtcNow;
+        }
+
+        private void ArmIdleTimer()
+        {
+            _idleTimer ??= new Timer(
+                _ => _ = TryIdleReleaseAsync(),
+                null,
+                TimeSpan.FromMinutes(1),
+                TimeSpan.FromMinutes(1));
+        }
+
+        private async Task TryIdleReleaseAsync()
+        {
+            if (_context == null)
+            {
+                return;
+            }
+            if (DateTime.UtcNow - _lastUseUtc < BrowserIdleTimeout)
+            {
+                return;
+            }
+            if (Interlocked.CompareExchange(ref _idleReleaseRunning, 1, 0) != 0)
+            {
+                return;
+            }
+            try
+            {
+                // Do not steal the gate from an in-flight request.
+                if (!await _gate.WaitAsync(0))
+                {
+                    return;
+                }
+                try
+                {
+                    if (_context == null)
+                    {
+                        return;
+                    }
+                    if (DateTime.UtcNow - _lastUseUtc < BrowserIdleTimeout)
+                    {
+                        return;
+                    }
+                    await CloseBrowserCoreAsync();
+                    Logger.Log(
+                        $"Grok web browser: released Chromium after {BrowserIdleTimeout.TotalMinutes:0} min idle.");
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _idleReleaseRunning, 0);
+            }
+        }
+
+        /// Close Chromium but keep this client reusable (gate stays alive).
+        public async Task ReleaseBrowserAsync()
+        {
+            await _gate.WaitAsync();
+            try
+            {
+                await CloseBrowserCoreAsync();
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        private async Task CloseBrowserCoreAsync()
+        {
+            _page = null;
+            if (_context != null)
+            {
+                try { await _context.CloseAsync(); }
+                catch (Exception ex) { Logger.Log($"Grok web browser: context close: {ex.Message}"); }
+                _context = null;
+            }
+            if (_browser != null)
+            {
+                try { await _browser.CloseAsync(); }
+                catch (Exception ex) { Logger.Log($"Grok web browser: browser close: {ex.Message}"); }
+                _browser = null;
+            }
+            if (_playwright != null)
+            {
+                _playwright.Dispose();
+                _playwright = null;
+            }
         }
 
         private async Task PrepareImaginePageAsync(string? triggerPostId, CancellationToken ct)
@@ -611,18 +720,20 @@ namespace MultiImageClient
 
         public async ValueTask DisposeAsync()
         {
-            if (_context != null)
+            if (_idleTimer != null)
             {
-                await _context.CloseAsync();
-                _context = null;
+                await _idleTimer.DisposeAsync();
+                _idleTimer = null;
             }
-            if (_browser != null)
+            await _gate.WaitAsync();
+            try
             {
-                await _browser.CloseAsync();
-                _browser = null;
+                await CloseBrowserCoreAsync();
             }
-            _playwright?.Dispose();
-            _playwright = null;
+            finally
+            {
+                _gate.Release();
+            }
             _gate.Dispose();
         }
 
