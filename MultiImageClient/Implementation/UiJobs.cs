@@ -2116,10 +2116,16 @@ namespace MultiImageClient
                 {
                     Logger.Log($"[ui #{job.Id}] grid build failed: {ex.Message}");
                 }
+
+                foreach (var result in results)
+                {
+                    result.ReleaseImageData();
+                }
+                Array.Clear(results);
+                Array.Clear(tasks);
             }
             finally
             {
-                _jobLimit.Release();
                 job.Emit(new { type = "job-done" });
                 job.MarkDone();
                 // Completed UI jobs no longer own any ImageSharp canvases.
@@ -2128,7 +2134,23 @@ namespace MultiImageClient
                 // and contact-sheet jobs ratchet the resident daemon toward
                 // systemd MemoryHigh. In-use blocks from another concurrent
                 // job are explicitly preserved by ImageSharp.
-                Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
+                try
+                {
+                    Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
+                    GC.Collect(
+                        GC.MaxGeneration,
+                        GCCollectionMode.Aggressive,
+                        blocking: true,
+                        compacting: false);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"[ui #{job.Id}] post-job image-memory cleanup failed: {ex.Message}");
+                }
+                finally
+                {
+                    _jobLimit.Release();
+                }
                 Logger.Log($"[ui #{job.Id}] DONE");
             }
         }
@@ -2248,7 +2270,13 @@ namespace MultiImageClient
                             Source = "ui",
                             ExternalJobId = job.Id,
                             GeneratorKey = key,
-                        });
+                        },
+                        // The web archive already has raw files, structured
+                        // metadata/events, and one labeled combined sheet.
+                        // Five additional full-resolution annotation variants
+                        // per image multiply decode/render RAM, CPU, and disk
+                        // without adding information to the web product.
+                        saveAnnotatedVariants: false);
 
                     if (result.IsSuccess
                         && !string.IsNullOrEmpty(result.GeneratedMediaPath)

@@ -93,7 +93,8 @@ namespace MultiImageClient
             IImageGenerator generator,
             PromptDetails promptDetails,
             ImageManager imageManager,
-            GenerationArchiveContext? context = null)
+            GenerationArchiveContext? context = null,
+            bool saveAnnotatedVariants = true)
         {
             return await ExecuteCoreAsync(
                 generator,
@@ -101,7 +102,10 @@ namespace MultiImageClient
                 async () =>
                 {
                     var result = await generator.ProcessPromptAsync(generator, promptDetails);
-                    await imageManager.ProcessAndSaveAsync(result, generator);
+                    await imageManager.ProcessAndSaveAsync(
+                        result,
+                        generator,
+                        saveAnnotatedVariants);
                     return result;
                 },
                 context);

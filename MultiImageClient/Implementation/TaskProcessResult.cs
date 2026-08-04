@@ -81,6 +81,13 @@ namespace MultiImageClient
         public IReadOnlyDictionary<int, Dictionary<SaveType, string>> GetSavedImagePaths()
             => _savedImagePaths;
 
+        public void ReleaseImageData()
+        {
+            _ImageBytes.Clear();
+            _ImageBytes.TrimExcess();
+            Base64ImageDatas = Array.Empty<CreatedBase64Image>();
+        }
+
 
         public override string ToString()
         {

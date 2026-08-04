@@ -25,7 +25,14 @@ namespace MultiImageClient
             GenerationArchive.Initialize(settings);
         }
 
-        public async Task<Dictionary<SaveType, string>> DoSaveAsync(int n, PromptDetails pd, string contentType, byte[] imageBytes, IImageGenerator generator, Settings settings)
+        public async Task<Dictionary<SaveType, string>> DoSaveAsync(
+            int n,
+            PromptDetails pd,
+            string contentType,
+            byte[] imageBytes,
+            IImageGenerator generator,
+            Settings settings,
+            bool saveAnnotatedVariants = true)
         {
             var thesePaths = new Dictionary<SaveType, string>();
             if (imageBytes == null || imageBytes.Length == 0)
@@ -34,12 +41,24 @@ namespace MultiImageClient
                 throw new Exception("no bytes in the image data received; probably caller's problem.)");
             }
 
-            // Raw: endpoint bytes verbatim. Annotated variants: decode to PNG for ImageSharp/Magick overlays.
-            var rawBytes = imageBytes;
+            thesePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(
+                pd,
+                imageBytes,
+                n,
+                contentType,
+                settings,
+                SaveType.Raw,
+                generator);
+
+            if (!saveAnnotatedVariants)
+            {
+                return thesePaths;
+            }
+
+            // Annotated variants decode to PNG for ImageSharp/Magick overlays.
             var annotatedBytes = ConvertBytesForAnnotatedVariants(imageBytes, contentType);
             const string annotatedContentType = "image/png";
 
-            thesePaths[SaveType.Raw] = await ImageSaving.SaveImageAsync(pd, rawBytes, n, contentType, settings, SaveType.Raw, generator);
             thesePaths[SaveType.FullAnnotation] = await ImageSaving.SaveImageAsync(pd, annotatedBytes, n, annotatedContentType, settings, SaveType.FullAnnotation, generator);
             thesePaths[SaveType.FinalPrompt] = await ImageSaving.SaveImageAsync(pd, annotatedBytes, n, annotatedContentType, settings, SaveType.FinalPrompt, generator);
             thesePaths[SaveType.InitialIdea] = await ImageSaving.SaveImageAsync(pd, annotatedBytes, n, annotatedContentType, settings, SaveType.InitialIdea, generator);
@@ -79,7 +98,10 @@ namespace MultiImageClient
             return imageBytes;
         }
 
-        public async Task<TaskProcessResult> ProcessAndSaveAsync(TaskProcessResult result, IImageGenerator generator)
+        public async Task<TaskProcessResult> ProcessAndSaveAsync(
+            TaskProcessResult result,
+            IImageGenerator generator,
+            bool saveAnnotatedVariants = true)
         {
             try
             {
@@ -98,7 +120,14 @@ namespace MultiImageClient
                     // downloading it can just fail sometimes.
                     result.SetImageBytes(0, imageBytes);
                     var pd = result.PromptDetails.Copy();
-                    var downloadResults = await DoSaveAsync(0, pd, result.ContentType, imageBytes, generator, _settings);
+                    var downloadResults = await DoSaveAsync(
+                        0,
+                        pd,
+                        result.ContentType,
+                        imageBytes,
+                        generator,
+                        _settings,
+                        saveAnnotatedVariants);
                     result.SetSavedImagePaths(0, downloadResults);
                     await SaveJsonLogAsync(result, downloadResults);
                     return result;
@@ -124,7 +153,14 @@ namespace MultiImageClient
                                 Console.WriteLine("s");
                             }
                         }
-                        var downloadResults = await DoSaveAsync(ii, pd, result.ContentType, imageBytes, generator, _settings);
+                        var downloadResults = await DoSaveAsync(
+                            ii,
+                            pd,
+                            result.ContentType,
+                            imageBytes,
+                            generator,
+                            _settings,
+                            saveAnnotatedVariants);
                         result.SetSavedImagePaths(ii, downloadResults);
                         ii++;
                         await SaveJsonLogAsync(result, downloadResults);
