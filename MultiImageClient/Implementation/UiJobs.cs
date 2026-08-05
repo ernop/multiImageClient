@@ -1932,6 +1932,46 @@ namespace MultiImageClient
         public const string KeyGrokApiPro = "grok-api-pro";
         public const string KeyMetaWeb = "meta-web";
 
+        // Describe targets (image → text). Every one REQUIRES an input image;
+        // the server rejects describe jobs without one before they start.
+        // The composer prompt (when non-blank) is the describe instruction for
+        // the instruction-capable models; Ideogram /describe takes no
+        // instruction and always runs its fixed built-in describe.
+        public const string KeyDescribeIdeogram = "describe-ideogram";
+        public const string KeyDescribeOpenAi = "describe-openai";
+        public const string KeyDescribeClaude = "describe-claude";
+        public const string KeyDescribeGemini = "describe-gemini";
+        public const string KeyDescribeGrok = "describe-grok";
+        public const string KeyDescribeLocalInternVl = "describe-local-internvl";
+        public const string KeyDescribeLocalQwen = "describe-local-qwen";
+
+        public static readonly string[] DescribeKeys =
+        {
+            KeyDescribeIdeogram,
+            KeyDescribeOpenAi,
+            KeyDescribeClaude,
+            KeyDescribeGemini,
+            KeyDescribeGrok,
+            KeyDescribeLocalInternVl,
+            KeyDescribeLocalQwen,
+        };
+
+        public static bool IsDescribeKey(string key)
+            => DescribeKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
+
+        // Declared pre-operation default: used as the wire instruction when a
+        // describe-only job is submitted with a blank prompt (the server
+        // substitutes it BEFORE the job is accepted, and it becomes the job's
+        // recorded prompt — never a post-failure fallback).
+        public const string DefaultDescribeInstruction =
+            "Describe this image in detail. Cover the main subjects, setting, composition, "
+            + "style, colors, lighting, and any visible text.";
+
+        // Describe wire parameters, matched to tools/describe-eval defaults
+        // (1200 max tokens) and the Workflow Lab's deterministic temperature.
+        private const int DescribeMaxTokens = 1200;
+        private const float DescribeTemperature = 0.2f;
+
         // Single source of truth for which UI targets accept an input image.
         // Exposed to the frontend via /api/config (per-generator imageCapable
         // flag) and consulted in BuildGenerator, so the two can't drift.
@@ -2005,6 +2045,7 @@ namespace MultiImageClient
             KeyGoogle or KeyGooglePro or KeyIdeogramV3
                 or KeyKrea or KeyKreaTurbo or KeyKreaLarge => "style/reference image",
             KeyGrokWebVideo => "video source",
+            _ when IsDescribeKey(key) => "describe source (image \u2192 text)",
             _ => "NOT sent (text-only target, prompt only)",
         };
 
@@ -2192,6 +2233,23 @@ namespace MultiImageClient
             KeyGrokApi or KeyGrokApiPro
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GrokImagine, _settings),
             KeyMetaWeb => MetaWebDisabledProblem,
+            // Describe targets: gated on the same provider keys as their image
+            // siblings; the local vision models share the "not installed"
+            // EnableLocalGenerators gate (they are separate local servers, not
+            // ComfyUI, so no ComfyUI probe applies).
+            KeyDescribeIdeogram
+                => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.IdeogramApiKey), _settings.IdeogramApiKey),
+            KeyDescribeOpenAi
+                => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.OpenAIApiKey), _settings.OpenAIApiKey),
+            KeyDescribeClaude
+                => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.AnthropicApiKey), _settings.AnthropicApiKey),
+            KeyDescribeGemini
+                => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.GoogleGeminiApiKey), _settings.GoogleGeminiApiKey),
+            KeyDescribeGrok
+                => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.XAIGrokApiKey), _settings.XAIGrokApiKey),
+            KeyDescribeLocalInternVl or KeyDescribeLocalQwen => _settings.EnableLocalGenerators
+                ? null
+                : "local vision models are disabled (settings.json EnableLocalGenerators=false)",
             _ => $"unknown generator '{key}'",
         };
 
@@ -2303,16 +2361,29 @@ namespace MultiImageClient
                 finalizationAcquired = true;
                 try
                 {
-                    var combined = await ImageCombiner.CreateBatchLayoutImageSquareAsync(
-                        results, job.Prompt, _settings, openWhenDone: false,
-                        inputImagePath: job.HasInputImage ? job.InputImagePath : null,
-                        inputImageRole: job.HasInputImage ? BuildInputImageRoleText(spec.GeneratorKeys) : null);
-                    if (!string.IsNullOrEmpty(combined) && File.Exists(combined))
+                    // Describe results are text-only and contribute no cell to the
+                    // image contact sheet; their descriptions live in the job's
+                    // persisted gen-result events. A describe-only job builds no
+                    // sheet at all.
+                    var sheetResults = results
+                        .Where(r => !IsDescribeKey(r.ImageGeneratorDescription))
+                        .ToArray();
+                    if (sheetResults.Length > 0)
                     {
-                        job.StoreImagePath("grid", 0, combined, "image/png");
-                        job.Emit(new { type = "grid", url = $"/api/jobs/{job.Id}/images/grid/0", path = combined });
+                        var sheetKeys = spec.GeneratorKeys
+                            .Where(k => !IsDescribeKey(k))
+                            .ToList();
+                        var combined = await ImageCombiner.CreateBatchLayoutImageSquareAsync(
+                            sheetResults, job.Prompt, _settings, openWhenDone: false,
+                            inputImagePath: job.HasInputImage ? job.InputImagePath : null,
+                            inputImageRole: job.HasInputImage ? BuildInputImageRoleText(sheetKeys) : null);
+                        if (!string.IsNullOrEmpty(combined) && File.Exists(combined))
+                        {
+                            job.StoreImagePath("grid", 0, combined, "image/png");
+                            job.Emit(new { type = "grid", url = $"/api/jobs/{job.Id}/images/grid/0", path = combined });
+                        }
+                        Logger.Log($"[ui #{job.Id}] grid saved: {combined}");
                     }
-                    Logger.Log($"[ui #{job.Id}] grid saved: {combined}");
                 }
                 catch (Exception ex)
                 {
@@ -2359,6 +2430,11 @@ namespace MultiImageClient
 
         private async Task<TaskProcessResult> RunOneAsync(UiJob job, UiJobSpec spec, string key, PromptDetails pd)
         {
+            if (IsDescribeKey(key))
+            {
+                return await RunDescribeOneAsync(job, key, pd);
+            }
+
             var wallClock = Stopwatch.StartNew();
             job.Emit(new
             {
@@ -2623,6 +2699,161 @@ namespace MultiImageClient
             Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({urls.Count}/{want})" : $"FAIL ({merged.ErrorMessage})")} from {key} in {elapsed} ms"
                 + (actionHint != null ? $"\n[ui #{job.Id}]      next step: {actionHint.Text} -> {actionHint.Url}" : ""));
             return merged;
+        }
+
+        // Rough per-call cost ceilings for the describe targets, mirroring the
+        // "estimate, not bill" convention of the image generators' GetCost().
+        // Ideogram is a published flat price; the LLM vision calls are
+        // token-billed and estimated at ~1K image-input tokens + the 1200-token
+        // output cap at each provider's current list price.
+        private static decimal DescribeCostEstimate(string key) => key switch
+        {
+            KeyDescribeIdeogram => IdeogramModelPricing.IdeogramDescribe,
+            KeyDescribeOpenAi => 0.015m,
+            KeyDescribeClaude => 0.025m,
+            KeyDescribeGemini => 0.015m,
+            KeyDescribeGrok => 0.025m,
+            KeyDescribeLocalInternVl or KeyDescribeLocalQwen => 0m,
+            _ => throw new ArgumentException($"Unknown describe key '{key}'.", nameof(key)),
+        };
+
+        private ILocalVisionModel BuildDescriber(string key)
+        {
+            var availabilityProblem = DescribeAvailabilityProblem(key);
+            if (availabilityProblem != null)
+            {
+                throw new InvalidOperationException(availabilityProblem);
+            }
+
+            switch (key)
+            {
+                case KeyDescribeIdeogram:
+                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
+                    return new IdeogramDescriber(_settings.IdeogramApiKey);
+                case KeyDescribeOpenAi:
+                    RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", key);
+                    return new OpenAIVisionDescriber(_settings.OpenAIApiKey);
+                case KeyDescribeClaude:
+                    RequireKey(_settings.AnthropicApiKey, "AnthropicApiKey", key);
+                    return new ClaudeVisionDescriber(_settings.AnthropicApiKey);
+                case KeyDescribeGemini:
+                    RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
+                    return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey);
+                case KeyDescribeGrok:
+                    RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", key);
+                    return new GrokVisionDescriber(_settings.XAIGrokApiKey);
+                case KeyDescribeLocalInternVl:
+                    return new LocalInternVLClient();
+                case KeyDescribeLocalQwen:
+                    return new LocalQwenClient();
+                default:
+                    throw new ArgumentException($"unknown describe target '{key}'");
+            }
+        }
+
+        /// Describe targets return TEXT, not media: one provider call per
+        /// attached input image, all-or-nothing (fail closed — a blank or
+        /// missing description for ANY input fails the whole target rather
+        /// than presenting partial output as success). The descriptions ride
+        /// the persisted gen-result event (resultKind "text" + texts[]), which
+        /// is how they survive restarts and reach archive views; they are
+        /// deliberately absent from the image contact sheet.
+        private async Task<TaskProcessResult> RunDescribeOneAsync(UiJob job, string key, PromptDetails pd)
+        {
+            var wallClock = Stopwatch.StartNew();
+            job.Emit(new
+            {
+                type = "gen-start",
+                gen = key,
+                at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
+
+            var result = new TaskProcessResult
+            {
+                PromptDetails = pd,
+                ImageGeneratorDescription = key,
+                ContentType = "text/plain",
+            };
+
+            var texts = new List<object>();
+            string? error = null;
+            string label = key;
+            var perCallCost = 0m;
+            try
+            {
+                if (!job.HasInputImage)
+                {
+                    throw new InvalidOperationException($"'{key}' requires an input image; this job has none.");
+                }
+                var describer = BuildDescriber(key);
+                perCallCost = DescribeCostEstimate(key);
+                label = key == KeyDescribeIdeogram
+                    ? $"{describer.GetModelName()} (fixed instruction; the prompt is not sent)"
+                    : describer.GetModelName();
+                var instruction = pd.Prompt;
+                if (string.IsNullOrWhiteSpace(instruction))
+                {
+                    // POST /api/jobs substitutes the default instruction for
+                    // blank describe-only prompts, so this only guards direct
+                    // programmatic misuse.
+                    throw new InvalidOperationException("describe instruction is empty");
+                }
+                Logger.Log($"[ui #{job.Id}]   -> {key} ({describer.GetModelName()}, ~${perCallCost:0.###} x {job.InputImageCount} input(s))");
+
+                for (var i = 0; i < job.InputImageCount; i++)
+                {
+                    var imageBytes = await File.ReadAllBytesAsync(job.InputImagePaths[i]);
+                    var text = await describer.DescribeImageAsync(
+                        imageBytes, instruction, maxTokens: DescribeMaxTokens, temperature: DescribeTemperature);
+                    if (string.IsNullOrWhiteSpace(text))
+                    {
+                        // The local describers log-and-return-empty on transport
+                        // failure; blank text from any endpoint is a hard failure
+                        // here, never an empty "success".
+                        throw new InvalidDataException(
+                            $"{key} returned no description for input image {i + 1} of {job.InputImageCount}.");
+                    }
+                    texts.Add(new { inputIndex = i, text = text.Trim() });
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[ui #{job.Id}]   <- EXCEPTION from {key}: {ex.Message}");
+                error = ex.Message;
+                texts.Clear();
+            }
+
+            var ok = error == null && texts.Count == job.InputImageCount && texts.Count > 0;
+            result.IsSuccess = ok;
+            if (!ok)
+            {
+                result.ErrorMessage = error ?? "Describe completed without returning a description.";
+            }
+
+            var elapsed = wallClock.ElapsedMilliseconds;
+            var actionHint = ok ? null : ProviderActionHints.For(key, result.ErrorMessage);
+            job.Emit(new
+            {
+                type = "gen-result",
+                gen = key,
+                ok,
+                error = ok ? "" : result.ErrorMessage,
+                errorHint = actionHint?.Text,
+                errorHintUrl = actionHint?.Url,
+                ms = elapsed,
+                // No media: the frontend renders resultKind "text" cells from
+                // texts[] and the viewer pairs each text with its archived
+                // input image (/api/jobs/{id}/images/input/{inputIndex}).
+                images = Array.Empty<string>(),
+                mediaType = "",
+                label,
+                size = (string?)null,
+                resultKind = "text",
+                texts,
+                cost = ok ? perCallCost * texts.Count : 0m,
+            });
+            Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({texts.Count} description(s))" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms");
+            return result;
         }
 
         private IImageGenerator BuildGrokWeb(GrokWebClient client, UiJobSpec spec)

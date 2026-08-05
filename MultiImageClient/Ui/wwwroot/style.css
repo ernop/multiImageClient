@@ -1032,6 +1032,22 @@ body:not(.show-costs) #cost-summary { display: none !important; }
   border: 1px solid var(--line);
   display: block;
 }
+/* Subtle persistent edge marker: this image has been displayed full-size in
+   the zoom viewer at some point (per-browser, unofficial bookkeeping). */
+a[data-viewer-image].viewer-seen img {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(59, 75, 216, 0.30);
+}
+/* Departure pulse: on viewer close, the just-viewed image's thumbnail glows
+   briefly so the eye lands on it (applies in both handback modes). */
+a[data-viewer-image].viewer-return-pulse img {
+  animation: viewer-return-pulse 0.9s ease-out 3;
+}
+@keyframes viewer-return-pulse {
+  0%   { box-shadow: 0 0 0 1px rgba(59, 75, 216, 0.95), 0 0 0 0 rgba(59, 75, 216, 0.55); }
+  70%  { box-shadow: 0 0 0 1px rgba(59, 75, 216, 0.95), 0 0 0 12px rgba(59, 75, 216, 0); }
+  100% { box-shadow: 0 0 0 1px rgba(59, 75, 216, 0.95), 0 0 0 0 rgba(59, 75, 216, 0); }
+}
 .custom-video-player {
   width: 100%;
   min-width: 0;

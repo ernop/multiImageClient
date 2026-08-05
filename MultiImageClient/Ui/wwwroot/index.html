@@ -64,6 +64,13 @@
     <span><strong>show estimated costs</strong> — per-result, per-job, and session spend estimates.
       Off by default; estimates are still computed server-side either way.</span>
   </label>
+  <label class="settings-row">
+    <input id="viewer-return-sync" type="checkbox">
+    <span><strong>image viewer close handback</strong> — when you close the zoom viewer
+      (Esc or click outside) after arrowing to a different image, scroll this page to that
+      image and focus it. Off = the page stays exactly where it was.
+      Press <kbd>s</kbd> inside the viewer to toggle instantly.</span>
+  </label>
   <div id="gpt2-guidance-row">
     <label id="gpt2-guidance-toggle"
       title="gpt-image-2 habitually drifts into dark, murky, underexposed output. While this is on, the text below is appended to the prompt sent to gpt-image-2 on every job (and only to gpt-image-2 — other generators get your prompt untouched).">
@@ -256,7 +263,7 @@
       <div id="image-viewer-meta-row">
         <span id="image-viewer-generator"></span>
         <span id="image-viewer-dimensions"></span>
-        <button id="image-viewer-help-toggle" type="button" title="Keyboard shortcuts (?) — c compares with the input image, Esc or click outside to close">?</button>
+        <button id="image-viewer-help-toggle" type="button" title="Keyboard shortcuts (?) — c compares with the input image, s toggles close handback (scroll the page to the viewed image on close), Esc or click outside to close">?</button>
       </div>
       <div id="image-viewer-prompt"></div>
       <div id="image-viewer-guidance" hidden></div>

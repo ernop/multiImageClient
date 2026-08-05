@@ -23,6 +23,11 @@ namespace MultiImageClient
         public const string LaneIdeogram = "ideogram";
         public const string LaneRecraft = "recraft";
         public const string LaneComfyUi = "comfyui";
+        // Describe targets ride their provider-account lanes (an OpenAI describe
+        // competes with gpt-image jobs for the same account); these two exist
+        // only for providers with no image lane.
+        public const string LaneAnthropic = "anthropic";
+        public const string LaneLocalVision = "local-vision";
 
         private static readonly IReadOnlyDictionary<string, int> DefaultLimits =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
@@ -38,6 +43,8 @@ namespace MultiImageClient
                 [LaneIdeogram] = 1,
                 [LaneRecraft] = 2,
                 [LaneComfyUi] = 1,
+                [LaneAnthropic] = 2,
+                [LaneLocalVision] = 1,
             };
 
         private readonly object _gate = new();
@@ -153,6 +160,13 @@ namespace MultiImageClient
                     or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4
                     or UiJobRunner.KeyRecraftV4Pro => LaneRecraft,
                 UiJobRunner.KeyLocalKlein or UiJobRunner.KeyLocalZImage => LaneComfyUi,
+                UiJobRunner.KeyDescribeOpenAi => LaneOpenAi,
+                UiJobRunner.KeyDescribeGrok => LaneXaiApi,
+                UiJobRunner.KeyDescribeGemini => LaneGoogle,
+                UiJobRunner.KeyDescribeIdeogram => LaneIdeogram,
+                UiJobRunner.KeyDescribeClaude => LaneAnthropic,
+                UiJobRunner.KeyDescribeLocalInternVl
+                    or UiJobRunner.KeyDescribeLocalQwen => LaneLocalVision,
                 _ => throw new InvalidOperationException(
                     $"Generator '{generatorKey}' has no UI target scheduler lane."),
             };

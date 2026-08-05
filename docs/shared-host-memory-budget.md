@@ -1,5 +1,19 @@
 # Shared-Host RAM Budget (miic-alpha.fuseki / tpbeta)
 
+**Update 2026-08-05:** tpdiscord-web/reader were uninstalled and
+tpbeta.uwsgi was stopped and disabled (files retained), freeing ~1 GiB and
+making this app the box's primary tenant. Remaining neighbors are ~600 MB
+steady (fuseki4_ai ~265, postgres ~100, syncthing/nginx/journald/misc ~150)
+plus periodic cron spikes to ~700 MB (cgroup peak, partly reclaimable page
+cache). The unit was raised to **MemoryHigh=2048M / MemoryMax=2560M**
+(from 1200M/1600M): ~600M neighbors + ~500M cron allowance + ~400M
+page-cache floor leaves ~2.4 GiB of the 3.8 GiB no-swap box. The GC
+50%-of-max cap becomes 1280 MB (62% of high) and the 512 MB high→max gap
+covers the largest observed allocation burst (app peaked at 953 MB during
+active multi-user generation). The analysis below is the original
+2026-08-04 survey and explains the reasoning framework; its numbers predate
+this change.
+
 Surveyed 2026-08-04 against the live host. This records why the production
 `--ui` deployment (`multiimageclient.alpha.fuseki.net`, systemd unit
 `multiimageclient-ui.service` on tpbeta) has the memory limits it has, and
@@ -123,7 +137,8 @@ sized with tpDiscord resident, so `MemoryHigh` could be revisited upward.
 ## Open observations (no action decided)
 
 - `deploy/README.md`'s example settings show `UiMaxConcurrentGenerators: 2`
-  while AGENTS.md records production at 20. The live
-  `/etc/multiimageclient/settings.json` is root-owned 0640 and the deploy
-  SSH account has passwordless sudo only for the update helper, so the live
-  value was not confirmed during this survey.
+  while AGENTS.md records production at 20. Confirmed live on 2026-08-05:
+  `/etc/multiimageclient/settings.json` has `UiMaxConcurrentGenerators: 14`
+  (with `UiMaxConcurrentJobs: 1` and a 3 GiB disk reserve) — neither the
+  README example nor the AGENTS.md figure. Left unchanged; update whichever
+  document is meant to be authoritative when this is next touched.

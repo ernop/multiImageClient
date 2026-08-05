@@ -257,6 +257,18 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyGpt1Mini, label = "gpt-image-1-mini", detail = "OpenAI lower-cost image generation. Shape, quality, moderation, and n honored. Text-to-image in this UI." },
                     new { key = UiJobRunner.KeyLocalKlein, label = "local FLUX.2 Klein", detail = "Configured local ComfyUI FLUX.2 Klein workflow." },
                     new { key = UiJobRunner.KeyLocalZImage, label = "local Z-Image Turbo", detail = "Configured local ComfyUI Z-Image workflow." },
+                    // Describe targets (image → text). Rendered by the frontend as
+                    // their own chooser section; selectable only while an image is
+                    // attached (each one describes every attached input). The
+                    // composer prompt, when non-blank, is the describe instruction;
+                    // blank describe-only jobs get the standard instruction.
+                    new { key = UiJobRunner.KeyDescribeIdeogram, label = "Ideogram describe", detail = "Ideogram's /describe endpoint. Fixed built-in instruction — your prompt text is NOT sent to it. Returns Ideogram's own caption(s) for each attached image. $0.01 per image." },
+                    new { key = UiJobRunner.KeyDescribeOpenAi, label = "OpenAI describe (gpt-4.1)", detail = "OpenAI gpt-4.1 vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeClaude, label = "Claude describe (Sonnet)", detail = "Anthropic claude-sonnet-4-5 vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeGemini, label = "Gemini describe (2.5 Pro)", detail = "Google gemini-2.5-pro vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeGrok, label = "Grok describe (grok-4.3)", detail = "xAI grok-4.3 vision via api.x.ai. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeLocalInternVl, label = "local InternVL describe", detail = "Local InternVL3 Flask server on 127.0.0.1:11415 (do_flask_intern.py). Free; requires the local server to be running and EnableLocalGenerators=true." },
+                    new { key = UiJobRunner.KeyDescribeLocalQwen, label = "local Qwen describe", detail = "Local Ollama qwen2-vl on 127.0.0.1:11434. Free; requires Ollama with the model loaded and EnableLocalGenerators=true." },
                 }
                 .Select(g => new
                 {
@@ -265,8 +277,16 @@ namespace MultiImageClient
                     g.detail,
                     available = runner.IsAvailable(g.key),
                     availabilityProblem = runner.DescribeAvailabilityProblem(g.key),
-                    imageCapable = UiJobRunner.IsImageCapable(g.key),
+                    // Describe targets consume the attached image by definition
+                    // (that's their whole input), so they count as image-capable
+                    // for the chip icons and image-only bulk actions.
+                    imageCapable = UiJobRunner.IsImageCapable(g.key) || UiJobRunner.IsDescribeKey(g.key),
                     imageAspectOverride = SupportsImageAspectOverride(g.key),
+                    // "describe" targets return text (rendered as their own
+                    // chooser section, selectable only with an image attached);
+                    // everything else returns media.
+                    kind = UiJobRunner.IsDescribeKey(g.key) ? "describe" : "image",
+                    requiresImage = UiJobRunner.IsDescribeKey(g.key),
                     // Known hard prompt-length caps, surfaced so the composer can
                     // warn before submit; the server truncates over-limit prompts
                     // at the provider send stage (grok-web: GrokWebClient).
@@ -382,10 +402,10 @@ namespace MultiImageClient
                 var form = await request.ReadFormAsync();
 
                 var prompt = (form["prompt"].ToString() ?? "").Trim();
-                if (prompt.Length == 0)
-                {
-                    return Results.BadRequest(new { error = "prompt is required" });
-                }
+                // Blank prompts are rejected below once the generator set is
+                // known: a describe-only job may omit the prompt and gets the
+                // standard describe instruction instead (declared pre-operation
+                // default, recorded as the job's prompt).
 
                 if (!TryResolveCreatorName(
                     form["user"].ToString(),
@@ -409,6 +429,19 @@ namespace MultiImageClient
                 {
                     var reasons = unavailable.Select(k => $"{k}: {runner.DescribeAvailabilityProblem(k)}");
                     return Results.BadRequest(new { error = $"not available: {string.Join("; ", reasons)}" });
+                }
+
+                var describeKeys = genKeys.Where(UiJobRunner.IsDescribeKey).ToList();
+                if (prompt.Length == 0)
+                {
+                    if (describeKeys.Count == genKeys.Count)
+                    {
+                        prompt = UiJobRunner.DefaultDescribeInstruction;
+                    }
+                    else
+                    {
+                        return Results.BadRequest(new { error = "prompt is required" });
+                    }
                 }
 
                 var n = 1;
@@ -442,6 +475,15 @@ namespace MultiImageClient
                     return Results.BadRequest(new
                     {
                         error = $"At most {UiJobRunner.MaxInputImages} input images are accepted.",
+                    });
+                }
+                // Describe targets have no meaning without an image; reject the
+                // job outright rather than running them against nothing.
+                if (describeKeys.Count > 0 && uploadFiles.Count == 0)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = $"These describe targets require an attached image: {string.Join(", ", describeKeys)}. Attach an image or deselect them.",
                     });
                 }
 

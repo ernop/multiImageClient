@@ -48,6 +48,17 @@ let imageViewerHelpOpen = false;
 // sticky across images and page loads. Jobs without an input image show the
 // normal single-image view even while the mode is on.
 let imageViewerCompareInput = localStorage.getItem("imageViewerCompareInput") === "true";
+// Close handback ("inner movement implies outer movement"): when ON, closing
+// the viewer scrolls the page to the image that was on screen and focuses its
+// thumbnail. OFF by default — the page stays exactly where it was. Toggled in
+// the settings panel or instantly with `s` inside the viewer; per-browser.
+let imageViewerReturnSync = localStorage.getItem("imageViewerReturnSync") === "true";
+// Per-browser record of every image ever displayed full-size in the viewer;
+// marks card thumbnails with a subtle accent edge. Unofficial bookkeeping
+// only — capped, oldest entries retire first.
+const ViewerSeenKey = "mic_viewer_seen_v1";
+const ViewerSeenCap = 5000;
+const viewerSeenSet = loadViewerSeen();
 let imageViewerContentAr = null; // current output image's aspect ratio, for window shrink-wrap
 let imageViewerFocusBeforeOpen = null;
 let imageViewerWheelAccumulator = 0;
@@ -617,6 +628,19 @@ function setShowCosts(enabled) {
 }
 
 showCostsBox.addEventListener("change", () => setShowCosts(showCostsBox.checked));
+
+// Image-viewer close handback (see imageViewerReturnSync above). The settings
+// checkbox and the viewer's `s` shortcut drive the same persisted state.
+const viewerReturnSyncBox = el("viewer-return-sync");
+
+function setViewerReturnSync(enabled) {
+  imageViewerReturnSync = enabled;
+  localStorage.setItem("imageViewerReturnSync", String(enabled));
+  viewerReturnSyncBox.checked = enabled;
+}
+
+viewerReturnSyncBox.addEventListener("change", () => setViewerReturnSync(viewerReturnSyncBox.checked));
+viewerReturnSyncBox.checked = imageViewerReturnSync;
 
 nightWordsBox.addEventListener("input", () => {
   uiSettings.nightWords = nightWordsBox.value;
@@ -1899,6 +1923,64 @@ function locateImageViewerState(prompts) {
   return { promptIndex, itemIndex, prompt: prompts[promptIndex], item: prompts[promptIndex].items[itemIndex] };
 }
 
+function loadViewerSeen() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ViewerSeenKey) || "[]");
+    return new Set(Array.isArray(saved) ? saved.filter((k) => typeof k === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function viewerSeenKeyFor(jobId, generator, imageIndex) {
+  return `${jobId}|${generator}|${imageIndex}`;
+}
+
+// The outer-page thumbnail anchor for a viewer item/state, matched by exact
+// identity (job id + generator + image index) — never by position.
+function findViewerAnchor(ref) {
+  if (!ref) return null;
+  const card = document.getElementById(`job-${ref.jobId}`);
+  if (!card) return null;
+  for (const link of card.querySelectorAll('a[data-viewer-image="true"]')) {
+    if (link.dataset.generator === ref.generator &&
+        Number(link.dataset.imageIndex) === Number(ref.imageIndex)) {
+      return link;
+    }
+  }
+  return null;
+}
+
+// Called whenever a frame actually paints in the viewer: records the image as
+// seen (persisted per-browser) and marks its card thumbnail immediately.
+function markImageViewed(item) {
+  const key = viewerSeenKeyFor(item.jobId, item.generator, item.imageIndex);
+  if (!viewerSeenSet.has(key)) {
+    viewerSeenSet.add(key);
+    // Set preserves insertion order, so the front is the oldest mark.
+    while (viewerSeenSet.size > ViewerSeenCap) {
+      viewerSeenSet.delete(viewerSeenSet.values().next().value);
+    }
+    try {
+      localStorage.setItem(ViewerSeenKey, JSON.stringify([...viewerSeenSet]));
+    } catch (error) {
+      console.warn("could not persist viewer-seen marks", error);
+    }
+  }
+  const link = findViewerAnchor(item);
+  if (link) link.classList.add("viewer-seen");
+}
+
+// Departure pulse: the thumbnail of the image the user just closed out of
+// glows briefly so their eye lands on it — in both handback modes.
+function pulseViewerAnchor(link) {
+  link.classList.remove("viewer-return-pulse");
+  void link.offsetWidth; // restart the animation when re-closing onto the same image
+  link.classList.add("viewer-return-pulse");
+  link.addEventListener("animationend",
+    () => link.classList.remove("viewer-return-pulse"), { once: true });
+}
+
 function sortImageViewerPreloadWaiters() {
   imageViewerPreloadWaiters.sort((a, b) => a.priority - b.priority);
 }
@@ -2061,6 +2143,9 @@ function prepareImageViewerWindow(prompts, current) {
   if (imageViewerCompareInput && current.prompt.hasInput) {
     want(imageViewerInputUrl(current.item.jobId), 1);
   }
+  // Everything before this index is the visible presentation; everything
+  // after is speculative runway.
+  const immediateCount = schedule.length;
 
   for (let distance = 1; distance <= ImageViewerPreloadAhead; distance++) {
     consider(currentIndex + aheadSign * distance, 2 + distance);
@@ -2075,13 +2160,39 @@ function prepareImageViewerWindow(prompts, current) {
 
   // Stable order: first occurrence of each URL keeps the best (lowest) priority.
   const seen = new Set();
-  let currentEntry = null;
-  for (const { url, priority } of schedule) {
-    if (seen.has(url)) continue;
-    seen.add(url);
-    const entry = loadImageViewerEntry(url, priority);
-    if (url === current.item.url) currentEntry = entry;
-    else entry.promise.catch(() => {});
+  const startSlice = (from, to) => {
+    let currentEntry = null;
+    for (const { url, priority } of schedule.slice(from, to)) {
+      if (seen.has(url)) continue;
+      seen.add(url);
+      const entry = loadImageViewerEntry(url, priority);
+      if (url === current.item.url) currentEntry = entry;
+      else entry.promise.catch(() => {});
+    }
+    return currentEntry;
+  };
+
+  // The visible image (and its compare input) fetches ALONE. On a cold open,
+  // starting the runway at the same time splits the ~6-socket HTTP/1.1 pool
+  // and the server uplink across up to ImageViewerPreloadConcurrency multi-MB
+  // originals, multiplying the wait for the one image the user is staring at
+  // (observed 2026-08-05 as "first image very slow, rest instant"). Neighbors
+  // start only once the current frame has fetched+decoded — during warm
+  // navigation the current entry is already decoded, so the runway still
+  // schedules immediately and scrubbing stays hitch-free.
+  const currentEntry = startSlice(0, immediateCount);
+  const startNeighbors = () => startSlice(immediateCount, schedule.length);
+  if (currentEntry.blobUrl && currentEntry.image) {
+    startNeighbors();
+  } else {
+    const version = imageViewerRenderVersion;
+    const later = () => {
+      // A newer render's own prepare owns the window now; a closed viewer
+      // wants no fetches at all.
+      if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
+      startNeighbors();
+    };
+    currentEntry.promise.then(later, later);
   }
   return currentEntry;
 }
@@ -2201,6 +2312,7 @@ async function renderImageViewer() {
     imageViewerGenerator.textContent = genLabel(latest.item.generator);
     showImageViewerEntry(latest, entry);
     applyImageViewerCompare(latest);
+    markImageViewed(latest.item);
     if (imageViewerCompareInput && latest.prompt.hasInput) {
       const inputEntry = imageViewerCache.get(imageViewerInputUrl(latest.item.jobId));
       if (inputEntry && !inputEntry.blobUrl) {
@@ -2278,12 +2390,15 @@ function hideImageViewerHelp() {
 function showImageViewerHelp() {
   imageViewerHelpList.textContent = "";
   for (const command of ImageViewerCommands) {
-    if (!command.help) continue;
+    // help may be a function so entries can report live state (e.g. the
+    // close-handback toggle shows its current ON/OFF).
+    const helpText = typeof command.help === "function" ? command.help() : command.help;
+    if (!helpText) continue;
     const item = document.createElement("li");
     const keys = document.createElement("kbd");
     keys.textContent = command.keys.join(" / ");
     const label = document.createElement("span");
-    label.textContent = command.help;
+    label.textContent = helpText;
     item.appendChild(keys);
     item.appendChild(label);
     imageViewerHelpList.appendChild(item);
@@ -2368,6 +2483,22 @@ const ImageViewerCommands = [
       (event.key === "c" || event.key === "C"),
     help: "Compare with input image (left: input, right: output; applies to every image whose job had an input)",
     run: () => toggleImageViewerCompare(),
+  },
+  {
+    id: "returnSync",
+    keys: ["s"],
+    match: (event) =>
+      !event.ctrlKey && !event.metaKey && !event.altKey &&
+      (event.key === "s" || event.key === "S"),
+    help: () =>
+      `Toggle close handback (currently ${imageViewerReturnSync ? "ON" : "OFF"}) — when ON, ` +
+      "closing the viewer scrolls the page to the image you were viewing and focuses it; " +
+      "when OFF, the page stays where it was",
+    run: () => {
+      setViewerReturnSync(!imageViewerReturnSync);
+      // Refresh the ON/OFF readout in place when toggled from the help list.
+      if (imageViewerHelpOpen) showImageViewerHelp();
+    },
   },
   {
     id: "help",
@@ -2517,6 +2648,10 @@ function openImageViewer(link) {
 
 function closeImageViewer() {
   hideImageViewerHelp();
+  // Resolve the departed image's outer-page anchor BEFORE clearing state: the
+  // departure pulse (always) and the close handback (opt-in, `s` / settings)
+  // both target it.
+  const departedAnchor = findViewerAnchor(imageViewerState);
   imageViewer.hidden = true;
   document.body.classList.remove("image-viewer-open");
   imageViewerState = null;
@@ -2527,7 +2662,17 @@ function closeImageViewer() {
   for (const [url, entry] of imageViewerCache) discardImageViewerCacheEntry(url, entry);
   const restore = imageViewerFocusBeforeOpen;
   imageViewerFocusBeforeOpen = null;
-  if (restore && document.contains(restore) && typeof restore.focus === "function") {
+  if (departedAnchor) pulseViewerAnchor(departedAnchor);
+  if (imageViewerReturnSync && departedAnchor) {
+    // Handback: inner movement implies outer movement. Scroll only when the
+    // thumbnail isn't already fully on screen, and move focus to it so the
+    // keyboard continues from where the viewer walk ended.
+    const rect = departedAnchor.getBoundingClientRect();
+    if (rect.top < 0 || rect.bottom > window.innerHeight) {
+      departedAnchor.scrollIntoView({ block: "center" });
+    }
+    departedAnchor.focus({ preventScroll: true });
+  } else if (restore && document.contains(restore) && typeof restore.focus === "function") {
     restore.focus({ preventScroll: true });
   }
 }
@@ -2603,7 +2748,8 @@ document.addEventListener("keydown", (event) => {
   }
 
   event.preventDefault();
-  if (imageViewerHelpOpen && command.id !== "help" && command.id !== "close") {
+  // returnSync keeps the help list up so its ON/OFF readout refreshes in place.
+  if (imageViewerHelpOpen && !["help", "close", "returnSync"].includes(command.id)) {
     hideImageViewerHelp();
   }
   command.run();
@@ -3186,6 +3332,11 @@ function applyJobEvent(id, card, evt) {
         a.dataset.generator = evt.gen;
         a.dataset.imageIndex = String(imageIndex);
         a.dataset.generatorCount = String(evt.images.length);
+        // Persistent per-browser marker: this image was viewed full-size in
+        // the zoom viewer at some point (events replay, so re-apply here).
+        if (viewerSeenSet.has(viewerSeenKeyFor(id, evt.gen, imageIndex))) {
+          a.classList.add("viewer-seen");
+        }
         const img = document.createElement("img");
         // Cards display the <=640px server-side preview; the anchor (viewer,
         // open-in-new-tab, video source) keeps the exact original bytes.

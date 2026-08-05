@@ -28,7 +28,9 @@ namespace MultiImageClient
 
         public async Task<string> DescribeImageAsync(byte[] imageBytes, string prompt, int maxTokens = 512, float temperature = 0.8f)
         {
-            var dataUri = "data:image/png;base64," + Convert.ToBase64String(imageBytes);
+            // The data URI must carry the bytes' true type — UI describe inputs
+            // can be JPEG or WEBP, not just PNG.
+            var dataUri = $"data:{DescriberImageFormat.DetectMime(imageBytes)};base64," + Convert.ToBase64String(imageBytes);
             var payload = new
             {
                 model = _model,
