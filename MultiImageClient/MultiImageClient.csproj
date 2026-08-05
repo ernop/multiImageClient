@@ -52,6 +52,33 @@
     <ProjectReference Include="..\XAIGrokAPI\XAIGrokAPIClient.csproj" />
   </ItemGroup>
 
+  <!-- Stamp the exact commit into the assembly so the running instance can
+       report which code it contains (UI header, /api/config, startup log).
+       SourceRevisionId becomes the +suffix of AssemblyInformationalVersion;
+       the commit date rides along as AssemblyMetadata. A build outside git
+       embeds nothing and the runtime reports "untracked-build" — an explicit
+       label, never a guessed identity. -->
+  <Target Name="EmbedGitBuildInfo" BeforeTargets="GetAssemblyVersion" Condition="'$(SourceRevisionId)' == ''">
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; describe --always --dirty --abbrev=12"
+          ConsoleToMSBuild="true" IgnoreExitCode="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="MicGitDescribe" />
+      <Output TaskParameter="ExitCode" PropertyName="MicGitDescribeExit" />
+    </Exec>
+    <Exec Command="git -C &quot;$(MSBuildProjectDirectory)&quot; show -s --format=%cI HEAD"
+          ConsoleToMSBuild="true" IgnoreExitCode="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="MicGitCommitDate" />
+      <Output TaskParameter="ExitCode" PropertyName="MicGitCommitDateExit" />
+    </Exec>
+    <PropertyGroup Condition="'$(MicGitDescribeExit)' == '0' AND '$(MicGitDescribe)' != ''">
+      <SourceRevisionId>$(MicGitDescribe)</SourceRevisionId>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(MicGitCommitDateExit)' == '0' AND '$(MicGitCommitDate)' != ''">
+      <AssemblyMetadata Include="MicCommitDate" Value="$(MicGitCommitDate)" />
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <None Update="settings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

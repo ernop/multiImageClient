@@ -330,6 +330,14 @@ namespace MultiImageClient
                     },
                     defaults = new { shape = "auto", detail = "high", quality = "high", moderation = "low", n = 1 },
                     maxInputImages = UiJobRunner.MaxInputImages,
+                    // Exact code identity of the running server (embedded at
+                    // build time), so any window can trace what this instance
+                    // does or does not contain yet.
+                    build = new
+                    {
+                        commit = UiBuildInfo.Commit,
+                        commitDate = UiBuildInfo.CommitDate,
+                    },
                     // Shared-site identity: when the access gate is on, the
                     // authenticated login name seeds the creator-name control.
                     auth = new
@@ -1002,9 +1010,9 @@ namespace MultiImageClient
                 return Results.Json(new { entries });
             });
 
-            Logger.Log($"UI server starting on {url}  (wwwroot: {wwwroot})");
+            Logger.Log($"UI server starting on {url}  (build {UiBuildInfo.Describe}, wwwroot: {wwwroot})");
             Console.WriteLine();
-            Console.WriteLine($"  MultiImageClient UI:  {url}");
+            Console.WriteLine($"  MultiImageClient UI:  {url}  (build {UiBuildInfo.Commit})");
             Console.WriteLine("  Ctrl-C to stop.");
             Console.WriteLine();
             // Interactive `dotnet run -- --ui` still opens a tab. Under systemd

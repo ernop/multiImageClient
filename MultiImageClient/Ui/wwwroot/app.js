@@ -103,6 +103,7 @@ const imageViewerPrompt = el("image-viewer-prompt");
 const imageViewerGuidance = el("image-viewer-guidance");
 const imageViewerGenerator = el("image-viewer-generator");
 const imageViewerDimensions = el("image-viewer-dimensions");
+const imageViewerStatus = el("image-viewer-status");
 let lastLogSequence = 0;
 
 // ---------- live process log ----------
@@ -261,6 +262,15 @@ async function loadConfig() {
   authInfo = cfg.auth || authInfo;
   applyAuthState();
   initGpt2Guidance();
+
+  // Exact code identity of the running server, embedded at build time.
+  const buildNode = el("build-info");
+  if (buildNode && cfg.build && cfg.build.commit) {
+    buildNode.textContent = `build ${cfg.build.commit}`;
+    buildNode.title = cfg.build.commitDate
+      ? `Commit the running server was built from: ${cfg.build.commit}, committed ${cfg.build.commitDate}`
+      : `Commit the running server was built from: ${cfg.build.commit}`;
+  }
 
   const fillSelect = (selectEl, entries) => {
     selectEl.innerHTML = "";
@@ -2382,19 +2392,19 @@ function sizeImageViewerWindow() {
 // compare panes) draws at the largest undistorted size the screen allows,
 // and the window hugs that — full width only when the content actually
 // needs it (wide image, ultrawide compare), never just to fill the monitor.
-// Two passes because the status bar's height depends on the window width
-// (the prompt wraps differently when the window narrows).
+// The info panel (generator, resolution, prompt, guidance) goes wherever it
+// costs the image the least: below the stage, or as a fixed-width right
+// column when that draws the image larger — typical for wide images and for
+// compare mode, where the doubled stage makes height the binding constraint.
+const ImageViewerSideStatusWidth = 280; // matches the .side-status grid column in style.css
+
 function fitImageViewerWindow() {
   if (imageViewer.hidden || imageViewerWindow.dataset.userSized || !imageViewerContentAr) return;
   const margin = 16;
   const gap = 4; // matches #image-viewer-stage.compare gap
   const availWidth = Math.max(440, window.innerWidth - margin * 2);
   const availHeight = Math.max(320, window.innerHeight - margin * 2);
-  for (let pass = 0; pass < 2; pass++) {
-    const statusHeight = el("image-viewer-status").offsetHeight;
-    const stageMaxHeight = Math.max(120, availHeight - statusHeight);
-    let stageWidth;
-    let stageHeight;
+  const stageSizeWithin = (maxWidth, maxHeight) => {
     if (imageViewerStage.classList.contains("compare")) {
       const inputAr = imageViewerInputImage.naturalWidth > 0
         ? imageViewerInputImage.naturalWidth / imageViewerInputImage.naturalHeight
@@ -2402,19 +2412,44 @@ function fitImageViewerWindow() {
       // Equal-width panes: the wider aspect dictates the pane width needed
       // for both images to reach the shared stage height.
       const paneAr = Math.max(inputAr, imageViewerContentAr);
-      const paneMaxWidth = (availWidth - gap) / 2;
-      stageHeight = Math.min(stageMaxHeight, paneMaxWidth / paneAr);
-      stageWidth = stageHeight * paneAr * 2 + gap;
-    } else {
-      stageHeight = Math.min(stageMaxHeight, availWidth / imageViewerContentAr);
-      stageWidth = stageHeight * imageViewerContentAr;
+      const paneMaxWidth = (maxWidth - gap) / 2;
+      const height = Math.min(maxHeight, paneMaxWidth / paneAr);
+      return { width: height * paneAr * 2 + gap, height };
     }
-    const width = Math.max(440, Math.min(availWidth, Math.round(stageWidth)));
-    const height = Math.max(320, Math.min(availHeight, Math.round(stageHeight + statusHeight)));
+    const height = Math.min(maxHeight, maxWidth / imageViewerContentAr);
+    return { width: height * imageViewerContentAr, height };
+  };
+  const placeWindow = (width, height) => {
     imageViewerWindow.style.width = `${width}px`;
     imageViewerWindow.style.height = `${height}px`;
     imageViewerWindow.style.left = `${Math.max(margin, (window.innerWidth - width) / 2)}px`;
     imageViewerWindow.style.top = `${Math.max(margin, (window.innerHeight - height) / 2)}px`;
+  };
+
+  // Bottom-bar candidate: the bar's height depends on the window width (the
+  // prompt wraps differently as the window narrows), so measure it in bottom
+  // mode over two passes. This leaves the bottom layout applied.
+  imageViewerWindow.classList.remove("side-status");
+  let bottomStageHeight = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    const statusHeight = imageViewerStatus.offsetHeight;
+    const stage = stageSizeWithin(availWidth, Math.max(120, availHeight - statusHeight));
+    bottomStageHeight = stage.height;
+    placeWindow(
+      Math.max(440, Math.min(availWidth, Math.round(stage.width))),
+      Math.max(320, Math.min(availHeight, Math.round(stage.height + statusHeight))));
+  }
+
+  // Side-column candidate: fixed-width info column, full-height stage. The
+  // displayed image height equals the stage height in both layouts (the stage
+  // hugs the content's aspect ratio), so comparing stage heights compares
+  // image scale directly. Ties keep the bottom bar.
+  const sideStage = stageSizeWithin(availWidth - ImageViewerSideStatusWidth, availHeight);
+  if (sideStage.height > bottomStageHeight + 1) {
+    imageViewerWindow.classList.add("side-status");
+    placeWindow(
+      Math.max(440, Math.min(availWidth, Math.round(sideStage.width + ImageViewerSideStatusWidth))),
+      Math.max(320, Math.min(availHeight, Math.round(sideStage.height))));
   }
 }
 
