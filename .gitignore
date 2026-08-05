@@ -41,3 +41,4 @@ w-detection/__pycache__/
 
 # Runtime log artifacts (e.g. ideogram smoke-test logs)
 logs/
+tpdiscord-archive/

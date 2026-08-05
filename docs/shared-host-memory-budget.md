@@ -91,11 +91,11 @@ surveyed (total ~2.3 GiB used, ~1.2 GiB page cache, ~1.5 GiB available):
 |---|---|---|
 | `multiimageclient-ui` | ~750–950 MB | this app |
 | `tpbeta.uwsgi` | ~504 MB | Terrain Parkour beta Django site (uWSGI, `parkour2021` venv) |
-| `tpdiscord-web` | ~409 MB | tpDiscord web UI — a Django dev `runserver` on port 8018, not uWSGI, which partly explains its size |
+| `tpdiscord-web` | ~409 MB | tpDiscord web UI — a Django dev `runserver` on port 8018, not uWSGI, which partly explains its size. **Decommissioned 2026-08-05** (see below) |
 | `fuseki4_ai.uwsgi` | ~181 MB | subcreation Django app; its cgroup also holds a ~120 MB `goaccess` (log analytics) and a `fuseki4-ai-gene` worker |
 | `postgresql@18-main` | ~93 MB | shared database backing the Django sites |
 | `nginx` | ~64 MB | the only public listener; routes all vhosts including the secret-path miic vhost |
-| `tpdiscord-reader` | ~63 MB | Discord message reader companion to tpdiscord-web |
+| `tpdiscord-reader` | ~63 MB | Discord message reader companion to tpdiscord-web. **Decommissioned 2026-08-05** (see below) |
 | `syncthing@subcreation` | ~48 MB | file sync |
 | `fail2ban` | ~23 MB | SSH/web brute-force banning |
 | `php8.3-fpm`, `python-relay` | ~15 MB, ~13 MB | small services |
@@ -104,10 +104,24 @@ The neighbors sum to about 1.4 GiB and predate this deployment — that is why
 the miic budget sits where it does: 1200M high keeps the box out of the
 no-swap OOM zone even when this service and Terrain Parkour peak together.
 
+## tpDiscord decommission (2026-08-05)
+
+`tpdiscord-web` + `tpdiscord-reader` were shut down and removed: units
+stopped/disabled/deleted, the four `/tpdiscord/` nginx routes removed from
+`terrain_nginx_beta.conf` (committed in the terrainParkour repo), the
+`tpdiscord` Postgres database and its dedicated role dropped, and the
+untracked bulk data (2.5 GB `media/`, venv, messages, logs, `config.json`)
+deleted from the server. The git-tracked source stays in the terrainParkour
+repo (`services/tpdiscord/`, ~1.8 MB working copy restored). Everything
+deleted was archived first to this project's local `tpdiscord-archive/`
+(gitignored): full media (3,996 files, SHA/size-verified), `pg_dump` in
+custom + plain-SQL formats (hash-verified), `config.json`, `messages/`,
+`chatindex/`, `logs/`. The Discord bot token was deliberately NOT revoked.
+This frees ~515 MB RAM and ~2.8 GB disk; the miic memory budget above was
+sized with tpDiscord resident, so `MemoryHigh` could be revisited upward.
+
 ## Open observations (no action decided)
 
-- `tpdiscord-web` at ~400 MB via Django `runserver` is the second-largest
-  tenant and the least production-shaped process on the box.
 - `deploy/README.md`'s example settings show `UiMaxConcurrentGenerators: 2`
   while AGENTS.md records production at 20. The live
   `/etc/multiimageclient/settings.json` is root-owned 0640 and the deploy
