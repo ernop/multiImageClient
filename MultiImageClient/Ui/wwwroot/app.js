@@ -2343,6 +2343,42 @@ function renderImageViewerGuidance(current) {
   }
 }
 
+// Item-specific chrome (prompt, guidance, describe panel, generator name).
+// Callers pair this with same-item stage pixels only — never with another
+// item's media.
+function paintImageViewerChrome(target) {
+  imageViewerPrompt.textContent = target.prompt.prompt;
+  renderImageViewerGuidance(target);
+  // Describe items: the stage IS the submitted image; the panel above the
+  // prompt carries the returned description, and the header says so.
+  const isText = target.item.kind === "text";
+  imageViewerDescribe.hidden = !isText;
+  imageViewerDescribe.textContent = isText ? target.item.describeText : "";
+  imageViewerGenerator.textContent = isText
+    ? `${genLabel(target.item.generator)} — description of the submitted image`
+    : genLabel(target.item.generator);
+}
+
+// Cold-open loading state: the pending target's OWN card thumbnail at stage
+// size, with its own chrome — it explicitly identifies the image being
+// fetched, so nothing stale is implied. The dimensions slot reports that the
+// full-resolution bytes are still on their way; the compare split and the
+// "seen" mark wait for the real frame. The thumbnail is only used when the
+// clicked card already has it decoded (it always does — the user clicked it).
+function paintImageViewerColdOpenPreview(current) {
+  const anchor = findViewerAnchor(current.item);
+  const thumb = anchor ? anchor.querySelector("img") : null;
+  if (!thumb || !thumb.complete || !(thumb.naturalWidth > 0)) return;
+  imageViewerImage.src = thumb.currentSrc || thumb.src;
+  imageViewerImage.alt = `loading full resolution of ${current.item.generator} image ${current.item.imageIndex + 1}`;
+  paintImageViewerChrome(current);
+  imageViewerDimensions.textContent = "loading full resolution…";
+  // The thumb keeps the original's aspect ratio, so the window shrink-wraps
+  // to its final geometry immediately instead of jumping after the swap.
+  imageViewerContentAr = thumb.naturalWidth / thumb.naturalHeight;
+  fitImageViewerWindow();
+}
+
 // A hidden viewer is not allowed to retain presentable content. A later open
 // may wait on the network/decode path, and exposing the old image's chrome
 // during that wait falsely associates it with the newly selected image.
@@ -2388,16 +2424,7 @@ async function renderImageViewer() {
         latest.item.jobId !== current.item.jobId ||
         latest.item.generator !== current.item.generator ||
         latest.item.imageIndex !== current.item.imageIndex) return false;
-    imageViewerPrompt.textContent = latest.prompt.prompt;
-    renderImageViewerGuidance(latest);
-    // Describe items: the stage IS the submitted image; the panel above the
-    // prompt carries the returned description, and the header says so.
-    const isText = latest.item.kind === "text";
-    imageViewerDescribe.hidden = !isText;
-    imageViewerDescribe.textContent = isText ? latest.item.describeText : "";
-    imageViewerGenerator.textContent = isText
-      ? `${genLabel(latest.item.generator)} — description of the submitted image`
-      : genLabel(latest.item.generator);
+    paintImageViewerChrome(latest);
     showImageViewerEntry(latest, entry);
     applyImageViewerCompare(latest);
     markImageViewed(latest.item);
@@ -2420,6 +2447,17 @@ async function renderImageViewer() {
   if (currentEntry.blobUrl && currentEntry.image) {
     paint(currentEntry);
     return;
+  }
+
+  // Cold open: the stage was cleared while the viewer was hidden, so there is
+  // no previous coherent frame to keep up — the user would stare at an empty
+  // window for the whole full-resolution download (multi-MB originals take
+  // seconds on a remote deployment). Paint the SAME item's card thumbnail
+  // (already in the browser cache — it is the picture that was just clicked)
+  // together with its chrome, then swap to the full-resolution frame when it
+  // decodes. Warm navigation (stage occupied) keeps the previous frame.
+  if (!imageViewerImage.getAttribute("src")) {
+    paintImageViewerColdOpenPreview(current);
   }
 
   try {
