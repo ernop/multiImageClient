@@ -18,13 +18,17 @@ Restart=on-failure
 RestartSec=5
 UMask=0077
 
-# Be a polite neighbor on a 4 GiB server. The app also limits itself to one
-# job / two generators in the production settings and reserves disk space.
+# Memory budget re-derived 2026-08-05 after tpdiscord and tpbeta.uwsgi were
+# retired: remaining neighbors ~600M steady + ~500M cron spikes + ~400M page
+# cache floor leaves ~2.4G of the 3.8G no-swap box for this app, now its
+# primary tenant. MemoryHigh is the effective operating ceiling (the liveness
+# guard restarts after sustained time at it); the high->max gap must cover the
+# largest fast allocation burst so a clean restart beats the kernel kill.
 Nice=10
 CPUQuota=150%
 IOWeight=25
-MemoryHigh=1200M
-MemoryMax=1600M
+MemoryHigh=2048M
+MemoryMax=2560M
 OOMScoreAdjust=500
 TasksMax=256
 
