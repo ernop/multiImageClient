@@ -29,8 +29,6 @@
     <PackageReference Include="Google.Apis.Auth" Version="1.71.0" />
     <PackageReference Include="Google_GenerativeAI" Version="3.2.0" />
     <PackageReference Include="Google.Cloud.AIPlatform.V1" Version="3.0.0" />
-    <PackageReference Include="LLamaSharp" Version="0.17.0" />
-    <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.16.0" />
     <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.16.0" />
     <PackageReference Include="Magick.NET.Core" Version="14.16.0" />
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.10" />
