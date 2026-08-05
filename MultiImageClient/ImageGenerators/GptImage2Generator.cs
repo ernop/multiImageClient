@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -417,21 +418,24 @@ namespace MultiImageClient
                     long lastEventMs = 0;
 
                     await using var rawStream = await resp.Content.ReadAsStreamAsync();
-                    using var reader = new StreamReader(rawStream, Encoding.UTF8);
+                    using var reader = new Utf8SseLineReader(rawStream);
 
-                    while (!reader.EndOfStream)
+                    while (true)
                     {
-                        var line = await reader.ReadLineAsync();
-                        if (line == null) break;
+                        var lineOrNull = await reader.ReadLineAsync();
+                        if (lineOrNull == null) break;
+                        var line = lineOrNull.Value;
                         if (line.Length == 0) continue;                         // event boundary
-                        if (!line.StartsWith("data:")) continue;                // ignore `event:` / comment lines
-                        var payload = line.Substring(5).TrimStart();
-                        if (payload == "[DONE]")
+                        if (!line.Span.StartsWith("data:"u8)) continue;         // ignore `event:` / comment lines
+                        var payload = TrimLeadingAsciiWhitespace(line.Slice(5));
+                        if (payload.Span.SequenceEqual("[DONE]"u8))
                         {
                             traceDoneCount++;
                             break;
                         }
 
+                        // Parsed directly from the reader's UTF-8 buffer; the document
+                        // is disposed before the next ReadLineAsync overwrites it.
                         using var evt = JsonDocument.Parse(payload);
                         var root = evt.RootElement;
                         var type = root.TryGetProperty("type", out var tEl) ? tEl.GetString() : "(no type)";
@@ -456,7 +460,7 @@ namespace MultiImageClient
                                         && root.TryGetProperty("b64_json", out var pbEl)
                                         && pbEl.ValueKind == JsonValueKind.String)
                                     {
-                                        TryPublishPartial(pbEl.GetString(), pidx, imgIdx, promptDetails, genTag);
+                                        TryPublishPartial(pbEl, pidx, imgIdx, promptDetails, genTag);
                                     }
                                     break;
                                 }
@@ -504,7 +508,8 @@ namespace MultiImageClient
                             case "image_generation.error":
                                 {
                                     var (msg, code) = ExtractErrorDetails(root);
-                                    streamErrorMessage = msg ?? payload;
+                                    // Error payloads are small; materializing one is fine.
+                                    streamErrorMessage = msg ?? Encoding.UTF8.GetString(payload.Span);
                                     var codePart = string.IsNullOrEmpty(code) ? "" : $" [code={code}]";
                                     Logger.Log($"    [{genTag}] ERROR event at {nowMs} ms{codePart}: {streamErrorMessage}");
                                     break;
@@ -656,11 +661,15 @@ namespace MultiImageClient
         {
             if (IsBinarySseField(propertyName) && value.ValueKind == JsonValueKind.String)
             {
-                var encodedValue = value.GetString() ?? "";
+                // Measure the raw UTF-8 token rather than materializing the
+                // multi-megabyte base64 payload as a string just for .Length.
+                // Base64 has no JSON escapes, so raw length minus the two
+                // surrounding quotes is exact.
+                var rawLength = System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(value).Length;
                 return new
                 {
                     omitted = true,
-                    encodedLength = encodedValue.Length,
+                    encodedLength = Math.Max(0, rawLength - 2),
                 };
             }
 
@@ -916,11 +925,13 @@ namespace MultiImageClient
         // `partialIdx` is the partial-within-image index (0..PartialImageCount-1,
         // from the `partial_image_index` event field). `imageIdx` is the
         // provider's output index when present, or -1 when omitted.
-        private void TryPublishPartial(string b64, int partialIdx, int imageIdx, PromptDetails pd, string genTag)
+        private void TryPublishPartial(JsonElement b64Element, int partialIdx, int imageIdx, PromptDetails pd, string genTag)
         {
             try
             {
-                var bytes = Convert.FromBase64String(b64);
+                // Decodes straight from the document's UTF-8 buffer — never
+                // materializes the multi-megabyte base64 payload as a string.
+                var bytes = b64Element.GetBytesFromBase64();
                 _partialImageCallback?.Invoke(partialIdx, imageIdx, bytes);
                 if (string.IsNullOrEmpty(_partialSaveFolder))
                 {
@@ -967,6 +978,100 @@ namespace MultiImageClient
                 }
                 if (ct.IsCancellationRequested) return;
                 Logger.Log($"    [{genTag}] ...still waiting, {sw.ElapsedMilliseconds / 1000}s elapsed");
+            }
+        }
+
+        // SSE payloads use only ASCII space/tab after "data:" per the spec.
+        private static ReadOnlyMemory<byte> TrimLeadingAsciiWhitespace(ReadOnlyMemory<byte> value)
+        {
+            var span = value.Span;
+            var offset = 0;
+            while (offset < span.Length && (span[offset] == (byte)' ' || span[offset] == (byte)'\t'))
+            {
+                offset++;
+            }
+            return value.Slice(offset);
+        }
+
+        // Reads LF-terminated lines from the SSE byte stream into one reusable
+        // pooled buffer. gpt-image-2 partial/final events are single lines
+        // carrying the whole image as base64 (many megabytes each);
+        // StreamReader.ReadLineAsync allocated every such line as a fresh
+        // UTF-16 string (~2.7x the image bytes) plus a second full copy for
+        // the "data:" substring. Under two concurrent streams that LOH churn
+        // pushed the shared host's cgroup past memory.high and the liveness
+        // guard restarted the service. Byte slices into a reused buffer make
+        // the steady-state per-event allocation near zero.
+        private sealed class Utf8SseLineReader : IDisposable
+        {
+            private readonly Stream _stream;
+            private byte[] _readBuffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+            private int _readStart;
+            private int _readEnd;
+            private byte[] _lineBuffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+            private bool _endOfStream;
+
+            public Utf8SseLineReader(Stream stream)
+            {
+                _stream = stream;
+            }
+
+            // Returns the next line without its LF/CRLF terminator, as a slice
+            // of an internal buffer that is only valid until the next call
+            // (JsonDocuments parsed from it must be disposed before then).
+            // Returns null at end of stream; a final unterminated line is
+            // surfaced before that.
+            public async Task<ReadOnlyMemory<byte>?> ReadLineAsync()
+            {
+                var lineLength = 0;
+                while (true)
+                {
+                    if (_readStart >= _readEnd)
+                    {
+                        if (_endOfStream)
+                        {
+                            return lineLength > 0 ? _lineBuffer.AsMemory(0, lineLength) : null;
+                        }
+                        _readEnd = await _stream.ReadAsync(_readBuffer.AsMemory());
+                        _readStart = 0;
+                        if (_readEnd == 0)
+                        {
+                            _endOfStream = true;
+                        }
+                        continue;
+                    }
+
+                    var newlineIndex = Array.IndexOf(_readBuffer, (byte)'\n', _readStart, _readEnd - _readStart);
+                    var copyEnd = newlineIndex >= 0 ? newlineIndex : _readEnd;
+                    var copyLength = copyEnd - _readStart;
+                    EnsureLineCapacity(lineLength + copyLength);
+                    Buffer.BlockCopy(_readBuffer, _readStart, _lineBuffer, lineLength, copyLength);
+                    lineLength += copyLength;
+                    _readStart = copyEnd + (newlineIndex >= 0 ? 1 : 0);
+                    if (newlineIndex >= 0)
+                    {
+                        if (lineLength > 0 && _lineBuffer[lineLength - 1] == (byte)'\r')
+                        {
+                            lineLength--;
+                        }
+                        return _lineBuffer.AsMemory(0, lineLength);
+                    }
+                }
+            }
+
+            private void EnsureLineCapacity(int required)
+            {
+                if (required <= _lineBuffer.Length) return;
+                var replacement = ArrayPool<byte>.Shared.Rent(Math.Max(required, _lineBuffer.Length * 2));
+                Buffer.BlockCopy(_lineBuffer, 0, replacement, 0, _lineBuffer.Length);
+                ArrayPool<byte>.Shared.Return(_lineBuffer);
+                _lineBuffer = replacement;
+            }
+
+            public void Dispose()
+            {
+                ArrayPool<byte>.Shared.Return(_readBuffer);
+                ArrayPool<byte>.Shared.Return(_lineBuffer);
             }
         }
     }

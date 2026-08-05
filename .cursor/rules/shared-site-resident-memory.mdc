@@ -27,6 +27,7 @@ The `--ui` app on fuseki/tpbeta is a **long-lived multi-user daemon** on a small
 5. ~~Lazy archive hydration~~ — index all days; hydrate today + on-demand archive/`Get`; cold eviction.
 6. ~~Disk-backed card thumbs~~ — `UiHistory/{id}/thumbs/`; stream path; build from file stream, not full-original heap buffer.
 7. ~~Idle Chromium shutdown~~ — `GrokWebBrowserClient` / `MetaWebClient` release after 5 min idle (gate stays alive).
+8. ~~gpt-image-2 SSE partial parse churn~~ — each partial/final event arrived as one multi-MB base64 line and was materialized ~6x (StreamReader UTF-16 line, `Substring`, JSON transcode, summarizer `GetString` for `.Length`, b64 `GetString`, decode); two concurrent streams generated enough LOH garbage to cross memory.high. Fixed 2026-08-04: byte-based pooled `Utf8SseLineReader` in `GptImage2Generator`, `GetBytesFromBase64()` straight from the document, raw-token length via `JsonMarshal`, plus `runtimeconfig.template.json` pinning `System.GC.HeapHardLimitPercent=50` so the GC collects well below the liveness guard's memory.high kill line (the .NET default of 75% of memory.max equalled MemoryHigh exactly).
 
 When adding new UI caches, give them a byte/entry cap from day one.
 
