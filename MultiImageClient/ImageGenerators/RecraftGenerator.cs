@@ -297,16 +297,61 @@ namespace MultiImageClient
             catch (Exception ex)
             {
                 Logger.Log($"Recraft error: {ex.Message}");
-                var jsonPart = ex.Message.Split(" - ").Last().Trim();
-
-                using var doc = JsonDocument.Parse(jsonPart);
-                var detailedError = doc.RootElement.GetProperty("code").GetString();
-                return new TaskProcessResult { IsSuccess = false, ErrorMessage = detailedError, PromptDetails = promptDetails, ImageGenerator = _apiType, ImageGeneratorDescription = generator.GetGeneratorSpecPart() };
+                return new TaskProcessResult
+                {
+                    IsSuccess = false,
+                    ErrorMessage = ExtractErrorMessage(ex),
+                    PromptDetails = promptDetails,
+                    ImageGenerator = _apiType,
+                    ImageGeneratorDescription = generator.GetGeneratorSpecPart()
+                };
             }
             finally
             {
                 _recraftSemaphore.Release();
             }
+        }
+
+        public static string ExtractErrorMessage(Exception exception)
+        {
+            var message = exception.Message;
+            var jsonStart = message.IndexOf('{');
+            if (jsonStart < 0)
+            {
+                return message;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(message[jsonStart..]);
+                var root = doc.RootElement;
+                var code = root.TryGetProperty("code", out var codeElement)
+                    ? codeElement.GetString()
+                    : null;
+                var detail = root.TryGetProperty("message", out var messageElement)
+                    ? messageElement.GetString()
+                    : null;
+
+                if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(detail))
+                {
+                    return $"{code}: {detail}";
+                }
+                if (!string.IsNullOrWhiteSpace(code))
+                {
+                    return code;
+                }
+                if (!string.IsNullOrWhiteSpace(detail))
+                {
+                    return detail;
+                }
+            }
+            catch (JsonException)
+            {
+                // The provider or a downstream HTTP operation can return plain
+                // text containing a brace. Preserve the original failure.
+            }
+
+            return message;
         }
 
         // Recraft's /images/imageToImage input contract (recraft.ai docs,

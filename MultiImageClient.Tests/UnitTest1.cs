@@ -282,4 +282,24 @@ public class RecraftVariantTests
 
         Assert.EndsWith(".svg", filename, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void PlainTextFailureIsNotReplacedByJsonParserFailure()
+    {
+        var exception = new InvalidDataException(
+            "Recraft content-type probe returned unsupported or missing content type 'application/octet-stream'.");
+
+        Assert.Equal(exception.Message, RecraftGenerator.ExtractErrorMessage(exception));
+    }
+
+    [Fact]
+    public void ProviderJsonFailureIncludesCodeAndMessage()
+    {
+        var exception = new HttpRequestException(
+            "API request failed: BadRequest - {\"code\":\"invalid_model\",\"message\":\"Model is unavailable\"}");
+
+        Assert.Equal(
+            "invalid_model: Model is unavailable",
+            RecraftGenerator.ExtractErrorMessage(exception));
+    }
 }
