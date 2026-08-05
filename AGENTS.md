@@ -16,6 +16,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 - [docs/ideation-mode-prd.md](docs/ideation-mode-prd.md) — **core top-level product need (not yet implemented)**: Claude-powered Ideation Mode for the `--ui` web app. User briefs Claude (text and/or pasted images), Claude returns N highly-variable structured concept proposals via forced tool use (guaranteed-parseable JSON), user curates idea cards individually or auto-fans-out all N ideas × M generators. Keep this in mind when touching the UI; hone toward it.
 - [docs/grok-web-video-browser-transport.md](docs/grok-web-video-browser-transport.md) — grok-web video product contract and live browser protocol findings; motion prompt optional, method required, and Playwright must trigger Grok's real integrity-signed Make Video action.
 - [docs/provider-onboarding.md](docs/provider-onboarding.md) — researched 2026-07-30: signup steps, endpoints, pricing, and prompt-cap quirks for candidate new providers (Seedream, Reve, Luma, Qwen, MiniMax, Runway; Firefly = enterprise-gated skip; Midjourney = hosted-shim or midjourney-web routes only).
+- [docs/cdn-image-hosting-plan.md](docs/cdn-image-hosting-plan.md) — **not implemented yet**: Bunny.net Storage+CDN plan to dual-write durable images and serve signed CDN URLs in the UI (disk stays SoT; no AWS IAM; no Cloudflare). Owner checklist + settings keys + abuse caps.
 
 ## Related Projects
 
