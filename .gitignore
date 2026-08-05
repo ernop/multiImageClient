@@ -28,6 +28,7 @@ tools/vid2img/sessions/
 # Local scratch prompt/cookie files — keep repo txt that are checked in via ! rules below.
 *.txt
 !MultiImageClient/prompts.txt
+!MultiImageClient/Ui/wwwroot/mcphee/vendor/wordfreq/en-30k.txt
 !djangoManager/imageMaker/requirements.txt
 !tools/ideogram-export/requirements.txt
 !tools/vid2img/requirements.txt
