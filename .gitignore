@@ -38,3 +38,6 @@ tools/vid2img/sessions/
 w-detection/output-*/
 w-detection/*.png
 w-detection/__pycache__/
+
+# Runtime log artifacts (e.g. ideogram smoke-test logs)
+logs/
