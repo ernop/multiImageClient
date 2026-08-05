@@ -337,6 +337,7 @@ namespace MultiImageClient
                     {
                         commit = UiBuildInfo.Commit,
                         commitDate = UiBuildInfo.CommitDate,
+                        commitUrl = UiBuildInfo.CommitUrl,
                     },
                     // Shared-site identity: when the access gate is on, the
                     // authenticated login name seeds the creator-name control.

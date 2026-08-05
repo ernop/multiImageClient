@@ -10,8 +10,16 @@ namespace MultiImageClient
     /// rather than any guessed identity.
     public static class UiBuildInfo
     {
+        // The public repository this code lives in; the UI links the running
+        // build's hash straight to its commit page.
+        private const string CommitUrlBase = "https://github.com/ernop/multiImageClient/commit/";
+
         public static string Commit { get; }
         public static string CommitDate { get; }
+
+        /// Link to the exact commit in the public repo, or null when the
+        /// build carries no git identity (untracked-build).
+        public static string? CommitUrl { get; }
 
         static UiBuildInfo()
         {
@@ -26,6 +34,16 @@ namespace MultiImageClient
             CommitDate = asm
                 .GetCustomAttributes<AssemblyMetadataAttribute>()
                 .FirstOrDefault(a => a.Key == "MicCommitDate")?.Value ?? "";
+
+            // git describe may append "-dirty"; the link targets the hash
+            // itself (the page then can't show uncommitted local edits, which
+            // is exactly what the visible -dirty suffix warns about).
+            var hash = Commit.EndsWith("-dirty", System.StringComparison.Ordinal)
+                ? Commit[..^"-dirty".Length]
+                : Commit;
+            CommitUrl = hash.Length > 0 && hash.All(System.Uri.IsHexDigit)
+                ? CommitUrlBase + hash
+                : null;
         }
 
         public static string Describe =>

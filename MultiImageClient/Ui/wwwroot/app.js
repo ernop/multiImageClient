@@ -264,12 +264,27 @@ async function loadConfig() {
   initGpt2Guidance();
 
   // Exact code identity of the running server, embedded at build time.
+  // When the build carries a real hash it links to the commit in the public
+  // repo (the page-wide no-referrer meta keeps the secret path out of the
+  // outbound request).
   const buildNode = el("build-info");
   if (buildNode && cfg.build && cfg.build.commit) {
-    buildNode.textContent = `build ${cfg.build.commit}`;
-    buildNode.title = cfg.build.commitDate
+    const label = `build ${cfg.build.commit}`;
+    buildNode.textContent = "";
+    if (cfg.build.commitUrl) {
+      const a = document.createElement("a");
+      a.href = cfg.build.commitUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = label;
+      buildNode.appendChild(a);
+    } else {
+      buildNode.textContent = label;
+    }
+    buildNode.title = (cfg.build.commitDate
       ? `Commit the running server was built from: ${cfg.build.commit}, committed ${cfg.build.commitDate}`
-      : `Commit the running server was built from: ${cfg.build.commit}`;
+      : `Commit the running server was built from: ${cfg.build.commit}`)
+      + (cfg.build.commitUrl ? " — click to open the commit on GitHub" : "");
   }
 
   const fillSelect = (selectEl, entries) => {

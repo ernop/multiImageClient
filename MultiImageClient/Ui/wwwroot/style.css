@@ -64,6 +64,8 @@ header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
   padding: 2px 6px;
   user-select: none;
 }
+#build-info a { color: inherit; text-decoration: none; }
+#build-info a:hover { color: var(--accent); text-decoration: underline; }
 
 /* Deliberately quiet: a small moon that only asserts itself while active. */
 #night-toggle {
@@ -1364,6 +1366,32 @@ body.image-viewer-open { overflow: hidden; }
 }
 #image-viewer-guidance.sent { color: var(--ok); }
 #image-viewer-guidance.off { color: var(--err); font-weight: 600; }
+/* Side-column layout: when the image is wide (or compare mode doubles the
+   stage) height is the binding constraint and a bottom bar shrinks the image,
+   so the info panel becomes a fixed-width right column instead.
+   fitImageViewerWindow picks whichever placement draws the image larger; the
+   280px column must match ImageViewerSideStatusWidth in app.js. */
+#image-viewer-window.side-status {
+  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-rows: minmax(0, 1fr);
+}
+#image-viewer-window.side-status #image-viewer-status {
+  min-height: 0;
+  overflow-y: auto;
+  border-top: none;
+  border-left: 1px solid var(--line);
+}
+#image-viewer-window.side-status #image-viewer-meta-row {
+  flex-wrap: wrap;
+  row-gap: 3px;
+}
+/* The whole column scrolls as one, so the prompt and guidance drop their
+   bottom-bar height caps and stay adjacent at full length. */
+#image-viewer-window.side-status #image-viewer-prompt,
+#image-viewer-window.side-status #image-viewer-guidance {
+  max-height: none;
+  overflow-y: visible;
+}
 #image-viewer-resize {
   position: absolute;
   right: 0;
