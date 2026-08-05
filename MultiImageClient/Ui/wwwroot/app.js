@@ -23,6 +23,10 @@ let spellfixPrevious = null;  // prompt text as it was before the last fix, for 
 // gpt-image-2 anti-murk guidance defaults from /api/config; the live control
 // state lives in the DOM and persists per-browser in localStorage.
 let gpt2Guidance = { defaultEnabled: true, defaultText: "" };
+// Standard instruction the server substitutes for blank describe-only jobs;
+// the composer applies the same text at submit so the card shows exactly
+// what was recorded.
+let describeConfig = { defaultInstruction: "" };
 const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
 // V2: the default guidance text was replaced on 2026-07-31 (user request);
 // the key bump retires stored copies of the old default so every browser
@@ -93,6 +97,8 @@ const clearBtn = el("clear-image");
 const fileInput = el("file-input");
 const promptBox = el("prompt");
 const gensRow = el("gens-row");
+const describeSection = el("describe-section");
+const describeRow = el("describe-row");
 const sendBtn = el("send");
 const sendError = el("send-error");
 const jobsSection = el("jobs");
@@ -111,6 +117,7 @@ const imageViewerOutputLabel = el("image-viewer-output-label");
 const imageViewerHelp = el("image-viewer-help");
 const imageViewerHelpList = el("image-viewer-help-list");
 const imageViewerPrompt = el("image-viewer-prompt");
+const imageViewerDescribe = el("image-viewer-describe");
 const imageViewerGuidance = el("image-viewer-guidance");
 const imageViewerGenerator = el("image-viewer-generator");
 const imageViewerDimensions = el("image-viewer-dimensions");
@@ -267,6 +274,7 @@ async function loadConfig() {
   spellfix = cfg.spellfix || spellfix;
   applySpellfixAvailability();
   gpt2Guidance = cfg.gpt2Guidance || gpt2Guidance;
+  describeConfig = cfg.describe || describeConfig;
   if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
     maxInputImages = cfg.maxInputImages;
   }
@@ -335,8 +343,7 @@ async function loadConfig() {
   el("opt-n").value = cfg.defaults.n;
   updateShapeOptionLabel();
 
-  gensRow.innerHTML = "";
-  for (const g of generators) {
+  const buildGenChip = (g) => {
     const label = document.createElement("label");
     label.className = "gen-toggle" + (g.available ? "" : " unavailable");
     label.title = g.available
@@ -349,6 +356,8 @@ async function loadConfig() {
     cb.dataset.available = String(g.available);
     cb.dataset.imageCapable = String(!!g.imageCapable);
     cb.dataset.imageAspectOverride = String(!!g.imageAspectOverride);
+    cb.dataset.kind = g.kind || "image";
+    cb.dataset.requiresImage = String(!!g.requiresImage);
     cb.disabled = !g.available;
     cb.checked = g.available && g.defaultOn;
     cb.addEventListener("change", () => {
@@ -373,9 +382,19 @@ async function loadConfig() {
       "</svg>";
     label.appendChild(imgFlag);
     label.classList.toggle("checked", cb.checked);
-    gensRow.appendChild(label);
+    return label;
+  };
+
+  // Media generators and describe endpoints render as separate sections; the
+  // describe chips only become selectable while an image is attached
+  // (updateGeneratorCompatibility enforces it, matching the server's rule).
+  gensRow.innerHTML = "";
+  describeRow.innerHTML = "";
+  for (const g of generators) {
+    (g.kind === "describe" ? describeRow : gensRow).appendChild(buildGenChip(g));
   }
-  updateGeneratorCount();
+  describeSection.hidden = describeRow.children.length === 0;
+  updateGeneratorCompatibility();
 }
 
 function hasInputImages() {
@@ -392,26 +411,39 @@ function updateGeneratorCompatibility() {
   // not lock generator chips: non-gpt2 targets simply receive image 0.
   const hasImage = hasInputImages();
   gensRow.classList.toggle("has-image", hasImage);
+  describeRow.classList.toggle("has-image", hasImage);
+  describeSection.classList.toggle("needs-image", !hasImage);
   for (const btn of document.querySelectorAll("#gen-controls .image-only-action")) {
     btn.hidden = !hasImage;
   }
-  for (const cb of gensRow.querySelectorAll("input")) {
+  for (const cb of allGeneratorInputs()) {
     const providerAvailable = cb.dataset.available === "true";
     const imageCapable = cb.dataset.imageCapable === "true";
+    const isDescribe = cb.dataset.kind === "describe";
+    // Describe endpoints consume the image itself and ignore output-AR
+    // options entirely, so the AR-override disable never applies to them.
     const aspectIncompatible =
       hasImage &&
       imageCapable &&
+      !isDescribe &&
       el("opt-shape").value !== "auto" &&
       cb.dataset.imageAspectOverride !== "true";
-    cb.disabled = !providerAvailable || aspectIncompatible;
-    if (aspectIncompatible)
+    // requiresImage (describe endpoints): without an attached image there is
+    // nothing to describe — mirror the server's hard rejection as a disable.
+    const missingRequiredImage = cb.dataset.requiresImage === "true" && !hasImage;
+    cb.disabled = !providerAvailable || aspectIncompatible || missingRequiredImage;
+    if (aspectIncompatible || missingRequiredImage)
     {
       cb.checked = false;
     }
     const label = cb.closest(".gen-toggle");
     label.classList.toggle("unavailable", cb.disabled);
     label.classList.toggle("checked", cb.checked);
-    if (aspectIncompatible)
+    if (missingRequiredImage)
+    {
+      label.title = `${genLabel(cb.value)} describes an attached image — attach one to enable it`;
+    }
+    else if (aspectIncompatible)
     {
       label.title = `${genLabel(cb.value)} cannot override output AR with an input image; choose match input image to use it`;
     }
@@ -419,9 +451,13 @@ function updateGeneratorCompatibility() {
     {
       label.title = `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`;
     }
-    else if (hasImage && inputImageItems.length > 1 && cb.value !== "gpt2" && imageCapable)
+    else if (hasImage && inputImageItems.length > 1 && cb.value !== "gpt2" && imageCapable && !isDescribe)
     {
       label.title = `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (gpt-image-2 receives all)`;
+    }
+    else if (hasImage && inputImageItems.length > 1 && isDescribe)
+    {
+      label.title = `${genLabel(cb.value)} will describe each of the ${inputImageItems.length} attached images separately`;
     }
     else
     {
@@ -432,6 +468,10 @@ function updateGeneratorCompatibility() {
     }
   }
   updateGeneratorCount();
+}
+
+function allGeneratorInputs() {
+  return [...gensRow.querySelectorAll("input"), ...describeRow.querySelectorAll("input")];
 }
 
 function updateShapeOptionLabel() {
@@ -708,6 +748,18 @@ function setGeneratorsByImageCapability(wantCapable, checked) {
 }
 el("gens-enable-image-capable").addEventListener("click", () => setGeneratorsByImageCapability(true, true));
 el("gens-disable-text-only").addEventListener("click", () => setGeneratorsByImageCapability(false, false));
+// The main bulk buttons act on the media-generator section only; the describe
+// section has its own all/none so a "Enable all" can't silently fan an image
+// out to every paid describe endpoint too.
+function setAllDescribers(checked) {
+  for (const cb of describeRow.querySelectorAll("input:not(:disabled)")) {
+    cb.checked = checked;
+    cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
+  }
+  updateGeneratorCount();
+}
+el("describe-enable-all").addEventListener("click", () => setAllDescribers(true));
+el("describe-disable-all").addEventListener("click", () => setAllDescribers(false));
 el("opt-shape").addEventListener("change", updateGeneratorCompatibility);
 
 // ---------- image attach: paste / drop / browse (up to maxInputImages) ----------
@@ -1348,15 +1400,32 @@ async function loadKnownUsers() {
 // ---------- submit ----------
 
 function checkedGeneratorKeys() {
-  return [...gensRow.querySelectorAll("input:checked")].map((cb) => cb.value);
+  return allGeneratorInputs().filter((cb) => cb.checked).map((cb) => cb.value);
+}
+
+function isDescribeGenKey(key) {
+  return (generators.find((g) => g.key === key) || {}).kind === "describe";
 }
 
 async function submit() {
   sendError.textContent = "";
   const prompt = promptBox.value.trim();
-  if (!prompt) { sendError.textContent = "prompt is empty"; return; }
   const gens = checkedGeneratorKeys();
   if (gens.length === 0) { sendError.textContent = "pick at least one generator"; return; }
+  const describeOnly = gens.every(isDescribeGenKey);
+  // A describe-only job may omit the prompt: the standard describe instruction
+  // is used instead (the server enforces the same substitution), so the card
+  // shows exactly the instruction that went out.
+  let effectivePrompt = prompt;
+  if (!prompt) {
+    if (!describeOnly) { sendError.textContent = "prompt is empty"; return; }
+    effectivePrompt = describeConfig.defaultInstruction;
+    if (!effectivePrompt) { sendError.textContent = "prompt is empty"; return; }
+  }
+  if (gens.some(isDescribeGenKey) && !hasInputImages()) {
+    sendError.textContent = "describe endpoints need an attached image";
+    return;
+  }
   const user = currentUsername();
   if (!user) {
     sendError.textContent = "choose a username first (top of the page) — everything here is created under a name";
@@ -1365,7 +1434,7 @@ async function submit() {
   }
 
   const form = new FormData();
-  form.append("prompt", prompt);
+  form.append("prompt", effectivePrompt);
   form.append("user", user);
   form.append("generators", gens.join(","));
   form.append("shape", el("opt-shape").value);
@@ -1387,7 +1456,7 @@ async function submit() {
     const resp = await fetch(apiUrl("api/jobs"), { method: "POST", body: form });
     const body = await resp.json();
     if (!resp.ok) { sendError.textContent = body.error || `HTTP ${resp.status}`; return; }
-    addJobCard(body.id, prompt, gens, inputImageItems.length > 0, null, Date.now(), inputImageItems.length, { user });
+    addJobCard(body.id, effectivePrompt, gens, inputImageItems.length > 0, null, Date.now(), inputImageItems.length, { user });
   } catch (err) {
     sendError.textContent = String(err);
   } finally {
@@ -1894,6 +1963,10 @@ function getImageViewerPrompts() {
       imageIndex: Number(link.dataset.imageIndex),
       generatorCount: Number(link.dataset.generatorCount),
       url: link.href,
+      // Describe results ride the same walk: kind "text" items point their
+      // url at the described INPUT image and carry the description text.
+      kind: link.dataset.resultKind || "image",
+      describeText: link.dataset.describeText || "",
     }));
     if (items.length === 0) continue;
     prompts.push({
@@ -2199,8 +2272,9 @@ function prepareImageViewerWindow(prompts, current) {
 
 function showImageViewerEntry(current, entry) {
   imageViewerImage.src = entry.blobUrl;
-  imageViewerImage.alt =
-    `${current.item.generator} image ${current.item.imageIndex + 1} of ${current.item.generatorCount}`;
+  imageViewerImage.alt = current.item.kind === "text"
+    ? `input image ${current.item.imageIndex + 1} of ${current.item.generatorCount} described by ${current.item.generator}`
+    : `${current.item.generator} image ${current.item.imageIndex + 1} of ${current.item.generatorCount}`;
   imageViewerDimensions.textContent = `${entry.image.naturalWidth}×${entry.image.naturalHeight}`;
   imageViewerContentAr = entry.image.naturalWidth / entry.image.naturalHeight;
   fitImageViewerWindow();
@@ -2219,7 +2293,10 @@ function setImageViewerIdentity(item) {
 // Never point at a raw network URL (that would paint an unloading/partial
 // frame). Until the blob lands, keep the previous input pixels up.
 function applyImageViewerCompare(current) {
-  const active = !!current && imageViewerCompareInput && current.prompt.hasInput;
+  // Describe items already show the input image as the stage; comparing it
+  // with itself is meaningless, so the mode stays armed but paints nothing.
+  const active = !!current && imageViewerCompareInput && current.prompt.hasInput
+    && current.item.kind !== "text";
   imageViewerStage.classList.toggle("compare", active);
   imageViewerInputImage.hidden = !active;
   imageViewerInputLabel.hidden = !active;
@@ -2273,6 +2350,8 @@ function clearImageViewerPresentation() {
   imageViewerImage.removeAttribute("src");
   imageViewerImage.alt = "";
   imageViewerPrompt.textContent = "";
+  imageViewerDescribe.hidden = true;
+  imageViewerDescribe.textContent = "";
   renderImageViewerGuidance(null);
   imageViewerGenerator.textContent = "";
   imageViewerDimensions.textContent = "";
@@ -2287,6 +2366,8 @@ async function renderImageViewer() {
   if (!current) {
     imageViewerImage.removeAttribute("src");
     imageViewerPrompt.textContent = "";
+    imageViewerDescribe.hidden = true;
+    imageViewerDescribe.textContent = "";
     renderImageViewerGuidance(null);
     imageViewerGenerator.textContent = "selected image is no longer available";
     imageViewerDimensions.textContent = "";
@@ -2309,7 +2390,14 @@ async function renderImageViewer() {
         latest.item.imageIndex !== current.item.imageIndex) return false;
     imageViewerPrompt.textContent = latest.prompt.prompt;
     renderImageViewerGuidance(latest);
-    imageViewerGenerator.textContent = genLabel(latest.item.generator);
+    // Describe items: the stage IS the submitted image; the panel above the
+    // prompt carries the returned description, and the header says so.
+    const isText = latest.item.kind === "text";
+    imageViewerDescribe.hidden = !isText;
+    imageViewerDescribe.textContent = isText ? latest.item.describeText : "";
+    imageViewerGenerator.textContent = isText
+      ? `${genLabel(latest.item.generator)} — description of the submitted image`
+      : genLabel(latest.item.generator);
     showImageViewerEntry(latest, entry);
     applyImageViewerCompare(latest);
     markImageViewed(latest.item);
@@ -2804,6 +2892,73 @@ window.addEventListener("resize", () => {
 // aspect ratio can widen the shrink-wrapped window once known.
 imageViewerInputImage.addEventListener("load", fitImageViewerWindow);
 
+// One describe result block: a small thumb of the described input image, the
+// returned description text, and a copy button. The thumb anchor rides the
+// viewer walk (data-viewer-image) with resultKind "text", so the viewer shows
+// the submitted image beside the full description.
+function buildDescribeResult(jobId, gen, entry, totalInputs) {
+  const result = document.createElement("div");
+  result.className = "media-result describe-result";
+
+  const inputUrl = apiUrl(`api/jobs/${encodeURIComponent(jobId)}/images/input/${entry.inputIndex}`);
+  const a = document.createElement("a");
+  a.className = "describe-input-thumb";
+  a.href = inputUrl;
+  a.target = "_blank";
+  a.title = totalInputs > 1
+    ? `input image ${entry.inputIndex + 1} of ${totalInputs} — open in the viewer`
+    : "the described input image — open in the viewer";
+  a.dataset.viewerImage = "true";
+  a.dataset.jobId = jobId;
+  a.dataset.generator = gen;
+  a.dataset.imageIndex = String(entry.inputIndex);
+  a.dataset.generatorCount = String(totalInputs);
+  a.dataset.resultKind = "text";
+  a.dataset.describeText = entry.text;
+  if (viewerSeenSet.has(viewerSeenKeyFor(jobId, gen, entry.inputIndex))) {
+    a.classList.add("viewer-seen");
+  }
+  const img = document.createElement("img");
+  img.src = `${inputUrl}?thumb=1`;
+  img.loading = "lazy";
+  img.alt = `input image ${entry.inputIndex + 1} of ${totalInputs}`;
+  a.appendChild(img);
+  result.appendChild(a);
+
+  const body = document.createElement("div");
+  body.className = "describe-body";
+  if (totalInputs > 1) {
+    const which = document.createElement("div");
+    which.className = "describe-which";
+    which.textContent = `input ${entry.inputIndex + 1} of ${totalInputs}`;
+    body.appendChild(which);
+  }
+  const text = document.createElement("div");
+  text.className = "describe-text";
+  text.textContent = entry.text;
+  body.appendChild(text);
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "describe-copy";
+  copyBtn.textContent = "copy text";
+  copyBtn.title = "Copy this description";
+  let copyTimer = null;
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(entry.text);
+      copyBtn.textContent = "copied";
+    } catch {
+      copyBtn.textContent = "copy failed";
+    }
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => { copyBtn.textContent = "copy text"; }, 1600);
+  });
+  body.appendChild(copyBtn);
+  result.appendChild(body);
+  return result;
+}
+
 // "~$0.25", "~$0.02", "~$1.5" — trailing zeros trimmed. Empty for 0/absent.
 function formatCost(v) {
   if (!(v > 0)) return "";
@@ -2876,7 +3031,8 @@ function updateCostTotals() {
     renderCostSummary();
     return;
   }
-  costHeadline = `Session est. spend ${grand > 0 ? formatCost(grand) : "$0"} for ${grandImages} image${grandImages === 1 ? "" : "s"}`;
+  // "results" not "images": describe cells contribute text descriptions.
+  costHeadline = `Session est. spend ${grand > 0 ? formatCost(grand) : "$0"} for ${grandImages} result${grandImages === 1 ? "" : "s"}`;
   costBreakdown = [...perGen.entries()]
     .sort((a, b) => b[1].cost - a[1].cost)
     .map(([key, v]) => `${genLabel(key)} ${v.cost > 0 ? formatCost(v.cost) : "free"} (${v.images})`)
@@ -3275,7 +3431,21 @@ function applyJobEvent(id, card, evt) {
       "multi",
       evt.ok && evt.images.length > 1 && !(evt.mediaType && evt.mediaType.startsWith("video/")));
 
-    if (evt.ok) {
+    if (evt.ok && evt.resultKind === "text" && Array.isArray(evt.texts)) {
+      // Describe results: text descriptions of the job's input image(s), one
+      // block per input, with a copy affordance. Clicking a block opens the
+      // viewer showing the described input image beside the full text.
+      cell.dataset.state = "done";
+      if (evt.label) cell.querySelector(".cell-head").title = evt.label;
+      cell.dataset.cost = String(evt.cost || 0);
+      cell.dataset.imgCount = String(evt.texts.length);
+      cell.querySelector(".cell-cost").textContent = formatCost(evt.cost);
+      status.textContent = "";
+      for (const t of evt.texts) {
+        images.appendChild(buildDescribeResult(id, evt.gen, t, evt.texts.length));
+      }
+      if (!imageViewer.hidden) renderImageViewer();
+    } else if (evt.ok) {
       cell.dataset.state = "done";
       // Naming rule: the cell keeps the exact display name shown in the
       // generator chooser; the provider's internal spec string moves to a

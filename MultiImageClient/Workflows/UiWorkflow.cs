@@ -348,6 +348,13 @@ namespace MultiImageClient
                         defaultEnabled = true,
                         defaultText = DefaultGpt2GuidanceText,
                     },
+                    // Standard instruction used when a describe-only job is
+                    // submitted with a blank prompt; the composer shows the
+                    // same text so the card matches what actually went out.
+                    describe = new
+                    {
+                        defaultInstruction = UiJobRunner.DefaultDescribeInstruction,
+                    },
                     defaults = new { shape = "auto", detail = "high", quality = "high", moderation = "low", n = 1 },
                     maxInputImages = UiJobRunner.MaxInputImages,
                     // Exact code identity of the running server (embedded at
