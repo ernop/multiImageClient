@@ -164,6 +164,38 @@ namespace MultiImageClient
         /// is always one-prompt-per-line.
         public string TypedPromptsAppendFile { get; set; } = "";
 
+        /// Backblaze B2 image hosting for the --ui web app (see
+        /// docs/b2-image-hosting-plan.md). When enabled, finished UI result and
+        /// grid images upload to the public B2 bucket and job events emit B2
+        /// capability URLs (opaque random keys) instead of local /api URLs.
+        /// Upload failure = retry then visible hard-fail; the local copy is
+        /// never served as a substitute (owner decision 2026-08-05).
+        public bool EnableB2ImageHosting { get; set; }
+
+        /// Application key pair restricted to the one bucket (keyID +
+        /// applicationKey from the B2 dashboard; the secret is shown once).
+        public string B2KeyId { get; set; } = "";
+        public string B2ApplicationKey { get; set; } = "";
+
+        /// From the bucket details page. BucketId feeds b2_get_upload_url;
+        /// BucketName is the public URL path segment.
+        public string B2BucketId { get; set; } = "";
+        public string B2BucketName { get; set; } = "";
+
+        /// Public URL base, e.g. "https://f004.backblazeb2.com/file/mic-images-xxxx"
+        /// (no trailing slash). Owner-pinned because persisted event URLs must
+        /// stay correct forever; the client hard-errors at authorize time if
+        /// this disagrees with the account's live downloadUrl/bucket.
+        public string B2DownloadBaseUrl { get; set; } = "";
+
+        /// true (default): local raw images stay on disk — the dev-install
+        /// mode where disk remains a full second archive. false (production):
+        /// after a job's finalization completes, local raws whose B2 uploads
+        /// were checksum-verified are deleted; B2 is then the source of truth
+        /// for raw bytes on that install. Thumbs and job metadata always stay
+        /// local. false requires EnableB2ImageHosting.
+        public bool B2KeepLocalRawImages { get; set; } = true;
+
         /// Master switch for the local ComfyUI generators (local-klein, local-zimage).
         /// Default false: they are treated as NOT INSTALLED — shown disabled in the
         /// web UI and skipped by showcase/batch runs, regardless of the ComfyUI*
@@ -343,6 +375,32 @@ namespace MultiImageClient
             {
                 throw new InvalidOperationException(
                     $"settings.json: ImageDownloadBaseFolder='{ImageDownloadBaseFolder}' — could not create: {ex.Message}. Fix the path in settings.json.");
+            }
+
+            if (EnableB2ImageHosting)
+            {
+                var missing = new List<string>();
+                if (string.IsNullOrWhiteSpace(B2KeyId)) missing.Add(nameof(B2KeyId));
+                if (string.IsNullOrWhiteSpace(B2ApplicationKey)) missing.Add(nameof(B2ApplicationKey));
+                if (string.IsNullOrWhiteSpace(B2BucketId)) missing.Add(nameof(B2BucketId));
+                if (string.IsNullOrWhiteSpace(B2BucketName)) missing.Add(nameof(B2BucketName));
+                if (string.IsNullOrWhiteSpace(B2DownloadBaseUrl)) missing.Add(nameof(B2DownloadBaseUrl));
+                if (missing.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"settings.json: EnableB2ImageHosting is true but required B2 settings are blank: {string.Join(", ", missing)}. Fill them all in or set EnableB2ImageHosting to false. See docs/b2-image-hosting-plan.md.");
+                }
+                if (!B2DownloadBaseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                    || B2DownloadBaseUrl.EndsWith("/"))
+                {
+                    throw new InvalidOperationException(
+                        $"settings.json: B2DownloadBaseUrl='{B2DownloadBaseUrl}' must be an https URL without a trailing slash, e.g. \"https://f004.backblazeb2.com/file/my-bucket\".");
+                }
+            }
+            else if (!B2KeepLocalRawImages)
+            {
+                throw new InvalidOperationException(
+                    "settings.json: B2KeepLocalRawImages=false requires EnableB2ImageHosting=true — evicting local raw images without an upload destination would discard data.");
             }
         }
     }

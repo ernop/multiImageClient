@@ -267,8 +267,6 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyDescribeClaude, label = "Claude describe (Sonnet)", detail = "Anthropic claude-sonnet-4-5 vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeGemini, label = "Gemini describe (2.5 Pro)", detail = "Google gemini-2.5-pro vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeGrok, label = "Grok describe (grok-4.3)", detail = "xAI grok-4.3 vision via api.x.ai. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
-                    new { key = UiJobRunner.KeyDescribeLocalInternVl, label = "local InternVL describe", detail = "Local InternVL3 Flask server on 127.0.0.1:11415 (do_flask_intern.py). Free; requires the local server to be running and EnableLocalGenerators=true." },
-                    new { key = UiJobRunner.KeyDescribeLocalQwen, label = "local Qwen describe", detail = "Local Ollama qwen2-vl on 127.0.0.1:11434. Free; requires Ollama with the model loaded and EnableLocalGenerators=true." },
                 }
                 .Select(g => new
                 {

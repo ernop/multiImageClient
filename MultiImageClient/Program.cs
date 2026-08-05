@@ -19,6 +19,7 @@ using SixLabors.ImageSharp.Memory;
 //using System.Reflection.Metadata.Ecma335;
 //using System.Runtime;
 //using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace MultiImageClient
@@ -88,6 +89,18 @@ namespace MultiImageClient
             if (options.BackfillDl)
             {
                 DlMirror.Backfill(settings.ImageDownloadBaseFolder, settings.FlatImageMirrorPath);
+                return;
+            }
+
+            if (options.B2Smoke)
+            {
+                if (!settings.EnableB2ImageHosting)
+                {
+                    Console.Error.WriteLine("--b2-smoke requires EnableB2ImageHosting=true plus the B2* settings in settings.json. See docs/b2-image-hosting-plan.md.");
+                    Environment.Exit(2);
+                }
+                await new B2StorageClient(settings).RunSmokeTestAsync(CancellationToken.None);
+                Console.WriteLine("b2-smoke: PASS (details in log)");
                 return;
             }
 

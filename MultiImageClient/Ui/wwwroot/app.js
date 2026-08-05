@@ -5,9 +5,15 @@
 // The shared-site deployment serves the app behind a secret nginx path
 // prefix, so nothing may reference the origin root. Every API URL — including
 // server-generated ones persisted inside events as "/api/..." — resolves
-// through this helper against the page's own directory.
+// through this helper against the page's own directory. Absolute http(s)
+// URLs (B2-hosted result images) pass through untouched: prefixing them
+// would corrupt them.
 const appBase = location.pathname.replace(/[^/]*$/, "");
-const apiUrl = (path) => appBase + String(path).replace(/^\//, "");
+const apiUrl = (path) => {
+  const value = String(path);
+  if (/^https?:\/\//i.test(value)) return value;
+  return appBase + value.replace(/^\//, "");
+};
 
 // ---------- state ----------
 
@@ -393,7 +399,8 @@ async function loadConfig() {
   for (const g of generators) {
     (g.kind === "describe" ? describeRow : gensRow).appendChild(buildGenChip(g));
   }
-  describeSection.hidden = describeRow.children.length === 0;
+  // Visibility (needs an attached image + at least one describe target) is
+  // owned by updateGeneratorCompatibility, called next.
   updateGeneratorCompatibility();
 }
 
@@ -412,7 +419,10 @@ function updateGeneratorCompatibility() {
   const hasImage = hasInputImages();
   gensRow.classList.toggle("has-image", hasImage);
   describeRow.classList.toggle("has-image", hasImage);
-  describeSection.classList.toggle("needs-image", !hasImage);
+  // Without an attached image there is nothing to describe, so the whole
+  // describe section disappears rather than showing a row of disabled chips.
+  // (Any checked describe chips are unchecked below via requiresImage.)
+  describeSection.hidden = !hasImage || describeRow.children.length === 0;
   for (const btn of document.querySelectorAll("#gen-controls .image-only-action")) {
     btn.hidden = !hasImage;
   }
@@ -1964,9 +1974,11 @@ function getImageViewerPrompts() {
       generatorCount: Number(link.dataset.generatorCount),
       url: link.href,
       // Describe results ride the same walk: kind "text" items point their
-      // url at the described INPUT image and carry the description text.
+      // url at the described INPUT image and carry the description text plus
+      // the model's separated meta comments.
       kind: link.dataset.resultKind || "image",
       describeText: link.dataset.describeText || "",
+      describeComments: link.dataset.describeComments || "",
     }));
     if (items.length === 0) continue;
     prompts.push({
@@ -2350,10 +2362,22 @@ function paintImageViewerChrome(target) {
   imageViewerPrompt.textContent = target.prompt.prompt;
   renderImageViewerGuidance(target);
   // Describe items: the stage IS the submitted image; the panel above the
-  // prompt carries the returned description, and the header says so.
+  // prompt carries the returned description (plus the model's separated
+  // comments, when any), and the header says so.
   const isText = target.item.kind === "text";
   imageViewerDescribe.hidden = !isText;
-  imageViewerDescribe.textContent = isText ? target.item.describeText : "";
+  imageViewerDescribe.replaceChildren();
+  if (isText) {
+    const descriptionDiv = document.createElement("div");
+    descriptionDiv.textContent = target.item.describeText;
+    imageViewerDescribe.appendChild(descriptionDiv);
+    if (target.item.describeComments) {
+      const commentsDiv = document.createElement("div");
+      commentsDiv.className = "viewer-describe-comments";
+      commentsDiv.textContent = `model comments: ${target.item.describeComments}`;
+      imageViewerDescribe.appendChild(commentsDiv);
+    }
+  }
   imageViewerGenerator.textContent = isText
     ? `${genLabel(target.item.generator)} — description of the submitted image`
     : genLabel(target.item.generator);
@@ -2930,22 +2954,27 @@ window.addEventListener("resize", () => {
 // aspect ratio can widen the shrink-wrapped window once known.
 imageViewerInputImage.addEventListener("load", fitImageViewerWindow);
 
-// One describe result block: a small thumb of the described input image, the
-// returned description text, and a copy button. The thumb anchor rides the
-// viewer walk (data-viewer-image) with resultKind "text", so the viewer shows
-// the submitted image beside the full description.
-function buildDescribeResult(jobId, gen, entry, totalInputs) {
+// One describe result block: the returned description text at full card
+// width, the model's separated "comments" (meta remarks the JSON reply
+// contract diverts out of the description), a copy button, a "view with
+// image" link, and a collapsed sent/returned exchange viewer showing the
+// exact wire prompt and the raw pre-parse reply. No input thumbnail here —
+// the job head right above already shows the input image; the view link is
+// the viewer-walk anchor (data-viewer-image, resultKind "text"), so the
+// viewer shows the submitted image beside the full description.
+function buildDescribeResult(jobId, gen, entry, totalInputs, sentPrompt) {
   const result = document.createElement("div");
   result.className = "media-result describe-result";
 
   const inputUrl = apiUrl(`api/jobs/${encodeURIComponent(jobId)}/images/input/${entry.inputIndex}`);
   const a = document.createElement("a");
-  a.className = "describe-input-thumb";
+  a.className = "describe-view";
   a.href = inputUrl;
   a.target = "_blank";
+  a.textContent = "view with image";
   a.title = totalInputs > 1
-    ? `input image ${entry.inputIndex + 1} of ${totalInputs} — open in the viewer`
-    : "the described input image — open in the viewer";
+    ? `open the viewer: input image ${entry.inputIndex + 1} of ${totalInputs} beside this description`
+    : "open the viewer: the described input image beside this description";
   a.dataset.viewerImage = "true";
   a.dataset.jobId = jobId;
   a.dataset.generator = gen;
@@ -2953,15 +2982,10 @@ function buildDescribeResult(jobId, gen, entry, totalInputs) {
   a.dataset.generatorCount = String(totalInputs);
   a.dataset.resultKind = "text";
   a.dataset.describeText = entry.text;
+  a.dataset.describeComments = entry.comments || "";
   if (viewerSeenSet.has(viewerSeenKeyFor(jobId, gen, entry.inputIndex))) {
     a.classList.add("viewer-seen");
   }
-  const img = document.createElement("img");
-  img.src = `${inputUrl}?thumb=1`;
-  img.loading = "lazy";
-  img.alt = `input image ${entry.inputIndex + 1} of ${totalInputs}`;
-  a.appendChild(img);
-  result.appendChild(a);
 
   const body = document.createElement("div");
   body.className = "describe-body";
@@ -2976,6 +3000,21 @@ function buildDescribeResult(jobId, gen, entry, totalInputs) {
   text.textContent = entry.text;
   body.appendChild(text);
 
+  // The model's non-description remarks (the JSON contract diverts caveats,
+  // offers, and meta-chatter into "comments" so the description stays clean).
+  if (entry.comments) {
+    const comments = document.createElement("div");
+    comments.className = "describe-comments";
+    const commentsLabel = document.createElement("span");
+    commentsLabel.className = "describe-comments-label";
+    commentsLabel.textContent = "model comments: ";
+    comments.appendChild(commentsLabel);
+    comments.appendChild(document.createTextNode(entry.comments));
+    body.appendChild(comments);
+  }
+
+  const tools = document.createElement("div");
+  tools.className = "describe-tools";
   const copyBtn = document.createElement("button");
   copyBtn.type = "button";
   copyBtn.className = "describe-copy";
@@ -2992,7 +3031,43 @@ function buildDescribeResult(jobId, gen, entry, totalInputs) {
     if (copyTimer) clearTimeout(copyTimer);
     copyTimer = setTimeout(() => { copyBtn.textContent = "copy text"; }, 1600);
   });
-  body.appendChild(copyBtn);
+  tools.appendChild(copyBtn);
+  tools.appendChild(a);
+  body.appendChild(tools);
+
+  // Exact wire exchange, collapsed by default: the full prompt actually sent
+  // to this endpoint (instruction + JSON reply contract) and the raw reply
+  // before parsing. Ideogram sends no prompt at all; events persisted before
+  // this feature lack `raw` and show the parsed description instead.
+  const exchange = document.createElement("details");
+  exchange.className = "describe-exchange";
+  const summary = document.createElement("summary");
+  summary.textContent = "sent / returned";
+  summary.title = "Show the exact full prompt sent to this endpoint and its raw reply";
+  exchange.appendChild(summary);
+  const sentHead = document.createElement("div");
+  sentHead.className = "describe-exchange-head";
+  sentHead.textContent = "sent prompt";
+  exchange.appendChild(sentHead);
+  const sentBody = document.createElement("div");
+  sentBody.className = "describe-exchange-body";
+  // "" means Ideogram (which sends no prompt by design); events persisted
+  // before the exchange recorder existed have no claim to make either way.
+  sentBody.textContent = sentPrompt
+    || (gen === "describe-ideogram"
+      ? "(nothing — Ideogram /describe uses its fixed built-in instruction; the prompt is not sent)"
+      : "(not recorded — this result predates the exchange recorder)");
+  exchange.appendChild(sentBody);
+  const returnedHead = document.createElement("div");
+  returnedHead.className = "describe-exchange-head";
+  returnedHead.textContent = "raw reply";
+  exchange.appendChild(returnedHead);
+  const returnedBody = document.createElement("div");
+  returnedBody.className = "describe-exchange-body";
+  returnedBody.textContent = entry.raw || entry.text;
+  exchange.appendChild(returnedBody);
+  body.appendChild(exchange);
+
   result.appendChild(body);
   return result;
 }
@@ -3149,7 +3224,9 @@ async function setActiveFromJob(id, card) {
   updateShapeOptionLabel();
 
   const wanted = new Set([...card.querySelectorAll(".cell")].map((cell) => cell.dataset.gen));
-  for (const cb of gensRow.querySelectorAll("input")) {
+  // Both sections restore: describe selections come back too (the input image
+  // is already re-attached above, so their image requirement is satisfied).
+  for (const cb of allGeneratorInputs()) {
     if (cb.dataset.available !== "true") continue;
     cb.checked = wanted.has(cb.value);
     cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
@@ -3480,7 +3557,7 @@ function applyJobEvent(id, card, evt) {
       cell.querySelector(".cell-cost").textContent = formatCost(evt.cost);
       status.textContent = "";
       for (const t of evt.texts) {
-        images.appendChild(buildDescribeResult(id, evt.gen, t, evt.texts.length));
+        images.appendChild(buildDescribeResult(id, evt.gen, t, evt.texts.length, evt.sentPrompt || ""));
       }
       if (!imageViewer.hidden) renderImageViewer();
     } else if (evt.ok) {
@@ -3548,7 +3625,13 @@ function applyJobEvent(id, card, evt) {
         const img = document.createElement("img");
         // Cards display the <=640px server-side preview; the anchor (viewer,
         // open-in-new-tab, video source) keeps the exact original bytes.
-        img.src = `${url}?thumb=1`;
+        // B2-hosted results carry a parallel `thumbs` array of local preview
+        // URLs, because ?thumb=1 means nothing to the B2 origin and would
+        // pull the full-resolution original into every card. Pre-hosting
+        // events have no thumbs and keep the local ?thumb=1 form.
+        img.src = Array.isArray(evt.thumbs) && evt.thumbs[imageIndex]
+          ? apiUrl(evt.thumbs[imageIndex])
+          : `${url}?thumb=1`;
         img.loading = "lazy";
         // Reserve the final layout box before the bytes arrive: without an
         // intrinsic size every card collapses, the whole history fits inside

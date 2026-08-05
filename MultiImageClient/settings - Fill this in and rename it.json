@@ -53,6 +53,13 @@
     "recraft": 2,
     "comfyui": 1
   },
+  "EnableB2ImageHosting": false,
+  "B2KeyId": "Optional: Backblaze B2 application keyID (bucket-restricted). Required only when EnableB2ImageHosting=true. See docs/b2-image-hosting-plan.md.",
+  "B2ApplicationKey": "Optional: Backblaze B2 applicationKey (shown once at key creation).",
+  "B2BucketId": "Optional: B2 bucketId from the bucket details page.",
+  "B2BucketName": "Optional: B2 bucket name (public bucket).",
+  "B2DownloadBaseUrl": "Optional: public URL base, e.g. https://f004.backblazeb2.com/file/my-bucket (no trailing slash; must match the account's live download endpoint).",
+  "B2KeepLocalRawImages": true,
   "EnableLocalGenerators": false,
   "ComfyUIBaseUrl": "Optional: local ComfyUI server URL, e.g. http://127.0.0.1:8188. Required for Local ComfyUI providers.",
   "ComfyUIWorkflowPath": "Optional: absolute path to an API-format ComfyUI workflow JSON. Put {{PROMPT}} in the positive prompt field. Optional model placeholders: {{UNET}}, {{CHECKPOINT}}, {{VAE}}, {{TEXT_ENCODER}}, {{TEXT_ENCODER2}}, {{LORA}}, {{LORA_STRENGTH_MODEL}}, {{LORA_STRENGTH_CLIP}}.",

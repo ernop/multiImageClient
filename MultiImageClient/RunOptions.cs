@@ -40,6 +40,12 @@ namespace MultiImageClient
         /// into C:\dl and exit. Does not run any workflow.
         public bool BackfillDl { get; set; }
 
+        /// If true, run the Backblaze B2 hosting smoke test and exit: upload
+        /// random bytes, fetch them back anonymously through the public
+        /// bucket URL, byte-compare, verify a random wrong key 404s, delete.
+        /// Requires EnableB2ImageHosting + the B2* settings.
+        public bool B2Smoke { get; set; }
+
         /// If true, use the smallest/cheapest/fastest generator set
         /// (gpt-image-2 low quality, 1024x1024 square, moderation=low).
         /// Intended for iteration/smoke-testing, not production runs.
@@ -298,6 +304,9 @@ namespace MultiImageClient
                     case "--backfill-dl":
                         o.BackfillDl = true;
                         break;
+                    case "--b2-smoke":
+                        o.B2Smoke = true;
+                        break;
                     case "--fast":
                         o.Fast = true;
                         break;
@@ -509,6 +518,7 @@ namespace MultiImageClient
             Console.WriteLine("  --prompt-file fp  Use a newline-delimited prompt file instead of PromptFiles.");
             Console.WriteLine("  --input-image path  Use this image file for workflow 2 (round-trip image -> description -> images).");
             Console.WriteLine("  --backfill-dl     One-shot: mirror all images under ImageDownloadBaseFolder to C:\\dl and exit.");
+            Console.WriteLine("  --b2-smoke        One-shot: verify Backblaze B2 hosting config end to end (upload/fetch/compare/404-check/delete) and exit. Requires EnableB2ImageHosting + B2* settings. See docs/b2-image-hosting-plan.md.");
             Console.WriteLine("  --fast            Use cheapest/fastest generator set (gpt-image-2 low 1024x1024). Good for smoke tests.");
             Console.WriteLine("  --open-images     Pop finished images/contact-sheets open in the system default viewer. OFF by default (runs are headless and just save to disk). --quick-test enables this automatically.");
             Console.WriteLine("  --local-size WxH  Output resolution for local ComfyUI image generators such as FLUX.2 Klein and Z-Image (default 1024x1024). Valid: 1024x1024, 1536x1024, 1024x1536, 1152x896, 896x1152, 1344x768, 768x1344, 1408x1408.");

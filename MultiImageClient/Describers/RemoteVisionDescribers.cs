@@ -65,16 +65,22 @@ namespace MultiImageClient
             _model = model;
         }
 
+        // When set, the Responses API is asked for a JSON object natively
+        // (text.format json_object) in addition to whatever the prompt demands.
+        // The UI describe targets use this for their {description, comments}
+        // reply contract.
+        public bool RequestJsonOutput { get; init; }
+
         public string GetModelName() => _model;
 
         public async Task<string> DescribeImageAsync(byte[] imageBytes, string prompt, int maxTokens = 512, float temperature = 0.8f)
         {
             var mime = DescriberImageFormat.DetectMime(imageBytes);
             var dataUri = $"data:{mime};base64," + Convert.ToBase64String(imageBytes);
-            var payload = new
+            var payload = new Dictionary<string, object>
             {
-                model = _model,
-                input = new[]
+                ["model"] = _model,
+                ["input"] = new[]
                 {
                     new
                     {
@@ -86,8 +92,12 @@ namespace MultiImageClient
                         },
                     },
                 },
-                max_output_tokens = maxTokens,
+                ["max_output_tokens"] = maxTokens,
             };
+            if (RequestJsonOutput)
+            {
+                payload["text"] = new { format = new { type = "json_object" } };
+            }
 
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
             {
@@ -230,11 +240,33 @@ namespace MultiImageClient
             _model = model;
         }
 
+        // Asks Gemini for application/json output natively; used by the UI
+        // describe targets' {description, comments} reply contract.
+        public bool RequestJsonOutput { get; init; }
+
+        // gemini-2.5-pro CANNOT run with thinking disabled: thinkingBudget 0 is
+        // rejected with HTTP 400 "Budget 0 is invalid. This model only works in
+        // thinking mode." (observed live 2026-08-05 — it looks like a billing
+        // error but is purely a request-shape rule). Pro's minimum budget is
+        // 128; we grant a modest fixed budget and add it to maxOutputTokens
+        // since thought tokens count against that cap.
+        private const int ThinkingBudgetTokens = 1024;
+
         public string GetModelName() => _model;
 
         public async Task<string> DescribeImageAsync(byte[] imageBytes, string prompt, int maxTokens = 512, float temperature = 0.8f)
         {
             var mime = DescriberImageFormat.DetectMime(imageBytes);
+            var generationConfig = new Dictionary<string, object>
+            {
+                ["maxOutputTokens"] = maxTokens + ThinkingBudgetTokens,
+                ["temperature"] = temperature,
+                ["thinkingConfig"] = new { thinkingBudget = ThinkingBudgetTokens },
+            };
+            if (RequestJsonOutput)
+            {
+                generationConfig["responseMimeType"] = "application/json";
+            }
             var payload = new
             {
                 contents = new[]
@@ -249,12 +281,7 @@ namespace MultiImageClient
                         },
                     },
                 },
-                generationConfig = new
-                {
-                    maxOutputTokens = maxTokens,
-                    temperature,
-                    thinkingConfig = new { thinkingBudget = 0 },
-                },
+                generationConfig,
             };
 
             var url = "https://generativelanguage.googleapis.com/v1beta/models/"

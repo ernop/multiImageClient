@@ -186,6 +186,42 @@ namespace MultiImageClient
             StoreImage(genKey, n, Array.Empty<byte>(), contentType, durablePath);
         }
 
+        /// Records a checksum-verified B2 upload for a durably saved image.
+        public bool StoreCdnReference(string genKey, int n, string cdnKey, string cdnFileId)
+        {
+            return _storage?.SaveCdnReference($"{genKey}/{n}", cdnKey, cdnFileId) == true;
+        }
+
+        /// Production storage mode (B2KeepLocalRawImages=false): delete local
+        /// raw result/grid files whose B2 uploads were verified. The durable
+        /// card thumb is forced into existence first — thumbs are normally
+        /// built lazily from the original, which is about to disappear.
+        /// Returns the number of files actually deleted.
+        public int EvictHostedLocalRaws()
+        {
+            if (_storage == null)
+            {
+                return 0;
+            }
+            var evicted = 0;
+            foreach (var (key, _) in _storage.GetEvictableHostedImages())
+            {
+                var slash = key.LastIndexOf('/');
+                if (slash <= 0 || !int.TryParse(key.Substring(slash + 1), out var n))
+                {
+                    Logger.Log($"UI job {Id}: eviction skipped unparseable image key '{key}'.");
+                    continue;
+                }
+                var genKey = key.Substring(0, slash);
+                TryGetCardPreviewPath(genKey, n, out _, out _);
+                if (_storage.EvictLocalFile(key))
+                {
+                    evicted++;
+                }
+            }
+            return evicted;
+        }
+
         public bool TryGetContentSha256(string genKey, int n, out string sha256)
         {
             if (_storage?.TryGetContentSha256($"{genKey}/{n}", out sha256) == true)
@@ -643,6 +679,68 @@ namespace MultiImageClient
             }
         }
 
+        /// Records a verified B2 upload against an already-registered image.
+        /// Returns false when the image key was never registered — callers
+        /// treat that as a failure (an upload we cannot correlate is useless).
+        public bool SaveCdnReference(string key, string cdnKey, string cdnFileId)
+        {
+            lock (_writeLock)
+            {
+                if (!_images.TryGetValue(key, out var image))
+                {
+                    return false;
+                }
+                image.CdnKey = cdnKey;
+                image.CdnFileId = cdnFileId;
+                WriteJsonAtomically(_imagesPath, _images);
+                return true;
+            }
+        }
+
+        /// Result/grid images whose verified B2 upload was recorded and whose
+        /// local raw still exists on disk. Input images are never eviction
+        /// candidates: they stay local by design (v1 scope decision).
+        public List<(string Key, string Path)> GetEvictableHostedImages()
+        {
+            lock (_writeLock)
+            {
+                return _images
+                    .Where(kv => !kv.Key.StartsWith("input/", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(kv.Value.CdnKey)
+                        && !string.IsNullOrWhiteSpace(kv.Value.Path)
+                        && File.Exists(kv.Value.Path))
+                    .Select(kv => (kv.Key, kv.Value.Path))
+                    .ToList();
+            }
+        }
+
+        /// Deletes the local raw file for an image with a verified B2 upload
+        /// (production storage mode). The images.json record — path, hash,
+        /// CdnKey — is kept for provenance; local full-res serving of this key
+        /// 404s from now on, which is correct: its published URL is the B2 one.
+        public bool EvictLocalFile(string key)
+        {
+            lock (_writeLock)
+            {
+                if (!_images.TryGetValue(key, out var image)
+                    || string.IsNullOrWhiteSpace(image.CdnKey)
+                    || string.IsNullOrWhiteSpace(image.Path))
+                {
+                    return false;
+                }
+                try
+                {
+                    File.Delete(image.Path);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"UI history: could not evict {image.Path}: {ex.Message}");
+                    return false;
+                }
+            }
+        }
+
         public bool TryGetContentSha256(string key, out string sha256)
         {
             UiPersistedImage? image;
@@ -1032,6 +1130,15 @@ namespace MultiImageClient
             public string Path { get; set; } = "";
             public string ContentType { get; set; } = "application/octet-stream";
             public string ContentSha256 { get; set; } = "";
+
+            /// Backblaze B2 object key (ui/{jobId}/{gen}/{n}-{random}.{ext})
+            /// recorded only after a checksum-verified upload. Empty = not
+            /// hosted. The random segment is the public access capability.
+            public string CdnKey { get; set; } = "";
+
+            /// B2 fileId of the uploaded object, kept for future
+            /// deletion/purge bookkeeping.
+            public string CdnFileId { get; set; } = "";
         }
     }
 
@@ -1937,13 +2044,15 @@ namespace MultiImageClient
         // The composer prompt (when non-blank) is the describe instruction for
         // the instruction-capable models; Ideogram /describe takes no
         // instruction and always runs its fixed built-in describe.
+        // The local InternVL/Qwen describers were removed from the UI catalog
+        // 2026-08-05: neither local server exists on the dev box or production,
+        // so the targets only produced instant failures. The CLI describer
+        // classes remain for the batch workflows.
         public const string KeyDescribeIdeogram = "describe-ideogram";
         public const string KeyDescribeOpenAi = "describe-openai";
         public const string KeyDescribeClaude = "describe-claude";
         public const string KeyDescribeGemini = "describe-gemini";
         public const string KeyDescribeGrok = "describe-grok";
-        public const string KeyDescribeLocalInternVl = "describe-local-internvl";
-        public const string KeyDescribeLocalQwen = "describe-local-qwen";
 
         public static readonly string[] DescribeKeys =
         {
@@ -1952,8 +2061,6 @@ namespace MultiImageClient
             KeyDescribeClaude,
             KeyDescribeGemini,
             KeyDescribeGrok,
-            KeyDescribeLocalInternVl,
-            KeyDescribeLocalQwen,
         };
 
         public static bool IsDescribeKey(string key)
@@ -1967,10 +2074,79 @@ namespace MultiImageClient
             "Describe this image in detail. Cover the main subjects, setting, composition, "
             + "style, colors, lighting, and any visible text.";
 
+        // Appended to every instruction-capable describe call (all targets
+        // except Ideogram's fixed-instruction /describe) to form the exact wire
+        // prompt. Two goals, both user-specified product requirements
+        // (2026-08-05): (a) separate the actual description from chatty
+        // meta-text — models kept closing with "Would you like me to..."
+        // offers, so the reply is forced into a JSON object whose
+        // "description" field is ONLY the description and whose "comments"
+        // field absorbs everything else; (b) descriptions must be complete and
+        // matter-of-fact about every person's visible details (apparent age,
+        // sex, appearance) — this project depends on plain, even-handed
+        // descriptions of everyone to support its fairness goals.
+        public const string DescribeJsonReplyContract =
+            "Reply with ONLY a JSON object containing exactly two string fields, and no text outside it:\n"
+            + "  \"description\" — the description itself: clear, complete, plain prose describing the "
+            + "image as well as possible. No meta-commentary, no offers of further help, no questions, "
+            + "no markdown, no mention of these instructions.\n"
+            + "  \"comments\" — everything else you would otherwise have said (caveats, uncertainty, "
+            + "meta remarks, follow-up offers). Use an empty string if there is nothing.\n"
+            + "In the description, please be clear and matter-of-fact about every visible detail, "
+            + "including each person's apparent age, sex, and physical appearance. Complete, "
+            + "even-handed descriptions of every person are important to this application's goal of "
+            + "fair, equal treatment of all groups; do not omit or soften them. "
+            + "For everyone in the image who resembles a real-world person, you may mention the "
+            + "resemblance — and indeed must.";
+
         // Describe wire parameters, matched to tools/describe-eval defaults
         // (1200 max tokens) and the Workflow Lab's deterministic temperature.
         private const int DescribeMaxTokens = 1200;
         private const float DescribeTemperature = 0.2f;
+
+        // Strict parse of the {description, comments} reply contract. A reply
+        // that is not the required JSON object, or whose description is blank,
+        // is a hard failure (fail closed — never present chatty free text as
+        // if it were the structured description). The only tolerated cosmetic
+        // deviation is a markdown code fence around the object, stripped
+        // deterministically; a missing "comments" field means no comments.
+        private static (string Description, string Comments) ParseDescribeJsonReply(string raw)
+        {
+            var s = raw.Trim();
+            if (s.StartsWith("```", StringComparison.Ordinal))
+            {
+                var firstNewline = s.IndexOf('\n');
+                var lastFence = s.LastIndexOf("```", StringComparison.Ordinal);
+                if (firstNewline >= 0 && lastFence > firstNewline)
+                {
+                    s = s.Substring(firstNewline + 1, lastFence - firstNewline - 1).Trim();
+                }
+            }
+            try
+            {
+                using var doc = JsonDocument.Parse(s);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new JsonException("the reply's JSON root is not an object");
+                }
+                if (!doc.RootElement.TryGetProperty("description", out var description)
+                    || description.ValueKind != JsonValueKind.String
+                    || string.IsNullOrWhiteSpace(description.GetString()))
+                {
+                    throw new JsonException("the reply lacks a non-empty string \"description\" field");
+                }
+                var comments = doc.RootElement.TryGetProperty("comments", out var c)
+                        && c.ValueKind == JsonValueKind.String
+                    ? c.GetString()!.Trim()
+                    : "";
+                return (description.GetString()!.Trim(), comments);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException(
+                    $"describe reply did not follow the required JSON contract ({ex.Message}); reply starts: {Truncate(raw, 300)}");
+            }
+        }
 
         // Single source of truth for which UI targets accept an input image.
         // Exposed to the frontend via /api/config (per-generator imageCapable
@@ -2083,11 +2259,17 @@ namespace MultiImageClient
         public bool GrokBrowserConfigured => false;
         public bool MetaBrowserConfigured => false;
 
+        // Non-null exactly when EnableB2ImageHosting: finished result/grid
+        // files upload to the public B2 bucket and gen-result/grid events
+        // carry B2 capability URLs. See docs/b2-image-hosting-plan.md.
+        private readonly B2StorageClient? _b2;
+
         public UiJobRunner(Settings settings, MultiClientRunStats stats, RunOptions options)
         {
             _settings = settings;
             _stats = stats;
             _options = options;
+            _b2 = settings.EnableB2ImageHosting ? new B2StorageClient(settings) : null;
             _finalizationLimit = new SemaphoreSlim(ValidateUiConcurrency(
                 nameof(settings.UiMaxConcurrentJobs), settings.UiMaxConcurrentJobs));
             _targetScheduler = new UiTargetScheduler(
@@ -2247,9 +2429,6 @@ namespace MultiImageClient
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.GoogleGeminiApiKey), _settings.GoogleGeminiApiKey),
             KeyDescribeGrok
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.XAIGrokApiKey), _settings.XAIGrokApiKey),
-            KeyDescribeLocalInternVl or KeyDescribeLocalQwen => _settings.EnableLocalGenerators
-                ? null
-                : "local vision models are disabled (settings.json EnableLocalGenerators=false)",
             _ => $"unknown generator '{key}'",
         };
 
@@ -2380,7 +2559,13 @@ namespace MultiImageClient
                         if (!string.IsNullOrEmpty(combined) && File.Exists(combined))
                         {
                             job.StoreImagePath("grid", 0, combined, "image/png");
-                            job.Emit(new { type = "grid", url = $"/api/jobs/{job.Id}/images/grid/0", path = combined });
+                            // Retry x3 inside; a final upload failure throws to
+                            // the catch below, so the grid link is absent rather
+                            // than silently local (fail closed, no substitutes).
+                            var gridUrl = _b2 != null
+                                ? await UploadResultToB2Async(job, "grid", 0, combined, "image/png")
+                                : $"/api/jobs/{job.Id}/images/grid/0";
+                            job.Emit(new { type = "grid", url = gridUrl, path = combined });
                         }
                         Logger.Log($"[ui #{job.Id}] grid saved: {combined}");
                     }
@@ -2388,6 +2573,27 @@ namespace MultiImageClient
                 catch (Exception ex)
                 {
                     Logger.Log($"[ui #{job.Id}] grid build failed: {ex.Message}");
+                }
+
+                // Production storage mode: local raws whose uploads were
+                // checksum-verified are deleted once nothing here needs them
+                // (contact sheet composed, durable thumbs forced during
+                // eviction). B2 is the raw-byte source of truth on such
+                // installs; failures delete nothing.
+                if (_b2 != null && !_settings.B2KeepLocalRawImages)
+                {
+                    try
+                    {
+                        var evicted = job.EvictHostedLocalRaws();
+                        if (evicted > 0)
+                        {
+                            Logger.Log($"[ui #{job.Id}] evicted {evicted} local raw file(s) after verified B2 upload (B2KeepLocalRawImages=false)");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"[ui #{job.Id}] local raw eviction failed: {ex.Message}");
+                    }
                 }
 
                 foreach (var result in results)
@@ -2428,6 +2634,55 @@ namespace MultiImageClient
             }
         }
 
+        /// Uploads one durably saved result file to B2 with the decided retry
+        /// policy (3 attempts, short backoff) and persists the object key +
+        /// fileId. Returns the public capability URL. Throws after the final
+        /// attempt — the caller records the image as FAILED; a local URL is
+        /// never substituted (owner decision 2026-08-05: silent local serving
+        /// would mask upload failures and refill the disk-constrained host).
+        private async Task<string> UploadResultToB2Async(UiJob job, string genKey, int index, string localPath, string contentType)
+        {
+            var objectKey = B2StorageClient.BuildObjectKey(
+                job.Id, genKey, index, ExtensionForHostedFile(contentType, localPath));
+            const int attempts = 3;
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    var fileId = await _b2!.UploadFileAsync(localPath, objectKey, contentType, CancellationToken.None);
+                    if (!job.StoreCdnReference(genKey, index, objectKey, fileId))
+                    {
+                        throw new InvalidOperationException(
+                            $"uploaded {objectKey} but could not persist its CDN reference for {genKey}/{index}");
+                    }
+                    return _b2.DownloadUrlFor(objectKey);
+                }
+                catch (Exception ex) when (attempt < attempts)
+                {
+                    Logger.Log($"[ui #{job.Id}]   B2 upload attempt {attempt}/{attempts} for {genKey}/{index} failed: {ex.Message}; retrying");
+                    await Task.Delay(TimeSpan.FromSeconds(2 * attempt));
+                }
+            }
+        }
+
+        private static string ExtensionForHostedFile(string contentType, string localPath)
+        {
+            switch (contentType?.ToLowerInvariant())
+            {
+                case "image/png": return "png";
+                case "image/jpeg": return "jpg";
+                case "image/webp": return "webp";
+                case "image/gif": return "gif";
+            }
+            var fromPath = Path.GetExtension(localPath)?.TrimStart('.');
+            if (string.IsNullOrWhiteSpace(fromPath))
+            {
+                throw new InvalidOperationException(
+                    $"Cannot determine a hosted-file extension for content type '{contentType}' and path '{localPath}'.");
+            }
+            return fromPath.ToLowerInvariant();
+        }
+
         private async Task<TaskProcessResult> RunOneAsync(UiJob job, UiJobSpec spec, string key, PromptDetails pd)
         {
             if (IsDescribeKey(key))
@@ -2463,6 +2718,11 @@ namespace MultiImageClient
             var enablePartials = want == 1;
 
             var urls = new List<string>();
+            // Local card-thumb URLs, index-aligned with `urls`. Only emitted
+            // when B2 hosting is on: appending ?thumb=1 to a B2 URL would be
+            // ignored and pull full-resolution originals into every card —
+            // the exact regression the card-image rule exists to prevent.
+            var thumbs = new List<string>();
             var merged = new TaskProcessResult
             {
                 PromptDetails = pd,
@@ -2564,7 +2824,11 @@ namespace MultiImageClient
                             : result.GeneratedMediaContentType;
                         var idx = urls.Count;
                         job.StoreImagePath(key, idx, result.GeneratedMediaPath, mediaType);
+                        // v1 scope decision: video/SVG media stay local-served
+                        // even with B2 hosting on; only raster results and the
+                        // grid upload.
                         urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
+                        thumbs.Add($"/api/jobs/{job.Id}/images/{key}/{idx}?thumb=1");
                         merged.GeneratedMediaPath = result.GeneratedMediaPath;
                         merged.GeneratedMediaContentType = result.GeneratedMediaContentType;
                     }
@@ -2582,6 +2846,28 @@ namespace MultiImageClient
                                 job.StoreImagePath(key, idx, rawPath, result.ContentType ?? "image/png");
                                 firstImagePath ??= rawPath;
                                 merged.SetSavedRawImagePath(idx, rawPath);
+                                if (_b2 != null)
+                                {
+                                    // Retry x3 inside; throws on final failure,
+                                    // failing this image visibly. Never a local
+                                    // URL substitute.
+                                    var hostedUrl = await UploadResultToB2Async(
+                                        job, key, idx, rawPath, result.ContentType ?? "image/png");
+                                    urls.Add(hostedUrl);
+                                }
+                                else
+                                {
+                                    urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
+                                }
+                            }
+                            else if (_b2 != null)
+                            {
+                                // Hosting uploads stream from the durable saved
+                                // file; an image that never reached disk cannot
+                                // be hosted and must not fall back to local
+                                // serving (fail closed).
+                                throw new InvalidOperationException(
+                                    $"{key} returned image {i} without a durable saved file; B2 hosting requires the saved raw file.");
                             }
                             else
                             {
@@ -2593,8 +2879,9 @@ namespace MultiImageClient
                                     rawPath);
                                 firstImageBytes ??= bytes;
                                 merged.SetImageBytes(idx, bytes);
+                                urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
                             }
-                            urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
+                            thumbs.Add($"/api/jobs/{job.Id}/images/{key}/{idx}?thumb=1");
                             i++;
                         }
                     }
@@ -2684,6 +2971,10 @@ namespace MultiImageClient
                 errorHintUrl = actionHint?.Url,
                 ms = elapsed,
                 images = urls,
+                // Present only when B2 hosting is on: local ?thumb=1 card
+                // previews, index-aligned with `images` (whose entries are
+                // then absolute B2 URLs that have no thumb variant).
+                thumbs = _b2 != null ? thumbs : null,
                 mediaType,
                 label = label ?? key,
                 size = actualSize,
@@ -2711,9 +3002,11 @@ namespace MultiImageClient
             KeyDescribeIdeogram => IdeogramModelPricing.IdeogramDescribe,
             KeyDescribeOpenAi => 0.015m,
             KeyDescribeClaude => 0.025m,
-            KeyDescribeGemini => 0.015m,
+            // Gemini runs with a mandatory thinking budget (2.5 Pro cannot
+            // disable thinking), so its estimate includes those output-rate
+            // thinking tokens.
+            KeyDescribeGemini => 0.025m,
             KeyDescribeGrok => 0.025m,
-            KeyDescribeLocalInternVl or KeyDescribeLocalQwen => 0m,
             _ => throw new ArgumentException($"Unknown describe key '{key}'.", nameof(key)),
         };
 
@@ -2730,22 +3023,21 @@ namespace MultiImageClient
                 case KeyDescribeIdeogram:
                     RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
                     return new IdeogramDescriber(_settings.IdeogramApiKey);
+                // OpenAI and Gemini get their provider-native JSON output modes
+                // on top of the prompt contract; Claude and Grok have no such
+                // knob on these transports and rely on the prompt alone.
                 case KeyDescribeOpenAi:
                     RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", key);
-                    return new OpenAIVisionDescriber(_settings.OpenAIApiKey);
+                    return new OpenAIVisionDescriber(_settings.OpenAIApiKey) { RequestJsonOutput = true };
                 case KeyDescribeClaude:
                     RequireKey(_settings.AnthropicApiKey, "AnthropicApiKey", key);
                     return new ClaudeVisionDescriber(_settings.AnthropicApiKey);
                 case KeyDescribeGemini:
                     RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
-                    return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey);
+                    return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey) { RequestJsonOutput = true };
                 case KeyDescribeGrok:
                     RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", key);
                     return new GrokVisionDescriber(_settings.XAIGrokApiKey);
-                case KeyDescribeLocalInternVl:
-                    return new LocalInternVLClient();
-                case KeyDescribeLocalQwen:
-                    return new LocalQwenClient();
                 default:
                     throw new ArgumentException($"unknown describe target '{key}'");
             }
@@ -2779,6 +3071,12 @@ namespace MultiImageClient
             string? error = null;
             string label = key;
             var perCallCost = 0m;
+            // The exact full prompt sent over the wire (user instruction + the
+            // JSON reply contract), carried on the event so the card's
+            // sent/returned exchange viewer shows precisely what went out.
+            // Ideogram sends nothing (fixed built-in instruction), flagged as "".
+            var isIdeogram = key == KeyDescribeIdeogram;
+            var sentPrompt = "";
             try
             {
                 if (!job.HasInputImage)
@@ -2787,7 +3085,7 @@ namespace MultiImageClient
                 }
                 var describer = BuildDescriber(key);
                 perCallCost = DescribeCostEstimate(key);
-                label = key == KeyDescribeIdeogram
+                label = isIdeogram
                     ? $"{describer.GetModelName()} (fixed instruction; the prompt is not sent)"
                     : describer.GetModelName();
                 var instruction = pd.Prompt;
@@ -2798,22 +3096,30 @@ namespace MultiImageClient
                     // programmatic misuse.
                     throw new InvalidOperationException("describe instruction is empty");
                 }
+                sentPrompt = isIdeogram ? "" : instruction + "\n\n" + DescribeJsonReplyContract;
                 Logger.Log($"[ui #{job.Id}]   -> {key} ({describer.GetModelName()}, ~${perCallCost:0.###} x {job.InputImageCount} input(s))");
 
                 for (var i = 0; i < job.InputImageCount; i++)
                 {
                     var imageBytes = await File.ReadAllBytesAsync(job.InputImagePaths[i]);
-                    var text = await describer.DescribeImageAsync(
-                        imageBytes, instruction, maxTokens: DescribeMaxTokens, temperature: DescribeTemperature);
-                    if (string.IsNullOrWhiteSpace(text))
+                    var raw = await describer.DescribeImageAsync(
+                        imageBytes,
+                        isIdeogram ? instruction : sentPrompt,
+                        maxTokens: DescribeMaxTokens,
+                        temperature: DescribeTemperature);
+                    if (string.IsNullOrWhiteSpace(raw))
                     {
-                        // The local describers log-and-return-empty on transport
-                        // failure; blank text from any endpoint is a hard failure
-                        // here, never an empty "success".
+                        // Blank text from any endpoint is a hard failure here,
+                        // never an empty "success".
                         throw new InvalidDataException(
                             $"{key} returned no description for input image {i + 1} of {job.InputImageCount}.");
                     }
-                    texts.Add(new { inputIndex = i, text = text.Trim() });
+                    raw = raw.Trim();
+                    // Ideogram's captions are the description by definition; the
+                    // instruction-capable models answer under the JSON contract
+                    // and a non-conforming reply fails this target.
+                    var (description, comments) = isIdeogram ? (raw, "") : ParseDescribeJsonReply(raw);
+                    texts.Add(new { inputIndex = i, text = description, comments, raw });
                 }
             }
             catch (Exception ex)
@@ -2850,6 +3156,11 @@ namespace MultiImageClient
                 size = (string?)null,
                 resultKind = "text",
                 texts,
+                // The exact wire prompt ("" = Ideogram's fixed instruction);
+                // each texts[] entry carries the raw pre-parse reply, so the
+                // card's exchange toggle can show precisely what was sent to
+                // and returned from each endpoint.
+                sentPrompt,
                 cost = ok ? perCallCost * texts.Count : 0m,
             });
             Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({texts.Count} description(s))" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms");

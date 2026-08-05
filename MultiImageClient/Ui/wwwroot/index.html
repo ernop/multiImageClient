@@ -166,19 +166,6 @@
       </div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
 
-      <!-- Describe endpoints (image → text): submit the attached image to any
-           or all of them and get back text descriptions instead of images.
-           Selectable only while an image is attached. -->
-      <div id="describe-section" hidden>
-        <div id="describe-head">
-          <strong>describe</strong>
-          <span id="describe-head-note">image &rarr; text — needs an attached image; your prompt is the instruction (blank = standard "describe this image")</span>
-          <button id="describe-enable-all" type="button" title="Enable every available describe endpoint">all</button>
-          <button id="describe-disable-all" type="button" title="Disable every describe endpoint">none</button>
-        </div>
-        <div id="describe-row"><!-- describe checkboxes injected here --></div>
-      </div>
-
       <div id="opts-row">
         <div id="inspiration-control">
           <button id="inspiration-toggle" type="button" aria-expanded="false" aria-controls="inspiration-panel">
@@ -231,6 +218,21 @@
             </ul>
           </div>
         </span>
+      </div>
+
+      <!-- Describe endpoints (image → text): submit the attached image to any
+           or all of them and get back text descriptions instead of images.
+           Sits BELOW the media chooser and its output options (the options
+           don't apply to describe targets) and appears only while an image
+           is attached — without one there is nothing to describe. -->
+      <div id="describe-section" hidden>
+        <div id="describe-head">
+          <strong>describe</strong>
+          <span id="describe-head-note">image &rarr; text — describes the attached image(s); your prompt is the instruction (blank = standard "describe this image"); output options above don't apply</span>
+          <button id="describe-enable-all" type="button" title="Enable every available describe endpoint">all</button>
+          <button id="describe-disable-all" type="button" title="Disable every describe endpoint">none</button>
+        </div>
+        <div id="describe-row"><!-- describe checkboxes injected here --></div>
       </div>
 
       <div id="send-row">

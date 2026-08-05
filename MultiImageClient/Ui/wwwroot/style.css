@@ -561,6 +561,29 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .gen-img-flag.text-only { display: none; color: var(--err); }
 #gens-row.has-image .gen-img-flag.text-only { display: inline-flex; }
 
+/* ---------- describe endpoints (image → text) ---------- */
+
+/* Their own labeled section below the media chooser and its output options
+   (which don't apply to describe targets): each selected endpoint returns a
+   text description of the attached image(s) instead of an image. The chips
+   reuse .gen-toggle; the whole section only renders while an image is
+   attached — without one there is nothing to describe. */
+#describe-section { display: flex; flex-direction: column; gap: 6px; }
+#describe-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+#describe-head-note { font-size: 11px; }
+#describe-head button {
+  font: inherit; font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: var(--card); cursor: pointer;
+}
+#describe-head button:hover { border-color: var(--accent); }
+#describe-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+  gap: 8px;
+}
+
 #opts-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; font-size: 13px; }
 #opts-row label { display: inline-flex; align-items: center; gap: 5px; }
 #opts-row input, #opts-row select {
@@ -1038,6 +1061,91 @@ a[data-viewer-image].viewer-seen img {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px rgba(59, 75, 216, 0.30);
 }
+
+/* Describe result: the returned text at full card width, unclamped — the
+   input image is already visible in the job head right above, so no
+   per-result thumbnail. "view with image" in the tools row opens the viewer
+   (input image beside the full description). */
+.describe-result {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px;
+  background: var(--card);
+}
+.describe-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.describe-which { font-size: 11px; font-weight: 600; }
+.describe-text {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.describe-view {
+  font-size: 11px;
+  color: var(--accent-dark);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 8px;
+  background: var(--paper);
+}
+.describe-view:hover { border-color: var(--accent); color: var(--accent); }
+/* Same persistent "displayed full-size in the viewer" bookkeeping the image
+   thumbnails get, expressed on the link since there is no thumb here. */
+.describe-view.viewer-seen {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(59, 75, 216, 0.30);
+}
+/* The model's separated non-description remarks (the JSON reply contract
+   diverts meta chatter here). Secondary via size, never via gray. */
+.describe-comments {
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 90px;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+}
+.describe-comments-label { font-weight: 600; color: var(--accent-dark); }
+.describe-tools { display: flex; align-items: center; gap: 8px; }
+.describe-copy {
+  align-self: flex-start;
+  font: inherit; font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--line); border-radius: 3px;
+  background: var(--paper); cursor: pointer;
+}
+.describe-copy:hover { border-color: var(--accent); }
+/* Exact wire exchange, collapsed by default: full sent prompt + raw reply. */
+.describe-exchange { font-size: 11px; }
+.describe-exchange summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--accent-dark);
+  width: fit-content;
+}
+.describe-exchange summary:hover { color: var(--accent); }
+.describe-exchange-head { font-weight: 600; margin-top: 4px; }
+.describe-exchange-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 4px 6px;
+  background: var(--paper);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
 /* Departure pulse: on viewer close, the just-viewed image's thumbnail glows
    briefly so the eye lands on it (applies in both handback modes). */
 a[data-viewer-image].viewer-return-pulse img {
@@ -1362,6 +1470,28 @@ body.image-viewer-open { overflow: hidden; }
   background: var(--accent);
   outline: none;
 }
+/* Describe items: the returned description is the headline content (the
+   stage shows the submitted input image), so it sits above the prompt —
+   which for these items is the instruction that was sent. */
+#image-viewer-describe {
+  min-width: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.5;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px;
+  background: var(--paper);
+}
+#image-viewer-describe .viewer-describe-comments {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+}
 #image-viewer-prompt {
   min-width: 0;
   max-height: 108px;
@@ -1404,6 +1534,7 @@ body.image-viewer-open { overflow: hidden; }
 /* The whole column scrolls as one, so the prompt and guidance drop their
    bottom-bar height caps and stay adjacent at full length. */
 #image-viewer-window.side-status #image-viewer-prompt,
+#image-viewer-window.side-status #image-viewer-describe,
 #image-viewer-window.side-status #image-viewer-guidance {
   max-height: none;
   overflow-y: visible;
