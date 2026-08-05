@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>13.0</LangVersion>
     <ProjectGuid>{3E7F378B-7AC6-4904-B775-E4B4CC69AB5B}</ProjectGuid>
     <Platforms>AnyCPU;ARM64</Platforms>

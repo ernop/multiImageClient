@@ -16,7 +16,7 @@ staging="$HOME/multiimageclient-publish-staging"
 helper=/usr/local/sbin/multiimageclient-update
 
 [[ -d $repo/.git ]] || die "repo not found at $repo"
-[[ -x $dotnet ]] || die "dotnet not found at $dotnet — install .NET 9 SDK"
+[[ -x $dotnet ]] || die "dotnet not found at $dotnet — install .NET 10 SDK"
 [[ -x $helper ]] || die "missing $helper — run once: sudo bash $repo/deploy/install-agent-deploy.sh"
 
 cd "$repo"
