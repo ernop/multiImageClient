@@ -799,6 +799,9 @@ namespace MultiImageClient
 
             app.MapGet("/api/jobs/{id}/images/{gen}/{n:int}", (string id, string gen, int n, HttpContext ctx) =>
             {
+                // A miss is transient (job unknown here, or bytes not landed
+                // yet); never let a 404 become heuristically cacheable.
+                ctx.Response.Headers.CacheControl = "no-store";
                 var job = jobs.Get(id);
                 if (job == null) return Results.NotFound();
 
@@ -845,11 +848,16 @@ namespace MultiImageClient
                     return Results.NotFound();
                 }
 
-                if (job.IsDone)
+                // Input images are archived to disk before the job is announced
+                // to any client and are never rewritten, so they are stable from
+                // the first moment their URL can exist — cacheable mid-run.
+                var bytesAreFinal = job.IsDone
+                    || string.Equals(gen, "input", StringComparison.Ordinal);
+                if (bytesAreFinal)
                 {
-                    // A finished job's bytes never change, so let the browser
-                    // cache them: without this every page refresh re-downloads
-                    // the entire job history through the ~6-socket pool.
+                    // Finished bytes never change, so let the browser cache
+                    // them: without this every page refresh re-downloads the
+                    // entire job history through the ~6-socket pool.
                     ctx.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
                 }
                 else
@@ -878,8 +886,9 @@ namespace MultiImageClient
             // archived bytes (hashes live in images.json; listing peeks disk
             // without hydrating full UiJob graphs). Entries whose archived
             // bytes are no longer readable are omitted and logged, never guessed.
-            app.MapGet("/api/input-images", () =>
+            app.MapGet("/api/input-images", (HttpContext ctx) =>
             {
+                ctx.Response.Headers.CacheControl = "no-store";
                 var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var images = new List<object>();
                 foreach (var entry in jobs.ListInputLibraryCandidates())
