@@ -176,6 +176,19 @@ namespace MultiImageClient
         // be 10-30s and the final gap before `completed` can be similar.
         private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
 
+        // A silent SSE stream is a dead SSE stream. HttpClient.Timeout only
+        // covers SendAsync; with ResponseHeadersRead the body reads afterward
+        // have NO timeout, and OpenAI streams sometimes die silently mid-run
+        // (socket stays ESTAB, zero bytes ever arrive again — observed
+        // 2026-08-05/06 on both installs, one pair of streams stuck 15+ hours).
+        // Each zombie held its openai scheduler-lane slot forever, so later
+        // gpt2 jobs queued eternally: "partials spin forever, finals never
+        // arrive". Healthy gaps top out around ~90s (pre-first-partial and
+        // partial→final); 4 minutes of total silence is unambiguous death.
+        // The watchdog turns it into a visible attempt failure that frees the
+        // lane. Fail-closed: no retry, no substitute output.
+        private static readonly TimeSpan StreamStallTimeout = TimeSpan.FromMinutes(4);
+
         public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {
             await _semaphore.WaitAsync();
@@ -419,10 +432,27 @@ namespace MultiImageClient
 
                     await using var rawStream = await resp.Content.ReadAsStreamAsync();
                     using var reader = new Utf8SseLineReader(rawStream);
+                    using var stallCts = new CancellationTokenSource();
 
                     while (true)
                     {
-                        var lineOrNull = await reader.ReadLineAsync();
+                        // Re-armed before every line; one line (the multi-MB
+                        // final) may span many socket reads, all inside this
+                        // window. Once fired the loop throws, so the one-shot
+                        // nature of a canceled CTS is fine.
+                        stallCts.CancelAfter(StreamStallTimeout);
+                        ReadOnlyMemory<byte>? lineOrNull;
+                        try
+                        {
+                            lineOrNull = await reader.ReadLineAsync(stallCts.Token);
+                        }
+                        catch (OperationCanceledException) when (stallCts.IsCancellationRequested)
+                        {
+                            throw new TimeoutException(
+                                $"gpt-image-2 SSE stream stalled: no data for {(int)StreamStallTimeout.TotalSeconds}s "
+                                + $"(total {sw.ElapsedMilliseconds / 1000}s, last event at {lastEventMs / 1000}s). "
+                                + "The stream is dead; the attempt failed.");
+                        }
                         if (lineOrNull == null) break;
                         var line = lineOrNull.Value;
                         if (line.Length == 0) continue;                         // event boundary
@@ -942,7 +972,11 @@ namespace MultiImageClient
                 var folder = Path.Combine(_partialSaveFolder, today, "PartialsLive");
                 Directory.CreateDirectory(folder);
 
-                var promptPart = FilenameGenerator.TruncatePrompt(pd?.Prompt ?? "partial", 60);
+                // Sanitize: a '/' in the prompt otherwise becomes a bogus
+                // directory component and the write fails (observed 2026-08-06,
+                // prompt containing "MOSSAD / model").
+                var promptPart = FilenameGenerator.SanitizeFilename(
+                    FilenameGenerator.TruncatePrompt(pd?.Prompt ?? "partial", 60));
                 // Zero-padded timestamp keeps files sorted by arrival order
                 // across runs; partial index disambiguates within a single call.
                 var ts = DateTime.Now.ToString("HHmmss_fff");
@@ -1021,7 +1055,7 @@ namespace MultiImageClient
             // (JsonDocuments parsed from it must be disposed before then).
             // Returns null at end of stream; a final unterminated line is
             // surfaced before that.
-            public async Task<ReadOnlyMemory<byte>?> ReadLineAsync()
+            public async Task<ReadOnlyMemory<byte>?> ReadLineAsync(CancellationToken cancellationToken = default)
             {
                 var lineLength = 0;
                 while (true)
@@ -1032,7 +1066,7 @@ namespace MultiImageClient
                         {
                             return lineLength > 0 ? _lineBuffer.AsMemory(0, lineLength) : null;
                         }
-                        _readEnd = await _stream.ReadAsync(_readBuffer.AsMemory());
+                        _readEnd = await _stream.ReadAsync(_readBuffer.AsMemory(), cancellationToken);
                         _readStart = 0;
                         if (_readEnd == 0)
                         {
