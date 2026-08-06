@@ -4007,6 +4007,15 @@ imageViewer.addEventListener("auxclick", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (imageViewer.hidden) return;
+  // A modal/form layered over the viewer owns its keyboard completely. This
+  // is especially important for Make Video: letters such as c/f/s/v and
+  // navigation keys must edit/select normally, never operate the viewer
+  // behind the dialog.
+  const formOwnsKey = event.target instanceof Element &&
+    event.target.closest("input, textarea, select, [contenteditable]");
+  if (videoDialog.open || formOwnsKey) {
+    return;
+  }
 
   if (event.key === "Tab") {
     const focusables = getImageViewerFocusables();

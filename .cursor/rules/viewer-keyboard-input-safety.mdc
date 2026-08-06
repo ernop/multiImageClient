@@ -1,0 +1,14 @@
+---
+description: Keep viewer shortcuts from intercepting text and form input
+globs: MultiImageClient/Ui/wwwroot/*.{js,html}
+alwaysApply: false
+---
+
+# Viewer keyboard input safety
+
+- Image-viewer shortcuts must not run while a higher modal dialog is open.
+- They must not run when the keyboard event originates in an `input`,
+  `textarea`, `select`, or content-editable element.
+- The focused form/dialog owns typing, navigation, Tab, Enter, and Escape
+  according to its native or explicit handlers. Never let viewer commands
+  operate invisibly behind Make Video or another form.
