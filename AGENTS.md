@@ -115,7 +115,7 @@ The `/v1/images/generations` endpoint with `model=gpt-image-2` accepts:
 Pricing is token-based ($30 / 1M output tokens). Rough per-image ceilings we report: low ≈ $0.02, medium ≈ $0.08, high ≈ $0.25.
 
 ## Testing Guidelines
-No dedicated test project exists yet. Manually validate new workflows by running representative prompts and inspecting generated assets and metadata. When adding automated coverage, create an xUnit project referenced by the solution and ensure `dotnet test` succeeds. Capture regression prompts in `prompts.txt` with notes after bug fixes.
+`MultiImageClient.Tests/` is an xUnit project in the solution (50 tests passing as of 2026-08-06); run it with `dotnet test MultiImageClient.sln`. Current coverage: `UiShapeMapping` auto/explicit aspect resolution incl. fail-closed cases (missing input dimensions, unknown shape values), Krea2 + Recraft cost/model-id contracts against published prices, SVG raw-filename preservation, and Recraft failure-detail preservation. Provider transports still require manual validation — run representative prompts and inspect generated assets and metadata. Add new automated coverage to this project and ensure `dotnet test` succeeds. Capture regression prompts in `prompts.txt` with notes after bug fixes.
 
 ## Commit & Pull Request Guidelines
 Keep commits focused and use imperative, present-tense subjects as in history (`rename and genericize describers`). Include context in the body for prompt sets or configuration changes. Pull requests should outline workflow impacts, note which services (BFL, Ideogram, Recraft) are affected, call out required settings updates, and attach screenshots or sample outputs for UI or prompt adjustments.
