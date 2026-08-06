@@ -4910,6 +4910,11 @@ function applyJobEvent(id, card, evt) {
     updateJobProgress(card);
     updateCostTotals();
   } else if (evt.type === "grid") {
+    // Video jobs may have persisted a legacy grid event containing only their
+    // source image. The playable/downloadable MP4 is the useful artifact, so
+    // suppress that obsolete contact-sheet link during both live and archive
+    // event replay.
+    if (card.querySelector('.cell[data-gen="grok-web-video"]')) return;
     if ([...hiddenImageKeys].some((key) => key.startsWith(`${id}|`))) return;
     let link = card.querySelector(".grid-link");
     if (!link) {

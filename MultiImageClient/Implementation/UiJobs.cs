@@ -2595,17 +2595,27 @@ namespace MultiImageClient
                 finalizationAcquired = true;
                 try
                 {
-                    // Describe results are text-only and contribute no cell to the
-                    // image contact sheet; their descriptions live in the job's
-                    // persisted gen-result events. A describe-only job builds no
-                    // sheet at all.
+                    // Describe results are text-only and videos are already
+                    // directly playable/downloadable; neither contributes a cell
+                    // to an image contact sheet. A job containing only those
+                    // result kinds builds no sheet at all.
                     var sheetResults = results
-                        .Where(r => !IsDescribeKey(r.ImageGeneratorDescription))
+                        .Where(r =>
+                            !IsDescribeKey(r.ImageGeneratorDescription)
+                            && !string.Equals(
+                                r.ImageGeneratorDescription,
+                                KeyGrokWebVideo,
+                                StringComparison.OrdinalIgnoreCase))
                         .ToArray();
                     if (sheetResults.Length > 0)
                     {
                         var sheetKeys = spec.GeneratorKeys
-                            .Where(k => !IsDescribeKey(k))
+                            .Where(k =>
+                                !IsDescribeKey(k)
+                                && !string.Equals(
+                                    k,
+                                    KeyGrokWebVideo,
+                                    StringComparison.OrdinalIgnoreCase))
                             .ToList();
                         var combined = await ImageCombiner.CreateBatchLayoutImageSquareAsync(
                             sheetResults, job.Prompt, _settings, openWhenDone: false,
