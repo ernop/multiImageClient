@@ -2863,6 +2863,68 @@ document.addEventListener("click", (event) => {
   openImageViewer(link);
 });
 
+// ---------- hover prefetch of full-resolution originals ----------
+// Resting the pointer on a result thumbnail for a beat fetches the exact
+// bytes the viewer will need on click, so the click paints from the browser
+// HTTP cache instead of hanging on a multi-MB transfer over the server's
+// limited uplink (final images are served immutable, so a warmed URL is
+// never re-downloaded). Single-flight, latest hover wins: sweeping across a
+// grid replaces the in-flight prefetch instead of stacking downloads.
+// data-viewer-image anchors are images only (video results never get one).
+// Prefetch failure is silent by design: this is speculative cache warming,
+// and the click path performs its own fetch whose errors surface normally.
+const HoverPrefetchIntentMs = 150;
+const hoverPrefetchWarmed = new Set();
+let hoverPrefetchTimer = null;
+let hoverPrefetchController = null;
+
+function startHoverPrefetch(url) {
+  if (hoverPrefetchWarmed.has(url)) return;
+  if (hoverPrefetchController) hoverPrefetchController.abort();
+  const controller = new AbortController();
+  hoverPrefetchController = controller;
+  fetch(url, { signal: controller.signal, priority: "low" })
+    .then(async (response) => {
+      if (!response.ok) return;
+      await response.blob(); // drain fully so the cache entry completes
+      hoverPrefetchWarmed.add(url);
+    })
+    .catch(() => {})
+    .finally(() => {
+      if (hoverPrefetchController === controller) hoverPrefetchController = null;
+    });
+}
+
+document.addEventListener("pointerover", (event) => {
+  // The open viewer runs its own prioritized preload window; stay out of
+  // its way. Warmed-set hits skip the timer entirely.
+  if (!imageViewer.hidden) return;
+  const link = event.target.closest('a[data-viewer-image="true"]');
+  if (!link || hoverPrefetchWarmed.has(link.href)) return;
+  if (hoverPrefetchTimer) clearTimeout(hoverPrefetchTimer);
+  const url = link.href;
+  hoverPrefetchTimer = setTimeout(() => {
+    hoverPrefetchTimer = null;
+    startHoverPrefetch(url);
+  }, HoverPrefetchIntentMs);
+});
+
+document.addEventListener("pointerout", (event) => {
+  // Leaving the anchor cancels only the intent timer; an already-started
+  // transfer runs to completion (the pointer usually comes back, and the
+  // bytes cache either way).
+  const link = event.target.closest('a[data-viewer-image="true"]');
+  if (!link) return;
+  const to = event.relatedTarget instanceof Element
+    ? event.relatedTarget.closest('a[data-viewer-image="true"]')
+    : null;
+  if (to === link) return; // moved between children of the same anchor
+  if (hoverPrefetchTimer) {
+    clearTimeout(hoverPrefetchTimer);
+    hoverPrefetchTimer = null;
+  }
+});
+
 // Navigation is keyboard-only (see ImageViewerCommands; ? shows the list).
 // Closing is Escape or a click outside the window.
 el("image-viewer-help-toggle").addEventListener("click", () => toggleImageViewerHelp());
