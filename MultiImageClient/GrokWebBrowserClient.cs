@@ -193,6 +193,53 @@ namespace MultiImageClient
             }
         }
 
+        // One-time deployment-material capture. The real Edit control computes
+        // x-statsig-id, but its request is aborted before reaching Grok. The
+        // captured digest input + header must reproduce byte-for-byte through
+        // GrokWebStatsigSigner before either value is returned.
+        public async Task<GrokWebStatsigMaterial> CaptureStatsigMaterialAsync(
+            string triggerPostId,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(triggerPostId))
+            {
+                throw new ArgumentException(
+                    "Grok web statsig capture requires a source post id.",
+                    nameof(triggerPostId));
+            }
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            timeoutCts.CancelAfter(MaxBrowserOperationTimeout);
+            var ct = timeoutCts.Token;
+            await _gate.WaitAsync(ct);
+            try
+            {
+                NoteBrowserActivity();
+                await EnsureStartedAsync(ct);
+                await PrepareImaginePageAsync(triggerPostId, ct);
+                return await CaptureImageEditStatsigFromPageAsync(ct);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                await RetireBrowserAfterFaultAsync("statsig capture timeout");
+                throw new GrokWebException(
+                    $"Grok web statsig capture timed out after "
+                    + $"{MaxBrowserOperationTimeout.TotalSeconds:0} seconds.");
+            }
+            catch (PlaywrightException ex)
+            {
+                await RetireBrowserAfterFaultAsync("statsig capture transport failure");
+                throw new GrokWebException(
+                    $"Grok web statsig capture failed: {ex.Message}");
+            }
+            finally
+            {
+                NoteBrowserActivity();
+                _gate.Release();
+            }
+        }
+
         // Live protocol (2026-07-31): on an uploaded image post, fill the
         // composer and click aria-label=Edit. Grok sends modelName
         // imagine-image-edit with mediaGenInput.imageToImage.inputAssets.
@@ -299,6 +346,101 @@ namespace MultiImageClient
             finally
             {
                 _page.Response -= HandleResponse;
+                await _page.UnrouteAsync(endpointPattern, routeHandler);
+            }
+        }
+
+        private async Task<GrokWebStatsigMaterial> CaptureImageEditStatsigFromPageAsync(
+            CancellationToken ct)
+        {
+            const string endpointPattern = "**/rest/app-chat/conversations/new";
+            const string method = "POST";
+            const string path = "/rest/app-chat/conversations/new";
+            var headerSource = new TaskCompletionSource<string>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+
+            Func<IRoute, Task> routeHandler = async route =>
+            {
+                var header = route.Request.Headers
+                    .FirstOrDefault(pair => string.Equals(
+                        pair.Key,
+                        "x-statsig-id",
+                        StringComparison.OrdinalIgnoreCase))
+                    .Value;
+                if (string.IsNullOrWhiteSpace(header))
+                {
+                    headerSource.TrySetException(new GrokWebException(
+                        "Grok web Edit request did not carry x-statsig-id."));
+                }
+                else
+                {
+                    headerSource.TrySetResult(header);
+                }
+
+                // Capture only. Do not spend an image generation or let a
+                // placeholder edit reach the provider.
+                await route.AbortAsync("aborted");
+            };
+
+            await _page!.RouteAsync(endpointPattern, routeHandler);
+            try
+            {
+                var imageToggle = _page.Locator("button[aria-label=\"Image\" i]").Last;
+                if (await imageToggle.CountAsync() > 0 && await imageToggle.IsVisibleAsync())
+                {
+                    await imageToggle.ClickAsync(new LocatorClickOptions { Force = true });
+                }
+
+                var composer = _page.Locator(
+                    "[contenteditable=\"true\"][aria-label*=\"Ask Grok\" i], "
+                    + "[contenteditable=\"true\"]").Last;
+                await composer.WaitForAsync(new LocatorWaitForOptions
+                {
+                    State = WaitForSelectorState.Visible,
+                    Timeout = 30_000,
+                });
+                await composer.FillAsync("capture signing material");
+
+                var editButton = _page.Locator("button[aria-label=\"Edit\" i]").Last;
+                await editButton.WaitForAsync(new LocatorWaitForOptions
+                {
+                    State = WaitForSelectorState.Visible,
+                    Timeout = 30_000,
+                });
+                if (await editButton.IsDisabledAsync())
+                {
+                    throw new GrokWebException(
+                        "Grok web Edit control stayed disabled during statsig capture.");
+                }
+                await editButton.ClickAsync(new LocatorClickOptions { Force = true });
+
+                var header = await headerSource.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+                var digestInputs = await _page.EvaluateAsync<string[]>(
+                    """
+                    () => Array.isArray(window.__micStatsigDigestInputs)
+                        ? window.__micStatsigDigestInputs
+                        : []
+                    """);
+                var digestInput = digestInputs.LastOrDefault(value =>
+                    value.StartsWith(
+                        "POST!/rest/app-chat/conversations/new!",
+                        StringComparison.Ordinal)
+                    && value.Contains("obfiowerehiring", StringComparison.Ordinal));
+                if (string.IsNullOrWhiteSpace(digestInput))
+                {
+                    throw new GrokWebException(
+                        "Grok web signing middleware produced x-statsig-id, but its SHA-256 "
+                        + "digest input was not observable. The frontend signing implementation changed.");
+                }
+
+                return GrokWebStatsigSigner.ParseCapturedMaterial(
+                    header,
+                    digestInput,
+                    method,
+                    path);
+            }
+            finally
+            {
                 await _page.UnrouteAsync(endpointPattern, routeHandler);
             }
         }
@@ -552,6 +694,32 @@ namespace MultiImageClient
             {
                 ViewportSize = new ViewportSize { Width = 1440, Height = 900 },
             });
+            await _context.AddInitScriptAsync(
+                """
+                (() => {
+                    window.__micStatsigDigestInputs = [];
+                    const subtle = globalThis.crypto && globalThis.crypto.subtle;
+                    if (!subtle || typeof subtle.digest !== "function") return;
+                    const originalDigest = subtle.digest.bind(subtle);
+                    const wrappedDigest = async (algorithm, data) => {
+                        try {
+                            const text = new TextDecoder().decode(data);
+                            if (text.includes("obfiowerehiring")) {
+                                window.__micStatsigDigestInputs.push(text);
+                            }
+                        } catch {}
+                        return originalDigest(algorithm, data);
+                    };
+                    try {
+                        Object.defineProperty(subtle, "digest", {
+                            configurable: true,
+                            value: wrappedDigest,
+                        });
+                    } catch {
+                        try { subtle.digest = wrappedDigest; } catch {}
+                    }
+                })();
+                """);
             var pairs = GrokWebCookieLoader.LoadCookiePairs(_options.CookiePath);
             await _context.AddCookiesAsync(pairs.Select(kvp => new Cookie
             {

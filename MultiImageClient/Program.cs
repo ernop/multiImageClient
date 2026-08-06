@@ -46,6 +46,13 @@ namespace MultiImageClient
 
             var options = RunOptions.Parse(args);
 
+            if (options.GrokWebStatsigSelfTest)
+            {
+                GrokWebStatsigSigner.RunSelfTest();
+                Console.WriteLine("grok-web-statsig-self-test: PASS");
+                return;
+            }
+
             if (options.Ui)
             {
                 // The shared-site daemon repeatedly decodes large originals to
@@ -85,6 +92,16 @@ namespace MultiImageClient
             var settingsFilePath = ResolveSettingsPath();
             var settings = Settings.LoadFromFile(settingsFilePath);
             GenerationArchive.Initialize(settings);
+
+            if (options.GrokWebCaptureStatsig)
+            {
+                await GrokWebStatsigCapture.RunAsync(
+                    settings,
+                    options,
+                    settingsFilePath,
+                    CancellationToken.None);
+                return;
+            }
 
             if (options.BackfillDl)
             {

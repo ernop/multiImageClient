@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260804-spelling-panel">
+<link rel="stylesheet" href="style.css?v=20260806-favorites-viewer-nav">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260804-spelling-panel">
 </head>
 <body>
@@ -36,6 +36,16 @@
     <button type="button" class="user-chip selected" data-user="*">everyone</button>
     <!-- one chip per known creator, injected -->
   </div>
+</div>
+
+<div id="favorites-bar" aria-label="Browse shared image and prompt favorites">
+  <strong>favorites</strong>
+  <button id="favorites-all-images" type="button" class="favorite-user-chip selected">all generations</button>
+  <button id="favorites-everyone" type="button" class="favorite-user-chip"
+    title="Show every image and prompt anyone has favorited">everyone's favorites</button>
+  <div id="favorite-user-filters" aria-label="Show one person's favorites"></div>
+  <span id="favorites-hint">press <kbd>f</kbd> for a viewed image; use <strong>☆ prompt</strong> beside prompt text</span>
+  <span id="favorites-error"></span>
 </div>
 
 <div id="settings-panel" hidden aria-label="Settings">
@@ -248,6 +258,11 @@
     <span id="cost-text"></span>
   </section>
 
+  <section id="favorites-gallery" hidden aria-label="Favorite images and prompts">
+    <h2 id="favorites-gallery-title"></h2>
+    <div id="favorites-grid"></div>
+  </section>
+
   <section id="jobs"></section>
 
   <!-- Day archive: everything from earlier days, grouped by day and loaded
@@ -268,9 +283,9 @@
       <img id="image-viewer-image" alt="Generated image">
       <div id="image-viewer-help" hidden>
         <div id="image-viewer-help-panel">
-          <h2>Keyboard shortcuts</h2>
+          <h2>Viewer navigation and controls</h2>
           <ul id="image-viewer-help-list"></ul>
-          <p>Any key dismisses this list.</p>
+          <p>An unrecognized key or the mouse wheel dismisses this list.</p>
         </div>
       </div>
     </div>
@@ -278,7 +293,14 @@
       <div id="image-viewer-meta-row">
         <span id="image-viewer-generator"></span>
         <span id="image-viewer-dimensions"></span>
-        <button id="image-viewer-help-toggle" type="button" title="Keyboard shortcuts (?) — c compares with the input image, s toggles close handback (scroll the page to the viewed image on close), Esc or click outside to close">?</button>
+        <span id="image-viewer-position" aria-live="polite"
+          title="Place-in-list indicator: current item / all items in the visible gallery"></span>
+        <button id="image-viewer-favorite" type="button" aria-pressed="false"
+          title="Favorite this image (f)">☆ favorite</button>
+        <button id="image-viewer-hide" type="button" hidden
+          title="Hide this image from everyone">hide image</button>
+        <button id="image-viewer-help-toggle" type="button"
+          title="Viewer navigation and controls (?)">?</button>
       </div>
       <!-- Describe results: the stage shows the submitted input image and this
            panel carries the returned description text (the job prompt below it
@@ -344,6 +366,6 @@
 
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260804-spelling-panel"></script>
-<script src="app.js?v=20260804-spelling-panel"></script>
+<script src="app.js?v=20260806-creator-hiding-viewer-nav"></script>
 </body>
 </html>

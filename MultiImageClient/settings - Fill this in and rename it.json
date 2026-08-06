@@ -12,6 +12,8 @@
   "RecraftApiKey": "Optional: Recraft API key from https://www.recraft.ai/ (paid). Required for Recraft generators.",
   "XAIGrokApiKey": "Optional: xAI API key from https://console.x.ai/. Required for Grok Imagine image/video generators.",
   "GrokWebCookiePath": "Optional: absolute path to grok.com browser cookies (Netscape cookies.txt or raw Cookie header). Required for --grok-web.",
+  "GrokWebStatsigVerificationKey": "",
+  "GrokWebStatsigAnimationKey": "",
   "GrokWebBrowserExecutablePath": "Optional: Chrome/Chromium binary for grok-web video generation. Leave blank to use Playwright's Chromium (install once with --playwright-install).",
   "GrokWebBrowserHeaded": false,
   "GrokWebVideoTimeoutSeconds": 900,

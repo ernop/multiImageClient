@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -44,11 +45,18 @@ namespace MultiImageClient
     ///   GET  /api/archive/days                 archived (pre-today) days with job counts
     ///   GET  /api/archive/days/{day}           one archived day's jobs + full event history
     ///   GET  /api/users                        every creator name with job counts (filter bar)
+    ///   GET  /api/favorites                    persistent image + whole-prompt favorites by user
+    ///   POST /api/favorites                    idempotently set one user's exact resource favorite
+    ///   POST /api/visibility                   creator-only permanent prompt/image stream hiding
     ///   POST /api/auth/login|logout            shared-site access gate (only when UiAuthFilePath is set)
     public class UiWorkflow
     {
-        private static bool SupportsImageAspectOverride(string key)
-            => UiJobRunner.IsImageCapable(key)
+        private const string VisibilityOverrideLogin = "ernieMultiZone";
+
+        private static bool SupportsImageAspectOverride(
+            UiJobRunner runner,
+            string key)
+            => runner.IsImageCapableForCurrentSettings(key)
                 && !UiJobRunner.IsRecraftKey(key);
 
         // Default anti-murk guidance appended to every gpt-image-2 prompt while
@@ -86,6 +94,18 @@ namespace MultiImageClient
             }
 
             var jobs = new UiJobRegistry(settings);
+            UiFavoriteStore favorites;
+            UiVisibilityStore visibility;
+            try
+            {
+                favorites = new UiFavoriteStore(settings);
+                visibility = new UiVisibilityStore(settings);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"UI aborted: persistent UI state could not be loaded: {ex.Message}");
+                return;
+            }
             var activeJobs = new ConcurrentDictionary<string, Task>();
             await using var runner = new UiJobRunner(settings, stats, options);
 
@@ -222,7 +242,9 @@ namespace MultiImageClient
                 var generators = new[]
                 {
                     new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise. Accepts up to 4 ordered input images (other selected generators only receive the first). The default output AR matches the primary attached source; explicit AR choices override it." },
-                    new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = "grok.com cookie session using the browser-free imagine WebSocket. Text-to-image only in this UI; attached images are not sent. Auto requests square 1:1 because this transport has no prompt-aware auto and Grok's own default is 2:3. Side-by-side mode requests up to 4 images." },
+                    new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = runner.IsImageCapableForCurrentSettings(UiJobRunner.KeyGrokWeb)
+                        ? "grok.com cookie session. Text-to-image uses the browser-free imagine WebSocket; attached images use browser-free x-statsig-id-signed imagine-image-edit. Auto edits inherit the source shape. Text-to-image auto requests square 1:1 because the WebSocket has no prompt-aware auto."
+                        : "grok.com cookie session using the browser-free imagine WebSocket. Text-to-image only until current x-statsig-id signing material is captured; attached images are not sent. Auto requests square 1:1 because this transport has no prompt-aware auto and Grok's own default is 2:3. Side-by-side mode requests up to 4 images." },
                     new { key = UiJobRunner.KeyGrokApi, label = "grok-api", detail = "api.x.ai standard tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
                     new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api pro", detail = "api.x.ai pro tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
                     new { key = UiJobRunner.KeyKrea, label = "Krea 2 Medium", detail = "Krea's own foundation image model, not an aggregated third-party model. Best for expressive illustration and stable general use. An attached image is sent as a 0.6-strength style reference; auto matches its nearest native aspect ratio. The API currently accepts 1K only, so detail has no effect. n runs separate generations." },
@@ -278,8 +300,9 @@ namespace MultiImageClient
                     // Describe targets consume the attached image by definition
                     // (that's their whole input), so they count as image-capable
                     // for the chip icons and image-only bulk actions.
-                    imageCapable = UiJobRunner.IsImageCapable(g.key) || UiJobRunner.IsDescribeKey(g.key),
-                    imageAspectOverride = SupportsImageAspectOverride(g.key),
+                    imageCapable = runner.IsImageCapableForCurrentSettings(g.key) || UiJobRunner.IsDescribeKey(g.key),
+                    imageCapabilityProblem = runner.DescribeImageCapabilityProblem(g.key),
+                    imageAspectOverride = SupportsImageAspectOverride(runner, g.key),
                     // "describe" targets return text (rendered as their own
                     // chooser section, selectable only with an image attached);
                     // everything else returns media.
@@ -377,23 +400,26 @@ namespace MultiImageClient
             // Live (hydrated) job summaries. Full multi-day history is indexed
             // on disk and served through /api/archive — this endpoint no longer
             // returns every historical job as in-process objects.
-            app.MapGet("/api/jobs", () =>
+            app.MapGet("/api/jobs", (HttpContext ctx) =>
             {
-                var list = jobs.ListChronological().Select(j => new
-                {
-                    id = j.Id,
-                    prompt = j.Prompt,
-                    user = j.CreatedBy,
-                    gens = j.GeneratorKeys,
-                    hasImage = j.HasInputImage,
-                    inputCount = j.InputImageCount,
-                    done = j.IsDone,
-                    sourceJobId = j.SourceJobId,
-                    sourceGenerator = j.SourceGenerator,
-                    sourceIndex = j.SourceIndex,
-                    createdAt = j.CreatedAt.ToString("HH:mm:ss"),
-                    createdAtUnixMs = new DateTimeOffset(j.CreatedAt).ToUnixTimeMilliseconds(),
-                });
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var list = jobs.ListChronological()
+                    .Where(j => !visibility.IsPromptHidden(j.Id))
+                    .Select(j => new
+                    {
+                        id = j.Id,
+                        prompt = j.Prompt,
+                        user = j.CreatedBy,
+                        gens = j.GeneratorKeys,
+                        hasImage = j.HasInputImage,
+                        inputCount = j.InputImageCount,
+                        done = j.IsDone,
+                        sourceJobId = j.SourceJobId,
+                        sourceGenerator = j.SourceGenerator,
+                        sourceIndex = j.SourceIndex,
+                        canHide = CanManageVisibility(j, authUser),
+                        createdAtUnixMs = new DateTimeOffset(UiJobStorage.EnsureUtc(j.CreatedAt)).ToUnixTimeMilliseconds(),
+                    });
                 return Results.Json(new { jobs = list });
             });
 
@@ -507,7 +533,8 @@ namespace MultiImageClient
                     if (shape != "auto")
                     {
                         var aspectIncompatible = genKeys
-                            .Where(key => UiJobRunner.IsImageCapable(key) && !SupportsImageAspectOverride(key))
+                            .Where(key => runner.IsImageCapableForCurrentSettings(key)
+                                && !SupportsImageAspectOverride(runner, key))
                             .ToList();
                         if (aspectIncompatible.Count > 0)
                         {
@@ -572,6 +599,7 @@ namespace MultiImageClient
                     {
                         Prompt = prompt,
                         CreatedBy = createdBy,
+                        CreatorLogin = request.HttpContext.Items["micUser"] as string ?? "",
                         InputImagePaths = inputPaths,
                         InputImageWidth = inputImageWidth,
                         InputImageHeight = inputImageHeight,
@@ -677,6 +705,11 @@ namespace MultiImageClient
                 {
                     return Results.NotFound(new { error = "The source job is no longer available." });
                 }
+                if (visibility.IsPromptHidden(sourceJobId)
+                    || visibility.IsImageHidden(sourceJobId, sourceGenerator, sourceIndex))
+                {
+                    return Results.NotFound(new { error = "The selected source image is hidden." });
+                }
                 if (!sourceJob.TryGetImage(sourceGenerator, sourceIndex, out var sourceBytes, out var sourceContentType))
                 {
                     return Results.NotFound(new { error = "The selected source image is no longer available." });
@@ -747,6 +780,7 @@ namespace MultiImageClient
                     {
                         Prompt = prompt,
                         CreatedBy = videoCreatedBy,
+                        CreatorLogin = request.HttpContext.Items["micUser"] as string ?? "",
                         InputImagePaths = new[] { inputImagePath },
                         InputImageWidth = inputImageWidth,
                         InputImageHeight = inputImageHeight,
@@ -844,12 +878,32 @@ namespace MultiImageClient
             // replays the full history and hydrates a fresh window. An
             // out-of-range cursor (server restart) resyncs from 0, which is
             // idempotent client-side.
-            app.MapGet("/api/events/poll", (int? cursor, HttpContext ctx) =>
+            app.MapGet("/api/events/poll", (int? cursor, string? visibilityVersion, HttpContext ctx) =>
             {
                 var (envelopes, nextCursor) = jobs.ReadEnvelopes(cursor ?? 0);
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var visibleEnvelopes = BuildVisibleEnvelopes(
+                    envelopes,
+                    jobs,
+                    visibility,
+                    authUser);
+                var visibilitySnapshot = visibility.Snapshot();
+                var visibilityPayload = string.Equals(
+                    visibilityVersion,
+                    visibilitySnapshot.Version,
+                    StringComparison.Ordinal)
+                    ? JsonSerializer.Serialize(new
+                    {
+                        version = visibilitySnapshot.Version,
+                        unchanged = true,
+                    })
+                    : JsonSerializer.Serialize(BuildVisibilityResponse(
+                        visibilitySnapshot.Version,
+                        visibilitySnapshot.Records));
                 ctx.Response.Headers.CacheControl = "no-store";
                 return Results.Text(
-                    $"{{\"cursor\":{nextCursor},\"envelopes\":[{string.Join(",", envelopes)}]}}",
+                    $"{{\"cursor\":{nextCursor},\"visibility\":{visibilityPayload},"
+                    + $"\"envelopes\":[{string.Join(",", visibleEnvelopes)}]}}",
                     "application/json");
             });
 
@@ -860,6 +914,13 @@ namespace MultiImageClient
                 ctx.Response.Headers.CacheControl = "no-store";
                 var job = jobs.Get(id);
                 if (job == null) return Results.NotFound();
+                if (visibility.IsPromptHidden(id)
+                    || visibility.IsImageHidden(id, gen, n)
+                    || (string.Equals(gen, "grid", StringComparison.Ordinal)
+                        && visibility.HasHiddenImages(id)))
+                {
+                    return Results.NotFound();
+                }
 
                 // ?thumb=1 asks for the <=640px card preview; without it the
                 // exact original bytes are served (viewer, new-tab, video
@@ -957,7 +1018,8 @@ namespace MultiImageClient
                 ctx.Response.Headers.CacheControl = "no-store";
                 var seenHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var images = new List<object>();
-                foreach (var entry in jobs.ListInputLibraryCandidates())
+                foreach (var entry in jobs.ListInputLibraryCandidates()
+                    .Where(entry => !visibility.IsPromptHidden(entry.Id)))
                 {
                     if (!UiJobStorage.TryPeekJobSummary(
                         jobs.HistoryRoot,
@@ -995,6 +1057,7 @@ namespace MultiImageClient
                             width = index == 0 ? width : 0,
                             height = index == 0 ? height : 0,
                             prompt,
+                            // TryPeekJobSummary already normalized this to UTC.
                             createdAtUnixMs = new DateTimeOffset(createdAt).ToUnixTimeMilliseconds(),
                         });
                     }
@@ -1012,7 +1075,14 @@ namespace MultiImageClient
             app.MapGet("/api/archive/days", (HttpContext ctx) =>
             {
                 ctx.Response.Headers.CacheControl = "no-store";
-                var days = jobs.ListArchivedDays().Select(d => new
+                var days = jobs.ListArchivedDays()
+                    .Select(d =>
+                    {
+                        var visibleCount = d.JobIds.Count(id => !visibility.IsPromptHidden(id));
+                        return (d.Day, Count: visibleCount);
+                    })
+                    .Where(d => d.Count > 0)
+                    .Select(d => new
                 {
                     day = d.Day,
                     label = DateTime.ParseExact(d.Day, "yyyy-MM-dd", null).ToString("dddd, MMM d, yyyy"),
@@ -1027,7 +1097,10 @@ namespace MultiImageClient
                 {
                     return Results.BadRequest(new { error = "day must be yyyy-MM-dd" });
                 }
-                var dayJobs = jobs.ListArchivedDay(parsedDay);
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var dayJobs = jobs.ListArchivedDay(parsedDay)
+                    .Where(job => !visibility.IsPromptHidden(job.Id))
+                    .ToList();
                 // Hand-assembled like /api/events/poll: job metadata and each
                 // event are already-serialized JSON strings.
                 var sb = new StringBuilder();
@@ -1038,9 +1111,15 @@ namespace MultiImageClient
                     var job = dayJobs[i];
                     var (events, _) = job.ReadFrom(0);
                     sb.Append("{\"job\":");
-                    sb.Append(UiJobRegistry.SerializeJobMetadata(job));
+                    sb.Append(SerializeJobMetadataForViewer(
+                        job,
+                        CanManageVisibility(job, authUser)));
                     sb.Append(",\"events\":[");
-                    sb.Append(string.Join(",", events));
+                    sb.Append(string.Join(
+                        ",",
+                        events
+                            .Select(eventJson => BuildVisibleEventJson(job.Id, eventJson, visibility))
+                            .Where(eventJson => eventJson != null)));
                     sb.Append("]}");
                 }
                 sb.Append("]}");
@@ -1053,8 +1132,295 @@ namespace MultiImageClient
             app.MapGet("/api/users", (HttpContext ctx) =>
             {
                 ctx.Response.Headers.CacheControl = "no-store";
-                var users = jobs.ListUsers().Select(u => new { user = u.User, count = u.Count });
+                var users = jobs.ListUsers()
+                    .Select(u => new
+                    {
+                        user = u.User,
+                        count = u.JobIds.Count(id => !visibility.IsPromptHidden(id)),
+                    })
+                    .Where(u => u.count > 0);
                 return Results.Json(new { users });
+            });
+
+            // One-way stream hiding. Authorization comes only from the
+            // authenticated account: the job's creator login, or the fixed
+            // ernieMultiZone override. Browser-supplied display names never
+            // grant this permission.
+            app.MapPost("/api/visibility", async (HttpRequest request) =>
+            {
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (authUser.Length == 0)
+                {
+                    return Results.Json(
+                        new { error = "Log in to hide a prompt or image." },
+                        statusCode: 403);
+                }
+
+                var form = await request.ReadFormAsync();
+                var kind = form["kind"].ToString().Trim();
+                var jobId = form["jobId"].ToString().Trim();
+                if (kind != "prompt" && kind != "image")
+                {
+                    return Results.BadRequest(new { error = "kind must be prompt or image." });
+                }
+                if (jobId.Length == 0)
+                {
+                    return Results.BadRequest(new { error = "jobId is required." });
+                }
+
+                var job = jobs.Get(jobId);
+                if (job == null)
+                {
+                    return Results.NotFound(new { error = "The selected job is no longer available." });
+                }
+                if (!CanManageVisibility(job, authUser))
+                {
+                    return Results.Json(
+                        new { error = "Only the authenticated creator can hide this item." },
+                        statusCode: 403);
+                }
+
+                var generator = "";
+                var imageIndex = -1;
+                if (kind == "image")
+                {
+                    if (visibility.IsPromptHidden(jobId))
+                    {
+                        return Results.NotFound(new { error = "The selected job is hidden." });
+                    }
+                    generator = form["generator"].ToString().Trim();
+                    if (generator.Length == 0
+                        || !int.TryParse(form["imageIndex"].ToString(), out imageIndex)
+                        || imageIndex < 0)
+                    {
+                        return Results.BadRequest(
+                            new { error = "generator and a non-negative imageIndex are required." });
+                    }
+                    if (!TryResolveFavoriteImage(
+                        job,
+                        generator,
+                        imageIndex,
+                        out _,
+                        out var imageError))
+                    {
+                        return Results.NotFound(new { error = imageError });
+                    }
+                }
+
+                try
+                {
+                    visibility.Hide(new UiHiddenResource
+                    {
+                        Kind = kind,
+                        JobId = jobId,
+                        Generator = generator,
+                        ImageIndex = imageIndex,
+                        HiddenByLogin = authUser,
+                        HiddenAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    });
+                    Logger.Log(
+                        $"UI visibility: {authUser} hid {kind}/{jobId}"
+                        + (kind == "image" ? $"/{generator}/{imageIndex}" : "") + ".");
+                    var snapshot = visibility.Snapshot();
+                    return Results.Json(BuildVisibilityResponse(
+                        snapshot.Version,
+                        snapshot.Records));
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException)
+                {
+                    Logger.Log($"UI visibility: could not persist hide operation: {ex.Message}");
+                    return Results.Json(
+                        new { error = "The hide operation could not be persisted." },
+                        statusCode: 500);
+                }
+            });
+
+            // Shared persistent image + prompt favorites. POST takes the
+            // desired boolean state instead of "toggle", so a retried request
+            // is idempotent. New records are accepted only after correlating
+            // their exact identity to a persisted job/result. Removing an
+            // existing record needs only its stored identity, so a user can
+            // still clean it up after old job files are removed.
+            app.MapGet("/api/favorites", (string? version, HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                try
+                {
+                    var snapshot = favorites.Snapshot();
+                    var visibilitySnapshot = visibility.Snapshot();
+                    var combinedVersion = snapshot.Version + "." + visibilitySnapshot.Version;
+                    if (string.Equals(version, combinedVersion, StringComparison.Ordinal))
+                    {
+                        return Results.Json(new { version = combinedVersion, unchanged = true });
+                    }
+                    var visibleRecords = snapshot.Records
+                        .Where(record =>
+                            !visibility.IsPromptHidden(record.JobId)
+                            && (!string.Equals(record.Kind, "image", StringComparison.Ordinal)
+                                || !visibility.IsImageHidden(
+                                    record.JobId,
+                                    record.Generator,
+                                    record.ImageIndex)))
+                        .ToList();
+                    return Results.Json(BuildFavoritesResponse(
+                        combinedVersion,
+                        visibleRecords,
+                        jobs,
+                        ctx.Items["micUser"] as string ?? ""));
+                }
+                catch (InvalidDataException ex)
+                {
+                    Logger.Log($"UI favorites: listing failed: {ex.Message}");
+                    return Results.Json(
+                        new { error = "Favorites contain conflicting stored image identities." },
+                        statusCode: 500);
+                }
+            });
+
+            app.MapPost("/api/favorites", async (HttpRequest request) =>
+            {
+                var form = await request.ReadFormAsync();
+                if (!TryResolveCreatorName(
+                    form["user"].ToString(),
+                    request.HttpContext.Items["micUser"] as string ?? "",
+                    out var user,
+                    out var userError))
+                {
+                    return Results.BadRequest(new { error = userError });
+                }
+
+                var jobId = form["jobId"].ToString().Trim();
+                var kind = form["kind"].ToString().Trim();
+                if (kind.Length == 0)
+                {
+                    kind = "image";
+                }
+                if (kind != "image" && kind != "prompt")
+                {
+                    return Results.BadRequest(new { error = "kind must be image or prompt." });
+                }
+                if (jobId.Length == 0)
+                {
+                    return Results.BadRequest(new { error = "jobId is required." });
+                }
+                if (visibility.IsPromptHidden(jobId))
+                {
+                    return Results.NotFound(new { error = "The selected job is hidden." });
+                }
+                if (!bool.TryParse(form["favorite"].ToString(), out var favorite))
+                {
+                    return Results.BadRequest(new { error = "favorite must be true or false." });
+                }
+
+                var generator = "";
+                var imageIndex = -1;
+                if (kind == "image")
+                {
+                    generator = form["generator"].ToString().Trim();
+                    if (generator.Length == 0)
+                    {
+                        return Results.BadRequest(new { error = "generator is required for an image favorite." });
+                    }
+                    if (!int.TryParse(form["imageIndex"].ToString(), out imageIndex)
+                        || imageIndex < 0)
+                    {
+                        return Results.BadRequest(
+                            new { error = "imageIndex must be a non-negative integer for an image favorite." });
+                    }
+                    if (visibility.IsImageHidden(jobId, generator, imageIndex))
+                    {
+                        return Results.NotFound(new { error = "The selected image is hidden." });
+                    }
+                }
+
+                try
+                {
+                    var records = kind == "image"
+                        ? favorites.ListImage(jobId, generator, imageIndex)
+                        : favorites.ListPrompt(jobId);
+                    var existing = records
+                        .FirstOrDefault(record => string.Equals(record.User, user, StringComparison.Ordinal));
+
+                    if (favorite && existing == null)
+                    {
+                        var job = jobs.Get(jobId);
+                        if (job == null)
+                        {
+                            return Results.NotFound(new { error = "The selected job is no longer available." });
+                        }
+                        if (kind == "prompt")
+                        {
+                            existing = new UiFavoriteRecord
+                            {
+                                Kind = "prompt",
+                                User = user,
+                                JobId = job.Id,
+                                Prompt = job.Prompt,
+                                CreatedBy = job.CreatedBy,
+                                JobCreatedAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
+                                HasInputImage = job.HasInputImage,
+                                FavoritedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            };
+                        }
+                        else
+                        {
+                            if (!TryResolveFavoriteImage(
+                                    job,
+                                    generator,
+                                    imageIndex,
+                                    out var image,
+                                    out var imageError))
+                            {
+                                return Results.NotFound(new { error = imageError });
+                            }
+                            existing = new UiFavoriteRecord
+                            {
+                                Kind = "image",
+                                User = user,
+                                JobId = job.Id,
+                                Generator = generator,
+                                ImageIndex = imageIndex,
+                                GeneratorImageCount = image.GeneratorImageCount,
+                                Prompt = job.Prompt,
+                                CreatedBy = job.CreatedBy,
+                                JobCreatedAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
+                                HasInputImage = job.HasInputImage,
+                                ImageUrl = image.ImageUrl,
+                                ThumbUrl = image.ThumbUrl,
+                                Size = image.Size,
+                                FavoritedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            };
+                        }
+                    }
+
+                    if (existing != null)
+                    {
+                        favorites.Set(existing, favorite);
+                    }
+
+                    records = kind == "image"
+                        ? favorites.ListImage(jobId, generator, imageIndex)
+                        : favorites.ListPrompt(jobId);
+                    var item = records.Count == 0
+                        ? null
+                        : kind == "image"
+                            ? BuildFavoriteImageItem(
+                                records,
+                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? ""))
+                            : BuildFavoritePromptItem(
+                                records,
+                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? ""));
+                    return Results.Json(new { favorite, kind, item });
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException)
+                {
+                    Logger.Log(
+                        $"UI favorites: could not persist {user}/{kind}/{jobId}/{generator}/{imageIndex}: "
+                        + ex.Message);
+                    return Results.Json(
+                        new { error = "The favorite could not be persisted." },
+                        statusCode: 500);
+                }
             });
 
             // Same zero-persistent-connection rule as /api/events/poll: the
@@ -1062,10 +1428,20 @@ namespace MultiImageClient
             // counted against the same 6-connection browser pool.
             app.MapGet("/api/logs/poll", (long? after, HttpContext ctx) =>
             {
-                var entries = Logger.ReadBuffered(after ?? 0)
+                var buffered = Logger.ReadBuffered(after ?? 0).ToList();
+                var next = buffered.Count > 0
+                    ? buffered[^1].Sequence
+                    : after ?? 0;
+                var hiddenPromptIds = visibility.Snapshot().Records
+                    .Where(record => string.Equals(record.Kind, "prompt", StringComparison.Ordinal))
+                    .Select(record => record.JobId)
+                    .ToList();
+                var entries = buffered
+                    .Where(entry => !hiddenPromptIds.Any(jobId =>
+                        entry.Line.Contains($"[ui #{jobId}]", StringComparison.Ordinal)))
                     .Select(entry => new { sequence = entry.Sequence, line = entry.Line });
                 ctx.Response.Headers.CacheControl = "no-store";
-                return Results.Json(new { entries });
+                return Results.Json(new { entries, next });
             });
 
             Logger.Log($"UI server starting on {url}  (build {UiBuildInfo.Describe}, wwwroot: {wwwroot})");
@@ -1116,6 +1492,174 @@ namespace MultiImageClient
             }
         }
 
+        private static bool CanManageVisibility(UiJob? job, string authUser)
+        {
+            if (job == null || authUser.Length == 0)
+            {
+                return false;
+            }
+            if (string.Equals(
+                authUser,
+                VisibilityOverrideLogin,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            if (job.CreatorLogin.Length > 0)
+            {
+                return string.Equals(
+                    authUser,
+                    job.CreatorLogin,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            // Jobs from before authenticated creator identity was persisted
+            // cannot safely infer ownership from CreatedBy: that field was
+            // browser-supplied attribution and could name another account.
+            return false;
+        }
+
+        private static object BuildVisibilityResponse(
+            string version,
+            List<UiHiddenResource> records)
+        {
+            var prompts = records
+                .Where(record => string.Equals(record.Kind, "prompt", StringComparison.Ordinal))
+                .Select(record => record.JobId)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(jobId => jobId, StringComparer.Ordinal)
+                .ToList();
+            var images = records
+                .Where(record => string.Equals(record.Kind, "image", StringComparison.Ordinal))
+                .OrderBy(record => record.JobId, StringComparer.Ordinal)
+                .ThenBy(record => record.Generator, StringComparer.Ordinal)
+                .ThenBy(record => record.ImageIndex)
+                .Select(record => new
+                {
+                    jobId = record.JobId,
+                    generator = record.Generator,
+                    imageIndex = record.ImageIndex,
+                })
+                .ToList();
+            return new { version, prompts, images };
+        }
+
+        private static List<string> BuildVisibleEnvelopes(
+            List<string> envelopes,
+            UiJobRegistry jobs,
+            UiVisibilityStore visibility,
+            string authUser)
+        {
+            var visible = new List<string>(envelopes.Count);
+            foreach (var envelopeJson in envelopes)
+            {
+                var envelope = JsonNode.Parse(envelopeJson)?.AsObject()
+                    ?? throw new InvalidDataException("UI envelope parsed to null.");
+                var jobId = envelope["jobId"]?.GetValue<string>() ?? "";
+                if (jobId.Length == 0 || visibility.IsPromptHidden(jobId))
+                {
+                    continue;
+                }
+                var kind = envelope["kind"]?.GetValue<string>() ?? "";
+                if (string.Equals(kind, "job-known", StringComparison.Ordinal))
+                {
+                    var job = jobs.Get(jobId);
+                    if (job == null)
+                    {
+                        continue;
+                    }
+                    var metadata = envelope["job"]?.AsObject();
+                    if (metadata == null)
+                    {
+                        throw new InvalidDataException(
+                            $"UI job-known envelope for {jobId} has no metadata.");
+                    }
+                    metadata["canHide"] = CanManageVisibility(job, authUser);
+                    visible.Add(envelope.ToJsonString());
+                    continue;
+                }
+                if (string.Equals(kind, "event", StringComparison.Ordinal))
+                {
+                    var eventNode = envelope["event"];
+                    if (eventNode == null)
+                    {
+                        throw new InvalidDataException(
+                            $"UI event envelope for {jobId} has no event.");
+                    }
+                    var visibleEvent = BuildVisibleEventJson(
+                        jobId,
+                        eventNode.ToJsonString(),
+                        visibility);
+                    if (visibleEvent != null)
+                    {
+                        visible.Add(
+                            $"{{\"jobId\":{JsonSerializer.Serialize(jobId)},"
+                            + $"\"kind\":\"event\",\"event\":{visibleEvent}}}");
+                    }
+                }
+            }
+            return visible;
+        }
+
+        private static string? BuildVisibleEventJson(
+            string jobId,
+            string eventJson,
+            UiVisibilityStore visibility)
+        {
+            var evt = JsonNode.Parse(eventJson)?.AsObject()
+                ?? throw new InvalidDataException(
+                    $"UI event for {jobId} parsed to null.");
+            var type = evt["type"]?.GetValue<string>() ?? "";
+            if (string.Equals(type, "grid", StringComparison.Ordinal)
+                && visibility.HasHiddenImages(jobId))
+            {
+                return null;
+            }
+            if (string.Equals(type, "gen-partial", StringComparison.Ordinal))
+            {
+                var generator = evt["gen"]?.GetValue<string>() ?? "";
+                var imageIndex = evt["imageIndex"]?.GetValue<int>() ?? -1;
+                return visibility.IsImageHidden(jobId, generator, imageIndex)
+                    ? null
+                    : eventJson;
+            }
+            if (!string.Equals(type, "gen-result", StringComparison.Ordinal)
+                || !visibility.HasHiddenImages(jobId))
+            {
+                return eventJson;
+            }
+
+            var gen = evt["gen"]?.GetValue<string>() ?? "";
+            if (evt["images"] is not JsonArray images)
+            {
+                return eventJson;
+            }
+            var thumbs = evt["thumbs"] as JsonArray;
+            var changed = false;
+            for (var index = 0; index < images.Count; index++)
+            {
+                if (!visibility.IsImageHidden(jobId, gen, index))
+                {
+                    continue;
+                }
+                images[index] = null;
+                if (thumbs != null && index < thumbs.Count)
+                {
+                    thumbs[index] = null;
+                }
+                changed = true;
+            }
+            return changed ? evt.ToJsonString() : eventJson;
+        }
+
+        private static string SerializeJobMetadataForViewer(UiJob job, bool canHide)
+        {
+            var metadata = JsonNode.Parse(UiJobRegistry.SerializeJobMetadata(job))?.AsObject()
+                ?? throw new InvalidDataException(
+                    $"UI metadata for {job.Id} parsed to null.");
+            metadata["canHide"] = canHide;
+            return metadata.ToJsonString();
+        }
+
         /// Creator-name policy: every job is created under a display username
         /// (shared site, no privacy — attribution only). The submitted name
         /// wins; with the access gate on and no name submitted, the login
@@ -1146,6 +1690,235 @@ namespace MultiImageClient
             }
             error = "";
             return true;
+        }
+
+        private sealed class FavoriteImageDescriptor
+        {
+            public required string ImageUrl { get; init; }
+            public required string ThumbUrl { get; init; }
+            public string Size { get; init; } = "";
+            public int GeneratorImageCount { get; init; }
+        }
+
+        private static bool TryResolveFavoriteImage(
+            UiJob job,
+            string generator,
+            int imageIndex,
+            out FavoriteImageDescriptor image,
+            out string error)
+        {
+            FavoriteImageDescriptor? found = null;
+            var (events, _) = job.ReadFrom(0);
+            foreach (var eventJson in events)
+            {
+                using var document = JsonDocument.Parse(eventJson);
+                var root = document.RootElement;
+                if (!root.TryGetProperty("type", out var type)
+                    || !string.Equals(type.GetString(), "gen-result", StringComparison.Ordinal)
+                    || !root.TryGetProperty("gen", out var gen)
+                    || !string.Equals(gen.GetString(), generator, StringComparison.Ordinal)
+                    || !root.TryGetProperty("ok", out var ok)
+                    || ok.ValueKind != JsonValueKind.True)
+                {
+                    continue;
+                }
+
+                if ((root.TryGetProperty("resultKind", out var resultKind)
+                        && !string.Equals(resultKind.GetString(), "image", StringComparison.Ordinal))
+                    || (root.TryGetProperty("mediaType", out var mediaType)
+                        && (mediaType.GetString() ?? "").StartsWith(
+                            "video/",
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    error = "Only successful image results can be favorited.";
+                    image = null!;
+                    return false;
+                }
+                if (!root.TryGetProperty("images", out var images)
+                    || images.ValueKind != JsonValueKind.Array
+                    || imageIndex >= images.GetArrayLength())
+                {
+                    continue;
+                }
+
+                var imageUrl = images[imageIndex].GetString() ?? "";
+                if (imageUrl.Length == 0)
+                {
+                    error = "The selected image result has no recorded URL.";
+                    image = null!;
+                    return false;
+                }
+
+                var thumbUrl = "";
+                if (root.TryGetProperty("thumbs", out var thumbs)
+                    && thumbs.ValueKind == JsonValueKind.Array
+                    && imageIndex < thumbs.GetArrayLength())
+                {
+                    thumbUrl = thumbs[imageIndex].GetString() ?? "";
+                }
+                if (thumbUrl.Length == 0 && imageUrl.StartsWith("/", StringComparison.Ordinal))
+                {
+                    thumbUrl = imageUrl + (imageUrl.Contains('?') ? "&thumb=1" : "?thumb=1");
+                }
+                if (thumbUrl.Length == 0)
+                {
+                    error = "The selected hosted image has no exact recorded card thumbnail.";
+                    image = null!;
+                    return false;
+                }
+
+                var candidate = new FavoriteImageDescriptor
+                {
+                    ImageUrl = imageUrl,
+                    ThumbUrl = thumbUrl,
+                    Size = root.TryGetProperty("size", out var size) ? size.GetString() ?? "" : "",
+                    GeneratorImageCount = images.GetArrayLength(),
+                };
+                if (found != null)
+                {
+                    error = "The selected image identity has more than one successful result event.";
+                    image = null!;
+                    return false;
+                }
+                found = candidate;
+            }
+
+            if (found == null)
+            {
+                error = "The selected image result is no longer available.";
+                image = null!;
+                return false;
+            }
+            image = found;
+            error = "";
+            return true;
+        }
+
+        private static object BuildFavoritesResponse(
+            string version,
+            List<UiFavoriteRecord> records,
+            UiJobRegistry jobs,
+            string authUser)
+        {
+            var imageItems = records
+                .Where(record => record.Kind == "image")
+                .GroupBy(
+                    record => (record.JobId, record.Generator, record.ImageIndex),
+                    record => record)
+                .Select(group => BuildFavoriteImageItem(
+                    group.ToList(),
+                    CanManageVisibility(jobs.Get(group.Key.JobId), authUser)))
+                .ToList();
+            var promptItems = records
+                .Where(record => record.Kind == "prompt")
+                .GroupBy(record => record.JobId, StringComparer.Ordinal)
+                .Select(group => BuildFavoritePromptItem(
+                    group.ToList(),
+                    CanManageVisibility(jobs.Get(group.Key), authUser)))
+                .ToList();
+            var users = records
+                .GroupBy(record => record.User, StringComparer.Ordinal)
+                .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new
+                {
+                    user = group.Key,
+                    count = group.Count(),
+                    imageCount = group.Count(record => record.Kind == "image"),
+                    promptCount = group.Count(record => record.Kind == "prompt"),
+                })
+                .ToList();
+            return new
+            {
+                version,
+                unchanged = false,
+                favorites = imageItems,
+                promptFavorites = promptItems,
+                users,
+            };
+        }
+
+        private static object BuildFavoriteImageItem(
+            List<UiFavoriteRecord> records,
+            bool canHide)
+        {
+            if (records.Count == 0)
+            {
+                throw new InvalidDataException("Cannot build an empty favorite item.");
+            }
+            var first = records[0];
+            if (records.Any(record =>
+                record.Kind != "image"
+                || !string.Equals(record.JobId, first.JobId, StringComparison.Ordinal)
+                || !string.Equals(record.Generator, first.Generator, StringComparison.Ordinal)
+                || record.ImageIndex != first.ImageIndex
+                || record.GeneratorImageCount != first.GeneratorImageCount
+                || !string.Equals(record.Prompt, first.Prompt, StringComparison.Ordinal)
+                || !string.Equals(record.CreatedBy, first.CreatedBy, StringComparison.Ordinal)
+                || record.JobCreatedAtUnixMs != first.JobCreatedAtUnixMs
+                || record.HasInputImage != first.HasInputImage
+                || !string.Equals(record.ImageUrl, first.ImageUrl, StringComparison.Ordinal)
+                || !string.Equals(record.ThumbUrl, first.ThumbUrl, StringComparison.Ordinal)
+                || !string.Equals(record.Size, first.Size, StringComparison.Ordinal)))
+            {
+                throw new InvalidDataException(
+                    $"Favorite records disagree for {first.JobId}/{first.Generator}/{first.ImageIndex}.");
+            }
+
+            return new
+            {
+                jobId = first.JobId,
+                generator = first.Generator,
+                imageIndex = first.ImageIndex,
+                generatorImageCount = first.GeneratorImageCount,
+                prompt = first.Prompt,
+                createdBy = first.CreatedBy,
+                jobCreatedAtUnixMs = first.JobCreatedAtUnixMs,
+                hasInputImage = first.HasInputImage,
+                imageUrl = first.ImageUrl,
+                thumbUrl = first.ThumbUrl,
+                size = first.Size,
+                canHide,
+                users = records
+                    .OrderBy(record => record.User, StringComparer.OrdinalIgnoreCase)
+                    .Select(record => record.User)
+                    .ToList(),
+            };
+        }
+
+        private static object BuildFavoritePromptItem(
+            List<UiFavoriteRecord> records,
+            bool canHide)
+        {
+            if (records.Count == 0)
+            {
+                throw new InvalidDataException("Cannot build an empty prompt favorite item.");
+            }
+            var first = records[0];
+            if (records.Any(record =>
+                record.Kind != "prompt"
+                || !string.Equals(record.JobId, first.JobId, StringComparison.Ordinal)
+                || !string.Equals(record.Prompt, first.Prompt, StringComparison.Ordinal)
+                || !string.Equals(record.CreatedBy, first.CreatedBy, StringComparison.Ordinal)
+                || record.JobCreatedAtUnixMs != first.JobCreatedAtUnixMs
+                || record.HasInputImage != first.HasInputImage))
+            {
+                throw new InvalidDataException(
+                    $"Prompt favorite records disagree for job {first.JobId}.");
+            }
+
+            return new
+            {
+                jobId = first.JobId,
+                prompt = first.Prompt,
+                createdBy = first.CreatedBy,
+                jobCreatedAtUnixMs = first.JobCreatedAtUnixMs,
+                hasInputImage = first.HasInputImage,
+                canHide,
+                users = records
+                    .OrderBy(record => record.User, StringComparer.OrdinalIgnoreCase)
+                    .Select(record => record.User)
+                    .ToList(),
+            };
         }
 
         private static string? DescribeDiskCapacityProblem(Settings settings)

@@ -933,6 +933,47 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
 .copy-prompt:hover rect:last-of-type { fill: var(--accent); }
 .copy-prompt-note { font-size: 11px; font-weight: 700; color: var(--ok); white-space: nowrap; }
 .copy-prompt-note.err { color: var(--err); }
+.prompt-favorite {
+  padding: 3px 8px;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  font: 700 11px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.prompt-favorite:hover {
+  color: #fff;
+  background: var(--accent);
+}
+.prompt-favorite[aria-pressed="true"] {
+  color: var(--ink);
+  background: #f5c542;
+  border-color: var(--ink);
+}
+.prompt-favorite.pending { cursor: progress; }
+.prompt-favorite.error {
+  color: #fff;
+  background: var(--err);
+  border-color: var(--err);
+}
+.hide-prompt {
+  padding: 3px 8px;
+  color: var(--err);
+  background: var(--card);
+  border: 1px solid var(--err);
+  border-radius: 3px;
+  font: 700 11px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hide-prompt:hover,
+.hide-prompt:focus-visible {
+  color: #fff;
+  background: var(--err);
+}
+.hide-prompt:disabled { cursor: progress; }
 .job-meta {
   display: flex;
   flex-direction: column;
@@ -1041,7 +1082,10 @@ body:not(.show-costs) #cost-summary { display: none !important; }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
-.cell-images a { display: block; }
+.cell-images a {
+  position: relative;
+  display: block;
+}
 .media-result {
   position: relative;  /* anchors the hover-only "grok video" corner chip */
   flex: 1 1 180px;
@@ -1060,6 +1104,29 @@ body:not(.show-costs) #cost-summary { display: none !important; }
 a[data-viewer-image].viewer-seen img {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px rgba(59, 75, 216, 0.30);
+}
+/* Shared persistent favorite marker. Unlike viewer-seen, this is server-side
+   and visible to every user. Gold means the current "creating as" user is one
+   of the people who favorited it; blue means somebody else did. */
+.favorite-badge {
+  position: absolute;
+  z-index: 4;
+  top: 6px;
+  left: 6px;
+  min-width: 24px;
+  padding: 2px 7px;
+  color: #fff;
+  background: var(--accent-dark);
+  border: 1px solid #fff;
+  border-radius: 11px;
+  box-shadow: 0 1px 4px rgba(20, 22, 31, 0.32);
+  font: 800 12px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-align: center;
+  pointer-events: none;
+}
+a.favorite-mine .favorite-badge {
+  color: var(--ink);
+  background: #f5c542;
 }
 
 /* Describe result: the returned text at full card width, unclamped — the
@@ -1278,6 +1345,35 @@ a[data-viewer-image].viewer-return-pulse img {
   border: 1px solid var(--line);
   cursor: not-allowed;
 }
+.hide-image {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  padding: 4px 9px;
+  color: #fff;
+  background: var(--err);
+  border: 1px solid #fff;
+  border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(20, 22, 31, 0.25);
+  font: 700 11px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+.media-result:hover .hide-image,
+.hide-image:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.hide-image:disabled { cursor: progress; }
+.favorite-gallery-card > .hide-image {
+  position: static;
+  align-self: flex-end;
+  opacity: 1;
+  pointer-events: auto;
+  margin-top: 4px;
+}
 .cell-images .partial-image { position: static; }
 .cell-images .partial-image::after {
   content: "partial preview";
@@ -1386,7 +1482,7 @@ body.image-viewer-open { overflow: hidden; }
 }
 #image-viewer-help[hidden] { display: none; }
 #image-viewer-help-panel {
-  max-width: min(420px, 100%);
+  max-width: min(620px, 100%);
   max-height: 100%;
   overflow: auto;
   padding: 14px 16px;
@@ -1415,6 +1511,19 @@ body.image-viewer-open { overflow: hidden; }
   font: 700 12px/1.25 ui-monospace, SFMono-Regular, Consolas, monospace;
   color: #fff;
   white-space: nowrap;
+}
+.image-viewer-help-command {
+  display: grid;
+  gap: 1px;
+}
+.image-viewer-help-command strong {
+  color: #fff;
+  font-size: 13px;
+}
+.image-viewer-help-command span {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
 }
 #image-viewer-help-panel p {
   margin: 10px 0 0;
@@ -1452,8 +1561,53 @@ body.image-viewer-open { overflow: hidden; }
   font-weight: 600;
   white-space: nowrap;
 }
-#image-viewer-help-toggle {
+#image-viewer-position {
+  min-width: 5.5ch;
+  color: var(--accent-dark);
+  font: 800 12px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+#image-viewer-favorite {
   margin-left: auto;
+  padding: 3px 9px;
+  color: var(--accent-dark);
+  background: #eef0fa;
+  border: 1px solid var(--accent);
+  border-radius: 11px;
+  font: 700 11px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#image-viewer-favorite[aria-pressed="true"] {
+  color: var(--ink);
+  background: #f5c542;
+  border-color: var(--ink);
+}
+#image-viewer-favorite.pending { cursor: progress; }
+#image-viewer-favorite.error {
+  color: #fff;
+  background: var(--err);
+  border-color: var(--err);
+}
+#image-viewer-hide {
+  padding: 3px 9px;
+  color: var(--err);
+  background: var(--card);
+  border: 1px solid var(--err);
+  border-radius: 11px;
+  font: 700 11px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#image-viewer-hide:hover,
+#image-viewer-hide:focus-visible {
+  color: #fff;
+  background: var(--err);
+}
+#image-viewer-hide:disabled { cursor: progress; }
+#image-viewer-help-toggle {
   width: 22px;
   height: 22px;
   padding: 0;
@@ -1686,6 +1840,97 @@ body.image-viewer-open { overflow: hidden; }
 }
 #logout:hover { color: #fff; background: var(--accent); }
 
+/* ---------- shared persistent favorites ---------- */
+
+#favorites-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 7px 24px 0;
+  padding: 7px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 12px;
+}
+#favorites-bar > strong { color: var(--accent-dark); margin-right: 2px; }
+#favorite-user-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.favorite-user-chip {
+  padding: 3px 10px;
+  color: var(--accent-dark);
+  background: #eef0fa;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  font: 700 11px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+.favorite-user-chip:hover,
+.favorite-user-chip.selected {
+  color: #fff;
+  background: var(--accent);
+}
+.favorite-user-chip.self { border-width: 2px; }
+#favorites-hint { color: var(--accent-dark); font-size: 11px; }
+#favorites-hint kbd { color: var(--ink); font-weight: 800; }
+#favorites-error { color: var(--err); font-weight: 700; }
+
+#favorites-gallery { margin-bottom: 18px; }
+#favorites-gallery-title {
+  margin: 0 0 8px;
+  color: var(--accent-dark);
+  font-size: 16px;
+}
+#favorites-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.favorite-gallery-card {
+  min-width: 0;
+  padding: 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.favorite-gallery-card img {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.favorite-gallery-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 6px;
+  color: var(--accent-dark);
+  font-size: 11px;
+  font-weight: 700;
+}
+.favorite-gallery-meta .prompt-favorite { margin-left: auto; }
+.favorite-prompt-card {
+  border-color: var(--accent);
+  min-height: 150px;
+}
+.favorite-gallery-kind {
+  display: inline-block;
+  padding: 2px 7px;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 3px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.favorite-gallery-card .job-prompt {
+  margin-top: 5px;
+  max-height: 4.2em;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* Creator name on each job card: same visual weight family as the cost
    line — secondary through size, never through gray. */
 .job-user { font-weight: 800; color: var(--accent); }
@@ -1715,7 +1960,7 @@ body.image-viewer-open { overflow: hidden; }
 
 @media (max-width: 700px) {
   .tagline { display: none; }
-  #people-bar { margin: 8px 10px 0; }
+  #people-bar, #favorites-bar { margin: 8px 10px 0; }
   #logs-columns, .log-row {
     grid-template-columns: 92px minmax(90px, 125px) 34px minmax(0, 1fr);
     column-gap: 7px;

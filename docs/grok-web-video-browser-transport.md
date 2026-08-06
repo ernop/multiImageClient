@@ -25,12 +25,49 @@ The same endpoint returns HTTP 403 ("Request rejected by anti-bot rules") from a
 
 The missing condition is Grok's own request initiation path. The web app adds a dynamic `x-statsig-id` integrity header when its real **Make Video** action creates the request. Merely copying cookies or running arbitrary JavaScript in Chromium does not produce that header. On a post-detail page, the working sequence is **Make Video → Quick Animate**; the latter initiates the signed app-chat request.
 
+## Browser-free image-edit signing (2026-08-05)
+
+`x-statsig-id` is reproducible without a browser. Grok's frontend uses the
+same client-transaction construction as X: a public 48-byte
+`grok-site-verification` value, a deployment-specific animation key, a
+seconds-since-2023-05-01 counter, SHA-256, a random salt byte, XOR, and
+unpadded ordinary base64. `GrokWebStatsigSigner` implements the complete
+derivation in C# and validates against fixed independent vectors.
+
+The one-shot `--grok-web-capture-statsig --input-image <path>` operation:
+
+1. uploads the image and creates a Grok media post;
+2. opens that post once in Playwright;
+3. hooks the signing digest input and clicks the real Edit control;
+4. captures `x-statsig-id` but aborts the edit request before it reaches Grok;
+5. requires the C# signer to reproduce the captured header byte-for-byte; and
+6. writes the verified public deployment pair to
+   `GrokWebStatsigVerificationKey` / `GrokWebStatsigAnimationKey` in the exact
+   loaded settings file.
+
+With that pair configured, image edit sends a directly signed
+`POST /rest/app-chat/conversations/new` with no browser. A live local test on
+2026-08-05 completed one `imagine-image-edit` request in about 50 seconds and
+returned one 1328x784 image. The .NET HTTP transport was accepted, so this
+route did not require Chrome TLS impersonation or browser header ordering in
+that test.
+
+Capture values are deployment-specific. Missing, incomplete, malformed, or
+stale values are hard failures for signed edit; they are never replaced with
+guessed values. Text-to-image remains available through its separate
+WebSocket when signing material is absent. The UI reports grok-web as
+image-capable only while a complete validated pair is configured.
+
+Browser-free video has not been live-verified and remains on the existing
+Playwright real-control path. Sharing app-chat is not sufficient evidence that
+video has the same accepted anti-bot contract.
+
 ## Implemented transport split
 
 - Text-to-image generation continues to use `wss://grok.com/ws/imagine/listen`.
-- Image editing does **not** use that WebSocket. `properties.image_uri` is accepted but ignored by the consumer transport (observed 2026-07-31: outputs invented from the prompt alone). Live edit uses browser-backed `POST /rest/app-chat/conversations/new` with `modelName: "imagine-image-edit"` and `mediaGenInput.imageToImage.inputAssets: [assetId]`, triggered by grok.com's real **Edit** control so `x-statsig-id` is attached.
+- Image editing does **not** use that WebSocket. `properties.image_uri` is accepted but ignored by the consumer transport (observed 2026-07-31: outputs invented from the prompt alone). Live edit uses `POST /rest/app-chat/conversations/new` with `modelName: "imagine-image-edit"` and `mediaGenInput.imageToImage.inputAssets: [assetId]`. With current captured signing material this is direct browser-free HTTP; otherwise CLI edit retains the real-control Playwright transport.
 - Image upload, asset lookup, media-post creation, polling, and downloads continue to use `GrokWebClient` HTTP calls.
-- Video generation's and image editing's app-chat POSTs run through `GrokWebBrowserClient`, a shared Playwright Chromium context with the `GrokWebCookiePath` cookies injected.
+- Video generation's app-chat POST runs through `GrokWebBrowserClient`, a shared Playwright Chromium context with the `GrokWebCookiePath` cookies injected. Image edit uses it only when no verified browser-free signing pair is configured.
 - The app first uploads the source and creates its normal Grok image post. The browser client opens that post, verifies the session through `/rest/media/imagine/quota_info`, clicks Grok's real **Make Video → Quick Animate** controls, and intercepts only the outgoing request body. Grok's generated integrity headers remain untouched while the body receives the selected method, optional motion prompt, duration, resolution, and aspect ratio.
 - Browser app-chat operations are serialized. The UI owns one browser client for the server lifetime; the CLI owns one for the workflow lifetime.
 - Relative `streamingVideoGenerationResponse.videoUrl` values are normalized to `https://assets.grok.com/...` before download.

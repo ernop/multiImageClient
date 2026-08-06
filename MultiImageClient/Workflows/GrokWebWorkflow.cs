@@ -63,16 +63,29 @@ namespace MultiImageClient
                 return null;
             }
 
-            // Video and image-edit need the integrity-signed browser app-chat
-            // path; plain text-to-image stays on the imagine WebSocket.
-            var needsBrowser = mode is "video" or "video-from-image" or "edit";
+            // Browser-free signing is preferred when a complete, validated
+            // deployment pair is configured. Otherwise CLI browser modes keep
+            // their existing real-control transport.
+            GrokWebStatsigSigner.TryCreateFromSettings(
+                settings,
+                out var statsigSigner,
+                out _);
+            // Only browser-free image edit has been live-verified. Keep video
+            // on its established real-control browser path until separately
+            // proven; sharing an endpoint is not evidence that every model
+            // route has the same anti-bot contract.
+            var needsBrowser = mode is "video" or "video-from-image"
+                || (mode == "edit" && statsigSigner == null);
             await using var browserClient = needsBrowser
                 ? new GrokWebBrowserClient(GrokWebBrowserClient.BuildOptions(
                     settings,
                     cookiePath,
                     headedOverride: options.GrokWebHeaded))
                 : null;
-            using var client = GrokWebClient.FromCookieFile(cookiePath, browserClient);
+            using var client = GrokWebClient.FromCookieFile(
+                cookiePath,
+                browserClient,
+                statsigSigner);
             IImageGenerator generator;
             string sheetHeader;
 

@@ -51,6 +51,27 @@ try {
     selectedUserFilter.add(String(u));
   }
 } catch { /* corrupted filter state just resets to everyone */ }
+// Server-persistent shared favorites. Images are keyed by exact
+// jobId|generator|imageIndex; whole prompts are keyed by their originating
+// jobId. favoriteBrowseUser is null for the normal feed, "*" for everyone's
+// favorites, or one exact display username.
+let favoriteItems = new Map();
+let promptFavoriteItems = new Map();
+let favoriteUsers = new Map();
+let favoriteBrowseUser = null;
+let favoritesRefreshInFlight = false;
+let favoritesLastRefreshAt = 0;
+let favoritesSnapshotSignature = "";
+let favoritesServerVersion = "";
+let favoritesGalleryRenderPending = false;
+let favoriteMutation = null;
+let favoriteMutationError = null;
+// Server-persistent, global stream visibility. A hidden prompt removes its
+// whole job; a hidden image removes only that exact generated result.
+let visibilityServerVersion = "";
+let hiddenPromptJobIds = new Set();
+let hiddenImageKeys = new Set();
+let visibilityMutation = null;
 let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
 let imageViewerRenderVersion = 0;
 let imageViewerHelpOpen = false;
@@ -127,7 +148,12 @@ const imageViewerDescribe = el("image-viewer-describe");
 const imageViewerGuidance = el("image-viewer-guidance");
 const imageViewerGenerator = el("image-viewer-generator");
 const imageViewerDimensions = el("image-viewer-dimensions");
+const imageViewerPosition = el("image-viewer-position");
+const imageViewerFavorite = el("image-viewer-favorite");
+const imageViewerHide = el("image-viewer-hide");
 const imageViewerStatus = el("image-viewer-status");
+const favoritesGallery = el("favorites-gallery");
+const favoritesGrid = el("favorites-grid");
 let lastLogSequence = 0;
 
 // ---------- live process log ----------
@@ -191,6 +217,8 @@ function appendLogLine(entry) {
   const parsed = parseLogLine(entry.line);
   const row = document.createElement("div");
   row.className = `log-row${parsed.tone ? ` ${parsed.tone}` : ""}`;
+  const jobMatch = String(entry.line).match(/\[ui #([A-Za-z0-9]+)\]/);
+  if (jobMatch) row.dataset.jobId = jobMatch[1];
   for (const [className, value] of [
     ["log-time", parsed.time],
     ["log-source", parsed.source],
@@ -229,6 +257,7 @@ async function pollLogs() {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const body = await resp.json();
     for (const entry of body.entries) appendLogLine(entry);
+    if (body.next > lastLogSequence) lastLogSequence = body.next;
     logsConnection.textContent = "live";
     logsConnection.className = "live";
   } catch {
@@ -1310,6 +1339,8 @@ function currentUsername() {
 
 usernameInput.addEventListener("change", () => {
   localStorage.setItem(UsernameKey, currentUsername());
+  favoriteMutationError = null;
+  refreshFavoritePresentation();
 });
 
 function applyAuthState() {
@@ -1407,6 +1438,738 @@ async function loadKnownUsers() {
   } catch { /* the filter bar fills in from live events regardless */ }
 }
 
+// ---------- creator-only persistent stream hiding ----------
+
+function hiddenImageIdentity(jobId, generator, imageIndex) {
+  return `${jobId}|${generator}|${Number(imageIndex)}`;
+}
+
+function isPromptHidden(jobId) {
+  return hiddenPromptJobIds.has(String(jobId || ""));
+}
+
+function isImageHidden(jobId, generator, imageIndex) {
+  return hiddenImageKeys.has(hiddenImageIdentity(jobId, generator, imageIndex));
+}
+
+function applyVisibilitySnapshot(raw) {
+  if (!raw || raw.unchanged === true) return;
+  if (!raw.version || !Array.isArray(raw.prompts) || !Array.isArray(raw.images)) {
+    throw new Error("visibility response is malformed");
+  }
+
+  const prompts = new Set(raw.prompts.map(String));
+  const images = new Set();
+  for (const item of raw.images) {
+    if (!item || !item.jobId || !item.generator ||
+        !Number.isInteger(item.imageIndex) || item.imageIndex < 0) {
+      throw new Error("visibility response contains an invalid image identity");
+    }
+    images.add(hiddenImageIdentity(item.jobId, item.generator, item.imageIndex));
+  }
+
+  visibilityServerVersion = String(raw.version);
+  hiddenPromptJobIds = prompts;
+  hiddenImageKeys = images;
+
+  for (const card of document.querySelectorAll(
+    "#jobs .job, #archive .job, #favorites-grid .favorite-gallery-card")) {
+    const jobId = card.dataset.jobId || card.id.replace(/^job-/, "");
+    if (isPromptHidden(jobId)) {
+      for (const link of card.querySelectorAll('a[data-viewer-image="true"]')) {
+        const cached = imageViewerCache.get(link.href);
+        if (cached) discardImageViewerCacheEntry(link.href, cached);
+      }
+      const inputUrl = imageViewerInputUrl(jobId);
+      const inputCached = imageViewerCache.get(inputUrl);
+      if (inputCached) discardImageViewerCacheEntry(inputUrl, inputCached);
+      card.remove();
+      continue;
+    }
+    let hasHiddenImage = false;
+    for (const link of [...card.querySelectorAll('a[data-viewer-image="true"]')]) {
+      if (link.dataset.resultKind === "text") continue;
+      if (!isImageHidden(
+        link.dataset.jobId,
+        link.dataset.generator,
+        Number(link.dataset.imageIndex))) {
+        continue;
+      }
+      const cached = imageViewerCache.get(link.href);
+      if (cached) discardImageViewerCacheEntry(link.href, cached);
+      (link.closest(".media-result") || link).remove();
+      hasHiddenImage = true;
+    }
+    if (hasHiddenImage) card.querySelector(".grid-link")?.remove();
+  }
+  for (const row of document.querySelectorAll("#logs-lines .log-row[data-job-id]")) {
+    if (isPromptHidden(row.dataset.jobId)) row.remove();
+  }
+
+  if (imageViewerState &&
+      (isPromptHidden(imageViewerState.jobId) ||
+       isImageHidden(
+         imageViewerState.jobId,
+         imageViewerState.generator,
+         imageViewerState.imageIndex))) {
+    closeImageViewer();
+  } else if (!imageViewer.hidden) {
+    renderImageViewer();
+  }
+  updateCostTotals();
+  loadFavorites();
+}
+
+async function persistHiddenResource(kind, jobId, generator = "", imageIndex = -1) {
+  if (visibilityMutation) return false;
+  const identity = kind === "prompt"
+    ? `prompt|${jobId}`
+    : `image|${hiddenImageIdentity(jobId, generator, imageIndex)}`;
+  visibilityMutation = identity;
+  const form = new FormData();
+  form.append("kind", kind);
+  form.append("jobId", jobId);
+  if (kind === "image") {
+    form.append("generator", generator);
+    form.append("imageIndex", String(imageIndex));
+  }
+  try {
+    const response = await fetch(apiUrl("api/visibility"), { method: "POST", body: form });
+    if (response.status === 401) { location.reload(); return false; }
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    applyVisibilitySnapshot(body);
+    return true;
+  } finally {
+    visibilityMutation = null;
+  }
+}
+
+function createHidePromptButton(jobId) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "hide-prompt";
+  button.textContent = "hide prompt";
+  button.title = "Permanently hide this entire prompt and all of its results from everyone";
+  button.addEventListener("click", async () => {
+    if (!confirm(
+      "Hide this entire prompt and all its results from everyone?\n\n" +
+      "This cannot be undone in the UI.")) return;
+    button.disabled = true;
+    button.textContent = "hiding…";
+    try {
+      await persistHiddenResource("prompt", jobId);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "hide failed";
+      button.title = String(error);
+    }
+  });
+  return button;
+}
+
+function createHideImageButton(jobId, generator, imageIndex) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "hide-image";
+  button.textContent = "hide";
+  button.title = "Hide only this image from everyone";
+  button.setAttribute("aria-label", "Hide only this image from everyone");
+  button.addEventListener("click", async () => {
+    if (!confirm("Hide only this image from everyone?\n\nThis cannot be undone in the UI.")) return;
+    button.disabled = true;
+    button.textContent = "hiding…";
+    try {
+      await persistHiddenResource("image", jobId, generator, imageIndex);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = "hide failed";
+      button.title = String(error);
+    }
+  });
+  return button;
+}
+
+// ---------- shared persistent image + prompt favorites ----------
+
+function favoriteIdentity(jobId, generator, imageIndex) {
+  return `${jobId}|${generator}|${Number(imageIndex)}`;
+}
+
+function favoriteIdentityFor(ref) {
+  return ref ? favoriteIdentity(ref.jobId, ref.generator, ref.imageIndex) : "";
+}
+
+function promptFavoriteIdentity(jobId) {
+  return String(jobId || "");
+}
+
+function favoriteMutationIdentity(kind, identity) {
+  return `${kind}|${identity}`;
+}
+
+function normalizeFavoriteItem(raw) {
+  if (!raw || typeof raw !== "object" ||
+      !raw.jobId || !raw.generator ||
+      !Number.isInteger(raw.imageIndex) || raw.imageIndex < 0 ||
+      !Number.isInteger(raw.generatorImageCount) ||
+      raw.generatorImageCount <= raw.imageIndex ||
+      typeof raw.prompt !== "string" ||
+      !(raw.jobCreatedAtUnixMs > 0) ||
+      !raw.imageUrl || !raw.thumbUrl ||
+      !Array.isArray(raw.users) || raw.users.some((user) => !user)) {
+    throw new Error("favorites response contains an invalid exact image identity");
+  }
+  return {
+    jobId: String(raw.jobId),
+    generator: String(raw.generator),
+    imageIndex: Number(raw.imageIndex),
+    generatorImageCount: Number(raw.generatorImageCount),
+    prompt: String(raw.prompt),
+    createdBy: String(raw.createdBy || ""),
+    jobCreatedAtUnixMs: Number(raw.jobCreatedAtUnixMs),
+    hasInputImage: !!raw.hasInputImage,
+    imageUrl: String(raw.imageUrl),
+    thumbUrl: String(raw.thumbUrl),
+    size: String(raw.size || ""),
+    canHide: !!raw.canHide,
+    users: [...new Set(raw.users.map(String))],
+  };
+}
+
+function normalizePromptFavoriteItem(raw) {
+  if (!raw || typeof raw !== "object" ||
+      !raw.jobId || typeof raw.prompt !== "string" || !raw.prompt.trim() ||
+      !(raw.jobCreatedAtUnixMs > 0) ||
+      !Array.isArray(raw.users) || raw.users.some((user) => !user)) {
+    throw new Error("favorites response contains an invalid exact prompt identity");
+  }
+  return {
+    jobId: String(raw.jobId),
+    prompt: String(raw.prompt),
+    createdBy: String(raw.createdBy || ""),
+    jobCreatedAtUnixMs: Number(raw.jobCreatedAtUnixMs),
+    hasInputImage: !!raw.hasInputImage,
+    canHide: !!raw.canHide,
+    users: [...new Set(raw.users.map(String))],
+  };
+}
+
+function favoriteItemFor(ref) {
+  return favoriteItems.get(favoriteIdentityFor(ref)) || null;
+}
+
+function favoriteSnapshotSignature(imageItems, promptItems) {
+  const ordered = (items) => [...items.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, item]) => [key, item]);
+  return JSON.stringify({
+    images: ordered(imageItems),
+    prompts: ordered(promptItems),
+  });
+}
+
+function rebuildFavoriteUsers() {
+  favoriteUsers = new Map();
+  for (const item of [...favoriteItems.values(), ...promptFavoriteItems.values()]) {
+    for (const name of item.users) {
+      favoriteUsers.set(name, (favoriteUsers.get(name) || 0) + 1);
+    }
+  }
+}
+
+function applyFavoriteMarkerToAnchor(link) {
+  if (!link || link.dataset.resultKind === "text") return;
+  const item = favoriteItems.get(favoriteIdentity(
+    link.dataset.jobId,
+    link.dataset.generator,
+    Number(link.dataset.imageIndex)));
+  const oldBadge = link.querySelector(":scope > .favorite-badge");
+  if (!item || item.users.length === 0) {
+    if (oldBadge) oldBadge.remove();
+    link.classList.remove("is-favorited", "favorite-mine");
+    if (link.dataset.favoriteTitle === "true") {
+      link.removeAttribute("title");
+      delete link.dataset.favoriteTitle;
+    }
+    return;
+  }
+
+  const mine = item.users.includes(currentUsername());
+  link.classList.add("is-favorited");
+  link.classList.toggle("favorite-mine", mine);
+  const badge = oldBadge || document.createElement("span");
+  badge.className = "favorite-badge";
+  badge.textContent = item.users.length === 1 ? "★" : `★ ${item.users.length}`;
+  badge.setAttribute("aria-hidden", "true");
+  if (!oldBadge) link.appendChild(badge);
+  link.title = `Favorited by ${item.users.join(", ")}`;
+  link.dataset.favoriteTitle = "true";
+}
+
+function applyFavoriteMarkers() {
+  for (const link of document.querySelectorAll('a[data-viewer-image="true"]')) {
+    applyFavoriteMarkerToAnchor(link);
+  }
+}
+
+function createPromptFavoriteButton(jobId) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "prompt-favorite";
+  button.dataset.jobId = jobId;
+  button.addEventListener("click", () => togglePromptFavorite(jobId));
+  renderPromptFavoriteButton(button);
+  return button;
+}
+
+function renderPromptFavoriteButton(button) {
+  if (!button) return;
+  const jobId = promptFavoriteIdentity(button.dataset.jobId);
+  const key = favoriteMutationIdentity("prompt", jobId);
+  const item = promptFavoriteItems.get(jobId);
+  const users = item ? item.users : [];
+  const mine = users.includes(currentUsername());
+
+  button.classList.remove("pending", "error");
+  button.disabled = false;
+  button.setAttribute("aria-pressed", String(mine));
+  if (favoriteMutation === key) {
+    button.classList.add("pending");
+    button.disabled = true;
+    button.textContent = "saving…";
+    button.title = "Persisting prompt favorite";
+    return;
+  }
+  if (favoriteMutationError && favoriteMutationError.key === key) {
+    button.classList.add("error");
+    button.textContent = "favorite failed";
+    button.title = favoriteMutationError.message;
+    return;
+  }
+
+  button.textContent = mine
+    ? `★ prompt${users.length > 1 ? ` · ${users.length}` : ""}`
+    : users.length > 0
+      ? `☆ prompt · ★ ${users.length}`
+      : "☆ prompt";
+  button.title = users.length > 0
+    ? `Prompt favorited by ${users.join(", ")}. Click to ${mine ? "remove your favorite" : "add yours"}.`
+    : "Favorite this entire prompt";
+}
+
+function applyPromptFavoriteMarkers() {
+  for (const button of document.querySelectorAll(".prompt-favorite")) {
+    renderPromptFavoriteButton(button);
+  }
+}
+
+function renderFavoriteControls() {
+  const filters = el("favorite-user-filters");
+  filters.replaceChildren();
+  const allImages = el("favorites-all-images");
+  const everyone = el("favorites-everyone");
+  allImages.classList.toggle("selected", favoriteBrowseUser === null);
+  everyone.classList.toggle("selected", favoriteBrowseUser === "*");
+  const total = favoriteItems.size + promptFavoriteItems.size;
+  everyone.textContent = total === 1
+    ? "everyone's favorites · 1"
+    : `everyone's favorites · ${total}`;
+
+  for (const [user, count] of [...favoriteUsers.entries()].sort((a, b) =>
+    a[0].localeCompare(b[0], undefined, { sensitivity: "base" }))) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "favorite-user-chip";
+    chip.classList.toggle("selected", favoriteBrowseUser === user);
+    chip.classList.toggle("self", user === currentUsername());
+    chip.textContent = `${user} · ${count}`;
+    chip.title = `Show ${user}'s ${count} favorite item${count === 1 ? "" : "s"}`;
+    chip.addEventListener("click", () => setFavoriteBrowseUser(user));
+    filters.appendChild(chip);
+  }
+}
+
+function setFavoriteBrowseUser(user) {
+  favoriteBrowseUser = user;
+  renderFavoriteControls();
+  const active = favoriteBrowseUser !== null;
+  jobsSection.hidden = active;
+  el("archive").hidden = active || el("archive-days").childElementCount === 0;
+  favoritesGallery.hidden = !active;
+  if (active) renderFavoritesGallery();
+}
+
+el("favorites-all-images").addEventListener("click", () => setFavoriteBrowseUser(null));
+el("favorites-everyone").addEventListener("click", () => setFavoriteBrowseUser("*"));
+
+function renderFavoritesGallery() {
+  if (favoriteBrowseUser === null) return;
+  const items = [
+    ...[...favoriteItems.values()].map((item) => ({ ...item, kind: "image" })),
+    ...[...promptFavoriteItems.values()].map((item) => ({ ...item, kind: "prompt" })),
+  ]
+    .filter((item) =>
+      favoriteBrowseUser === "*" || item.users.includes(favoriteBrowseUser))
+    .sort((a, b) => b.jobCreatedAtUnixMs - a.jobCreatedAtUnixMs);
+  const title = favoriteBrowseUser === "*"
+    ? "everyone's favorites"
+    : `${favoriteBrowseUser}'s favorites`;
+  el("favorites-gallery-title").textContent =
+    `${title} — ${items.length} item${items.length === 1 ? "" : "s"}`;
+  favoritesGrid.replaceChildren();
+
+  if (items.length === 0) {
+    const empty = document.createElement("p");
+    empty.textContent = "No favorites in this view.";
+    favoritesGrid.appendChild(empty);
+    favoritesGalleryRenderPending = false;
+    return;
+  }
+
+  for (const item of items) {
+    const card = document.createElement("article");
+    card.className = "job favorite-gallery-card";
+    card.dataset.jobId = item.jobId;
+    card.dataset.user = item.createdBy;
+    card.dataset.hasInputImage = String(item.hasInputImage);
+    card.dataset.canHide = String(item.canHide);
+
+    let link = null;
+    if (item.kind === "image") {
+      link = document.createElement("a");
+      link.href = apiUrl(item.imageUrl);
+      link.target = "_blank";
+      link.dataset.viewerImage = "true";
+      link.dataset.jobId = item.jobId;
+      link.dataset.generator = item.generator;
+      link.dataset.imageIndex = String(item.imageIndex);
+      link.dataset.generatorCount = String(item.generatorImageCount);
+
+      const img = document.createElement("img");
+      img.src = apiUrl(item.thumbUrl);
+      img.loading = "lazy";
+      img.alt = `${genLabel(item.generator)} image favorited by ${item.users.join(", ")}`;
+      const dims = /^(\d+)x(\d+)$/.exec(item.size);
+      if (dims) img.style.aspectRatio = `${dims[1]} / ${dims[2]}`;
+      link.appendChild(img);
+      card.appendChild(link);
+      if (item.canHide) {
+        const result = link.closest(".media-result");
+        (result || card).appendChild(
+          createHideImageButton(item.jobId, item.generator, item.imageIndex));
+      }
+    } else {
+      card.classList.add("favorite-prompt-card");
+      const kind = document.createElement("strong");
+      kind.className = "favorite-gallery-kind";
+      kind.textContent = "prompt";
+      card.appendChild(kind);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "favorite-gallery-meta";
+    const madeBy = item.createdBy ? `made by ${item.createdBy}` : "creator not recorded";
+    const date = new Date(item.jobCreatedAtUnixMs).toLocaleDateString();
+    const resource = item.kind === "image" ? `${genLabel(item.generator)} image` : "whole prompt";
+    const summary = document.createElement("span");
+    summary.textContent =
+      `${resource} · ${madeBy} · ${date} · favorited by ${item.users.join(", ")}`;
+    meta.append(summary, createPromptFavoriteButton(item.jobId));
+    if (item.canHide) meta.appendChild(createHidePromptButton(item.jobId));
+    card.appendChild(meta);
+
+    const prompt = document.createElement("div");
+    prompt.className = "job-prompt";
+    prompt.textContent = item.prompt;
+    card.appendChild(prompt);
+    favoritesGrid.appendChild(card);
+    if (link) applyFavoriteMarkerToAnchor(link);
+  }
+  favoritesGalleryRenderPending = false;
+}
+
+function refreshFavoritePresentation() {
+  renderFavoriteControls();
+  applyFavoriteMarkers();
+  applyPromptFavoriteMarkers();
+  if (!imageViewer.hidden) {
+    const current = locateImageViewerState(getImageViewerPrompts());
+    renderImageViewerFavorite(current ? current.item : null);
+    renderImageViewerHide(current ? current.item : null);
+  }
+  if (favoriteBrowseUser !== null) {
+    if (imageViewer.hidden) renderFavoritesGallery();
+    else favoritesGalleryRenderPending = true;
+  }
+}
+
+async function loadFavorites() {
+  if (favoritesRefreshInFlight) return;
+  favoritesRefreshInFlight = true;
+  try {
+    const versionQuery = favoritesServerVersion
+      ? `?version=${encodeURIComponent(favoritesServerVersion)}`
+      : "";
+    const response = await fetch(apiUrl(`api/favorites${versionQuery}`));
+    if (response.status === 401) { location.reload(); return; }
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    if (body.unchanged === true) {
+      if (!body.version || body.version !== favoritesServerVersion) {
+        throw new Error("favorites unchanged response has the wrong version");
+      }
+      favoritesLastRefreshAt = Date.now();
+      el("favorites-error").textContent = "";
+      return;
+    }
+    if (!Array.isArray(body.favorites) ||
+        !Array.isArray(body.promptFavorites) ||
+        !Array.isArray(body.users)) {
+      throw new Error("favorites response is malformed");
+    }
+    if (!body.version) throw new Error("favorites response has no version");
+
+    const nextItems = new Map();
+    for (const raw of body.favorites) {
+      const item = normalizeFavoriteItem(raw);
+      const key = favoriteIdentityFor(item);
+      if (nextItems.has(key)) {
+        throw new Error(`favorites response repeats ${key}`);
+      }
+      nextItems.set(key, item);
+    }
+    const nextPromptItems = new Map();
+    for (const raw of body.promptFavorites) {
+      const item = normalizePromptFavoriteItem(raw);
+      const key = promptFavoriteIdentity(item.jobId);
+      if (nextPromptItems.has(key)) {
+        throw new Error(`favorites response repeats prompt ${key}`);
+      }
+      nextPromptItems.set(key, item);
+    }
+    const nextUsers = new Map();
+    for (const entry of body.users) {
+      if (!entry.user || !Number.isInteger(entry.count) || entry.count < 1) {
+        throw new Error("favorites response contains an invalid user count");
+      }
+      nextUsers.set(String(entry.user), Number(entry.count));
+    }
+    const nextSignature = favoriteSnapshotSignature(nextItems, nextPromptItems);
+    const changed = nextSignature !== favoritesSnapshotSignature;
+    favoriteItems = nextItems;
+    promptFavoriteItems = nextPromptItems;
+    favoriteUsers = nextUsers;
+    favoritesSnapshotSignature = nextSignature;
+    favoritesServerVersion = String(body.version);
+    favoritesLastRefreshAt = Date.now();
+    el("favorites-error").textContent = "";
+    if (favoriteBrowseUser !== null &&
+        favoriteBrowseUser !== "*" &&
+        !favoriteUsers.has(favoriteBrowseUser) &&
+        imageViewer.hidden) {
+      setFavoriteBrowseUser(null);
+    }
+    if (changed) refreshFavoritePresentation();
+  } catch (error) {
+    el("favorites-error").textContent = `favorites refresh failed: ${error}`;
+  } finally {
+    favoritesRefreshInFlight = false;
+  }
+}
+
+function pollFavorites() {
+  if (document.hidden && Date.now() - favoritesLastRefreshAt < 30000) return;
+  loadFavorites();
+}
+
+function renderImageViewerFavorite(item) {
+  imageViewerFavorite.className = "";
+  imageViewerFavorite.disabled = !item || item.kind === "text";
+  imageViewerFavorite.setAttribute("aria-pressed", "false");
+  if (!item || item.kind === "text") {
+    imageViewerFavorite.textContent = "☆ favorite";
+    imageViewerFavorite.title = item && item.kind === "text"
+      ? "Describe-result views cannot be favorited."
+      : "Favorite this image (f)";
+    return;
+  }
+
+  const identity = favoriteIdentityFor(item);
+  const mutationKey = favoriteMutationIdentity("image", identity);
+  if (favoriteMutation === mutationKey) {
+    imageViewerFavorite.classList.add("pending");
+    imageViewerFavorite.textContent = "saving…";
+    imageViewerFavorite.title = "Persisting favorite";
+    return;
+  }
+  if (favoriteMutationError && favoriteMutationError.key === mutationKey) {
+    imageViewerFavorite.classList.add("error");
+    imageViewerFavorite.textContent = "favorite failed";
+    imageViewerFavorite.title = favoriteMutationError.message;
+    return;
+  }
+
+  const favorite = favoriteItems.get(identity);
+  const users = favorite ? favorite.users : [];
+  const mine = users.includes(currentUsername());
+  imageViewerFavorite.setAttribute("aria-pressed", String(mine));
+  imageViewerFavorite.textContent = mine
+    ? `★ favorited${users.length > 1 ? ` · ${users.length}` : ""}`
+    : users.length > 0
+      ? `☆ favorite · ★ ${users.length}`
+      : "☆ favorite";
+  imageViewerFavorite.title = users.length > 0
+    ? `Favorited by ${users.join(", ")}. Press f to ${mine ? "remove your favorite" : "add yours"}.`
+    : "Favorite this image (f)";
+}
+
+function renderImageViewerHide(item) {
+  const card = item ? findViewerAnchor(item)?.closest(".job") : null;
+  const allowed = !!item && item.kind !== "text" && card?.dataset.canHide === "true";
+  imageViewerHide.hidden = !allowed;
+  imageViewerHide.disabled = !allowed || visibilityMutation !== null;
+  imageViewerHide.textContent = visibilityMutation ? "hiding…" : "hide image";
+}
+
+async function hideCurrentViewerImage() {
+  const current = locateImageViewerState(getImageViewerPrompts());
+  if (!current || current.item.kind === "text") return;
+  if (findViewerAnchor(current.item)?.closest(".job")?.dataset.canHide !== "true") return;
+  if (!confirm("Hide only this image from everyone?\n\nThis cannot be undone in the UI.")) return;
+  renderImageViewerHide(current.item);
+  try {
+    await persistHiddenResource(
+      "image",
+      current.item.jobId,
+      current.item.generator,
+      current.item.imageIndex);
+  } catch (error) {
+    imageViewerHide.disabled = false;
+    imageViewerHide.textContent = "hide failed";
+    imageViewerHide.title = String(error);
+  }
+}
+
+async function toggleImageViewerFavorite() {
+  const current = locateImageViewerState(getImageViewerPrompts());
+  if (!current || current.item.kind === "text") return;
+  const user = currentUsername();
+  if (!user) {
+    favoriteMutationError = {
+      key: favoriteMutationIdentity("image", favoriteIdentityFor(current.item)),
+      message: "Choose a 'creating as' username before favoriting.",
+    };
+    renderImageViewerFavorite(current.item);
+    return;
+  }
+
+  const key = favoriteIdentityFor(current.item);
+  const mutationKey = favoriteMutationIdentity("image", key);
+  if (favoriteMutation) return;
+  const existing = favoriteItems.get(key);
+  const desired = !(existing && existing.users.includes(user));
+  favoriteMutation = mutationKey;
+  favoriteMutationError = null;
+  renderImageViewerFavorite(current.item);
+
+  const form = new FormData();
+  form.append("kind", "image");
+  form.append("user", user);
+  form.append("jobId", current.item.jobId);
+  form.append("generator", current.item.generator);
+  form.append("imageIndex", String(current.item.imageIndex));
+  form.append("favorite", String(desired));
+
+  try {
+    const response = await fetch(apiUrl("api/favorites"), { method: "POST", body: form });
+    if (response.status === 401) { location.reload(); return; }
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    if (body.kind !== "image") {
+      throw new Error("favorite response kind did not match the requested image");
+    }
+    if (body.item) {
+      const item = normalizeFavoriteItem(body.item);
+      if (favoriteIdentityFor(item) !== key) {
+        throw new Error("favorite response identity did not match the requested image");
+      }
+      favoriteItems.set(key, item);
+    } else {
+      favoriteItems.delete(key);
+    }
+    // Counts are cheap to recompute and avoid trusting a mutation response
+    // about unrelated users.
+    rebuildFavoriteUsers();
+    favoritesSnapshotSignature =
+      favoriteSnapshotSignature(favoriteItems, promptFavoriteItems);
+    favoriteMutation = null;
+    refreshFavoritePresentation();
+  } catch (error) {
+    favoriteMutation = null;
+    favoriteMutationError = { key: mutationKey, message: String(error) };
+    renderImageViewerFavorite(current.item);
+  }
+}
+
+imageViewerFavorite.addEventListener("click", () => toggleImageViewerFavorite());
+imageViewerHide.addEventListener("click", () => hideCurrentViewerImage());
+
+async function togglePromptFavorite(jobId) {
+  const identity = promptFavoriteIdentity(jobId);
+  if (!identity || favoriteMutation) return;
+  const user = currentUsername();
+  const mutationKey = favoriteMutationIdentity("prompt", identity);
+  if (!user) {
+    favoriteMutationError = {
+      key: mutationKey,
+      message: "Choose a 'creating as' username before favoriting.",
+    };
+    applyPromptFavoriteMarkers();
+    return;
+  }
+
+  const existing = promptFavoriteItems.get(identity);
+  const desired = !(existing && existing.users.includes(user));
+  favoriteMutation = mutationKey;
+  favoriteMutationError = null;
+  applyPromptFavoriteMarkers();
+
+  const form = new FormData();
+  form.append("kind", "prompt");
+  form.append("user", user);
+  form.append("jobId", identity);
+  form.append("favorite", String(desired));
+
+  try {
+    const response = await fetch(apiUrl("api/favorites"), { method: "POST", body: form });
+    if (response.status === 401) { location.reload(); return; }
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    if (body.kind !== "prompt") {
+      throw new Error("favorite response kind did not match the requested prompt");
+    }
+    if (body.item) {
+      const item = normalizePromptFavoriteItem(body.item);
+      if (promptFavoriteIdentity(item.jobId) !== identity) {
+        throw new Error("favorite response identity did not match the requested prompt");
+      }
+      promptFavoriteItems.set(identity, item);
+    } else {
+      promptFavoriteItems.delete(identity);
+    }
+    rebuildFavoriteUsers();
+    favoritesSnapshotSignature =
+      favoriteSnapshotSignature(favoriteItems, promptFavoriteItems);
+    favoriteMutation = null;
+    refreshFavoritePresentation();
+  } catch (error) {
+    favoriteMutation = null;
+    favoriteMutationError = { key: mutationKey, message: String(error) };
+    applyPromptFavoriteMarkers();
+  }
+}
+
 // ---------- submit ----------
 
 function checkedGeneratorKeys() {
@@ -1466,7 +2229,14 @@ async function submit() {
     const resp = await fetch(apiUrl("api/jobs"), { method: "POST", body: form });
     const body = await resp.json();
     if (!resp.ok) { sendError.textContent = body.error || `HTTP ${resp.status}`; return; }
-    addJobCard(body.id, effectivePrompt, gens, inputImageItems.length > 0, null, Date.now(), inputImageItems.length, { user });
+    addJobCard(
+      body.id,
+      effectivePrompt,
+      gens,
+      inputImageItems.length > 0,
+      Date.now(),
+      inputImageItems.length,
+      { user, canHide: !!authInfo.user });
   } catch (err) {
     sendError.textContent = String(err);
   } finally {
@@ -1748,7 +2518,14 @@ el("video-form").addEventListener("submit", async (e) => {
       return;
     }
     videoDialog.close();
-    addJobCard(body.id, prompt, ["grok-web-video"], true, null, Date.now(), 1, { user: currentUsername() });
+    addJobCard(
+      body.id,
+      prompt,
+      ["grok-web-video"],
+      true,
+      Date.now(),
+      1,
+      { user: currentUsername(), canHide: !!authInfo.user });
   } catch (err) {
     error.textContent = String(err);
   } finally {
@@ -1958,17 +2735,22 @@ window.addEventListener("resize", () => {
 
 function getImageViewerPrompts() {
   const prompts = [];
-  // Live jobs first (newest at top), then any expanded archive days, so the
-  // keyboard walk covers everything currently on screen in page order.
-  for (const card of document.querySelectorAll("#jobs .job, #archive .job")) {
+  // Normal mode walks live jobs then expanded archive days. Favorites mode
+  // walks only the dedicated filtered favorites gallery, so the same image
+  // cannot appear twice when its original job card is also loaded.
+  const cardSelector = favoriteBrowseUser === null
+    ? "#jobs .job, #archive .job"
+    : "#favorites-grid .favorite-gallery-card";
+  for (const card of document.querySelectorAll(cardSelector)) {
     // Night-hidden and person-filtered jobs are invisible to the viewer's
     // keyboard walk too, as are jobs inside a collapsed archive day.
     if (card.classList.contains("night-hidden")) continue;
     if (card.classList.contains("user-filter-hidden")) continue;
     const dayContainer = card.closest(".archive-day-jobs");
     if (dayContainer && dayContainer.hidden) continue;
+    const jobId = card.dataset.jobId || card.id.substring("job-".length);
     const items = [...card.querySelectorAll('a[data-viewer-image="true"]')].map((link) => ({
-      jobId: card.id.substring("job-".length),
+      jobId,
       generator: link.dataset.generator,
       imageIndex: Number(link.dataset.imageIndex),
       generatorCount: Number(link.dataset.generatorCount),
@@ -1982,7 +2764,7 @@ function getImageViewerPrompts() {
     }));
     if (items.length === 0) continue;
     prompts.push({
-      jobId: card.id.substring("job-".length),
+      jobId,
       prompt: card.querySelector(".job-prompt").textContent,
       hasInput: card.dataset.hasInputImage === "true",
       gpt2Guidance: card.dataset.gpt2Guidance || "",         // "sent" | "off" | "" (unknown)
@@ -2025,9 +2807,11 @@ function viewerSeenKeyFor(jobId, generator, imageIndex) {
 // identity (job id + generator + image index) — never by position.
 function findViewerAnchor(ref) {
   if (!ref) return null;
-  const card = document.getElementById(`job-${ref.jobId}`);
-  if (!card) return null;
-  for (const link of card.querySelectorAll('a[data-viewer-image="true"]')) {
+  const scope = favoriteBrowseUser === null
+    ? document.querySelectorAll("#jobs a[data-viewer-image='true'], #archive a[data-viewer-image='true']")
+    : document.querySelectorAll("#favorites-grid a[data-viewer-image='true']");
+  for (const link of scope) {
+    if (link.dataset.jobId !== ref.jobId) continue;
     if (link.dataset.generator === ref.generator &&
         Number(link.dataset.imageIndex) === Number(ref.imageIndex)) {
       return link;
@@ -2361,6 +3145,9 @@ function renderImageViewerGuidance(current) {
 function paintImageViewerChrome(target) {
   imageViewerPrompt.textContent = target.prompt.prompt;
   renderImageViewerGuidance(target);
+  renderImageViewerFavorite(target.item);
+  renderImageViewerHide(target.item);
+  renderImageViewerPosition(target.item);
   // Describe items: the stage IS the submitted image; the panel above the
   // prompt carries the returned description (plus the model's separated
   // comments, when any), and the header says so.
@@ -2415,6 +3202,9 @@ function clearImageViewerPresentation() {
   renderImageViewerGuidance(null);
   imageViewerGenerator.textContent = "";
   imageViewerDimensions.textContent = "";
+  renderImageViewerPosition(null);
+  renderImageViewerFavorite(null);
+  renderImageViewerHide(null);
   imageViewerContentAr = null;
   applyImageViewerCompare(null);
 }
@@ -2429,8 +3219,11 @@ async function renderImageViewer() {
     imageViewerDescribe.hidden = true;
     imageViewerDescribe.textContent = "";
     renderImageViewerGuidance(null);
+    renderImageViewerFavorite(null);
+    renderImageViewerHide(null);
     imageViewerGenerator.textContent = "selected image is no longer available";
     imageViewerDimensions.textContent = "";
+    renderImageViewerPosition(null);
     applyImageViewerCompare(null);
     return;
   }
@@ -2521,6 +3314,50 @@ function navigateImageViewerAbsolute(index) {
   setImageViewerIdentity(allItems[targetIndex]);
 }
 
+function findImageViewerFlatIndex(allItems, item) {
+  if (!item) return -1;
+  return allItems.findIndex((candidate) =>
+    candidate.jobId === item.jobId &&
+    candidate.generator === item.generator &&
+    candidate.imageIndex === item.imageIndex);
+}
+
+// Place-in-list indicator: a stable, 1-based current / total reading for the
+// exact visible walk. It is painted with the same item-specific chrome as the
+// decoded media, so the number can never advance ahead of the pixels.
+function renderImageViewerPosition(item) {
+  const allItems = item ? getImageViewerFlatItems() : [];
+  const index = findImageViewerFlatIndex(allItems, item);
+  if (index < 0) {
+    imageViewerPosition.textContent = "";
+    imageViewerPosition.removeAttribute("aria-label");
+    return;
+  }
+  imageViewerPosition.textContent = `${index + 1} / ${allItems.length}`;
+  imageViewerPosition.setAttribute(
+    "aria-label",
+    `item ${index + 1} of ${allItems.length} in the visible gallery`);
+}
+
+// Halfway jump: move halfway through the remaining distance to an endpoint.
+// Repetition converges exponentially (1/2, 3/4, 7/8...) while floor/ceil make
+// the final press reach the exact first/last item instead of stalling beside it.
+function navigateImageViewerHalfway(direction) {
+  const allItems = getImageViewerFlatItems();
+  const prompts = getImageViewerPrompts();
+  const current = locateImageViewerState(prompts);
+  if (!current || allItems.length === 0) return;
+  const currentIndex = findImageViewerFlatIndex(allItems, current.item);
+  if (currentIndex < 0) return;
+  const lastIndex = allItems.length - 1;
+  const targetIndex = direction < 0
+    ? Math.floor(currentIndex / 2)
+    : Math.ceil((currentIndex + lastIndex) / 2);
+  if (targetIndex === currentIndex) return;
+  imageViewerNavDelta = Math.sign(direction);
+  setImageViewerIdentity(allItems[targetIndex]);
+}
+
 function navigateImageViewerPrompt(delta) {
   const prompts = getImageViewerPrompts();
   const current = locateImageViewerState(prompts);
@@ -2548,7 +3385,12 @@ function showImageViewerHelp() {
     const keys = document.createElement("kbd");
     keys.textContent = command.keys.join(" / ");
     const label = document.createElement("span");
-    label.textContent = helpText;
+    label.className = "image-viewer-help-command";
+    const name = document.createElement("strong");
+    name.textContent = command.name;
+    const explanation = document.createElement("span");
+    explanation.textContent = helpText;
+    label.append(name, explanation);
     item.appendChild(keys);
     item.appendChild(label);
     imageViewerHelpList.appendChild(item);
@@ -2564,93 +3406,158 @@ function toggleImageViewerHelp() {
 
 const ImageViewerCommands = [
   {
+    id: "positionIndicator",
+    keys: ["Always visible"],
+    name: "Place-in-list indicator",
+    match: () => false,
+    help: "The 1-based current / total count identifies your exact place in the visible gallery.",
+    run: () => {},
+  },
+  {
+    id: "wheelStep",
+    keys: ["Wheel"],
+    name: "Intent-filtered wheel stepping",
+    match: () => false,
+    help: "Vertical wheel movement advances one image only after a threshold; trackpad noise and horizontal gestures do not skip through the list.",
+    run: () => {},
+  },
+  {
+    id: "mouseSideStep",
+    keys: ["Mouse Back", "Mouse Forward"],
+    name: "Mouse side-button stepping",
+    match: () => false,
+    help: "A mouse's Back or Forward thumb button selects the previous or next image without changing browser history.",
+    run: () => {},
+  },
+  {
     id: "previous",
     keys: ["Left", "Up"],
+    name: "Single-step traversal",
     match: (event) =>
       !event.ctrlKey && !event.metaKey &&
       (event.key === "ArrowLeft" || event.key === "ArrowUp"),
-    help: "Previous image (crosses prompts)",
+    help: "Select the previous image in the visible gallery, crossing prompt boundaries.",
     run: () => navigateImageViewerImage(-1),
   },
   {
     id: "next",
     keys: ["Right", "Down"],
+    name: "Single-step traversal",
     match: (event) =>
       !event.ctrlKey && !event.metaKey &&
       (event.key === "ArrowRight" || event.key === "ArrowDown"),
-    help: "Next image (crosses prompts)",
+    help: "Select the next image in the visible gallery, crossing prompt boundaries.",
     run: () => navigateImageViewerImage(1),
   },
   {
     id: "newerPrompt",
     keys: ["Ctrl+Left"],
+    name: "Prompt-boundary jump",
     match: (event) =>
       (event.ctrlKey || event.metaKey) && event.key === "ArrowLeft",
-    help: "First image of newer prompt",
+    help: "Select the first image belonging to the newer prompt.",
     run: () => navigateImageViewerPrompt(-1),
   },
   {
     id: "olderPrompt",
     keys: ["Ctrl+Right"],
+    name: "Prompt-boundary jump",
     match: (event) =>
       (event.ctrlKey || event.metaKey) && event.key === "ArrowRight",
-    help: "First image of older prompt",
+    help: "Select the first image belonging to the older prompt.",
     run: () => navigateImageViewerPrompt(1),
   },
   {
     id: "pageBack",
     keys: ["PageUp"],
+    name: "Fixed-distance jump",
     match: (event) => !event.ctrlKey && !event.metaKey && event.key === "PageUp",
-    help: `Jump ${ImageViewerPageJumpSize} images back`,
+    help: `Move ${ImageViewerPageJumpSize} images toward the beginning of the visible gallery.`,
     run: () => navigateImageViewerImage(-ImageViewerPageJumpSize),
   },
   {
     id: "pageForward",
     keys: ["PageDown"],
+    name: "Fixed-distance jump",
     match: (event) => !event.ctrlKey && !event.metaKey && event.key === "PageDown",
-    help: `Jump ${ImageViewerPageJumpSize} images forward`,
+    help: `Move ${ImageViewerPageJumpSize} images toward the end of the visible gallery.`,
     run: () => navigateImageViewerImage(ImageViewerPageJumpSize),
+  },
+  {
+    id: "halfwayBack",
+    keys: ["Ctrl+PageUp"],
+    name: "Halfway jump",
+    match: (event) =>
+      (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey &&
+      event.key === "PageUp",
+    help: "Move halfway through the remaining distance to the first item; repeated presses rapidly narrow a long gallery.",
+    run: () => navigateImageViewerHalfway(-1),
+  },
+  {
+    id: "halfwayForward",
+    keys: ["Ctrl+PageDown"],
+    name: "Halfway jump",
+    match: (event) =>
+      (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey &&
+      event.key === "PageDown",
+    help: "Move halfway through the remaining distance to the last item; repeated presses rapidly narrow a long gallery.",
+    run: () => navigateImageViewerHalfway(1),
   },
   {
     id: "first",
     keys: ["Home"],
+    name: "Endpoint jump",
     match: (event) => !event.ctrlKey && !event.metaKey && event.key === "Home",
-    help: "First image in gallery",
+    help: "Select the first item in the visible gallery.",
     run: () => navigateImageViewerAbsolute(0),
   },
   {
     id: "last",
     keys: ["End"],
+    name: "Endpoint jump",
     match: (event) => !event.ctrlKey && !event.metaKey && event.key === "End",
-    help: "Last image in gallery",
+    help: "Select the last item in the visible gallery.",
     run: () => navigateImageViewerAbsolute(-1),
   },
   {
     id: "compareInput",
     keys: ["c"],
+    name: "Sticky input comparison",
     match: (event) =>
       !event.ctrlKey && !event.metaKey && !event.altKey &&
       (event.key === "c" || event.key === "C"),
-    help: "Compare with input image (left: input, right: output; applies to every image whose job had an input)",
+    help: "Keep input/output comparison armed while traversing; jobs without an input remain single-image.",
     run: () => toggleImageViewerCompare(),
   },
   {
-    id: "fullscreen",
+    id: "favorite",
     keys: ["f"],
+    name: "Shared exact-image favorite",
     match: (event) =>
-      !event.ctrlKey && !event.metaKey && !event.altKey &&
-      (event.key === "f" || event.key === "F"),
-    help: "Toggle fullscreen",
+      !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
+      event.key === "f",
+    help: "Add or remove your persistent favorite for this exact job, generator, and image index.",
+    run: () => toggleImageViewerFavorite(),
+  },
+  {
+    id: "fullscreen",
+    keys: ["Shift+F"],
+    name: "Fullscreen inspection",
+    match: (event) =>
+      !event.ctrlKey && !event.metaKey && !event.altKey && event.shiftKey &&
+      event.key === "F",
+    help: "Use the full monitor while preserving the viewer's adaptive image and information layout.",
     run: () => toggleImageViewerFullscreen(),
   },
   {
     id: "returnSync",
     keys: ["s"],
+    name: "Close handback",
     match: (event) =>
       !event.ctrlKey && !event.metaKey && !event.altKey &&
       (event.key === "s" || event.key === "S"),
     help: () =>
-      `Toggle close handback (currently ${imageViewerReturnSync ? "ON" : "OFF"}) — when ON, ` +
+      `Currently ${imageViewerReturnSync ? "ON" : "OFF"}. When ON, ` +
       "closing the viewer scrolls the page to the image you were viewing and focuses it; " +
       "when OFF, the page stays where it was",
     run: () => {
@@ -2662,17 +3569,19 @@ const ImageViewerCommands = [
   {
     id: "help",
     keys: ["?", "/"],
+    name: "Control glossary",
     match: (event) =>
       !event.ctrlKey && !event.metaKey && !event.altKey &&
       (event.key === "?" || event.key === "/"),
-    help: "Toggle this shortcut list",
+    help: "Show or hide these named viewer interactions and their exact behavior.",
     run: () => toggleImageViewerHelp(),
   },
   {
     id: "close",
     keys: ["Escape"],
+    name: "Layered exit",
     match: (event) => event.key === "Escape",
-    help: "Close shortcut list / exit fullscreen / close viewer",
+    help: "Close the glossary first, then fullscreen, then the viewer on successive presses.",
     run: () => {
       if (imageViewerHelpOpen) hideImageViewerHelp();
       // While fullscreen, Esc only exits fullscreen (the browser does this
@@ -2852,6 +3761,13 @@ function closeImageViewer() {
   } else if (restore && document.contains(restore) && typeof restore.focus === "function") {
     restore.focus({ preventScroll: true });
   }
+  if (favoriteBrowseUser !== null &&
+      favoriteBrowseUser !== "*" &&
+      !favoriteUsers.has(favoriteBrowseUser)) {
+    setFavoriteBrowseUser(null);
+  } else if (favoritesGalleryRenderPending && favoriteBrowseUser !== null) {
+    renderFavoritesGallery();
+  }
 }
 
 // Document-level so result images inside archived day sections open the
@@ -2925,7 +3841,8 @@ document.addEventListener("pointerout", (event) => {
   }
 });
 
-// Navigation is keyboard-only (see ImageViewerCommands; ? shows the list).
+// Navigation uses keys, normalized wheel intent, and optional mouse thumb
+// buttons (see ImageViewerCommands; ? shows the named interaction glossary).
 // Closing is Escape or a click outside the window.
 el("image-viewer-help-toggle").addEventListener("click", () => toggleImageViewerHelp());
 
@@ -2939,11 +3856,25 @@ imageViewer.addEventListener("click", (event) => {
   }
 });
 
+function normalizedImageViewerWheelDelta(event) {
+  if (event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return 0;
+  // Normalize Firefox line/page wheel units into approximate CSS pixels so
+  // one physical gesture has comparable semantics across mice and trackpads.
+  const unit = event.deltaMode === 1
+    ? 16
+    : event.deltaMode === 2
+      ? Math.max(1, imageViewerStage.clientHeight || window.innerHeight)
+      : 1;
+  return event.deltaY * unit;
+}
+
 imageViewer.addEventListener("wheel", (event) => {
   if (imageViewer.hidden) return;
   event.preventDefault();
+  const delta = normalizedImageViewerWheelDelta(event);
+  if (delta === 0) return;
   if (imageViewerHelpOpen) hideImageViewerHelp();
-  imageViewerWheelAccumulator += event.deltaY;
+  imageViewerWheelAccumulator += delta;
   if (imageViewerWheelResetTimer) clearTimeout(imageViewerWheelResetTimer);
   imageViewerWheelResetTimer = setTimeout(() => {
     imageViewerWheelAccumulator = 0;
@@ -2954,6 +3885,26 @@ imageViewer.addEventListener("wheel", (event) => {
   imageViewerWheelAccumulator = 0;
   navigateImageViewerImage(direction);
 }, { passive: false });
+
+function isImageViewerSideButton(event) {
+  return event.button === 3 || event.button === 4;
+}
+
+// Prevent Back/Forward thumb buttons from changing browser history while the
+// modal viewer owns the interaction, then map them to exact adjacent items.
+imageViewer.addEventListener("mousedown", (event) => {
+  if (!imageViewer.hidden && isImageViewerSideButton(event)) event.preventDefault();
+});
+imageViewer.addEventListener("mouseup", (event) => {
+  if (imageViewer.hidden || !isImageViewerSideButton(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (imageViewerHelpOpen) hideImageViewerHelp();
+  navigateImageViewerImage(event.button === 3 ? -1 : 1);
+});
+imageViewer.addEventListener("auxclick", (event) => {
+  if (!imageViewer.hidden && isImageViewerSideButton(event)) event.preventDefault();
+});
 
 document.addEventListener("keydown", (event) => {
   if (imageViewer.hidden) return;
@@ -3329,20 +4280,36 @@ async function setActiveFromJob(id, card) {
 // opts: { user, container }. user is the creator display name (shared-site
 // attribution + filter target); container is where the card renders — the
 // live feed by default, an archive day section otherwise.
-function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inputCount, opts = {}) {
+function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opts = {}) {
+  if (isPromptHidden(id)) return null;
   const existing = el(`job-${id}`);
-  if (existing) return existing;
+  if (existing) {
+    if (opts.canHide && existing.dataset.canHide !== "true") {
+      existing.dataset.canHide = "true";
+      const copyWrap = existing.querySelector(".copy-prompt-wrap");
+      if (copyWrap && !copyWrap.querySelector(".hide-prompt")) {
+        copyWrap.prepend(createHidePromptButton(id));
+      }
+    }
+    return existing;
+  }
 
   const resolvedInputCount = Math.max(
     0,
     Number.isFinite(inputCount) ? inputCount : (hasImage ? 1 : 0));
 
+  // The server sends only the UTC instant (unix ms); every displayed time is
+  // formatted here in the viewer's own timezone and locale.
+  const createdMs = Number(createdAtUnixMs) || Date.now();
+
   const card = document.createElement("div");
   card.className = "job";
   card.id = `job-${id}`;
+  card.dataset.jobId = id;
   card.dataset.state = "queued";
-  card.dataset.createdAt = String(createdAtUnixMs || Date.now());
+  card.dataset.createdAt = String(createdMs);
   card.dataset.user = opts.user || "";
+  card.dataset.canHide = String(!!opts.canHide);
   // Read by the image viewer's input-comparison mode (`c`).
   card.dataset.hasInputImage = String(!!hasImage || resolvedInputCount > 0);
   card.dataset.inputCount = String(resolvedInputCount);
@@ -3407,7 +4374,8 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inpu
       if (copyNoteTimer) clearTimeout(copyNoteTimer);
       copyNoteTimer = setTimeout(() => { copyNote.hidden = true; }, 1600);
     });
-    copyWrap.append(copyBtn, copyNote);
+    if (opts.canHide) copyWrap.appendChild(createHidePromptButton(id));
+    copyWrap.append(createPromptFavoriteButton(id), copyBtn, copyNote);
     head.appendChild(copyWrap);
   }
   const meta = document.createElement("div");
@@ -3420,7 +4388,14 @@ function addJobCard(id, prompt, gens, hasImage, createdAt, createdAtUnixMs, inpu
     <span class="job-cost"></span>
     <span class="job-connection">connecting…</span>`;
   meta.querySelector(".job-user").textContent = opts.user || "";
-  meta.querySelector(".job-created").textContent = createdAt || new Date().toLocaleTimeString();
+  // Same-local-day jobs show just the time; older ones (archive cards, or a
+  // viewer whose local date differs from the server's day bucket) include
+  // the local date so the time can't be misread as today's.
+  const created = new Date(createdMs);
+  meta.querySelector(".job-created").textContent =
+    created.toDateString() === new Date().toDateString()
+      ? created.toLocaleTimeString()
+      : created.toLocaleString();
   // Video jobs aren't composer setups, so they get no set-active button.
   if (!gens.includes("grok-web-video")) {
     const setActive = document.createElement("button");
@@ -3513,17 +4488,24 @@ async function pollJobEvents() {
     jobsPollTimer = null;
   }
   try {
-    const resp = await fetch(apiUrl(`api/events/poll?cursor=${jobsPollCursor}`));
+    const visibilityQuery = visibilityServerVersion
+      ? `&visibilityVersion=${encodeURIComponent(visibilityServerVersion)}`
+      : "";
+    const resp = await fetch(apiUrl(
+      `api/events/poll?cursor=${jobsPollCursor}${visibilityQuery}`));
     if (resp.status === 401) { location.reload(); return; }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const body = await resp.json();
     // A cursor lower than ours means the server restarted and resynced us
     // from 0; the replayed history is applied idempotently.
     jobsPollCursor = body.cursor;
+    applyVisibilitySnapshot(body.visibility);
     for (const envelope of body.envelopes) {
       if (envelope.kind === "job-known") {
         const j = envelope.job;
-        addJobCard(j.id, j.prompt, j.gens, j.hasImage, j.createdAt, j.createdAtUnixMs, j.inputCount, { user: j.user });
+        addJobCard(
+          j.id, j.prompt, j.gens, j.hasImage, j.createdAtUnixMs, j.inputCount,
+          { user: j.user, canHide: !!j.canHide });
         continue;
       }
       const card = el(`job-${envelope.jobId}`);
@@ -3601,6 +4583,7 @@ function applyJobEvent(id, card, evt) {
   } else if (evt.type === "gen-partial") {
     const cell = card.querySelector(`.cell[data-gen="${evt.gen}"]`);
     if (!cell || ["done", "error"].includes(cell.dataset.state)) return;
+    if (isImageHidden(id, evt.gen, evt.imageIndex)) return;
     setCellStatus(cell, `partial preview ${evt.partialIndex + 1} received`, true);
     const images = cell.querySelector(".cell-images");
     const selector = `img[data-partial-index="${evt.imageIndex}"]`;
@@ -3633,7 +4616,8 @@ function applyJobEvent(id, card, evt) {
     // the cell stays roughly the same height as a single full-width image.
     images.classList.toggle(
       "multi",
-      evt.ok && evt.images.length > 1 && !(evt.mediaType && evt.mediaType.startsWith("video/")));
+      evt.ok && evt.images.filter(Boolean).length > 1 &&
+        !(evt.mediaType && evt.mediaType.startsWith("video/")));
 
     if (evt.ok && evt.resultKind === "text" && Array.isArray(evt.texts)) {
       // Describe results: text descriptions of the job's input image(s), one
@@ -3661,10 +4645,11 @@ function applyJobEvent(id, card, evt) {
       cell.querySelector(".cell-size").textContent = sizeText;
       if (evt.label) cell.querySelector(".cell-head").title = evt.label;
       cell.dataset.cost = String(evt.cost || 0);
-      cell.dataset.imgCount = String(evt.images.length);
+      cell.dataset.imgCount = String(evt.images.filter(Boolean).length);
       cell.querySelector(".cell-cost").textContent = formatCost(evt.cost);
       status.textContent = "";
       for (const [imageIndex, rawUrl] of evt.images.entries()) {
+        if (!rawUrl || isImageHidden(id, evt.gen, imageIndex)) continue;
         // Event URLs are persisted server-side as "/api/..."; resolve them
         // against the page's base so they work behind the proxy prefix.
         const url = apiUrl(rawUrl);
@@ -3712,6 +4697,7 @@ function applyJobEvent(id, card, evt) {
           a.classList.add("viewer-seen");
         }
         const img = document.createElement("img");
+        img.alt = `${genLabel(evt.gen)} image ${imageIndex + 1} of ${evt.images.length}`;
         // Cards display the <=640px server-side preview; the anchor (viewer,
         // open-in-new-tab, video source) keeps the exact original bytes.
         // B2-hosted results carry a parallel `thumbs` array of local preview
@@ -3733,6 +4719,7 @@ function applyJobEvent(id, card, evt) {
         }
         a.appendChild(img);
         result.appendChild(a);
+        applyFavoriteMarkerToAnchor(a);
         if (videoGeneration.available) {
           const button = document.createElement("button");
           button.type = "button";
@@ -3745,6 +4732,9 @@ function applyJobEvent(id, card, evt) {
             openVideoDialog(id, evt.gen, imageIndex, url, sourcePrompt);
           });
           result.appendChild(button);
+        }
+        if (card.dataset.canHide === "true") {
+          result.appendChild(createHideImageButton(id, evt.gen, imageIndex));
         }
         images.appendChild(result);
       }
@@ -3778,6 +4768,7 @@ function applyJobEvent(id, card, evt) {
     updateJobProgress(card);
     updateCostTotals();
   } else if (evt.type === "grid") {
+    if ([...hiddenImageKeys].some((key) => key.startsWith(`${id}|`))) return;
     let link = card.querySelector(".grid-link");
     if (!link) {
       link = document.createElement("div");
@@ -3838,12 +4829,12 @@ async function loadArchiveDays() {
     days = (await resp.json()).days;
   } catch (err) {
     // Non-fatal: the live feed still works; say so instead of hiding it.
-    archiveSection.hidden = false;
+    archiveSection.hidden = favoriteBrowseUser !== null;
     archiveDaysEl.textContent = `could not list archived days: ${err}`;
     return;
   }
   if (!days.length) return;
-  archiveSection.hidden = false;
+  archiveSection.hidden = favoriteBrowseUser !== null;
   archiveDaysEl.replaceChildren(...days.map(buildArchiveDayRow));
 }
 
@@ -3895,8 +4886,9 @@ async function loadArchiveDay(day, container) {
   for (const item of body.jobs) {
     const j = item.job;
     const card = addJobCard(
-      j.id, j.prompt, j.gens, j.hasImage, j.createdAt, j.createdAtUnixMs, j.inputCount,
-      { user: j.user, container });
+      j.id, j.prompt, j.gens, j.hasImage, j.createdAtUnixMs, j.inputCount,
+      { user: j.user, canHide: !!j.canHide, container });
+    if (!card) continue;
     for (const evt of item.events) {
       applyJobEvent(j.id, card, evt);
     }
@@ -3985,8 +4977,10 @@ loadConfig()
   .then(() => {
     pollJobEvents();
     loadKnownUsers();
+    loadFavorites();
     loadArchiveDays();
     pollRamStatus();
+    setInterval(pollFavorites, 5000);
     setInterval(pollRamStatus, 15000);
   })
   .catch((err) => {

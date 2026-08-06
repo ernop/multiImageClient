@@ -303,3 +303,78 @@ public class RecraftVariantTests
             RecraftGenerator.ExtractErrorMessage(exception));
     }
 }
+
+public class UiVisibilityStoreTests
+{
+    [Fact]
+    public void VisibilityAuthorizationUsesAuthenticatedCreatorAndOverrideOnly()
+    {
+        var method = typeof(UiWorkflow).GetMethod(
+            "CanManageVisibility",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var current = new UiJob
+        {
+            Prompt = "test",
+            CreatedBy = "display alias",
+            CreatorLogin = "creator-login",
+        };
+        var legacy = new UiJob
+        {
+            Prompt = "test",
+            CreatedBy = "creator-login",
+        };
+
+        Assert.True((bool)method.Invoke(null, new object?[] { current, "creator-login" })!);
+        Assert.False((bool)method.Invoke(null, new object?[] { current, "display alias" })!);
+        Assert.True((bool)method.Invoke(null, new object?[] { current, "ernieMultiZone" })!);
+        Assert.False((bool)method.Invoke(null, new object?[] { legacy, "creator-login" })!);
+        Assert.True((bool)method.Invoke(null, new object?[] { legacy, "ernieMultiZone" })!);
+    }
+
+    [Fact]
+    public void HiddenPromptAndImagePersistByExactIdentity()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "multi-image-client-visibility-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var settings = new Settings { ImageDownloadBaseFolder = root };
+            var store = new UiVisibilityStore(settings);
+            store.Hide(new UiHiddenResource
+            {
+                Kind = "prompt",
+                JobId = "job-a",
+                HiddenByLogin = "creator",
+                HiddenAtUnixMs = 1,
+            });
+            store.Hide(new UiHiddenResource
+            {
+                Kind = "image",
+                JobId = "job-b",
+                Generator = "gpt2",
+                ImageIndex = 2,
+                HiddenByLogin = "creator",
+                HiddenAtUnixMs = 2,
+            });
+
+            var reloaded = new UiVisibilityStore(settings);
+
+            Assert.True(reloaded.IsPromptHidden("job-a"));
+            Assert.False(reloaded.IsPromptHidden("job-b"));
+            Assert.True(reloaded.IsImageHidden("job-b", "gpt2", 2));
+            Assert.False(reloaded.IsImageHidden("job-b", "gpt2", 1));
+            Assert.True(reloaded.HasHiddenImages("job-b"));
+            Assert.Equal(2, reloaded.Snapshot().Records.Count);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+}

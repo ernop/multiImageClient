@@ -208,6 +208,17 @@ namespace MultiImageClient
         /// browser executable is available.
         public bool PlaywrightInstall { get; set; }
 
+        /// If true, run deterministic offline vectors against the pure-C#
+        /// grok.com x-statsig-id signer and exit. No settings, cookies,
+        /// browser, network access, or provider request is involved.
+        public bool GrokWebStatsigSelfTest { get; set; }
+
+        /// If true, use a real Grok image-post Edit control once to capture
+        /// current x-statsig-id deployment inputs, abort the signed edit before
+        /// it reaches Grok, verify exact reproduction, write the pair to the
+        /// loaded settings file, and exit.
+        public bool GrokWebCaptureStatsig { get; set; }
+
         /// If true, run GrokArchive.SyncAsync and exit: back-read the entire
         /// reachable grok-api history (xAI Files API inventory + re-pollable
         /// video request_ids + local JSON logs) into grok_ledger.jsonl and
@@ -457,6 +468,12 @@ namespace MultiImageClient
                     case "--playwright-install":
                         o.PlaywrightInstall = true;
                         break;
+                    case "--grok-web-statsig-self-test":
+                        o.GrokWebStatsigSelfTest = true;
+                        break;
+                    case "--grok-web-capture-statsig":
+                        o.GrokWebCaptureStatsig = true;
+                        break;
                     case "--provider-sample-showcase":
                         o.ProviderSampleShowcase = true;
                         break;
@@ -559,6 +576,8 @@ namespace MultiImageClient
             Console.WriteLine("  --meta-web-headed     Show the meta-web browser window. Run this once to log in to meta.ai; the persistent profile (MetaWebBrowserProfilePath) keeps the session for headless runs.");
             Console.WriteLine("  --meta-web-cookies fp Override settings.json MetaWebCookiePath with a Netscape cookies.txt or raw Cookie header export from https://www.meta.ai (needs datr + ecto_1_sess; full jar preferred). Alternative to the headed login.");
             Console.WriteLine("  --playwright-install  One-time setup: download Playwright's Chromium for --meta-web and grok-web video, then exit. Not needed when the corresponding BrowserExecutablePath points at Chrome/Chromium.");
+            Console.WriteLine("  --grok-web-statsig-self-test  One-shot offline test of the pure-C# x-statsig-id signer against fixed independent vectors; no settings, cookies, browser, network, or provider request.");
+            Console.WriteLine("  --grok-web-capture-statsig  One-shot: use --input-image to create a Grok post, capture current signing inputs from the real Edit control, abort before generation, verify, and update the loaded settings file.");
             Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low (pops open only with --open-images).");
             Console.WriteLine("  --provider-sample-file fp   Pair with --provider-sample-showcase to reuse a saved numbered/plain people-fixture prompt list.");
             Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok-api,recraft (grok-api-pro adds the pro tier).");

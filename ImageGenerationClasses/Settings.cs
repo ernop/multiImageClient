@@ -36,6 +36,16 @@ namespace MultiImageClient
         /// Required for --grok-web consumer-session generators.
         public string GrokWebCookiePath { get; set; } = "";
 
+        /// Public 48-byte grok-site-verification value, base64-encoded, for
+        /// browser-free x-statsig-id signing. Capture both signing values
+        /// together with --grok-web-capture-statsig after a frontend deploy.
+        public string GrokWebStatsigVerificationKey { get; set; } = "";
+
+        /// Public frontend animation key paired with
+        /// GrokWebStatsigVerificationKey. The pair enables browser-free
+        /// grok-web image editing; stale or incomplete pairs fail closed.
+        public string GrokWebStatsigAnimationKey { get; set; } = "";
+
         /// Optional Chrome/Chromium binary used for grok-web video generation's
         /// browser-backed app-chat POST. Blank = Playwright's bundled Chromium.
         public string GrokWebBrowserExecutablePath { get; set; } = "";

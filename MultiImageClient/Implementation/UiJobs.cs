@@ -42,11 +42,20 @@ namespace MultiImageClient
         /// attribution; deliberately not an access-control concept). Empty on
         /// jobs persisted before usernames existed.
         public string CreatedBy { get; init; } = "";
+        /// Authenticated account that created the job. Unlike CreatedBy, this
+        /// is an access-control identity and is never supplied by the browser.
+        /// Empty on jobs created without the access gate or before this field
+        /// existed.
+        public string CreatorLogin { get; init; } = "";
         public IReadOnlyList<string> InputImagePaths { get; init; } = Array.Empty<string>();
         public int InputImageWidth { get; init; }
         public int InputImageHeight { get; init; }
         public IReadOnlyList<string> GeneratorKeys { get; init; } = Array.Empty<string>();
-        public DateTime CreatedAt { get; init; } = DateTime.Now;
+        /// Always a UTC instant (Kind=Utc). Persisted with its offset in
+        /// job.json; loaders normalize through UiJobStorage.EnsureUtc. Clients
+        /// receive it only as unix milliseconds and format it in the viewer's
+        /// own timezone.
+        public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
         public string SourceJobId { get; init; } = "";
         public string SourceGenerator { get; init; } = "";
         public int? SourceIndex { get; init; }
@@ -587,6 +596,7 @@ namespace MultiImageClient
                     Id = job.Id,
                     Prompt = job.Prompt,
                     CreatedBy = job.CreatedBy,
+                    CreatorLogin = job.CreatorLogin,
                     InputImagePath = job.InputImagePath,
                     InputImagePaths = job.InputImagePaths.ToList(),
                     InputImageWidth = job.InputImageWidth,
@@ -887,6 +897,23 @@ namespace MultiImageClient
             return true;
         }
 
+        /// Normalizes a persisted CreatedAt to a UTC instant. Every historical
+        /// writer serialized DateTime.Now, which System.Text.Json emits WITH
+        /// its offset, so round-tripped values arrive as Kind=Local carrying
+        /// the correct instant; current writers store DateTime.UtcNow (Kind=
+        /// Utc, "Z" suffix). Kind=Unspecified can only come from an offset-less
+        /// hand-edited file; the sole writer of such values was the server's
+        /// local clock, so that is the one documented interpretation applied.
+        internal static DateTime EnsureUtc(DateTime value)
+        {
+            return value.Kind switch
+            {
+                DateTimeKind.Utc => value,
+                DateTimeKind.Local => value.ToUniversalTime(),
+                _ => DateTime.SpecifyKind(value, DateTimeKind.Local).ToUniversalTime(),
+            };
+        }
+
         public static List<UiHistoryIndexEntry> ScanIndex(string root)
         {
             var entries = new List<UiHistoryIndexEntry>();
@@ -918,7 +945,7 @@ namespace MultiImageClient
                     {
                         Id = metadata.Id,
                         FolderName = Path.GetFileName(folder),
-                        CreatedAt = metadata.CreatedAt,
+                        CreatedAt = EnsureUtc(metadata.CreatedAt),
                         CreatedBy = metadata.CreatedBy ?? "",
                         SourceJobId = metadata.SourceJobId ?? "",
                         InputImageCount = inputPaths.Count,
@@ -971,11 +998,12 @@ namespace MultiImageClient
                     Id = metadata.Id,
                     Prompt = metadata.Prompt,
                     CreatedBy = metadata.CreatedBy ?? "",
+                    CreatorLogin = metadata.CreatorLogin ?? "",
                     InputImagePaths = ResolvePersistedInputPaths(metadata),
                     InputImageWidth = metadata.InputImageWidth,
                     InputImageHeight = metadata.InputImageHeight,
                     GeneratorKeys = metadata.GeneratorKeys,
-                    CreatedAt = metadata.CreatedAt,
+                    CreatedAt = EnsureUtc(metadata.CreatedAt),
                     SourceJobId = metadata.SourceJobId,
                     SourceGenerator = metadata.SourceGenerator,
                     SourceIndex = metadata.SourceIndex,
@@ -1032,7 +1060,7 @@ namespace MultiImageClient
                 prompt = metadata.Prompt;
                 width = metadata.InputImageWidth;
                 height = metadata.InputImageHeight;
-                createdAt = metadata.CreatedAt;
+                createdAt = EnsureUtc(metadata.CreatedAt);
                 return true;
             }
             catch (Exception ex)
@@ -1113,6 +1141,7 @@ namespace MultiImageClient
             public string Id { get; set; } = "";
             public string Prompt { get; set; } = "";
             public string CreatedBy { get; set; } = "";
+            public string CreatorLogin { get; set; } = "";
             public string InputImagePath { get; set; } = "";
             public List<string> InputImagePaths { get; set; } = new();
             public int InputImageWidth { get; set; }
@@ -1210,6 +1239,10 @@ namespace MultiImageClient
         public UiJobRegistry(Settings settings)
         {
             _historyRoot = Path.Combine(settings.ImageDownloadBaseFolder, "UiHistory");
+            // CreatedAt instants are UTC; the live-feed/"today" and archive-day
+            // buckets deliberately follow the SERVER's calendar day, matching
+            // the saves/<day> folder convention. Only the buckets are server-
+            // local — displayed times are formatted in each viewer's browser.
             var today = DateTime.Now.Date;
             var archivedCount = 0;
             var closedInterrupted = 0;
@@ -1218,7 +1251,7 @@ namespace MultiImageClient
             {
                 lock (_indexLock) _index.Add(entry);
 
-                if (entry.CreatedAt.Date == today)
+                if (entry.CreatedAt.ToLocalTime().Date == today)
                 {
                     var job = UiJobStorage.TryLoad(_historyRoot, entry.FolderName);
                     if (job == null)
@@ -1410,8 +1443,9 @@ namespace MultiImageClient
                 gens = job.GeneratorKeys,
                 hasImage = job.HasInputImage,
                 inputCount = job.InputImageCount,
-                createdAt = job.CreatedAt.ToString("HH:mm:ss"),
-                createdAtUnixMs = new DateTimeOffset(job.CreatedAt).ToUnixTimeMilliseconds(),
+                // No preformatted time string: the browser formats the unix-ms
+                // instant in the viewer's own timezone.
+                createdAtUnixMs = new DateTimeOffset(UiJobStorage.EnsureUtc(job.CreatedAt)).ToUnixTimeMilliseconds(),
             });
         }
 
@@ -1465,15 +1499,19 @@ namespace MultiImageClient
         }
 
         /// Archived days (jobs not in the live feed), newest day first.
-        public List<(string Day, int Count)> ListArchivedDays()
+        public List<(string Day, List<string> JobIds)> ListArchivedDays()
         {
             List<UiHistoryIndexEntry> snapshot;
             lock (_indexLock) snapshot = _index.ToList();
             return snapshot
                 .Where(e => !IsInLiveFeed(e.Id))
-                .GroupBy(e => e.CreatedAt.Date)
+                // Server-local calendar day, same bucketing as the registry's
+                // "today" hydration and the saves/<day> folders.
+                .GroupBy(e => e.CreatedAt.ToLocalTime().Date)
                 .OrderByDescending(g => g.Key)
-                .Select(g => (g.Key.ToString("yyyy-MM-dd"), g.Count()))
+                .Select(g => (
+                    g.Key.ToString("yyyy-MM-dd"),
+                    g.Select(entry => entry.Id).ToList()))
                 .ToList();
         }
 
@@ -1485,7 +1523,7 @@ namespace MultiImageClient
             lock (_indexLock)
             {
                 dayEntries = _index
-                    .Where(e => !IsInLiveFeed(e.Id) && e.CreatedAt.Date == day.Date)
+                    .Where(e => !IsInLiveFeed(e.Id) && e.CreatedAt.ToLocalTime().Date == day.Date)
                     .OrderBy(e => e.CreatedAt)
                     .ToList();
             }
@@ -1507,14 +1545,14 @@ namespace MultiImageClient
         /// Every distinct creator username across all history (live + archive)
         /// with job counts, most prolific first. Empty usernames (jobs from
         /// before attribution existed) are reported under "".
-        public List<(string User, int Count)> ListUsers()
+        public List<(string User, List<string> JobIds)> ListUsers()
         {
             List<UiHistoryIndexEntry> snapshot;
             lock (_indexLock) snapshot = _index.ToList();
             return snapshot
                 .GroupBy(e => e.CreatedBy ?? "")
                 .OrderByDescending(g => g.Count())
-                .Select(g => (g.Key, g.Count()))
+                .Select(g => (g.Key, g.Select(entry => entry.Id).ToList()))
                 .ToList();
         }
 
@@ -2191,6 +2229,16 @@ namespace MultiImageClient
         public static bool IsImageCapable(string key)
             => ImageCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
 
+        public bool IsImageCapableForCurrentSettings(string key)
+            => IsImageCapable(key)
+                || (key.Equals(KeyGrokWeb, StringComparison.OrdinalIgnoreCase)
+                    && _grokWebStatsigSigner != null);
+
+        public string? DescribeImageCapabilityProblem(string key)
+            => key.Equals(KeyGrokWeb, StringComparison.OrdinalIgnoreCase)
+                ? _grokWebStatsigProblem
+                : null;
+
         public static bool IsRecraftKey(string key)
             => key is KeyRecraft
                 or KeyRecraftV41Utility
@@ -2207,9 +2255,10 @@ namespace MultiImageClient
         // image-to-image source, the reference-style targets as a
         // style/reference guide, and text-only targets never receive it
         // (user-specified attachment policy, 2026-07-28).
-        private static string DescribeInputImageFunction(string key) => key switch
+        private string DescribeInputImageFunction(string key) => key switch
         {
             KeyGpt2 or KeyGrokApi or KeyGrokApiPro => "edit source",
+            KeyGrokWeb when _grokWebStatsigSigner != null => "edit source",
             KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
                 or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
                 or KeyRecraftV4Pro => "image-to-image source",
@@ -2225,7 +2274,7 @@ namespace MultiImageClient
             _ => "NOT sent (text-only target, prompt only)",
         };
 
-        public static string BuildInputImageRoleText(IReadOnlyList<string> generatorKeys)
+        public string BuildInputImageRoleText(IReadOnlyList<string> generatorKeys)
         {
             var perGenerator = generatorKeys
                 .Select(k => $"{k}: {DescribeInputImageFunction(k)}");
@@ -2237,8 +2286,10 @@ namespace MultiImageClient
         private readonly RunOptions _options;
         private readonly ImageManager _imageManager;
         private readonly GeneratorGroups _generatorGroups;
+        private readonly GrokWebStatsigSigner? _grokWebStatsigSigner;
+        private readonly string? _grokWebStatsigProblem;
         private const string GrokWebBrowserDisabledProblem =
-            "Chromium-backed grok-web image editing and video are disabled in the UI";
+            "Chromium-backed grok-web video is disabled in the UI";
         private const string MetaWebDisabledProblem =
             "Chromium-backed meta-web is disabled in the UI";
         private readonly object _comfyProbeLock = new();
@@ -2269,6 +2320,10 @@ namespace MultiImageClient
             _settings = settings;
             _stats = stats;
             _options = options;
+            GrokWebStatsigSigner.TryCreateFromSettings(
+                settings,
+                out _grokWebStatsigSigner,
+                out _grokWebStatsigProblem);
             _b2 = settings.EnableB2ImageHosting ? new B2StorageClient(settings) : null;
             _finalizationLimit = new SemaphoreSlim(ValidateUiConcurrency(
                 nameof(settings.UiMaxConcurrentJobs), settings.UiMaxConcurrentJobs));
@@ -2753,8 +2808,12 @@ namespace MultiImageClient
                         }
                         var cookiePath = ResolveGrokWebCookiePath()
                             ?? throw new InvalidOperationException("grok-web cookie file not found (settings.json GrokWebCookiePath or --grok-web-cookies)");
-                        grokWebClient = GrokWebClient.FromCookieFile(cookiePath);
-                        generator = BuildGrokWeb(grokWebClient, spec);
+                        grokWebClient = GrokWebClient.FromCookieFile(
+                            cookiePath,
+                            statsigSigner: _grokWebStatsigSigner);
+                        generator = job.HasInputImage && _grokWebStatsigSigner != null
+                            ? await BuildGrokWebEditAsync(grokWebClient, spec, job)
+                            : BuildGrokWeb(grokWebClient, spec);
                     }
                     else if (key == KeyMetaWeb)
                     {
@@ -3182,6 +3241,32 @@ namespace MultiImageClient
                 client, maxConcurrency: 1, _stats,
                 pro: _options.GrokWebPro,
                 aspectRatio: ar,
+                enableSideBySide: _options.GrokWebSideBySide,
+                settings: _settings,
+                captureSessions: false);
+        }
+
+        private async Task<IImageGenerator> BuildGrokWebEditAsync(
+            GrokWebClient client,
+            UiJobSpec spec,
+            UiJob job)
+        {
+            if (_grokWebStatsigSigner == null)
+            {
+                throw new InvalidOperationException(
+                    _grokWebStatsigProblem
+                    ?? "Grok web browser-free image editing is not configured.");
+            }
+
+            // Empty means inherit/derive from the submitted source image.
+            var aspectRatio = UiShapeMapping.GrokAspect(spec.Shape);
+            return await GrokWebImagineEditGenerator.CreateAsync(
+                client,
+                job.InputImagePath,
+                maxConcurrency: 1,
+                _stats,
+                pro: _options.GrokWebPro,
+                aspectRatio: aspectRatio,
                 enableSideBySide: _options.GrokWebSideBySide,
                 settings: _settings,
                 captureSessions: false);

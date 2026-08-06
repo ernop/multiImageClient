@@ -78,8 +78,12 @@ namespace MultiImageClient
         private readonly HttpClient _http;
         private readonly string _cookieHeader;
         private readonly GrokWebBrowserClient? _appChatBrowser;
+        private readonly GrokWebStatsigSigner? _statsigSigner;
 
-        public GrokWebClient(string cookieHeader, GrokWebBrowserClient? appChatBrowser = null)
+        public GrokWebClient(
+            string cookieHeader,
+            GrokWebBrowserClient? appChatBrowser = null,
+            GrokWebStatsigSigner? statsigSigner = null)
         {
             if (string.IsNullOrWhiteSpace(cookieHeader))
             {
@@ -88,6 +92,7 @@ namespace MultiImageClient
 
             _cookieHeader = cookieHeader.Trim();
             _appChatBrowser = appChatBrowser;
+            _statsigSigner = statsigSigner;
             _http = new HttpClient
             {
                 BaseAddress = new Uri(Origin),
@@ -102,8 +107,12 @@ namespace MultiImageClient
 
         public static GrokWebClient FromCookieFile(
             string cookieFilePath,
-            GrokWebBrowserClient? appChatBrowser = null)
-            => new(GrokWebCookieLoader.LoadCookieHeader(cookieFilePath), appChatBrowser);
+            GrokWebBrowserClient? appChatBrowser = null,
+            GrokWebStatsigSigner? statsigSigner = null)
+            => new(
+                GrokWebCookieLoader.LoadCookieHeader(cookieFilePath),
+                appChatBrowser,
+                statsigSigner);
 
         public async Task<GrokWebImageGenerationResult> GenerateImageAsync(
             string prompt,
@@ -957,12 +966,11 @@ namespace MultiImageClient
             GrokWebAsset sourceAsset,
             CancellationToken cancellationToken = default)
         {
-            if (_appChatBrowser == null)
+            if (_appChatBrowser == null && _statsigSigner == null)
             {
                 throw new GrokWebException(
-                    "Grok web image edit requires the Playwright browser transport "
-                    + "(same integrity-signed app-chat path as video). "
-                    + "Run with --playwright-install once if Chromium is missing.");
+                    "Grok web image edit requires current x-statsig-id signing material "
+                    + "or the Playwright browser transport.");
             }
             if (string.IsNullOrWhiteSpace(sourceAsset.AssetId))
             {
@@ -1222,11 +1230,17 @@ namespace MultiImageClient
             {
                 return await RunAppChatInBrowserAsync(payload, triggerPostId, trigger, cancellationToken);
             }
-            if (trigger != GrokWebAppChatTrigger.None)
+            if (trigger == GrokWebAppChatTrigger.Video)
             {
                 throw new GrokWebException(
-                    "Grok web app-chat requires the Playwright browser transport for "
-                    + $"{trigger} (integrity-signed request). Standalone HTTP returns 403.");
+                    "Grok web video still requires the live-verified Playwright browser transport. "
+                    + "Browser-free x-statsig-id transport is currently verified only for image edit.");
+            }
+            if (trigger != GrokWebAppChatTrigger.None && _statsigSigner == null)
+            {
+                throw new GrokWebException(
+                    "Grok web app-chat requires either current x-statsig-id signing material "
+                    + $"or the Playwright browser transport for {trigger}.");
             }
 
             const string path = "/rest/app-chat/conversations/new";
@@ -1246,6 +1260,15 @@ namespace MultiImageClient
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
+            if (trigger != GrokWebAppChatTrigger.None)
+            {
+                request.Headers.TryAddWithoutValidation(
+                    "x-statsig-id",
+                    _statsigSigner!.Generate("POST", path));
+                request.Headers.TryAddWithoutValidation(
+                    "x-xai-request-id",
+                    Guid.NewGuid().ToString());
+            }
 
             var startedAtUtc = DateTime.UtcNow;
             HttpResponseMessage? response = null;
