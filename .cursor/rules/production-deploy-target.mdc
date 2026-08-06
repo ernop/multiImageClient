@@ -1,0 +1,25 @@
+---
+description: Pin releases to the private MultiImageClient production site only
+alwaysApply: true
+---
+
+# Production release target
+
+- This repository has one production product target: the private shared
+  MultiImageClient image-making site the owner calls
+  `multi-image-client-alpha.fuseki.net`.
+- Its currently installed canonical DNS/TLS vhost is
+  `multiimageclient.alpha.fuseki.net`. Treat the two names as the same intended
+  product site; an ordinary deploy must not rename DNS, TLS, or nginx.
+- `tpbeta` is only the colocated physical host. It is not the product/site
+  identity, and its other services and vhosts are outside this repository's
+  deployment scope.
+- In this repository, “push and deploy” normally means: run CI, push the
+  requested Git branch to GitHub, then re-release only
+  `multiimageclient-ui.service` through `deploy/agent-redeploy.sh`.
+- On this workstation, the `tpbeta` SSH alias logs in as `subcreation`, which
+  does not own the checkout. Use the documented `tpbeta-root` command that
+  runs the release as `tparkour`; never guess another checkout or service.
+- Verify the exact commit, active service, fresh start time, loopback response,
+  and private public vhost after deployment. Never print or disclose the
+  site's secret path, credentials, cookies, or provider keys.

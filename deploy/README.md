@@ -1,8 +1,19 @@
-# Shared-Site Deployment (tpbeta or any Linux box)
+# Production Deployment — Private MultiImageClient Site
 
-The `--ui` web app is now a shared site: everyone generates under a chosen
-username, everyone sees (and can iterate on) everyone's work, older days live
-in a lazy-loaded archive, and access is gated by three independent layers.
+This repository has one production product target: the owner's private shared
+image-making site, referred to as `multi-image-client-alpha.fuseki.net`. The
+verified installed nginx/TLS hostname is currently
+`multiimageclient.alpha.fuseki.net`; changing that hostname is a separate
+DNS/TLS migration, not a release step.
+
+The site runs on the colocated machine `tpbeta` as
+`multiimageclient-ui.service`. `tpbeta` is host infrastructure, not the
+product target. Its other sites, vhosts, and services are outside this
+repository's deployment scope.
+
+The `--ui` web app lets everyone generate under a chosen username, see and
+iterate on shared work, and open older days through a lazy-loaded archive.
+Access is gated by three independent layers.
 
 ## The three layers
 
@@ -12,18 +23,59 @@ in a lazy-loaded archive, and access is gated by three independent layers.
 | App login (username/password → long-lived cookie) | Anyone without credentials you handed out | `ui-auth.json` via `UiAuthFilePath` in settings.json |
 | Loopback bind | Direct access to Kestrel; nginx is the only public listener | built-in (`127.0.0.1` only) |
 
-## Agent / passwordless redeploys
+## Routine production release
+
+This repository currently has no hosted `.github/workflows` pipeline. The
+release gate is the local equivalent:
+
+```bash
+node --check MultiImageClient/Ui/wwwroot/app.js
+dotnet test MultiImageClient.sln --no-restore
+git status --short --branch
+```
+
+Push the intended commit to GitHub only after those checks pass. From the
+current development workstation, release that commit with:
+
+```bash
+ssh tpbeta-root \
+  'sudo -u tparkour -H bash /home/tparkour/multiImageClient/deploy/agent-redeploy.sh'
+```
+
+Do not use plain `ssh tpbeta` here: on this workstation that alias logs in as
+`subcreation`, which does not own this checkout or service. Do not search for
+another checkout or deploy a similarly named service.
+
+`agent-redeploy.sh` fast-forwards `/home/tparkour/multiImageClient`, publishes
+to a staging directory, and invokes the locked-down update helper. The helper
+rsyncs only into `/opt/multiimageclient` and restarts only
+`multiimageclient-ui.service`. It does not edit nginx or any neighboring
+service during a routine release.
+
+After it returns, require all of the following:
+
+- the remote checkout commit equals the pushed commit;
+- `multiimageclient-ui.service` is active with a new start timestamp;
+- the loopback HTTP probe succeeds;
+- the private public vhost still answers through its existing secret path.
+
+Never print the secret path, login credentials, cookies, or provider keys in
+deployment output.
+
+## Passwordless redeploy helper installation
 
 After the shared site is installed, give the deploy user **one** interactive
 sudo to install a locked-down helper. Forever after, agents can redeploy
 without a password or TTY:
 
 ```bash
-# ONE TIME (password prompt):
-ssh -t tpbeta 'sudo bash ~/multiImageClient/deploy/install-agent-deploy.sh'
+# One-time helper installation as root:
+ssh tpbeta-root \
+  'bash /home/tparkour/multiImageClient/deploy/install-agent-deploy.sh'
 
-# EVERY UPDATE (no password — agents run this):
-ssh tpbeta 'bash ~/multiImageClient/deploy/agent-redeploy.sh'
+# Routine release after installation:
+ssh tpbeta-root \
+  'sudo -u tparkour -H bash /home/tparkour/multiImageClient/deploy/agent-redeploy.sh'
 ```
 
 That grants `NOPASSWD` only for `/usr/local/sbin/multiimageclient-update`

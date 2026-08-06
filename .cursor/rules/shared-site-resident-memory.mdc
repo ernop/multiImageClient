@@ -5,7 +5,11 @@ alwaysApply: true
 
 # Shared-site resident process (production)
 
-The `--ui` app on fuseki/tpbeta is a **long-lived multi-user daemon** on a small host (~4 GiB, cgroup `MemoryHigh` ~1.2 GiB). Design and fix it like production server software, not a local one-shot CLI.
+The private `--ui` site at `multiimageclient.alpha.fuseki.net` is a
+**long-lived multi-user daemon** on the shared physical host `tpbeta`
+(~4 GiB, cgroup `MemoryHigh` 2048 MiB). Design and fix it like production
+server software, not a local one-shot CLI. `tpbeta` names the machine, not the
+product deployment target.
 
 ## Rules
 

@@ -9,14 +9,27 @@ C# desktop app that chains together image generation steps across multiple APIs 
 ## Also Read
 
 - [.cursorrules](.cursorrules) — communication style, XML docs policy, namespace rules, constants philosophy
-- [.cursor/rules/shared-site-resident-memory.mdc](.cursor/rules/shared-site-resident-memory.mdc) — **production `--ui` on fuseki is a resident daemon**: disk is source of truth, bound RAM/caches, no process-lifetime full image retention. Say **"shared-site resident"** or **"production UI memory"** to force this + clear the listed debt.
-- [docs/shared-host-memory-budget.md](docs/shared-host-memory-budget.md) — the miic-alpha.fuseki RAM budget and its reasoning framework (no-swap 4 GiB box, layered retention→intake→Chromium→self-heal fixes with commit references), plus per-tenant RAM surveys. Current since 2026-08-05: MemoryHigh=2048M/MemoryMax=2560M/GC 50% after tpdiscord and tpbeta.uwsgi were retired and the app became the box's primary tenant.
+- [.cursor/rules/production-deploy-target.mdc](.cursor/rules/production-deploy-target.mdc) — **mandatory release identity**: this repo deploys only the private MultiImageClient production site; `tpbeta` is its shared physical host, never the product target
+- [.cursor/rules/shared-site-resident-memory.mdc](.cursor/rules/shared-site-resident-memory.mdc) — **the private production `--ui` site is a resident daemon**: disk is source of truth, RAM/caches are bounded, and full image bytes never remain resident for process lifetime. Say **"shared-site resident"** or **"production UI memory"** to force this + clear the listed debt.
+- [docs/shared-host-memory-budget.md](docs/shared-host-memory-budget.md) — the private MultiImageClient site's RAM budget on physical host `tpbeta` and its reasoning framework (no-swap 4 GiB box, layered retention→intake→Chromium→self-heal fixes with commit references), plus per-tenant RAM surveys. Current since 2026-08-05: MemoryHigh=2048M/MemoryMax=2560M/GC 50% after tpdiscord and tpbeta.uwsgi were retired and the app became the box's primary tenant.
 - [.cursor/rules/atomic-preloading-viewers.mdc](.cursor/rules/atomic-preloading-viewers.mdc) — **mandatory for every quick/preloading viewer**: never expose a previous item's media or metadata while a new selection loads; clear hidden presentation state and swap media + chrome atomically.
 - [docs/fail-closed-policy.md](docs/fail-closed-policy.md) — mandatory no-fallback policy: preserve exact identity, fix upstream, and fail hard on ambiguity or incomplete output
 - [docs/ideation-mode-prd.md](docs/ideation-mode-prd.md) — **core top-level product need (not yet implemented)**: Claude-powered Ideation Mode for the `--ui` web app. User briefs Claude (text and/or pasted images), Claude returns N highly-variable structured concept proposals via forced tool use (guaranteed-parseable JSON), user curates idea cards individually or auto-fans-out all N ideas × M generators. Keep this in mind when touching the UI; hone toward it.
 - [docs/grok-web-video-browser-transport.md](docs/grok-web-video-browser-transport.md) — grok-web video product contract and live browser protocol findings; motion prompt optional, method required, and Playwright must trigger Grok's real integrity-signed Make Video action.
 - [docs/provider-onboarding.md](docs/provider-onboarding.md) — researched 2026-07-30: signup steps, endpoints, pricing, and prompt-cap quirks for candidate new providers (Seedream, Reve, Luma, Qwen, MiniMax, Runway; Firefly = enterprise-gated skip; Midjourney = hosted-shim or midjourney-web routes only).
 - [docs/b2-image-hosting-plan.md](docs/b2-image-hosting-plan.md) — **Backblaze B2 image hosting** (provider switched from Bunny 2026-08-05 on running cost + counterparty; full staged plan + all decisions settled same day). Primary goal is STORAGE offload (production disk 91% full, eternal retention), not serving relief. Decided: fully-open `allPublic` bucket with opaque-random-key capability URLs; upload failure = retry ×3 then visible hard-fail, NEVER serve the local copy as substitute; per-install retention via `B2KeepLocalRawImages` (dev keeps raws, production evicts after verified upload — B2 becomes raw-byte SoT there); v1 uploads results+grids only. Owner checklist, curl smoke test, settings keys, and the verified 2026 running-cost comparison in the doc.
+
+## Production Release Identity
+
+The sole production product target for this repository is the owner's private
+shared image-making site, referred to as
+`multi-image-client-alpha.fuseki.net`. The verified installed nginx/TLS
+hostname is currently `multiimageclient.alpha.fuseki.net`; changing that
+hostname is a separate DNS/TLS migration, never part of an ordinary release.
+`tpbeta` is only the colocated machine hosting it. A request to “push and
+deploy” means push the requested Git branch, then redeploy only
+`multiimageclient-ui.service` using [deploy/README.md](deploy/README.md).
+Never deploy or restart a neighboring site, vhost, or service.
 
 ## Related Projects
 

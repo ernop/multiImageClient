@@ -78,8 +78,9 @@ Raw-byte residency is **per-install configuration**, not a single global rule:
 
 - **Local/dev install:** local disk is fine as the durable home
   (`EnableB2ImageHosting` may be off entirely, or on with local raws kept).
-- **Production (alpha.fuseki.net):** local disk **may not** be the durable
-  home of raw images — the box is 77 GB, 91% full, retention is eternal. With
+- **Private MultiImageClient production site (hosted on `tpbeta`):** local disk
+  **may not** be the durable home of raw images — the box is 77 GB, 91% full,
+  retention is eternal. With
   hosting enabled and local retention off, the local raw is deleted after the
   upload is verified and job finalization (thumbs, contact sheet) no longer
   needs it. On that install, **B2 is the source of truth for raw bytes**;

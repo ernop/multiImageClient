@@ -1,4 +1,10 @@
-# Shared-Host RAM Budget (miic-alpha.fuseki / tpbeta)
+# Shared-Host RAM Budget (MultiImageClient production on tpbeta)
+
+The product target is the owner's private image-making site, referred to as
+`multi-image-client-alpha.fuseki.net`; the verified installed nginx/TLS
+hostname is `multiimageclient.alpha.fuseki.net`. `tpbeta` is only the
+colocated physical host. Routine releases update `multiimageclient-ui.service`
+and do not touch the host's neighboring sites or services.
 
 **Update 2026-08-05:** tpdiscord-web/reader were uninstalled and
 tpbeta.uwsgi was stopped and disabled (files retained), freeing ~1 GiB and
@@ -14,10 +20,10 @@ active multi-user generation). The analysis below is the original
 2026-08-04 survey and explains the reasoning framework; its numbers predate
 this change.
 
-Surveyed 2026-08-04 against the live host. This records why the production
-`--ui` deployment (`multiimageclient.alpha.fuseki.net`, systemd unit
-`multiimageclient-ui.service` on tpbeta) has the memory limits it has, and
-what else on the machine consumes RAM. Companion to
+Surveyed 2026-08-04 against the live host. This records why that production
+`--ui` deployment (systemd unit `multiimageclient-ui.service` on `tpbeta`) has
+the memory limits it has, and what else on the machine consumes RAM. Companion
+to
 [.cursor/rules/shared-site-resident-memory.mdc](../.cursor/rules/shared-site-resident-memory.mdc)
 (the design rule) and [deploy/README.md](../deploy/README.md) (the install
 procedure).

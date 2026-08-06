@@ -5,8 +5,9 @@ set -Eeuo pipefail
 # deploy user passwordless sudo for THAT PATH ONLY. After this one interactive
 # sudo, agents can finish deploys with `sudo -n /usr/local/sbin/multiimageclient-update`.
 #
-# Usage (once):
-#   ssh -t tpbeta 'sudo bash ~/multiImageClient/deploy/install-agent-deploy.sh'
+# From the current development workstation (once):
+#   ssh tpbeta-root \
+#     'bash /home/tparkour/multiImageClient/deploy/install-agent-deploy.sh'
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "run with sudo"

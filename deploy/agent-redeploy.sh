@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Non-interactive redeploy for agents (and humans). Pulls, publishes to
-# ~/multiimageclient-publish-staging, then installs via passwordless sudo.
+# Non-interactive release for the private MultiImageClient production site
+# (currently multiimageclient.alpha.fuseki.net on host tpbeta). Pulls,
+# publishes to ~/multiimageclient-publish-staging, then installs via the
+# passwordless helper. It updates only multiimageclient-ui.service; the host's
+# other sites and services are outside this script's scope.
 # Requires one-time: sudo bash deploy/install-agent-deploy.sh
 #
-# Usage (no TTY / no password after install):
-#   bash ~/multiImageClient/deploy/agent-redeploy.sh
+# From the current development workstation:
+#   ssh tpbeta-root \
+#     'sudo -u tparkour -H bash /home/tparkour/multiImageClient/deploy/agent-redeploy.sh'
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
