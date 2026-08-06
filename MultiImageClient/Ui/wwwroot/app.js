@@ -2530,6 +2530,46 @@ el("video-form").addEventListener("submit", async (e) => {
 
 // ---------- custom video player ----------
 
+const VideoAudioStorageKey = "mic_video_audio_v1";
+let sharedVideoVolume = 0.5;
+let sharedVideoMuted = false;
+try {
+  const savedVideoAudio = JSON.parse(localStorage.getItem(VideoAudioStorageKey) || "{}");
+  if (Number.isFinite(savedVideoAudio.volume)
+    && savedVideoAudio.volume >= 0
+    && savedVideoAudio.volume <= 1) {
+    sharedVideoVolume = savedVideoAudio.volume;
+  }
+  if (typeof savedVideoAudio.muted === "boolean") {
+    sharedVideoMuted = savedVideoAudio.muted;
+  }
+} catch {
+  // A malformed browser-local value is ignored; the declared 50% unmuted
+  // initial setting remains in force.
+}
+
+function applySharedVideoAudio() {
+  for (const player of document.querySelectorAll(".custom-video-player")) {
+    player.video.volume = sharedVideoVolume;
+    player.video.muted = sharedVideoMuted;
+    const volume = player.querySelector(".video-volume");
+    const mute = player.querySelector(".video-mute");
+    volume.value = String(sharedVideoVolume);
+    mute.textContent = sharedVideoMuted || sharedVideoVolume === 0 ? "Unmute" : "Mute";
+    mute.setAttribute("aria-label", mute.textContent + " video");
+  }
+}
+
+function setSharedVideoAudio(volume, muted) {
+  sharedVideoVolume = Math.max(0, Math.min(1, volume));
+  sharedVideoMuted = muted;
+  localStorage.setItem(VideoAudioStorageKey, JSON.stringify({
+    volume: sharedVideoVolume,
+    muted: sharedVideoMuted,
+  }));
+  applySharedVideoAudio();
+}
+
 function formatMediaTime(value) {
   if (!Number.isFinite(value)) return "0:00";
   const seconds = Math.max(0, Math.floor(value));
@@ -2577,7 +2617,7 @@ function setExactPixelMode(
   }
 }
 
-function createVideoPlayer(url) {
+function createVideoPlayer(url, downloadFilename = "grok-video.mp4") {
   const player = document.createElement("div");
   player.className = "custom-video-player";
   player.tabIndex = 0;
@@ -2586,7 +2626,8 @@ function createVideoPlayer(url) {
   video.src = url;
   video.preload = "metadata";
   video.playsInline = true;
-  video.volume = 0.5;
+  video.volume = sharedVideoVolume;
+  video.muted = sharedVideoMuted;
   video.setAttribute("aria-label", "Generated video");
   player.video = video;
 
@@ -2624,7 +2665,7 @@ function createVideoPlayer(url) {
   volume.min = "0";
   volume.max = "1";
   volume.step = "0.05";
-  volume.value = "0.5";
+  volume.value = String(sharedVideoVolume);
   volume.setAttribute("aria-label", "Video volume");
 
   const resolution = document.createElement("span");
@@ -2652,6 +2693,14 @@ function createVideoPlayer(url) {
   });
   controls.appendChild(fullscreen);
 
+  const save = document.createElement("a");
+  save.className = "video-save";
+  save.href = url;
+  save.download = downloadFilename;
+  save.textContent = "Save video";
+  save.setAttribute("aria-label", "Save generated video");
+  controls.appendChild(save);
+
   const syncPlayState = () => {
     const paused = video.paused;
     play.textContent = paused ? "Play" : "Pause";
@@ -2668,7 +2717,7 @@ function createVideoPlayer(url) {
     time.textContent = `${formatMediaTime(video.currentTime)} / ${formatMediaTime(video.duration)}`;
   };
   const syncMute = () => {
-    mute.textContent = video.muted || video.volume === 0 ? "Unmute" : "Mute";
+    mute.textContent = sharedVideoMuted || sharedVideoVolume === 0 ? "Unmute" : "Mute";
     mute.setAttribute("aria-label", mute.textContent + " video");
   };
 
@@ -2689,16 +2738,14 @@ function createVideoPlayer(url) {
     if (video.duration > 0) video.currentTime = Number(seek.value) / 1000 * video.duration;
   });
   mute.addEventListener("click", () => {
-    video.muted = !video.muted;
-    syncMute();
+    setSharedVideoAudio(sharedVideoVolume, !sharedVideoMuted);
   });
   volume.addEventListener("input", () => {
-    video.volume = Number(volume.value);
-    video.muted = video.volume === 0;
-    syncMute();
+    const nextVolume = Number(volume.value);
+    setSharedVideoAudio(nextVolume, nextVolume === 0);
   });
   player.addEventListener("keydown", (event) => {
-    if (event.target.matches("input, button")) return;
+    if (event.target.matches("input, button, a")) return;
     if (event.key === " " || event.key.toLowerCase() === "k") {
       event.preventDefault();
       togglePlay();
@@ -2716,6 +2763,7 @@ function createVideoPlayer(url) {
   });
 
   player.append(video, controls);
+  syncMute();
   setExactPixelMode(player, true);
   return player;
 }
@@ -4764,7 +4812,9 @@ function applyJobEvent(id, card, evt) {
         if (evt.mediaType && evt.mediaType.startsWith("video/")) {
           const result = document.createElement("div");
           result.className = "media-result";
-          result.appendChild(createVideoPlayer(url));
+          result.appendChild(createVideoPlayer(
+            url,
+            `grok-video-${id}-${imageIndex + 1}.mp4`));
 
           if (videoGeneration.available) {
             const redo = document.createElement("button");

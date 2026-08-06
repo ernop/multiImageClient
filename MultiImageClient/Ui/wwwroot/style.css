@@ -1246,7 +1246,8 @@ a[data-viewer-image].viewer-return-pulse img {
   color: #fff;
   background: var(--accent-dark);
 }
-.video-player-controls button {
+.video-player-controls button,
+.video-player-controls a {
   flex: 0 0 auto;
   padding: 4px 8px;
   color: var(--accent-dark);
@@ -1254,10 +1255,13 @@ a[data-viewer-image].viewer-return-pulse img {
   border: 1px solid #fff;
   border-radius: 3px;
   font: 700 11px/1.25 system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-decoration: none;
   cursor: pointer;
 }
 .video-player-controls button:hover,
-.video-player-controls button:focus-visible {
+.video-player-controls button:focus-visible,
+.video-player-controls a:hover,
+.video-player-controls a:focus-visible {
   color: #fff;
   background: var(--accent);
   outline: 1px solid #fff;
