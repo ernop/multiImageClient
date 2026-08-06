@@ -1536,8 +1536,13 @@ body.image-viewer-open { overflow: hidden; }
   text-align: right;
   white-space: nowrap;
 }
-#image-viewer-favorite {
+#image-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
+}
+#image-viewer-favorite {
   padding: 3px 9px;
   color: var(--accent-dark);
   background: #eef0fa;
@@ -1702,8 +1707,41 @@ body.image-viewer-open { overflow: hidden; }
   border-left: 1px solid var(--line);
 }
 #image-viewer-window.side-status #image-viewer-meta-row {
-  flex-wrap: wrap;
-  row-gap: 3px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 4px 7px;
+}
+#image-viewer-window.side-status #image-viewer-generator {
+  grid-column: 1;
+  grid-row: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#image-viewer-window.side-status #image-viewer-dimensions {
+  grid-column: 2;
+  grid-row: 1;
+}
+#image-viewer-window.side-status #image-viewer-position {
+  grid-column: 3;
+  grid-row: 1;
+}
+#image-viewer-window.side-status #image-viewer-help-toggle {
+  grid-column: 4;
+  grid-row: 1;
+}
+#image-viewer-window.side-status #image-viewer-actions {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px;
+  margin-left: 0;
+}
+#image-viewer-window.side-status #image-viewer-actions button {
+  justify-self: stretch;
+}
+#image-viewer-window.side-status #image-viewer-hide {
+  grid-column: 1;
 }
 /* The whole column scrolls as one, so the prompt and guidance drop their
    bottom-bar height caps and stay adjacent at full length. */
