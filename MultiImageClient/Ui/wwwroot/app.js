@@ -155,6 +155,7 @@ const imageViewerGenerator = el("image-viewer-generator");
 const imageViewerDimensions = el("image-viewer-dimensions");
 const imageViewerPosition = el("image-viewer-position");
 const imageViewerFavorite = el("image-viewer-favorite");
+const imageViewerVideo = el("image-viewer-video");
 const imageViewerHide = el("image-viewer-hide");
 const imageViewerStatus = el("image-viewer-status");
 const favoritesGallery = el("favorites-gallery");
@@ -1573,28 +1574,6 @@ function createHidePromptButton(jobId) {
   return button;
 }
 
-function createHideImageButton(jobId, generator, imageIndex) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "hide-image";
-  button.textContent = "hide";
-  button.title = "Hide only this image from everyone";
-  button.setAttribute("aria-label", "Hide only this image from everyone");
-  button.addEventListener("click", async () => {
-    if (!confirm("Hide only this image from everyone?\n\nThis cannot be undone in the UI.")) return;
-    button.disabled = true;
-    button.textContent = "hiding…";
-    try {
-      await persistHiddenResource("image", jobId, generator, imageIndex);
-    } catch (error) {
-      button.disabled = false;
-      button.textContent = "hide failed";
-      button.title = String(error);
-    }
-  });
-  return button;
-}
-
 // ---------- shared persistent image + prompt favorites ----------
 
 function favoriteIdentity(jobId, generator, imageIndex) {
@@ -1859,11 +1838,6 @@ function renderFavoritesGallery() {
       if (dims) img.style.aspectRatio = `${dims[1]} / ${dims[2]}`;
       link.appendChild(img);
       card.appendChild(link);
-      if (item.canHide) {
-        const result = link.closest(".media-result");
-        (result || card).appendChild(
-          createHideImageButton(item.jobId, item.generator, item.imageIndex));
-      }
     } else {
       card.classList.add("favorite-prompt-card");
       const kind = document.createElement("strong");
@@ -2029,6 +2003,12 @@ function renderImageViewerFavorite(item) {
     : "Favorite this image (v)";
 }
 
+function renderImageViewerVideo(item) {
+  const allowed = !!item && item.kind !== "text" && videoGeneration.available;
+  imageViewerVideo.hidden = !allowed;
+  imageViewerVideo.disabled = !allowed;
+}
+
 function renderImageViewerHide(item) {
   const card = item ? findViewerAnchor(item)?.closest(".job") : null;
   const allowed = !!item && item.kind !== "text" && card?.dataset.canHide === "true";
@@ -2118,6 +2098,16 @@ async function toggleImageViewerFavorite() {
 }
 
 imageViewerFavorite.addEventListener("click", () => toggleImageViewerFavorite());
+imageViewerVideo.addEventListener("click", () => {
+  const current = locateImageViewerState(getImageViewerPrompts());
+  if (!current || current.item.kind === "text" || !videoGeneration.available) return;
+  openVideoDialog(
+    current.item.jobId,
+    current.item.generator,
+    current.item.imageIndex,
+    current.item.url,
+    current.prompt.prompt);
+});
 imageViewerHide.addEventListener("click", () => hideCurrentViewerImage());
 
 async function togglePromptFavorite(jobId) {
@@ -3250,6 +3240,7 @@ function paintImageViewerChrome(target) {
   renderImageViewerGuidance(target);
   renderImageViewerActiveActions(target.item);
   renderImageViewerFavorite(target.item);
+  renderImageViewerVideo(target.item);
   renderImageViewerHide(target.item);
   renderImageViewerPosition(target.item);
   // Describe items: the stage IS the submitted image; the panel above the
@@ -3309,6 +3300,7 @@ function clearImageViewerPresentation() {
   renderImageViewerPosition(null);
   renderImageViewerActiveActions(null);
   renderImageViewerFavorite(null);
+  renderImageViewerVideo(null);
   renderImageViewerHide(null);
   imageViewerContentAr = null;
   applyImageViewerCompare(null);
@@ -3326,6 +3318,7 @@ async function renderImageViewer() {
     renderImageViewerGuidance(null);
     renderImageViewerActiveActions(null);
     renderImageViewerFavorite(null);
+    renderImageViewerVideo(null);
     renderImageViewerHide(null);
     imageViewerGenerator.textContent = "selected image is no longer available";
     imageViewerDimensions.textContent = "";
@@ -4826,22 +4819,6 @@ function applyJobEvent(id, card, evt) {
         a.appendChild(img);
         result.appendChild(a);
         applyFavoriteMarkerToAnchor(a);
-        if (videoGeneration.available) {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "make-video make-video-add";
-          button.setAttribute("aria-label", "Make Grok video from this image");
-          button.title = "Make Grok video from this image";
-          button.textContent = "grok video";
-          button.addEventListener("click", () => {
-            const sourcePrompt = card.querySelector(".job-prompt").textContent;
-            openVideoDialog(id, evt.gen, imageIndex, url, sourcePrompt);
-          });
-          result.appendChild(button);
-        }
-        if (card.dataset.canHide === "true") {
-          result.appendChild(createHideImageButton(id, evt.gen, imageIndex));
-        }
         images.appendChild(result);
       }
       if (!imageViewer.hidden) renderImageViewer();

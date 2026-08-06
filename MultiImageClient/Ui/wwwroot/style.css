@@ -1071,9 +1071,7 @@ body:not(.show-costs) #cost-summary { display: none !important; }
 .cell-hint { font-size: 12.5px; margin-top: 4px; word-break: break-word; }
 .cell-hint a { font-weight: 600; white-space: nowrap; }
 
-/* Status labels stay in normal flow. The one deliberate overlay is the
-   hover-only "grok video" chip on each result's corner (user-requested:
-   zero footprint until mouseover). */
+/* Status labels stay in normal flow. */
 .cell-images { display: flex; flex-wrap: wrap; gap: 6px; }
 /* Multi-image results (grok-web's 4, any n>1) pack into two columns: four
    half-width images in a 2x2 occupy the same height as one full-width image,
@@ -1087,7 +1085,7 @@ body:not(.show-costs) #cost-summary { display: none !important; }
   display: block;
 }
 .media-result {
-  position: relative;  /* anchors the hover-only "grok video" corner chip */
+  position: relative;  /* anchors the redo-video chip on video results */
   flex: 1 1 180px;
   display: flex;
   flex-direction: column;
@@ -1302,10 +1300,8 @@ a[data-viewer-image].viewer-return-pulse img {
   max-height: none;
 }
 .custom-video-player:fullscreen .video-player-controls { flex: 0 0 auto; }
-/* "grok video" floats over the result's top-right corner and only exists
-   while hovering that result (or keyboard-focusing the button): absolute
-   positioning reserves zero space, and there's deliberately no transition —
-   it snaps in and out instantly. Light opaque chip, dark text. */
+/* Redo-video stays attached to an existing video result. Starting a video
+   from an image is available only in the generated-image viewer. */
 .make-video {
   position: absolute;
   top: 6px;
@@ -1344,35 +1340,6 @@ a[data-viewer-image].viewer-return-pulse img {
   background: #eef0fa;
   border: 1px solid var(--line);
   cursor: not-allowed;
-}
-.hide-image {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  z-index: 5;
-  opacity: 0;
-  pointer-events: none;
-  padding: 4px 9px;
-  color: #fff;
-  background: var(--err);
-  border: 1px solid #fff;
-  border-radius: 3px;
-  box-shadow: 0 1px 4px rgba(20, 22, 31, 0.25);
-  font: 700 11px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
-  cursor: pointer;
-}
-.media-result:hover .hide-image,
-.hide-image:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-.hide-image:disabled { cursor: progress; }
-.favorite-gallery-card > .hide-image {
-  position: static;
-  align-self: flex-end;
-  opacity: 1;
-  pointer-events: auto;
-  margin-top: 4px;
 }
 .cell-images .partial-image { position: static; }
 .cell-images .partial-image::after {
@@ -1590,6 +1557,21 @@ body.image-viewer-open { overflow: hidden; }
   color: #fff;
   background: var(--err);
   border-color: var(--err);
+}
+#image-viewer-video {
+  padding: 3px 9px;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 11px;
+  font: 700 11px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#image-viewer-video:hover,
+#image-viewer-video:focus-visible {
+  color: #fff;
+  background: var(--accent);
 }
 #image-viewer-hide {
   padding: 3px 9px;
