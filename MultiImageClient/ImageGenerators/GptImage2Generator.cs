@@ -433,14 +433,17 @@ namespace MultiImageClient
                     await using var rawStream = await resp.Content.ReadAsStreamAsync();
                     using var reader = new Utf8SseLineReader(rawStream);
                     using var stallCts = new CancellationTokenSource();
+                    var loggedNonDataLine = false;
+
+                    // Armed once here, then re-armed only after each DATA line.
+                    // SSE keepalive comments or empty lines must not reset the
+                    // timer: a stream that carries keepalives but no events is
+                    // still a dead generation, and re-arming on every line
+                    // would let it hang forever.
+                    stallCts.CancelAfter(StreamStallTimeout);
 
                     while (true)
                     {
-                        // Re-armed before every line; one line (the multi-MB
-                        // final) may span many socket reads, all inside this
-                        // window. Once fired the loop throws, so the one-shot
-                        // nature of a canceled CTS is fine.
-                        stallCts.CancelAfter(StreamStallTimeout);
                         ReadOnlyMemory<byte>? lineOrNull;
                         try
                         {
@@ -449,14 +452,30 @@ namespace MultiImageClient
                         catch (OperationCanceledException) when (stallCts.IsCancellationRequested)
                         {
                             throw new TimeoutException(
-                                $"gpt-image-2 SSE stream stalled: no data for {(int)StreamStallTimeout.TotalSeconds}s "
+                                $"gpt-image-2 SSE stream stalled: no event data for {(int)StreamStallTimeout.TotalSeconds}s "
                                 + $"(total {sw.ElapsedMilliseconds / 1000}s, last event at {lastEventMs / 1000}s). "
                                 + "The stream is dead; the attempt failed.");
                         }
                         if (lineOrNull == null) break;
                         var line = lineOrNull.Value;
                         if (line.Length == 0) continue;                         // event boundary
-                        if (!line.Span.StartsWith("data:"u8)) continue;         // ignore `event:` / comment lines
+                        if (!line.Span.StartsWith("data:"u8))
+                        {
+                            // `event:` fields or `:` keepalive comments. Log the
+                            // first one per stream so we learn what the server
+                            // actually sends between events.
+                            if (!loggedNonDataLine)
+                            {
+                                loggedNonDataLine = true;
+                                var preview = Encoding.UTF8.GetString(line.Span.Slice(0, Math.Min(line.Length, 60)));
+                                Logger.Log($"    [{genTag}] non-data SSE line (logged once): \"{preview}\"");
+                            }
+                            continue;
+                        }
+                        // One data line = one event; the multi-MB final arrives
+                        // as a single line inside the window armed after the
+                        // previous event.
+                        stallCts.CancelAfter(StreamStallTimeout);
                         var payload = TrimLeadingAsciiWhitespace(line.Slice(5));
                         if (payload.Span.SequenceEqual("[DONE]"u8))
                         {
@@ -548,6 +567,16 @@ namespace MultiImageClient
                                 // Unknown event types: log the type so we notice but don't dump payload.
                                 Logger.Log($"    [{genTag}] event '{type}' at {nowMs} ms (no handler)");
                                 break;
+                        }
+
+                        if (streamErrorMessage == null && finalImages.Count == _imageCount)
+                        {
+                            // Every requested image is in hand; [DONE] is just
+                            // stream framing, and waiting for it holds a finished
+                            // result hostage if the server lingers (observed
+                            // 2026-08-05: `completed` received, then 30+s of
+                            // silence with no [DONE]).
+                            break;
                         }
                     }
 
