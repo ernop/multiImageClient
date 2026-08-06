@@ -15,7 +15,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 - [.cursor/rules/atomic-preloading-viewers.mdc](.cursor/rules/atomic-preloading-viewers.mdc) — **mandatory for every quick/preloading viewer**: never expose a previous item's media or metadata while a new selection loads; clear hidden presentation state and swap media + chrome atomically.
 - [docs/fail-closed-policy.md](docs/fail-closed-policy.md) — mandatory no-fallback policy: preserve exact identity, fix upstream, and fail hard on ambiguity or incomplete output
 - [docs/ideation-mode-prd.md](docs/ideation-mode-prd.md) — **core top-level product need (not yet implemented)**: Claude-powered Ideation Mode for the `--ui` web app. User briefs Claude (text and/or pasted images), Claude returns N highly-variable structured concept proposals via forced tool use (guaranteed-parseable JSON), user curates idea cards individually or auto-fans-out all N ideas × M generators. Keep this in mind when touching the UI; hone toward it.
-- [docs/grok-web-video-browser-transport.md](docs/grok-web-video-browser-transport.md) — grok-web video product contract and live browser protocol findings; motion prompt optional, method required, and Playwright must trigger Grok's real integrity-signed Make Video action.
+- [docs/grok-web-video-browser-transport.md](docs/grok-web-video-browser-transport.md) — grok-web edit/video integrity transport: pure-C# Statsig signing in production, with Playwright retained only for signing-material capture and explicit CLI fallback
 - [docs/provider-onboarding.md](docs/provider-onboarding.md) — researched 2026-07-30: signup steps, endpoints, pricing, and prompt-cap quirks for candidate new providers (Seedream, Reve, Luma, Qwen, MiniMax, Runway; Firefly = enterprise-gated skip; Midjourney = hosted-shim or midjourney-web routes only).
 - [docs/b2-image-hosting-plan.md](docs/b2-image-hosting-plan.md) — **Backblaze B2 image hosting** (provider switched from Bunny 2026-08-05 on running cost + counterparty; full staged plan + all decisions settled same day). Primary goal is STORAGE offload (production disk 91% full, eternal retention), not serving relief. Decided: fully-open `allPublic` bucket with opaque-random-key capability URLs; upload failure = retry ×3 then visible hard-fail, NEVER serve the local copy as substitute; per-install retention via `B2KeepLocalRawImages` (dev keeps raws, production evicts after verified upload — B2 becomes raw-byte SoT there); v1 uploads results+grids only. Owner checklist, curl smoke test, settings keys, and the verified 2026 running-cost comparison in the doc.
 
@@ -30,6 +30,14 @@ hostname is a separate DNS/TLS migration, never part of an ordinary release.
 deploy” means push the requested Git branch, then redeploy only
 `multiimageclient-ui.service` using [deploy/README.md](deploy/README.md).
 Never deploy or restart a neighboring site, vhost, or service.
+
+Live production limits verified 2026-08-06 are 1 contact-sheet finalizer,
+14 aggregate provider requests, default 64 pending jobs, scheduler-default
+lane caps, 3 GiB free-disk reserve, `MemoryHigh=2048M`, and
+`MemoryMax=2560M`. The tracked MultiImageClient named vhost returns 404 for
+unknown paths; it does not install a default-server 444 catch-all. Any
+machine-level default vhost is outside this repository. These verified limits
+supersede older production figures later in this file.
 
 ## Related Projects
 

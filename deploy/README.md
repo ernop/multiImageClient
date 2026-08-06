@@ -88,7 +88,8 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
 1. **App**: publish under `/opt/multiimageclient`; keep the private settings
    separately under `/etc/multiimageclient/settings.json`. The systemd unit
    selects it with `MULTIIMAGECLIENT_SETTINGS`, so no secret file sits in the
-   code tree. Add:
+   code tree. The following is a conservative **greenfield baseline**, not a
+   snapshot of current production:
    ```json
    "UiAuthFilePath": "/etc/multiimageclient/ui-auth.json",
    "ImageDownloadBaseFolder": "/var/lib/multiimageclient/saves",
@@ -113,6 +114,10 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
    `UiMaxConcurrentJobs` now gates only memory-heavy contact-sheet
    finalization, so one slow job does not prevent later jobs from using
    unrelated targets.
+   Current production was verified 2026-08-06 at 1 finalizer, 14 aggregate
+   requests, default 64 pending jobs, scheduler-default lane caps, and a 3 GiB
+   reserve. `/etc/multiimageclient/settings.json` is the source of truth for
+   live app-level caps.
 2. **Auth file**: copy `ui-auth.example.json` to
    `/etc/multiimageclient/ui-auth.json`, set a
    long random `secret` (`openssl rand -hex 24`), add one account per friend.

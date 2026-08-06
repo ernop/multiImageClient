@@ -74,38 +74,36 @@ The fix was layered, in commit order (2026-07-31 → 2026-08-04):
    read as UTF-8 bytes through a pooled line reader with partials decoded
    straight from the `JsonDocument`.
 
-## The specific numbers and their reasoning
+## Current limits and their reasoning
 
 From `deploy/multiimageclient-ui.service` and
 `MultiImageClient/runtimeconfig.template.json`:
 
-- **`MemoryHigh=1200M` / `MemoryMax=1600M`** — "be a polite neighbor on a
-  4 GiB server." This service is the newest tenant, so it gets roughly a
-  quarter to a third of RAM, leaving the majority for the pre-existing
-  sites. `MemoryHigh` triggers kernel reclaim/throttling first; `MemoryMax`
-  is the hard kill line; the ~400 MB gap gives the liveness guard time to
-  restart cleanly before the kernel does it uncleanly.
+- **`MemoryHigh=2048M` / `MemoryMax=2560M`** — verified live 2026-08-06.
+  `MemoryHigh` is the operating ceiling; `MemoryMax` is the hard kill line.
+  The 512 MB gap covers fast native/image allocation bursts while the
+  liveness guard gets time to restart a persistently throttled process.
 - **`OOMScoreAdjust=500`** — if the whole box runs out of memory anyway, the
   kernel should sacrifice this service, not the neighbors.
 - **`System.GC.HeapHardLimitPercent: 50` + `ConserveMemory: 6`** — with a
-  cgroup limit set, .NET sizes its heap off `memory.max`. The .NET default
-  of 75% of 1600M equals 1200M — exactly `MemoryHigh` — so the GC felt no
-  pressure until the service was already at the restart threshold. Pinning
-  50% caps the managed heap around 800 MB and collects aggressively, leaving
-  headroom for native allocations (ImageSharp/Magick buffers, sockets, JIT).
+  cgroup limit set, .NET sizes its heap off `memory.max`. Pinning 50% caps
+  the managed heap around 1280 MB (62.5% of `MemoryHigh`) and leaves about
+  768 MB below the operating ceiling for native allocations (ImageSharp/
+  Magick buffers, sockets, JIT).
 - **`Nice=10`, `CPUQuota=150%`, `IOWeight=25`, `TasksMax=256`** — the same
   politeness principle applied to CPU, disk, and thread/process count.
-- **App-level caps** (production settings on tpbeta): 1 finalizer job,
-  20 aggregate provider requests, 64 pending jobs, 3 GiB disk reserve, low
-  per-lane provider caps.
+- **App-level caps** — verified live 2026-08-06: 1 finalizer job, 14 aggregate
+  provider requests, default 64 pending jobs, 3 GiB disk reserve, and the
+  scheduler's conservative per-lane defaults (no live override object).
 
-Steady state observed 2026-08-04: cgroup `memory.current` ~750–950 MB
-against the 1200M high — warm but under the throttle line.
+Steady state observed 2026-08-04 was ~750–950 MB. That observation predates
+the raised limits but remains useful as a working-set baseline.
 
 ## Other RAM users on the box, and why
 
-tpbeta hosts one person's colocated sites. Per-service cgroup usage as
-surveyed (total ~2.3 GiB used, ~1.2 GiB page cache, ~1.5 GiB available):
+This is the **2026-08-04 pre-decommission snapshot**, not the current tenant
+list. At that time tpbeta's per-service cgroup usage totaled ~2.3 GiB used,
+~1.2 GiB page cache, and ~1.5 GiB available:
 
 | Service | RAM | What it is |
 |---|---|---|
@@ -120,9 +118,9 @@ surveyed (total ~2.3 GiB used, ~1.2 GiB page cache, ~1.5 GiB available):
 | `fail2ban` | ~23 MB | SSH/web brute-force banning |
 | `php8.3-fpm`, `python-relay` | ~15 MB, ~13 MB | small services |
 
-The neighbors sum to about 1.4 GiB and predate this deployment — that is why
-the miic budget sits where it does: 1200M high keeps the box out of the
-no-swap OOM zone even when this service and Terrain Parkour peak together.
+The neighbors then summed to about 1.4 GiB and motivated the original
+1200M/1600M limits. The 2026-08-05 retirements below freed enough capacity
+for the current 2048M/2560M limits.
 
 ## tpDiscord decommission (2026-08-05)
 
@@ -137,14 +135,5 @@ deleted was archived first to this project's local `tpdiscord-archive/`
 (gitignored): full media (3,996 files, SHA/size-verified), `pg_dump` in
 custom + plain-SQL formats (hash-verified), `config.json`, `messages/`,
 `chatindex/`, `logs/`. The Discord bot token was deliberately NOT revoked.
-This frees ~515 MB RAM and ~2.8 GB disk; the miic memory budget above was
-sized with tpDiscord resident, so `MemoryHigh` could be revisited upward.
-
-## Open observations (no action decided)
-
-- `deploy/README.md`'s example settings show `UiMaxConcurrentGenerators: 2`
-  while AGENTS.md records production at 20. Confirmed live on 2026-08-05:
-  `/etc/multiimageclient/settings.json` has `UiMaxConcurrentGenerators: 14`
-  (with `UiMaxConcurrentJobs: 1` and a 3 GiB disk reserve) — neither the
-  README example nor the AGENTS.md figure. Left unchanged; update whichever
-  document is meant to be authoritative when this is next touched.
+This freed ~515 MB RAM and ~2.8 GB disk. The memory budget was subsequently
+raised to the current 2048M/2560M values documented above.

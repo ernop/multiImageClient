@@ -14,29 +14,32 @@ compromised friend account = a hostile user with complete member powers.
 
 ## Damage they CAN do
 
-1. **Spend your API credits** (acknowledged; you monitor this). Ceiling per
-   job is bounded (n ≤ 10, 4 jobs running concurrently) but total volume is
-   not — there are **no per-user quotas or spend caps**. A script hammering
-   `POST /api/jobs` burns money as fast as the providers accept it.
+1. **Spend your API credits** (acknowledged; you monitor this). Per-request
+   image counts are bounded, production permits at most 14 aggregate provider
+   executions, and the accepted-job queue is bounded at the default 64; total
+   volume over time is not — there are **no per-user quotas or spend caps**.
+   A script hammering `POST /api/jobs` burns money as fast as the provider
+   lanes accept it.
 2. **Abuse your consumer accounts — worse than credits.** `grok-web`,
    grok-web video ("Spicy" mode included), and `meta-web` run through *your*
-   logged-in grok.com / meta.ai sessions. A malicious user can generate
-   ToS-violating content **attributable to your personal X/Meta accounts**,
-   risking bans of accounts you care about. If you don't fully trust every
-   invitee, consider not configuring grok-web/meta-web cookies on the shared
-   box, or handing out accounts only to people you'd lend your phone to.
+   configured consumer sessions. `meta-web` is absent from production;
+   grok-web image/edit/video use browser-free transports but still authenticate
+   as your consumer account. A malicious user can generate ToS-violating
+   content attributable to that account and risk an account ban.
 3. **Fill the disk / exhaust memory (site takedown, not takeover).** Every
-   upload and result is archived under `saves/`, job event logs grow
-   unboundedly, and each job's images are also held in process memory for the
-   life of the process. Sustained flooding → disk full or OOM → site down
-   until you clean up and restart (systemd auto-restarts the process, but a
-   full disk stays full). nginx's 64 MB body cap and rate limits slow this;
-   they don't stop a patient authenticated attacker.
+   upload and result is archived durably; retention is eternal. Full result
+   bytes are not retained in process memory, caches and queues are bounded,
+   systemd caps memory, and the 3 GiB free-space guard rejects new jobs before
+   the filesystem is exhausted. Sustained flooding can still consume the
+   remaining disk allowance, provider capacity, and bounded queue slots.
+   nginx's 64 MB body cap and rate limits slow this; they do not stop a patient
+   authenticated attacker.
 4. **Pollute shared history.** Offensive prompts/images are visible to
-   everyone and mixed into everyone's archive; there is no delete API, so
-   cleanup means removing `UiHistory/<jobId>/` folders and saved files on the
-   server by hand. Usernames are not authenticated identity — any member can
-   create under any name (deliberate: attribution, not privacy).
+   everyone and mixed into everyone's archive. Creator-only hiding removes
+   prompts/images from app streams but does not delete underlying local/B2
+   bytes; physical deletion still requires server/storage administration.
+   Usernames are not authenticated identity — any member can create under any
+   name (deliberate: attribution, not privacy).
 
 ## Damage they CANNOT do (and why)
 
