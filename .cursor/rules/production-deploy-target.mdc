@@ -6,11 +6,10 @@ alwaysApply: true
 # Production release target
 
 - This repository has one production product target: the private shared
-  MultiImageClient image-making site the owner calls
-  `multi-image-client-alpha.fuseki.net`.
-- Its currently installed canonical DNS/TLS vhost is
-  `multiimageclient.alpha.fuseki.net`. Treat the two names as the same intended
-  product site; an ordinary deploy must not rename DNS, TLS, or nginx.
+  MultiImageClient image-making site at
+  `https://multiimageclient.alpha.fuseki.net/<private-path>/`.
+- The path segment is secret and must never be printed, committed, or exposed
+  in logs. An ordinary deploy must not rename DNS, TLS, the path, or nginx.
 - `tpbeta` is only the colocated physical host. It is not the product/site
   identity, and its other services and vhosts are outside this repository's
   deployment scope.

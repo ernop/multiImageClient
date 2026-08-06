@@ -1,10 +1,10 @@
 # Production Deployment — Private MultiImageClient Site
 
 This repository has one production product target: the owner's private shared
-image-making site, referred to as `multi-image-client-alpha.fuseki.net`. The
-verified installed nginx/TLS hostname is currently
-`multiimageclient.alpha.fuseki.net`; changing that hostname is a separate
-DNS/TLS migration, not a release step.
+image-making site at
+`https://multiimageclient.alpha.fuseki.net/<private-path>/`. The path segment
+is secret and must never be printed or committed. Changing the hostname, path,
+TLS, or nginx is a separate migration, not a release step.
 
 The site runs on the colocated machine `tpbeta` as
 `multiimageclient-ui.service`. `tpbeta` is host infrastructure, not the

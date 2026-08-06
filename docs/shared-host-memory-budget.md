@@ -1,10 +1,10 @@
 # Shared-Host RAM Budget (MultiImageClient production on tpbeta)
 
-The product target is the owner's private image-making site, referred to as
-`multi-image-client-alpha.fuseki.net`; the verified installed nginx/TLS
-hostname is `multiimageclient.alpha.fuseki.net`. `tpbeta` is only the
-colocated physical host. Routine releases update `multiimageclient-ui.service`
-and do not touch the host's neighboring sites or services.
+The product target is the owner's private image-making site at
+`https://multiimageclient.alpha.fuseki.net/<private-path>/`; the path segment
+is secret and never belongs in logs or commits. `tpbeta` is only the colocated
+physical host. Routine releases update `multiimageclient-ui.service` and do
+not touch the host's neighboring sites or services.
 
 **Update 2026-08-05:** tpdiscord-web/reader were uninstalled and
 tpbeta.uwsgi was stopped and disabled (files retained), freeing ~1 GiB and

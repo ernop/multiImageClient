@@ -22,10 +22,10 @@ C# desktop app that chains together image generation steps across multiple APIs 
 ## Production Release Identity
 
 The sole production product target for this repository is the owner's private
-shared image-making site, referred to as
-`multi-image-client-alpha.fuseki.net`. The verified installed nginx/TLS
-hostname is currently `multiimageclient.alpha.fuseki.net`; changing that
-hostname is a separate DNS/TLS migration, never part of an ordinary release.
+shared image-making site at
+`https://multiimageclient.alpha.fuseki.net/<private-path>/`. The path segment
+is secret and must never be printed or committed. Changing the hostname, path,
+TLS, or nginx is a separate migration, never part of an ordinary release.
 `tpbeta` is only the colocated machine hosting it. A request to “push and
 deploy” means push the requested Git branch, then redeploy only
 `multiimageclient-ui.service` using [deploy/README.md](deploy/README.md).
