@@ -36,11 +36,10 @@ namespace MultiImageClient
         ImageEdit = 2,
     }
 
-    // grok.com's app-chat endpoint rejects standalone HTTP clients even when
-    // they copy browser headers. Video generation and image editing therefore
-    // perform only that POST inside a real logged-in Chromium page. Uploads,
-    // image generation (text-to-image WS), media polling, downloads, and
-    // saving remain in GrokWebClient.
+    // Playwright transport retained for one-shot signing-material capture and
+    // explicit CLI fallback when no current x-statsig-id pair is configured.
+    // The UI does not instantiate this client; signed image-edit/video app-chat
+    // POSTs run directly through GrokWebClient.
     public sealed class GrokWebBrowserClient : IAsyncDisposable, IDisposable
     {
         public const string ImagineUrl = "https://grok.com/imagine";

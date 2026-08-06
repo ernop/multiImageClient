@@ -70,12 +70,12 @@ namespace MultiImageClient
                 settings,
                 out var statsigSigner,
                 out _);
-            // Only browser-free image edit has been live-verified. Keep video
-            // on its established real-control browser path until separately
-            // proven; sharing an endpoint is not evidence that every model
-            // route has the same anti-bot contract.
-            var needsBrowser = mode is "video" or "video-from-image"
-                || (mode == "edit" && statsigSigner == null);
+            // Image edit and video submit through the same method + app-chat
+            // path, which are the complete inputs to x-statsig-id. Prefer the
+            // direct signer for either payload; without current material the
+            // explicit CLI modes retain their Playwright transport.
+            var needsBrowser = (mode is "video" or "video-from-image" or "edit")
+                && statsigSigner == null;
             await using var browserClient = needsBrowser
                 ? new GrokWebBrowserClient(GrokWebBrowserClient.BuildOptions(
                     settings,

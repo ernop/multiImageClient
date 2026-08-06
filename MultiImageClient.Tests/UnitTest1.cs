@@ -378,3 +378,72 @@ public class UiVisibilityStoreTests
         }
     }
 }
+
+public class GrokWebVideoAvailabilityTests
+{
+    [Fact]
+    public async Task VideoIsAvailableWithCookieAndCompleteSigningPair()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "multi-image-client-grok-video-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var cookiePath = Path.Combine(root, "cookies.json");
+        await File.WriteAllTextAsync(cookiePath, "[]");
+        try
+        {
+            var settings = CreateSettings(root, cookiePath);
+            await using var runner = new UiJobRunner(
+                settings,
+                new MultiClientRunStats(),
+                new RunOptions());
+
+            Assert.Null(runner.DescribeAvailabilityProblem(UiJobRunner.KeyGrokWebVideo));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task VideoFailsClosedWithoutSigningPair()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "multi-image-client-grok-video-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var cookiePath = Path.Combine(root, "cookies.json");
+        await File.WriteAllTextAsync(cookiePath, "[]");
+        try
+        {
+            var settings = CreateSettings(root, cookiePath);
+            settings.GrokWebStatsigVerificationKey = "";
+            settings.GrokWebStatsigAnimationKey = "";
+            await using var runner = new UiJobRunner(
+                settings,
+                new MultiClientRunStats(),
+                new RunOptions());
+
+            Assert.Contains(
+                "not configured",
+                runner.DescribeAvailabilityProblem(UiJobRunner.KeyGrokWebVideo));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static Settings CreateSettings(string root, string cookiePath)
+    {
+        return new Settings
+        {
+            ImageDownloadBaseFolder = root,
+            LogFilePath = Path.Combine(root, "test.log"),
+            GrokWebCookiePath = cookiePath,
+            GrokWebStatsigVerificationKey = Convert.ToBase64String(new byte[48]),
+            GrokWebStatsigAnimationKey = "0a",
+        };
+    }
+}

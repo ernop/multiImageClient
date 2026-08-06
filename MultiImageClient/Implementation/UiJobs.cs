@@ -2288,8 +2288,6 @@ namespace MultiImageClient
         private readonly GeneratorGroups _generatorGroups;
         private readonly GrokWebStatsigSigner? _grokWebStatsigSigner;
         private readonly string? _grokWebStatsigProblem;
-        private const string GrokWebBrowserDisabledProblem =
-            "Chromium-backed grok-web video is disabled in the UI";
         private const string MetaWebDisabledProblem =
             "Chromium-backed meta-web is disabled in the UI";
         private readonly object _comfyProbeLock = new();
@@ -2461,12 +2459,14 @@ namespace MultiImageClient
                 => DescribeComfyAvailability(ImageGeneratorApiType.LocalFlux2Klein),
             KeyLocalZImage
                 => DescribeComfyAvailability(ImageGeneratorApiType.LocalZImage),
-            // The UI exposes only the browser-free imagine WebSocket path.
-            // Attached images are not sent to grok-web.
+            // Text-to-image needs only cookies. Signed app-chat features
+            // validate their deployment material separately.
             KeyGrokWeb => ResolveGrokWebCookiePath() == null
                 ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
                 : null,
-            KeyGrokWebVideo => GrokWebBrowserDisabledProblem,
+            KeyGrokWebVideo => ResolveGrokWebCookiePath() == null
+                ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
+                : _grokWebStatsigProblem,
             KeyGrokApi or KeyGrokApiPro
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GrokImagine, _settings),
             KeyMetaWeb => MetaWebDisabledProblem,
@@ -2802,18 +2802,16 @@ namespace MultiImageClient
                     IImageGenerator generator;
                     if (key is KeyGrokWeb or KeyGrokWebVideo)
                     {
-                        if (key == KeyGrokWebVideo)
-                        {
-                            throw new InvalidOperationException(GrokWebBrowserDisabledProblem);
-                        }
                         var cookiePath = ResolveGrokWebCookiePath()
                             ?? throw new InvalidOperationException("grok-web cookie file not found (settings.json GrokWebCookiePath or --grok-web-cookies)");
                         grokWebClient = GrokWebClient.FromCookieFile(
                             cookiePath,
                             statsigSigner: _grokWebStatsigSigner);
-                        generator = job.HasInputImage && _grokWebStatsigSigner != null
-                            ? await BuildGrokWebEditAsync(grokWebClient, spec, job)
-                            : BuildGrokWeb(grokWebClient, spec);
+                        generator = key == KeyGrokWebVideo
+                            ? await BuildGrokWebVideoAsync(grokWebClient, job, spec)
+                            : job.HasInputImage && _grokWebStatsigSigner != null
+                                ? await BuildGrokWebEditAsync(grokWebClient, spec, job)
+                                : BuildGrokWeb(grokWebClient, spec);
                     }
                     else if (key == KeyMetaWeb)
                     {
@@ -3270,6 +3268,41 @@ namespace MultiImageClient
                 enableSideBySide: _options.GrokWebSideBySide,
                 settings: _settings,
                 captureSessions: false);
+        }
+
+        private async Task<IImageGenerator> BuildGrokWebVideoAsync(
+            GrokWebClient client,
+            UiJob job,
+            UiJobSpec spec)
+        {
+            if (_grokWebStatsigSigner == null)
+            {
+                throw new InvalidOperationException(
+                    _grokWebStatsigProblem
+                    ?? "Grok web browser-free video generation is not configured.");
+            }
+            if (!job.HasInputImage)
+            {
+                throw new InvalidOperationException(
+                    "grok-web image-to-video requires a source image");
+            }
+
+            var aspectRatio = spec.VideoAspectRatio == "source"
+                ? UiShapeMapping.GrokAspectForInput(
+                    job.InputImageWidth,
+                    job.InputImageHeight)
+                : spec.VideoAspectRatio;
+            return await GrokWebImagineVideoGenerator.CreateFromImageAsync(
+                client,
+                _settings,
+                _stats,
+                job.InputImagePath,
+                maxConcurrency: 1,
+                aspectRatio: aspectRatio,
+                resolution: spec.VideoResolution,
+                durationSeconds: spec.VideoDurationSeconds,
+                enableSideBySide: false,
+                videoMode: spec.VideoMode);
         }
 
         private static ImageGeneratorApiType BflApiTypeForKey(string key) => key switch

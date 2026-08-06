@@ -885,6 +885,18 @@ namespace MultiImageClient
             string videoMode = "normal",
             CancellationToken cancellationToken = default)
         {
+            if (_appChatBrowser == null && _statsigSigner == null)
+            {
+                throw new GrokWebException(
+                    "Grok web video requires current x-statsig-id signing material "
+                    + "or the Playwright browser transport.");
+            }
+            if (string.IsNullOrWhiteSpace(parentPostId))
+            {
+                throw new GrokWebException(
+                    "Grok web video requires the exact source or placeholder post id.");
+            }
+
             videoMode = NormalizeVideoMode(videoMode);
             object payload;
             if (sourceAsset != null)
@@ -1230,12 +1242,6 @@ namespace MultiImageClient
             {
                 return await RunAppChatInBrowserAsync(payload, triggerPostId, trigger, cancellationToken);
             }
-            if (trigger == GrokWebAppChatTrigger.Video)
-            {
-                throw new GrokWebException(
-                    "Grok web video still requires the live-verified Playwright browser transport. "
-                    + "Browser-free x-statsig-id transport is currently verified only for image edit.");
-            }
             if (trigger != GrokWebAppChatTrigger.None && _statsigSigner == null)
             {
                 throw new GrokWebException(
@@ -1249,9 +1255,10 @@ namespace MultiImageClient
                 Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
             };
             // /rest/app-chat is behind stricter anti-bot rules than the other
-            // REST endpoints (upload, media/post) — without the browser's
-            // fetch-metadata headers it 403s with "Request rejected by
-            // anti-bot rules" (observed 2026-07-12).
+            // REST endpoints (upload, media/post). Both image edit and video
+            // use this exact POST request identity, so the same deployment
+            // material signs either payload. Missing or stale material remains
+            // a provider-visible hard failure.
             request.Headers.TryAddWithoutValidation("Accept", "*/*");
             request.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
             request.Headers.TryAddWithoutValidation("sec-ch-ua", "\"Chromium\";v=\"136\", \"Google Chrome\";v=\"136\", \"Not.A/Brand\";v=\"99\"");

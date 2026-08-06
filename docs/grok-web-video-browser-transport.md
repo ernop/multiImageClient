@@ -25,7 +25,7 @@ The same endpoint returns HTTP 403 ("Request rejected by anti-bot rules") from a
 
 The missing condition is Grok's own request initiation path. The web app adds a dynamic `x-statsig-id` integrity header when its real **Make Video** action creates the request. Merely copying cookies or running arbitrary JavaScript in Chromium does not produce that header. On a post-detail page, the working sequence is **Make Video → Quick Animate**; the latter initiates the signed app-chat request.
 
-## Browser-free image-edit signing (2026-08-05)
+## Browser-free app-chat signing (2026-08-05/06)
 
 `x-statsig-id` is reproducible without a browser. Grok's frontend uses the
 same client-transaction construction as X: a public 48-byte
@@ -45,31 +45,35 @@ The one-shot `--grok-web-capture-statsig --input-image <path>` operation:
    `GrokWebStatsigVerificationKey` / `GrokWebStatsigAnimationKey` in the exact
    loaded settings file.
 
-With that pair configured, image edit sends a directly signed
-`POST /rest/app-chat/conversations/new` with no browser. A live local test on
-2026-08-05 completed one `imagine-image-edit` request in about 50 seconds and
-returned one 1328x784 image. The .NET HTTP transport was accepted, so this
-route did not require Chrome TLS impersonation or browser header ordering in
-that test.
+With that pair configured, image edit and video send a directly signed
+`POST /rest/app-chat/conversations/new` with no browser. The token inputs are
+the HTTP method and origin-relative path, not the app-chat payload, so the
+same material covers `imagine-image-edit` and `imagine-video-gen`. A live
+local test on 2026-08-05 completed one `imagine-image-edit` request in about
+50 seconds and returned one 1328x784 image. The .NET HTTP transport was
+accepted, so this route did not require Chrome TLS impersonation or browser
+header ordering in that test.
 
 Capture values are deployment-specific. Missing, incomplete, malformed, or
-stale values are hard failures for signed edit; they are never replaced with
-guessed values. Text-to-image remains available through its separate
+stale values are hard failures for signed edit/video; they are never replaced
+with guessed values. Text-to-image remains available through its separate
 WebSocket when signing material is absent. The UI reports grok-web as
-image-capable only while a complete validated pair is configured.
+image-capable and video-capable only while a complete validated pair is
+configured.
 
-Browser-free video has not been live-verified and remains on the existing
-Playwright real-control path. Sharing app-chat is not sufficient evidence that
-video has the same accepted anti-bot contract.
+Browser-free video was enabled on 2026-08-06 because it has the exact same
+signed request identity (`POST /rest/app-chat/conversations/new`) as the
+live-verified edit route. Its first end-to-end provider test is still pending;
+an HTTP rejection or missing exact-post result remains a visible hard failure.
 
 ## Implemented transport split
 
 - Text-to-image generation continues to use `wss://grok.com/ws/imagine/listen`.
 - Image editing does **not** use that WebSocket. `properties.image_uri` is accepted but ignored by the consumer transport (observed 2026-07-31: outputs invented from the prompt alone). Live edit uses `POST /rest/app-chat/conversations/new` with `modelName: "imagine-image-edit"` and `mediaGenInput.imageToImage.inputAssets: [assetId]`. With current captured signing material this is direct browser-free HTTP; otherwise CLI edit retains the real-control Playwright transport.
 - Image upload, asset lookup, media-post creation, polling, and downloads continue to use `GrokWebClient` HTTP calls.
-- Video generation's app-chat POST runs through `GrokWebBrowserClient`, a shared Playwright Chromium context with the `GrokWebCookiePath` cookies injected. Image edit uses it only when no verified browser-free signing pair is configured.
-- The app first uploads the source and creates its normal Grok image post. The browser client opens that post, verifies the session through `/rest/media/imagine/quota_info`, clicks Grok's real **Make Video → Quick Animate** controls, and intercepts only the outgoing request body. Grok's generated integrity headers remain untouched while the body receives the selected method, optional motion prompt, duration, resolution, and aspect ratio.
-- Browser app-chat operations are serialized. The UI owns one browser client for the server lifetime; the CLI owns one for the workflow lifetime.
+- Video generation uses the same direct signed app-chat HTTP request when current signing material is configured. The UI has no Playwright video fallback: missing material makes video unavailable. Explicit CLI video modes retain the prior real-control Playwright path only when signing material is absent.
+- The app first uploads the source and creates its normal Grok image post, then submits the selected method, optional motion prompt, duration, resolution, and aspect ratio through app-chat.
+- CLI Playwright fallback operations are serialized and idle-release their Chromium process.
 - Relative `streamingVideoGenerationResponse.videoUrl` values are normalized to `https://assets.grok.com/...` before download.
 - HTTP 200 and a model message saying that a video was generated are not success. The job succeeds only after an MP4 URL appears for the exact source post and the downloaded bytes have MP4 file magic.
 
@@ -114,13 +118,14 @@ Repeated 2:3 output came from `auto` image jobs, where grok-web's consumer trans
 ## Configuration
 
 - `GrokWebCookiePath`: existing complete grok.com cookie export; `sso` and `sso-rw` are required.
-- `GrokWebBrowserExecutablePath`: optional existing Chrome/Chromium executable.
-- `GrokWebBrowserHeaded`: optional troubleshooting window.
-- `GrokWebVideoTimeoutSeconds`: browser request timeout, default 900.
+- `GrokWebStatsigVerificationKey` and `GrokWebStatsigAnimationKey`: exact validated deployment pair required for browser-free edit/video and all UI video.
+- `GrokWebBrowserExecutablePath`: optional existing Chrome/Chromium executable for capture and CLI fallback.
+- `GrokWebBrowserHeaded`: optional troubleshooting window for capture and CLI fallback.
+- `GrokWebVideoTimeoutSeconds`: app-chat request timeout, default 900.
 - `GrokWebVideoPollTimeoutSeconds`: media-post polling limit after app-chat returns without a video URL, default 180.
 - `--playwright-install`: installs Playwright Chromium when no executable path is configured.
 - `--grok-web-video-method normal|fun|custom|spicy`: CLI method selection.
-- `--grok-web-headed`: shows the CLI/UI-owned Grok video browser.
+- `--grok-web-headed`: shows the CLI Grok browser when capture/fallback requires it.
 
 Cookies are credentials. Never log their values, commit the cookie file, or include it in captures.
 
@@ -142,5 +147,5 @@ The server normalizes and rejects a missing/unknown method. An empty prompt rema
 ## Operational caveats
 
 - This is an unofficial consumer-web integration and can break when grok.com changes its page or anti-automation behavior.
-- Chromium startup is lazy: ordinary grok-web image jobs do not require Playwright.
-- A browser/session failure affects the video job and is surfaced through the existing SSE error result.
+- UI image and video jobs do not start Chromium. Playwright remains an explicit capture/CLI-fallback dependency.
+- A stale signing pair or provider rejection affects only that target and is surfaced through the normal job error result.

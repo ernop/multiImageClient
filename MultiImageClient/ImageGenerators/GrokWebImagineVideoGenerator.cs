@@ -97,7 +97,7 @@ namespace MultiImageClient
             {
                 "Grok Web Imagine Video",
                 "imagine-video-gen",
-                "grok.com browser app-chat",
+                "grok.com app-chat",
                 $"AR {_aspectRatio}",
                 _resolution,
                 $"{_durationSeconds}s",
