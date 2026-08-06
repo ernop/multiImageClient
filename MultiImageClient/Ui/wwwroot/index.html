@@ -296,7 +296,7 @@
         <span id="image-viewer-position" aria-live="polite"
           title="Place-in-list indicator: current item / all items in the visible gallery"></span>
         <button id="image-viewer-favorite" type="button" aria-pressed="false"
-          title="Favorite this image (f)">☆ favorite</button>
+          title="Favorite this image (v)">☆ favorite</button>
         <button id="image-viewer-hide" type="button" hidden
           title="Hide this image from everyone">hide image</button>
         <button id="image-viewer-help-toggle" type="button"
@@ -307,6 +307,13 @@
            is the instruction that was sent). -->
       <div id="image-viewer-describe" hidden></div>
       <div id="image-viewer-prompt"></div>
+      <div id="image-viewer-active-actions" hidden
+        aria-label="Set the viewed image as the composer input">
+        <button id="image-viewer-set-image" type="button"
+          title="Replace the composer input with this image; keep the current composer prompt">set image active</button>
+        <button id="image-viewer-set-image-prompt" type="button"
+          title="Replace the composer input with this image and replace the composer prompt with this image's prompt">set image + prompt active</button>
+      </div>
       <div id="image-viewer-guidance" hidden></div>
     </div>
     <div id="image-viewer-resize" role="separator" aria-label="Resize image viewer" title="Drag to resize"></div>
@@ -366,6 +373,6 @@
 
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260804-spelling-panel"></script>
-<script src="app.js?v=20260806-creator-hiding-viewer-nav"></script>
+<script src="app.js?v=20260806-fullscreen-f"></script>
 </body>
 </html>

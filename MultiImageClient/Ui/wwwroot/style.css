@@ -1653,6 +1653,44 @@ body.image-viewer-open { overflow: hidden; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+#image-viewer-active-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 2px;
+}
+#image-viewer-active-actions[hidden] { display: none; }
+#image-viewer-active-actions button {
+  padding: 2px 7px;
+  color: var(--accent-dark);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: 700 10px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#image-viewer-active-actions button:hover,
+#image-viewer-active-actions button:focus-visible {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  outline: none;
+}
+#image-viewer-active-actions button.pending {
+  cursor: progress;
+}
+#image-viewer-active-actions button.success {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+#image-viewer-active-actions button.error {
+  color: #fff;
+  background: var(--err);
+  border-color: var(--err);
+}
 /* gpt2 anti-murk guidance status under the prompt: green shows the exact
    appended text, red flags a gpt2 image generated without it. Secondary via
    size, not desaturation (house style: no gray text). */

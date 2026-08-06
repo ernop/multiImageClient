@@ -74,6 +74,8 @@ let hiddenImageKeys = new Set();
 let visibilityMutation = null;
 let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
 let imageViewerRenderVersion = 0;
+let imageViewerActivationVersion = 0;
+let imageViewerActivationController = null;
 let imageViewerHelpOpen = false;
 // Global "always compare with the input image" toggle (`c` in the viewer),
 // sticky across images and page loads. Jobs without an input image show the
@@ -144,6 +146,9 @@ const imageViewerOutputLabel = el("image-viewer-output-label");
 const imageViewerHelp = el("image-viewer-help");
 const imageViewerHelpList = el("image-viewer-help-list");
 const imageViewerPrompt = el("image-viewer-prompt");
+const imageViewerActiveActions = el("image-viewer-active-actions");
+const imageViewerSetImage = el("image-viewer-set-image");
+const imageViewerSetImagePrompt = el("image-viewer-set-image-prompt");
 const imageViewerDescribe = el("image-viewer-describe");
 const imageViewerGuidance = el("image-viewer-guidance");
 const imageViewerGenerator = el("image-viewer-generator");
@@ -1991,7 +1996,7 @@ function renderImageViewerFavorite(item) {
     imageViewerFavorite.textContent = "☆ favorite";
     imageViewerFavorite.title = item && item.kind === "text"
       ? "Describe-result views cannot be favorited."
-      : "Favorite this image (f)";
+      : "Favorite this image (v)";
     return;
   }
 
@@ -2020,8 +2025,8 @@ function renderImageViewerFavorite(item) {
       ? `☆ favorite · ★ ${users.length}`
       : "☆ favorite";
   imageViewerFavorite.title = users.length > 0
-    ? `Favorited by ${users.join(", ")}. Press f to ${mine ? "remove your favorite" : "add yours"}.`
-    : "Favorite this image (f)";
+    ? `Favorited by ${users.join(", ")}. Press v to ${mine ? "remove your favorite" : "add yours"}.`
+    : "Favorite this image (v)";
 }
 
 function renderImageViewerHide(item) {
@@ -3139,12 +3144,111 @@ function renderImageViewerGuidance(current) {
   }
 }
 
+function imageViewerIdentityMatches(item) {
+  return !!item && !!imageViewerState &&
+    imageViewerState.jobId === item.jobId &&
+    imageViewerState.generator === item.generator &&
+    Number(imageViewerState.imageIndex) === Number(item.imageIndex);
+}
+
+function renderImageViewerActiveActions(item) {
+  imageViewerActiveActions.hidden = !item;
+  for (const button of [imageViewerSetImage, imageViewerSetImagePrompt]) {
+    button.disabled = false;
+    button.classList.remove("pending", "error", "success");
+  }
+  imageViewerSetImage.textContent = "set image active";
+  imageViewerSetImage.title =
+    "Replace the composer input with this image; keep the current composer prompt";
+  imageViewerSetImagePrompt.textContent = "set image + prompt active";
+  imageViewerSetImagePrompt.title =
+    "Replace the composer input with this image and replace the composer prompt with this image's prompt";
+}
+
+// These controls intentionally set only the fields they name. Both replace
+// every current composer image with the exact viewed original; the second also
+// copies this item's prompt. Generator selection and output options remain
+// untouched. A later click supersedes an earlier in-flight fetch by identity.
+async function setViewedImageActive(includePrompt) {
+  const current = locateImageViewerState(getImageViewerPrompts());
+  if (!current) return;
+
+  const item = { ...current.item };
+  const prompt = current.prompt.prompt;
+  const selectedButton = includePrompt ? imageViewerSetImagePrompt : imageViewerSetImage;
+  const operationVersion = ++imageViewerActivationVersion;
+  if (imageViewerActivationController) imageViewerActivationController.abort();
+  const controller = new AbortController();
+  imageViewerActivationController = controller;
+
+  for (const button of [imageViewerSetImage, imageViewerSetImagePrompt]) {
+    button.disabled = true;
+    button.classList.remove("error", "success");
+    button.classList.add("pending");
+  }
+  selectedButton.textContent = "setting…";
+
+  try {
+    const response = await fetch(apiUrl(item.url), { signal: controller.signal });
+    if (!response.ok) throw new Error(`image fetch returned HTTP ${response.status}`);
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/")) {
+      throw new Error(`image fetch returned ${blob.type || "an unknown content type"}`);
+    }
+    if (operationVersion !== imageViewerActivationVersion) return;
+
+    await setImagesFromBlobs([blob]);
+    if (includePrompt) {
+      promptBox.value = prompt;
+      if (mcpheeCtl) mcpheeCtl.refresh();
+      if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+    }
+    sendError.textContent = "";
+
+    if (imageViewerIdentityMatches(item)) {
+      selectedButton.classList.remove("pending");
+      selectedButton.classList.add("success");
+      selectedButton.textContent = includePrompt ? "image + prompt active" : "image active";
+      selectedButton.title = includePrompt
+        ? "This image and prompt are now active in the composer"
+        : "This image is now active in the composer; the composer prompt was left unchanged";
+    }
+  } catch (error) {
+    if (error && error.name === "AbortError") return;
+    if (operationVersion !== imageViewerActivationVersion) return;
+    if (imageViewerIdentityMatches(item)) {
+      selectedButton.classList.remove("pending");
+      selectedButton.classList.add("error");
+      selectedButton.textContent = "set active failed";
+      selectedButton.title = String(error);
+    }
+  } finally {
+    if (operationVersion !== imageViewerActivationVersion) return;
+    imageViewerActivationController = null;
+    if (!imageViewerIdentityMatches(item)) return;
+    for (const button of [imageViewerSetImage, imageViewerSetImagePrompt]) {
+      button.disabled = false;
+      button.classList.remove("pending");
+    }
+    setTimeout(() => {
+      if (operationVersion === imageViewerActivationVersion &&
+          imageViewerIdentityMatches(item)) {
+        renderImageViewerActiveActions(item);
+      }
+    }, 1800);
+  }
+}
+
+imageViewerSetImage.addEventListener("click", () => setViewedImageActive(false));
+imageViewerSetImagePrompt.addEventListener("click", () => setViewedImageActive(true));
+
 // Item-specific chrome (prompt, guidance, describe panel, generator name).
 // Callers pair this with same-item stage pixels only — never with another
 // item's media.
 function paintImageViewerChrome(target) {
   imageViewerPrompt.textContent = target.prompt.prompt;
   renderImageViewerGuidance(target);
+  renderImageViewerActiveActions(target.item);
   renderImageViewerFavorite(target.item);
   renderImageViewerHide(target.item);
   renderImageViewerPosition(target.item);
@@ -3203,6 +3307,7 @@ function clearImageViewerPresentation() {
   imageViewerGenerator.textContent = "";
   imageViewerDimensions.textContent = "";
   renderImageViewerPosition(null);
+  renderImageViewerActiveActions(null);
   renderImageViewerFavorite(null);
   renderImageViewerHide(null);
   imageViewerContentAr = null;
@@ -3219,6 +3324,7 @@ async function renderImageViewer() {
     imageViewerDescribe.hidden = true;
     imageViewerDescribe.textContent = "";
     renderImageViewerGuidance(null);
+    renderImageViewerActiveActions(null);
     renderImageViewerFavorite(null);
     renderImageViewerHide(null);
     imageViewerGenerator.textContent = "selected image is no longer available";
@@ -3531,21 +3637,21 @@ const ImageViewerCommands = [
   },
   {
     id: "favorite",
-    keys: ["f"],
+    keys: ["v"],
     name: "Shared exact-image favorite",
     match: (event) =>
       !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey &&
-      event.key === "f",
+      event.key === "v",
     help: "Add or remove your persistent favorite for this exact job, generator, and image index.",
     run: () => toggleImageViewerFavorite(),
   },
   {
     id: "fullscreen",
-    keys: ["Shift+F"],
+    keys: ["f"],
     name: "Fullscreen inspection",
     match: (event) =>
-      !event.ctrlKey && !event.metaKey && !event.altKey && event.shiftKey &&
-      event.key === "F",
+      !event.ctrlKey && !event.metaKey && !event.altKey &&
+      event.key.toLowerCase() === "f",
     help: "Use the full monitor while preserving the viewer's adaptive image and information layout.",
     run: () => toggleImageViewerFullscreen(),
   },
