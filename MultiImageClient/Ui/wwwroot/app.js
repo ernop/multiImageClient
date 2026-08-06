@@ -2635,6 +2635,15 @@ const ImageViewerCommands = [
     run: () => toggleImageViewerCompare(),
   },
   {
+    id: "fullscreen",
+    keys: ["f"],
+    match: (event) =>
+      !event.ctrlKey && !event.metaKey && !event.altKey &&
+      (event.key === "f" || event.key === "F"),
+    help: "Toggle fullscreen",
+    run: () => toggleImageViewerFullscreen(),
+  },
+  {
     id: "returnSync",
     keys: ["s"],
     match: (event) =>
@@ -2663,13 +2672,30 @@ const ImageViewerCommands = [
     id: "close",
     keys: ["Escape"],
     match: (event) => event.key === "Escape",
-    help: "Close shortcut list, then viewer",
+    help: "Close shortcut list / exit fullscreen / close viewer",
     run: () => {
       if (imageViewerHelpOpen) hideImageViewerHelp();
+      // While fullscreen, Esc only exits fullscreen (the browser does this
+      // natively too); the viewer stays open. A second Esc closes it.
+      else if (document.fullscreenElement === imageViewer) document.exitFullscreen();
       else closeImageViewer();
     },
   },
 ];
+
+// Fullscreen covers the whole monitor with the viewer overlay; entering and
+// exiting both fire a window resize, so fitImageViewerWindow re-shrink-wraps
+// the window to the new viewport automatically.
+async function toggleImageViewerFullscreen() {
+  if (document.fullscreenElement) {
+    await document.exitFullscreen();
+    return;
+  }
+  // Entering fullscreen means "draw this as large as the screen allows", so
+  // a prior manual drag-resize stops pinning the window size.
+  delete imageViewerWindow.dataset.userSized;
+  await imageViewer.requestFullscreen();
+}
 
 // Pre-content size: fill the viewport (any monitor aspect) minus a thin
 // margin that keeps the click-outside-to-close backdrop reachable. Once the
@@ -2798,6 +2824,7 @@ function openImageViewer(link) {
 
 function closeImageViewer() {
   hideImageViewerHelp();
+  if (document.fullscreenElement === imageViewer) document.exitFullscreen();
   // Resolve the departed image's outer-page anchor BEFORE clearing state: the
   // departure pulse (always) and the close handback (opt-in, `s` / settings)
   // both target it.
