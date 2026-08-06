@@ -46,11 +46,17 @@ Do not use plain `ssh tpbeta` here: on this workstation that alias logs in as
 `subcreation`, which does not own this checkout or service. Do not search for
 another checkout or deploy a similarly named service.
 
+`tparkour` in the command is only the Unix account that owns this repository's
+server checkout and .NET installation. It does not identify Terrain Parkour as
+the product being deployed. The physical host serves several projects; this
+release remains scoped to MultiImageClient.
+
 `agent-redeploy.sh` fast-forwards `/home/tparkour/multiImageClient`, publishes
 to a staging directory, and invokes the locked-down update helper. The helper
 rsyncs only into `/opt/multiimageclient` and restarts only
 `multiimageclient-ui.service`. It does not edit nginx or any neighboring
-service during a routine release.
+service during a routine release. Use this automation for normal releases;
+do not substitute host-wide rsync, service restarts, or nginx changes.
 
 After it returns, require all of the following:
 

@@ -19,7 +19,10 @@ alwaysApply: true
   `multiimageclient-ui.service` through `deploy/agent-redeploy.sh`.
 - On this workstation, the `tpbeta` SSH alias logs in as `subcreation`, which
   does not own the checkout. Use the documented `tpbeta-root` command that
-  runs the release as `tparkour`; never guess another checkout or service.
+  runs the release as the `tparkour` Unix checkout owner. That account name
+  does not make Terrain Parkour a deployment target. Never guess another
+  checkout or service, and never replace the standard release script with an
+  ad hoc host-wide update.
 - Verify the exact commit, active service, fresh start time, loopback response,
   and private public vhost after deployment. Never print or disclose the
   site's secret path, credentials, cookies, or provider keys.
