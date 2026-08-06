@@ -864,21 +864,34 @@ namespace MultiImageClient
                 // ?thumb=1 asks for the <=640px card preview; without it the
                 // exact original bytes are served (viewer, new-tab, video
                 // sources, set-active restore all use the plain URL).
+                //
+                // Cacheability is decided per image, not per job: a durable
+                // on-disk path is only ever recorded once, when that gen/index's
+                // FINAL bytes are saved (partials live as path-less RAM bytes),
+                // so path-backed responses are immutable even while sibling
+                // generators of the same job are still running. Without this,
+                // reviewing another user's fresh multi-generator job re-fetched
+                // every already-final multi-MB original on each viewer open and
+                // navigation until the job's last generator landed.
                 IResult fileResult;
+                bool bytesAreFinal;
                 if (ctx.Request.Query.ContainsKey("thumb"))
                 {
                     if (job.TryGetCardPreviewPath(gen, n, out var thumbPath, out var thumbType))
                     {
-                        // Disk-backed thumb — stream, do not buffer into heap.
+                        // Disk-backed thumb, built from the durable final —
+                        // stream, do not buffer into heap.
                         fileResult = Results.File(
                             Path.GetFullPath(thumbPath),
                             thumbType,
                             enableRangeProcessing: true);
+                        bytesAreFinal = true;
                     }
                     else if (job.TryGetCardPreviewBytes(gen, n, out var bytes, out var contentType))
                     {
                         // Ephemeral streaming partials only.
                         fileResult = Results.File(bytes, contentType);
+                        bytesAreFinal = false;
                     }
                     else
                     {
@@ -893,22 +906,19 @@ namespace MultiImageClient
                         Path.GetFullPath(path),
                         pathType,
                         enableRangeProcessing: true);
+                    bytesAreFinal = true;
                 }
                 else if (job.TryGetImage(gen, n, out var memBytes, out var memType))
                 {
                     // Ephemeral partials (no durable path yet).
                     fileResult = Results.File(memBytes, memType);
+                    bytesAreFinal = false;
                 }
                 else
                 {
                     return Results.NotFound();
                 }
 
-                // Input images are archived to disk before the job is announced
-                // to any client and are never rewritten, so they are stable from
-                // the first moment their URL can exist — cacheable mid-run.
-                var bytesAreFinal = job.IsDone
-                    || string.Equals(gen, "input", StringComparison.Ordinal);
                 if (bytesAreFinal)
                 {
                     // Finished bytes never change, so let the browser cache
