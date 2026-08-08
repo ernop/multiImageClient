@@ -175,7 +175,7 @@ namespace MultiImageClient
         public string GrokWebAspectRatio { get; set; } = "2:3";
 
         /// Video length in seconds for --grok-web video modes.
-        public int GrokWebVideoLength { get; set; } = 10;
+        public int GrokWebVideoLength { get; set; } = 15;
 
         /// 480p or 720p for --grok-web video modes.
         public string GrokWebVideoResolution { get; set; } = "480p";

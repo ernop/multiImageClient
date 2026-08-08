@@ -1602,7 +1602,7 @@ namespace MultiImageClient
         public bool Gpt2GuidanceEnabled { get; init; } = true;
         public string Gpt2GuidanceText { get; init; } = "";
         public string VideoMode { get; init; } = "normal";
-        public int VideoDurationSeconds { get; init; } = 10;
+        public int VideoDurationSeconds { get; init; } = 15;
         public string VideoResolution { get; init; } = "480p";
         public string VideoAspectRatio { get; init; } = "source";
     }

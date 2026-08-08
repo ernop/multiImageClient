@@ -47,6 +47,9 @@ namespace MultiImageClient
     ///   GET  /api/users                        every creator name with job counts (filter bar)
     ///   GET  /api/favorites                    persistent image + whole-prompt favorites by user
     ///   POST /api/favorites                    idempotently set one user's exact resource favorite
+    ///   GET  /api/activity/poll?after=N        bounded shared activity poll
+    ///   POST /api/requests                     submit a request to the developer
+    ///   GET  /api/requests?after=N             developer-only request inbox
     ///   POST /api/visibility                   creator-only permanent prompt/image stream hiding
     ///   POST /api/auth/login|logout            shared-site access gate (only when UiAuthFilePath is set)
     public class UiWorkflow
@@ -96,10 +99,12 @@ namespace MultiImageClient
             var jobs = new UiJobRegistry(settings);
             UiFavoriteStore favorites;
             UiVisibilityStore visibility;
+            UiCommunityStore community;
             try
             {
                 favorites = new UiFavoriteStore(settings);
                 visibility = new UiVisibilityStore(settings);
+                community = new UiCommunityStore(settings);
             }
             catch (Exception ex)
             {
@@ -394,6 +399,12 @@ namespace MultiImageClient
                         enabled = auth != null,
                         user = ctx.Items["micUser"] as string ?? "",
                     },
+                    notifications = new
+                    {
+                        isDeveloper = IsDeveloperLogin(ctx.Items["micUser"] as string ?? ""),
+                        maxRequestChars = UiCommunityStore.MaxRequestChars,
+                        returnAfterHours = UiCommunityStore.ReturnAfter.TotalHours,
+                    },
                 });
             });
 
@@ -617,6 +628,21 @@ namespace MultiImageClient
                         Gpt2GuidanceText = gpt2GuidanceText,
                     };
                     jobs.Add(job);
+                    try
+                    {
+                        community.RecordGenerationStart(
+                            job.CreatorLogin,
+                            job.CreatedBy,
+                            job.Id,
+                            new DateTimeOffset(UiJobStorage.EnsureUtc(job.CreatedAt)).ToUnixTimeMilliseconds());
+                    }
+                    catch (Exception ex)
+                    {
+                        // Activity is secondary to the accepted generation:
+                        // never turn a durable image job into a failed submit
+                        // after its exact identity has already been registered.
+                        Logger.Log($"UI activity: could not record generation start for {job.Id}: {ex.Message}");
+                    }
                     for (var i = 0; i < savedInputs.Count; i++)
                     {
                         // Keep each input in the job's image store so reloaded pages
@@ -729,7 +755,7 @@ namespace MultiImageClient
                     return Results.BadRequest(new { error = ex.Message });
                 }
 
-                var durationSeconds = 10;
+                var durationSeconds = 15;
                 if (int.TryParse(form["duration"].ToString(), out var parsedDuration))
                 {
                     durationSeconds = parsedDuration;
@@ -799,6 +825,18 @@ namespace MultiImageClient
                     };
 
                     jobs.Add(job);
+                    try
+                    {
+                        community.RecordGenerationStart(
+                            job.CreatorLogin,
+                            job.CreatedBy,
+                            job.Id,
+                            new DateTimeOffset(UiJobStorage.EnsureUtc(job.CreatedAt)).ToUnixTimeMilliseconds());
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"UI activity: could not record video generation start for {job.Id}: {ex.Message}");
+                    }
                     job.StoreImage("input", 0, sourceBytes, sourceContentType, inputImagePath);
                     job.Emit(new
                     {
@@ -1340,6 +1378,8 @@ namespace MultiImageClient
                         : favorites.ListPrompt(jobId);
                     var existing = records
                         .FirstOrDefault(record => string.Equals(record.User, user, StringComparison.Ordinal));
+                    var addedFavorite = false;
+                    UiJob? favoritedJob = null;
 
                     if (favorite && existing == null)
                     {
@@ -1391,11 +1431,38 @@ namespace MultiImageClient
                                 FavoritedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                             };
                         }
+                        favoritedJob = job;
+                        addedFavorite = true;
                     }
 
                     if (existing != null)
                     {
                         favorites.Set(existing, favorite);
+                        if (addedFavorite && favoritedJob != null)
+                        {
+                            try
+                            {
+                                community.RecordFavorite(
+                                    request.HttpContext.Items["micUser"] as string ?? "",
+                                    user,
+                                    favoritedJob.CreatorLogin,
+                                    favoritedJob.CreatedBy,
+                                    favoritedJob.Id,
+                                    kind,
+                                    generator,
+                                    imageIndex,
+                                    existing.FavoritedAtUnixMs);
+                            }
+                            catch (Exception ex)
+                            {
+                                // The favorite itself is already durable and
+                                // remains the source of truth. A notification
+                                // write failure must not make a retry produce
+                                // a false favorite failure or duplicate edge.
+                                Logger.Log(
+                                    $"UI activity: could not record favorite {user}/{kind}/{jobId}: {ex.Message}");
+                            }
+                        }
                     }
 
                     records = kind == "image"
@@ -1421,6 +1488,119 @@ namespace MultiImageClient
                         new { error = "The favorite could not be persisted." },
                         statusCode: 500);
                 }
+            });
+
+            // Shared social activity uses a bounded SQLite log and short
+            // polling. Omitting `after` initializes a browser at the current
+            // tail without replaying old alerts; subsequent polls use the
+            // returned exact cursor.
+            app.MapGet("/api/activity/poll", (long? after, HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                var result = community.ReadActivityAfter(after);
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var isDeveloper = IsDeveloperLogin(authUser);
+                var entries = result.Records
+                    .Where(record =>
+                        string.Equals(record.Audience, "all", StringComparison.Ordinal)
+                        || (isDeveloper
+                            && string.Equals(record.Audience, "developer", StringComparison.Ordinal)))
+                    .Where(record =>
+                        record.JobId.Length == 0
+                        || (!visibility.IsPromptHidden(record.JobId)
+                            && (record.ImageIndex < 0
+                                || !visibility.IsImageHidden(
+                                    record.JobId,
+                                    record.Generator,
+                                    record.ImageIndex))))
+                    .Select(record => new
+                    {
+                        id = record.Id,
+                        at = record.AtUnixMs,
+                        kind = record.Kind,
+                        actor = record.ActorDisplay,
+                        target = record.TargetDisplay,
+                        jobId = record.JobId,
+                        generator = record.Generator,
+                        imageIndex = record.ImageIndex,
+                        resourceKind = record.ResourceKind,
+                        isActor = authUser.Length > 0
+                            && string.Equals(record.ActorLogin, authUser, StringComparison.Ordinal),
+                        isTarget = authUser.Length > 0
+                            && string.Equals(record.TargetLogin, authUser, StringComparison.Ordinal),
+                    });
+                return Results.Json(new
+                {
+                    cursor = result.Cursor,
+                    reset = result.Reset,
+                    entries,
+                });
+            });
+
+            app.MapPost("/api/requests", async (HttpRequest request) =>
+            {
+                var form = await request.ReadFormAsync();
+                if (!TryResolveCreatorName(
+                    form["user"].ToString(),
+                    request.HttpContext.Items["micUser"] as string ?? "",
+                    out var submitter,
+                    out var userError))
+                {
+                    return Results.BadRequest(new { error = userError });
+                }
+                try
+                {
+                    var stored = community.SubmitRequest(
+                        request.HttpContext.Items["micUser"] as string ?? "",
+                        submitter,
+                        form["body"].ToString(),
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    Logger.Log($"UI request: stored {stored.Id} from {submitter}.");
+                    return Results.Json(new
+                    {
+                        id = stored.Id,
+                        sequence = stored.Sequence,
+                        submittedAtUnixMs = stored.SubmittedAtUnixMs,
+                    });
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"UI request: persistence failed for {submitter}: {ex.Message}");
+                    return Results.Json(
+                        new { error = "The request could not be stored." },
+                        statusCode: 500);
+                }
+            });
+
+            app.MapGet("/api/requests", (long? after, HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                if (!IsDeveloperLogin(authUser))
+                {
+                    return Results.Json(
+                        new { error = "Developer access is required." },
+                        statusCode: 403);
+                }
+                var result = community.ReadRequestsAfter(after ?? 0);
+                return Results.Json(new
+                {
+                    cursor = result.Cursor,
+                    reset = result.Reset,
+                    requests = result.Records.Select(record => new
+                    {
+                        sequence = record.Sequence,
+                        id = record.Id,
+                        submittedAtUnixMs = record.SubmittedAtUnixMs,
+                        submitterLogin = record.SubmitterLogin,
+                        submitter = record.SubmitterDisplay,
+                        body = record.Body,
+                    }),
+                });
             });
 
             // Same zero-persistent-connection rule as /api/events/poll: the
@@ -1498,10 +1678,7 @@ namespace MultiImageClient
             {
                 return false;
             }
-            if (string.Equals(
-                authUser,
-                VisibilityOverrideLogin,
-                StringComparison.OrdinalIgnoreCase))
+            if (IsDeveloperLogin(authUser))
             {
                 return true;
             }
@@ -1517,6 +1694,13 @@ namespace MultiImageClient
             // browser-supplied attribution and could name another account.
             return false;
         }
+
+        private static bool IsDeveloperLogin(string authUser)
+            => authUser.Length > 0
+                && string.Equals(
+                    authUser,
+                    VisibilityOverrideLogin,
+                    StringComparison.OrdinalIgnoreCase);
 
         private static object BuildVisibilityResponse(
             string version,

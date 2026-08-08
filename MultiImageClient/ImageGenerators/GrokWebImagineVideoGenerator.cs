@@ -37,7 +37,7 @@ namespace MultiImageClient
             GrokWebAsset? sourceAsset,
             string aspectRatio = "2:3",
             string resolution = "480p",
-            int durationSeconds = 10,
+            int durationSeconds = 15,
             bool enableSideBySide = true,
             string videoMode = "normal",
             int pollSeconds = 5,

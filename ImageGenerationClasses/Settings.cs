@@ -127,6 +127,11 @@ namespace MultiImageClient
         /// it produced. The server never writes this file.
         public string UiAuthFilePath { get; set; } = "";
 
+        /// SQLite storage for shared-site activity notifications and user
+        /// requests to the developer. Blank uses
+        /// ImageDownloadBaseFolder/ui-community.sqlite3.
+        public string UiCommunityDbPath { get; set; } = "";
+
         /// Maximum number of memory-heavy UI job finalizations (contact-sheet
         /// rendering and cleanup) allowed at once. Endpoint requests from
         /// different jobs are scheduled independently by target and do not

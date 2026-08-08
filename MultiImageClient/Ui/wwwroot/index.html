@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260806-favorites-viewer-nav">
+<link rel="stylesheet" href="style.css?v=20260807-activity-center">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260804-spelling-panel">
 </head>
 <body>
@@ -20,6 +20,8 @@
   <span id="build-info" title="Commit hash the running server was built from."></span>
   <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel" title="Settings (stored in this browser only)">settings</button>
   <button id="logs-toggle" type="button" aria-expanded="false" aria-controls="logs-panel">logs</button>
+  <button id="activity-toggle" type="button" aria-expanded="false" aria-controls="activity-panel"
+    title="Open the floating activity center">activity</button>
   <button id="logout" type="button" hidden title="Log out of this shared site on this browser">log out</button>
 </header>
 
@@ -105,6 +107,65 @@
     <span>time</span><span>source</span><span>event</span><span>message</span>
   </div>
   <div id="logs-lines" role="log" aria-live="off"></div>
+</section>
+
+<section id="activity-panel" class="collapsed" aria-label="Activity center">
+  <div id="activity-head">
+    <strong id="activity-drag" title="Drag to reposition">activity</strong>
+    <span id="activity-latest">quiet</span>
+    <span id="activity-unread" hidden>0</span>
+    <button id="activity-options-toggle" type="button" aria-expanded="false"
+      aria-controls="activity-options">config</button>
+    <button id="activity-expand" type="button" aria-expanded="false"
+      aria-label="Expand activity center">▴</button>
+  </div>
+  <div id="activity-body" hidden>
+    <div id="activity-lines" role="log" aria-live="polite"></div>
+
+    <div id="activity-options" hidden>
+      <strong>alert types</strong>
+      <label><input id="activity-own-gens" type="checkbox"> my generation status</label>
+      <label><input id="activity-returning" type="checkbox"> somebody returns and generates after a while</label>
+      <label><input id="activity-my-favorites" type="checkbox"> somebody favorites my work</label>
+      <label><input id="activity-shared-favorites" type="checkbox"> somebody favorites anyone else's work</label>
+      <label id="activity-request-alerts-row" hidden>
+        <input id="activity-request-alerts" type="checkbox"> new developer requests
+      </label>
+      <strong>delivery</strong>
+      <label><input id="activity-sound" type="checkbox"> subtle sound</label>
+      <label><input id="activity-browser-popup" type="checkbox"> Firefox/browser popup notification</label>
+      <div id="activity-notification-permission"></div>
+      <p class="activity-note">
+        Every switch is stored permanently in this browser until you change it.
+        Sound starts off. Browser popups start on, but cannot appear unless the browser grants permission.
+        Alerts never take focus, and repeated updates for the same generator are condensed.
+        Turn off any category here without disabling the activity center.
+      </p>
+      <p class="activity-note">
+        Drag the “activity” label to move this panel. Drag the corner to resize it.
+        Position and size stay in this browser.
+      </p>
+    </div>
+
+    <form id="activity-request-form">
+      <label for="activity-request-text"><strong>request something from the developer</strong></label>
+      <textarea id="activity-request-text" rows="3" maxlength="4000"
+        placeholder="Feature request, problem, or note…"></textarea>
+      <div class="activity-request-actions">
+        <span id="activity-request-status"></span>
+        <button id="activity-request-submit" type="submit">submit request</button>
+      </div>
+    </form>
+
+    <section id="activity-request-inbox" hidden>
+      <div class="activity-inbox-head">
+        <strong>developer request inbox</strong>
+        <span id="activity-request-count"></span>
+      </div>
+      <div id="activity-request-list"></div>
+    </section>
+  </div>
+  <div id="activity-resize" title="Drag to resize" aria-hidden="true"></div>
 </section>
 
 <main>
@@ -356,7 +417,7 @@
             </select>
           </label>
           <label>length
-            <input id="video-duration" type="number" min="1" max="15" value="10">
+            <input id="video-duration" type="number" min="1" max="15" value="15">
             <span>seconds</span>
           </label>
           <label>quality
@@ -377,6 +438,6 @@
 
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260804-spelling-panel"></script>
-<script src="app.js?v=20260806-fullscreen-f"></script>
+<script src="app.js?v=20260807-activity-center"></script>
 </body>
 </html>

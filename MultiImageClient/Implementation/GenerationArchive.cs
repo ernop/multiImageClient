@@ -39,6 +39,21 @@ namespace MultiImageClient
 
         public static string DatabasePath => _databasePath;
 
+        internal static void EnsureSqliteAvailable()
+        {
+            lock (Sync)
+            {
+                if (_sqliteProviderInitialized)
+                {
+                    return;
+                }
+                var native = LoadSystemSqlite();
+                SQLitePCL.SQLite3Provider_dynamic_cdecl.Setup("sqlite3", native);
+                SQLitePCL.raw.SetProvider(new SQLitePCL.SQLite3Provider_dynamic_cdecl());
+                _sqliteProviderInitialized = true;
+            }
+        }
+
         public static void Initialize(Settings settings)
         {
             if (!settings.EnableGenerationArchive)
@@ -52,15 +67,9 @@ namespace MultiImageClient
                 : settings.GenerationArchiveDbPath;
             path = Path.GetFullPath(path);
 
+            EnsureSqliteAvailable();
             lock (Sync)
             {
-                if (!_sqliteProviderInitialized)
-                {
-                    var native = LoadSystemSqlite();
-                    SQLitePCL.SQLite3Provider_dynamic_cdecl.Setup("sqlite3", native);
-                    SQLitePCL.raw.SetProvider(new SQLitePCL.SQLite3Provider_dynamic_cdecl());
-                    _sqliteProviderInitialized = true;
-                }
                 if (_enabled && string.Equals(path, _databasePath, StringComparison.Ordinal))
                 {
                     return;
