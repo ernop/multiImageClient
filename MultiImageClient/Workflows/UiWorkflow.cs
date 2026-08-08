@@ -325,6 +325,17 @@ namespace MultiImageClient
                         or UiJobRunner.KeyIdeogram
                         or UiJobRunner.KeyBfl
                         or UiJobRunner.KeyGoogle,
+                    // Default set for image-input jobs (the "image defaults"
+                    // group button): the same tiers with the text-only Ideogram
+                    // V4 swapped for the image-capable Ideogram V3. This is a
+                    // selection preset the user applies explicitly — attaching
+                    // an image never rewrites the current selection.
+                    defaultOnWithImage = g.key is UiJobRunner.KeyGpt2
+                        or UiJobRunner.KeyRecraft
+                        or UiJobRunner.KeyGrokWeb
+                        or UiJobRunner.KeyIdeogramV3
+                        or UiJobRunner.KeyBfl
+                        or UiJobRunner.KeyGoogle,
                 })
                 // Stable sort: available targets keep the intent order above,
                 // unavailable ones trail in the same relative order.

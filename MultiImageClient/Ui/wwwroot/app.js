@@ -471,6 +471,13 @@ async function loadConfig() {
   for (const g of generators) {
     (g.kind === "describe" ? describeRow : gensRow).appendChild(buildGenChip(g));
   }
+  // Selection-group buttons derive their key sets from the freshly loaded
+  // catalog (defaultOn / defaultOnWithImage), so they rebuild with the chips;
+  // the persisted collapse state re-applies for the same reason.
+  renderGenGroupButtons();
+  renderGenGroupSettingsList();
+  applyGenRowCollapse();
+  applyDescribeRowCollapse();
   // Visibility (needs an attached image + at least one describe target) is
   // owned by updateGeneratorCompatibility, called next.
   updateGeneratorCompatibility();
@@ -571,8 +578,10 @@ function updateShapeOptionLabel() {
 function updateGeneratorCount() {
   // The visible "N of M enabled" counter was removed (2026-07-31), but every
   // generator-selection change still funnels through here, so this remains
-  // the recompute point for the prompt-length notice.
+  // the recompute point for the prompt-length notice and the collapsed-row
+  // selection summaries.
   updatePromptLimitNotice();
+  updateCollapsedNotes();
 }
 
 // ---------- prompt length limits (non-blocking) ----------
@@ -682,6 +691,21 @@ function loadUiSettings() {
       activityTop: Number.isFinite(saved.activityTop) ? saved.activityTop : null,
       activityWidth: Number.isFinite(saved.activityWidth) ? saved.activityWidth : null,
       activityHeight: Number.isFinite(saved.activityHeight) ? saved.activityHeight : null,
+      // Named generator-selection groups saved by the user: [{name, keys[]}].
+      // Keys are generator catalog keys; unknown keys (a target renamed or
+      // removed server-side) simply have no chip to check when applied.
+      genGroups: Array.isArray(saved.genGroups)
+        ? saved.genGroups
+            .filter((g) => g && typeof g.name === "string" && g.name.trim() !== "" && Array.isArray(g.keys))
+            .map((g) => ({ name: g.name, keys: g.keys.filter((k) => typeof k === "string") }))
+        : [],
+      // Group-bar buttons the user chose to hide: builtin ids ("all", "none",
+      // "invert", "defaults", "image-defaults") or "custom:<name>".
+      hiddenGenGroups: Array.isArray(saved.hiddenGenGroups)
+        ? saved.hiddenGenGroups.filter((x) => typeof x === "string")
+        : [],
+      gensRowCollapsed: saved.gensRowCollapsed === true,
+      describeRowCollapsed: saved.describeRowCollapsed === true,
     };
   } catch {
     return {
@@ -700,6 +724,10 @@ function loadUiSettings() {
       activityTop: null,
       activityWidth: null,
       activityHeight: null,
+      genGroups: [],
+      hiddenGenGroups: [],
+      gensRowCollapsed: false,
+      describeRowCollapsed: false,
     };
   }
 }
@@ -1404,6 +1432,218 @@ function setAllDescribers(checked) {
 el("describe-enable-all").addEventListener("click", () => setAllDescribers(true));
 el("describe-disable-all").addEventListener("click", () => setAllDescribers(false));
 el("opt-shape").addEventListener("change", updateGeneratorCompatibility);
+
+// ---------- generator selection groups + chip-row collapse ----------
+
+// Group buttons apply a complete media-generator selection in one click:
+// the two built-in defaults (text jobs / image-input jobs, keyed off the
+// server catalog's defaultOn / defaultOnWithImage) plus any groups the user
+// saved from their own selection. Groups cover the MEDIA section only — the
+// describe section keeps its own all/none so a group can't silently fan an
+// image out to paid describe endpoints. All of it persists per-browser in
+// uiSettings (genGroups / hiddenGenGroups / *RowCollapsed).
+
+const genGroupsBar = el("gen-groups");
+const genGroupsList = el("gen-groups-list");
+
+function builtinGenGroups() {
+  return [
+    {
+      id: "defaults",
+      label: "defaults",
+      title: "The standard default selection for text-to-image jobs (what a fresh window starts with)",
+      keys: generators.filter((g) => g.defaultOn).map((g) => g.key),
+    },
+    {
+      id: "image-defaults",
+      label: "image defaults",
+      title: "The default selection for jobs with an input image: the same tiers with text-only Ideogram V4 swapped for image-capable Ideogram V3",
+      keys: generators.filter((g) => g.defaultOnWithImage).map((g) => g.key),
+    },
+  ];
+}
+
+function customGroupId(name) {
+  return `custom:${name}`;
+}
+
+function genGroupHidden(id) {
+  return uiSettings.hiddenGenGroups.includes(id);
+}
+
+function setGenGroupHidden(id, hidden) {
+  const without = uiSettings.hiddenGenGroups.filter((x) => x !== id);
+  uiSettings.hiddenGenGroups = hidden ? [...without, id] : without;
+  saveUiSettings();
+  renderGenGroupButtons();
+  renderGenGroupSettingsList();
+}
+
+// Applying a group is a complete selection statement: listed models turn on,
+// everything else in the media section turns off. Disabled chips (provider
+// unavailable, or Recraft's AR-override gap on image jobs) stay unchecked —
+// same rule as every other bulk action.
+function applyGenGroup(keys) {
+  const wanted = new Set(keys);
+  for (const cb of gensRow.querySelectorAll("input")) {
+    cb.checked = wanted.has(cb.value) && !cb.disabled;
+    cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
+  }
+  updateGeneratorCount();
+}
+
+function genGroupKeysSummary(keys) {
+  const known = keys.map((k) => genLabel(k));
+  return known.length ? known.join(", ") : "(no models)";
+}
+
+function renderGenGroupButtons() {
+  // The three basic actions are static buttons; visibility is the only thing
+  // managed here (data-group-id carries their settings identity).
+  for (const btn of document.querySelectorAll("#gen-controls [data-group-id]")) {
+    btn.hidden = genGroupHidden(btn.dataset.groupId);
+  }
+  genGroupsBar.innerHTML = "";
+  for (const group of builtinGenGroups()) {
+    if (genGroupHidden(group.id)) continue;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "gen-group-btn";
+    btn.textContent = group.label;
+    btn.title = `${group.title}: ${genGroupKeysSummary(group.keys)}`;
+    btn.addEventListener("click", () => applyGenGroup(group.keys));
+    genGroupsBar.appendChild(btn);
+  }
+  for (const group of uiSettings.genGroups) {
+    if (genGroupHidden(customGroupId(group.name))) continue;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "gen-group-btn custom";
+    btn.textContent = group.name;
+    btn.title = `Your saved group: ${genGroupKeysSummary(group.keys)}`;
+    btn.addEventListener("click", () => applyGenGroup(group.keys));
+    genGroupsBar.appendChild(btn);
+  }
+}
+
+function saveCurrentSelectionAsGroup() {
+  const keys = [...gensRow.querySelectorAll("input:checked")].map((cb) => cb.value);
+  if (keys.length === 0) {
+    alert("Select at least one model first — the group saves your current selection.");
+    return;
+  }
+  const name = (window.prompt(`Name for this group (${keys.length} model${keys.length === 1 ? "" : "s"}):`) || "").trim();
+  if (!name) return;
+  if (builtinGenGroups().some((g) => g.label === name) || ["all", "none", "invert"].includes(name)) {
+    alert(`"${name}" is a built-in button name — pick another.`);
+    return;
+  }
+  // Same name = overwrite (that's how you update a group), and saving always
+  // un-hides it so the result is visible immediately.
+  uiSettings.genGroups = [
+    ...uiSettings.genGroups.filter((g) => g.name !== name),
+    { name, keys },
+  ];
+  uiSettings.hiddenGenGroups = uiSettings.hiddenGenGroups.filter((x) => x !== customGroupId(name));
+  saveUiSettings();
+  renderGenGroupButtons();
+  renderGenGroupSettingsList();
+}
+
+el("gen-group-save").addEventListener("click", saveCurrentSelectionAsGroup);
+
+function renderGenGroupSettingsList() {
+  if (!genGroupsList) return;
+  genGroupsList.innerHTML = "";
+  const addRow = (id, label, detail, deletable) => {
+    const row = document.createElement("div");
+    row.className = "gen-group-row";
+    const toggle = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !genGroupHidden(id);
+    cb.addEventListener("change", () => setGenGroupHidden(id, !cb.checked));
+    toggle.appendChild(cb);
+    const nameNode = document.createElement("strong");
+    nameNode.textContent = label;
+    toggle.appendChild(nameNode);
+    if (detail) {
+      const detailNode = document.createElement("span");
+      detailNode.className = "gen-group-keys";
+      detailNode.textContent = detail;
+      toggle.appendChild(detailNode);
+    }
+    row.appendChild(toggle);
+    if (deletable) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "gen-group-delete";
+      del.textContent = "delete";
+      del.title = "Delete this saved group";
+      del.addEventListener("click", () => {
+        if (!confirm(`Delete the saved group "${label}"?`)) return;
+        uiSettings.genGroups = uiSettings.genGroups.filter((g) => g.name !== label);
+        uiSettings.hiddenGenGroups = uiSettings.hiddenGenGroups.filter((x) => x !== customGroupId(label));
+        saveUiSettings();
+        renderGenGroupButtons();
+        renderGenGroupSettingsList();
+      });
+      row.appendChild(del);
+    }
+    genGroupsList.appendChild(row);
+  };
+  addRow("all", "all", "enable every available model", false);
+  addRow("none", "none", "disable every model", false);
+  addRow("invert", "invert", "invert the current selection", false);
+  for (const group of builtinGenGroups()) {
+    addRow(group.id, group.label, genGroupKeysSummary(group.keys), false);
+  }
+  for (const group of uiSettings.genGroups) {
+    addRow(customGroupId(group.name), group.name, genGroupKeysSummary(group.keys), true);
+  }
+}
+
+// Chip-row collapse: hidden chips leave the group buttons as the whole
+// chooser (the compact view). Selection state lives in the checkboxes either
+// way — collapsing changes only what's displayed.
+const gensRowToggle = el("gens-row-toggle");
+const gensCollapsedNote = el("gens-collapsed-note");
+const describeRowToggle = el("describe-row-toggle");
+const describeCollapsedNote = el("describe-collapsed-note");
+
+function updateCollapsedNotes() {
+  const genCount = gensRow.querySelectorAll("input:checked").length;
+  gensCollapsedNote.textContent = `${genCount} selected`;
+  const descCount = describeRow.querySelectorAll("input:checked").length;
+  describeCollapsedNote.textContent = `${descCount} selected`;
+}
+
+function applyGenRowCollapse() {
+  gensRow.hidden = uiSettings.gensRowCollapsed;
+  gensCollapsedNote.hidden = !uiSettings.gensRowCollapsed;
+  gensRowToggle.textContent = uiSettings.gensRowCollapsed ? "show models" : "hide models";
+  gensRowToggle.setAttribute("aria-expanded", String(!uiSettings.gensRowCollapsed));
+  updateCollapsedNotes();
+}
+
+function applyDescribeRowCollapse() {
+  describeRow.hidden = uiSettings.describeRowCollapsed;
+  describeCollapsedNote.hidden = !uiSettings.describeRowCollapsed;
+  describeRowToggle.textContent = uiSettings.describeRowCollapsed ? "show" : "hide";
+  describeRowToggle.setAttribute("aria-expanded", String(!uiSettings.describeRowCollapsed));
+  updateCollapsedNotes();
+}
+
+gensRowToggle.addEventListener("click", () => {
+  uiSettings.gensRowCollapsed = !uiSettings.gensRowCollapsed;
+  saveUiSettings();
+  applyGenRowCollapse();
+});
+describeRowToggle.addEventListener("click", () => {
+  uiSettings.describeRowCollapsed = !uiSettings.describeRowCollapsed;
+  saveUiSettings();
+  applyDescribeRowCollapse();
+});
 
 // ---------- image attach: paste / drop / browse (up to maxInputImages) ----------
 
