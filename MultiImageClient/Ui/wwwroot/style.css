@@ -2007,45 +2007,105 @@ body.image-viewer-open { overflow: hidden; }
   cursor: pointer;
 }
 .compact-dialog-actions button[type="submit"] { color: #fff; background: var(--accent); }
+#generator-config-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+#generator-config-tabs button,
+#generator-config-group-tabs button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 3px 3px 0 0;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+#generator-config-tabs button.selected,
+#generator-config-group-tabs button.selected {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.generator-config-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 14px;
+}
+.generator-config-panel[hidden] { display: none; }
+.generator-config-panel > p {
+  margin: 0;
+  color: var(--accent-dark);
+  font-size: 12px;
+}
 .generator-config-sections {
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
-  padding: 0 14px;
   color: var(--accent-dark);
   font-size: 13px;
   font-weight: 700;
 }
-#generator-config-items {
+#generator-config-shown,
+#generator-config-defaults {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
   gap: 10px;
-  padding: 0 14px;
 }
-.generator-config-item-section {
+.generator-config-target-section {
   border: 1px solid var(--line);
   border-radius: 3px;
   overflow: hidden;
 }
-.generator-config-item-section h3 {
+.generator-config-target-section h3 {
   margin: 0;
   padding: 5px 8px;
   color: var(--accent-dark);
   background: #eef0fa;
   font-size: 13px;
 }
-.generator-config-item {
+.generator-config-choice-grid {
   display: grid;
-  grid-template-columns: minmax(130px, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 7px;
-  border-top: 1px solid var(--line);
+  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+  gap: 5px;
+  padding: 6px;
   font-size: 12px;
 }
-.generator-config-item label { white-space: nowrap; }
-#generator-config-presets { display: flex; flex-direction: column; gap: 7px; padding: 0 14px; }
-.generator-config-subhead { display: flex; align-items: center; justify-content: space-between; }
+.generator-config-choice {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 27px;
+  padding: 3px 7px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+}
+.generator-config-choice:hover:not(.unavailable) { border-color: var(--accent); background: #e4e8fb; }
+.generator-config-choice.selected { border-color: var(--accent); background: #eef0fa; }
+.generator-config-choice.unavailable { opacity: 0.45; cursor: not-allowed; }
+.generator-config-choice input { flex: 0 0 auto; accent-color: var(--accent); }
+.generator-config-choice span { min-width: 0; overflow-wrap: anywhere; }
+.generator-config-empty { margin: 0; padding: 5px; color: var(--accent-dark); font-size: 12px; }
+.generator-config-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#generator-config-group-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+#generator-config-group-tabs button { border-radius: 3px; }
 #generator-config-preset-list { display: flex; flex-direction: column; gap: 7px; }
 .generator-config-preset { margin: 0; padding: 7px; border: 1px solid var(--line); border-radius: 3px; }
 .generator-config-preset-head { display: flex; gap: 7px; margin-bottom: 6px; }
@@ -2057,13 +2117,6 @@ body.image-viewer-open { overflow: hidden; }
   border: 1px solid var(--line);
   border-radius: 3px;
 }
-.generator-config-preset-targets {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 3px 8px;
-  font-size: 12px;
-}
-.generator-config-preset-targets label { display: flex; align-items: center; gap: 4px; }
 .claude-advice-instruction {
   display: flex;
   flex-direction: column;
@@ -2370,6 +2423,10 @@ body.image-viewer-open { overflow: hidden; }
 @media (max-width: 700px) {
   .tagline { display: none; }
   #people-bar, #favorites-bar { margin: 8px 10px 0; }
+  #generator-config-shown,
+  #generator-config-defaults { grid-template-columns: 1fr; }
+  .generator-config-choice-grid { grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); }
+  .generator-config-subhead { align-items: flex-start; }
   #logs-columns, .log-row {
     grid-template-columns: 92px minmax(90px, 125px) 34px minmax(0, 1fr);
     column-gap: 7px;

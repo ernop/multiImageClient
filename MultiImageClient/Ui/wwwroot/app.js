@@ -1517,10 +1517,14 @@ function renderGeneratorPresetButtons() {
 
 const generatorConfigDialog = el("generator-config-dialog");
 const generatorConfigForm = el("generator-config-form");
-const generatorConfigItems = el("generator-config-items");
+const generatorConfigShown = el("generator-config-shown");
+const generatorConfigDefaults = el("generator-config-defaults");
+const generatorConfigGroupTabs = el("generator-config-group-tabs");
 const generatorConfigPresetList = el("generator-config-preset-list");
 const generatorConfigStatus = el("generator-config-status");
 let generatorConfigDraft = null;
+let generatorConfigView = "shown";
+let generatorConfigActivePresetId = null;
 
 function copyGeneratorPreferences(source) {
   return {
@@ -1543,111 +1547,206 @@ function setDraftKey(listName, key, enabled) {
   generatorConfigDraft[listName] = [...values];
 }
 
-function renderGeneratorConfigItems() {
-  generatorConfigItems.replaceChildren();
+function renderGeneratorConfigChoices(host, mode) {
+  host.replaceChildren();
   const hidden = new Set(generatorConfigDraft.hiddenGeneratorKeys);
   const selected = new Set(generatorConfigDraft.defaultSelectedKeys);
   for (const [kind, title] of [["image", "make image"], ["describe", "describe image"]]) {
     const section = document.createElement("section");
-    section.className = "generator-config-item-section";
+    section.className = "generator-config-target-section";
     const heading = document.createElement("h3");
     heading.textContent = title;
     section.appendChild(heading);
-    for (const generator of generators.filter((g) =>
-      (g.kind === "describe" ? "describe" : "image") === kind)) {
-      const row = document.createElement("div");
-      row.className = "generator-config-item";
-      const label = document.createElement("strong");
-      label.textContent = generator.label;
-      const showLabel = document.createElement("label");
-      const show = document.createElement("input");
-      show.type = "checkbox";
-      show.checked = !hidden.has(generator.key);
-      showLabel.append(show, document.createTextNode(" show"));
-      const defaultLabel = document.createElement("label");
-      const defaultOn = document.createElement("input");
-      defaultOn.type = "checkbox";
-      defaultOn.checked = selected.has(generator.key);
-      defaultOn.disabled = !show.checked;
-      defaultLabel.append(defaultOn, document.createTextNode(" selected by default"));
-      show.addEventListener("change", () => {
-        setDraftKey("hiddenGeneratorKeys", generator.key, !show.checked);
-        if (!show.checked) {
-          setDraftKey("defaultSelectedKeys", generator.key, false);
-          for (const preset of generatorConfigDraft.presets) {
-            preset.generatorKeys = preset.generatorKeys.filter((key) => key !== generator.key);
+    const grid = document.createElement("div");
+    grid.className = "generator-config-choice-grid";
+    const choices = generators.filter((generator) =>
+      (generator.kind === "describe" ? "describe" : "image") === kind
+      && (mode === "shown" || !hidden.has(generator.key)));
+    for (const generator of choices) {
+      const choice = document.createElement("label");
+      choice.className = "generator-config-choice";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = mode === "shown"
+        ? !hidden.has(generator.key)
+        : selected.has(generator.key);
+      checkbox.disabled = mode === "defaults" && !generator.available;
+      choice.classList.toggle("selected", checkbox.checked);
+      choice.classList.toggle("unavailable", checkbox.disabled);
+      if (!generator.available) {
+        choice.title = `Unavailable now: ${generator.availabilityProblem || "not configured"}`;
+      }
+      const text = document.createElement("span");
+      text.textContent = generator.label;
+      checkbox.addEventListener("change", () => {
+        choice.classList.toggle("selected", checkbox.checked);
+        if (mode === "shown") {
+          setDraftKey("hiddenGeneratorKeys", generator.key, !checkbox.checked);
+          if (!checkbox.checked) {
+            setDraftKey("defaultSelectedKeys", generator.key, false);
+            for (const preset of generatorConfigDraft.presets) {
+              preset.generatorKeys = preset.generatorKeys.filter((key) => key !== generator.key);
+            }
           }
+          renderGeneratorConfig();
+        } else {
+          setDraftKey("defaultSelectedKeys", generator.key, checkbox.checked);
         }
-        renderGeneratorConfig();
       });
-      defaultOn.addEventListener("change", () =>
-        setDraftKey("defaultSelectedKeys", generator.key, defaultOn.checked));
-      row.append(label, showLabel, defaultLabel);
-      section.appendChild(row);
+      choice.append(checkbox, text);
+      grid.appendChild(choice);
     }
-    generatorConfigItems.appendChild(section);
+    if (choices.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "generator-config-empty";
+      empty.textContent = mode === "defaults"
+        ? "No visible targets in this section."
+        : "No targets in this section.";
+      grid.appendChild(empty);
+    }
+    section.appendChild(grid);
+    host.appendChild(section);
+  }
+}
+
+function renderGeneratorConfigGroupTabs() {
+  generatorConfigGroupTabs.replaceChildren();
+  for (const preset of generatorConfigDraft.presets) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = preset.name.trim() || "unnamed group";
+    button.classList.toggle("selected", preset.id === generatorConfigActivePresetId);
+    button.addEventListener("click", () => {
+      generatorConfigActivePresetId = preset.id;
+      renderGeneratorConfigPresets();
+    });
+    generatorConfigGroupTabs.appendChild(button);
   }
 }
 
 function renderGeneratorConfigPresets() {
+  if (generatorConfigActivePresetId &&
+      !generatorConfigDraft.presets.some((preset) => preset.id === generatorConfigActivePresetId)) {
+    generatorConfigActivePresetId = null;
+  }
+  if (!generatorConfigActivePresetId && generatorConfigDraft.presets.length > 0) {
+    generatorConfigActivePresetId = generatorConfigDraft.presets[0].id;
+  }
+  renderGeneratorConfigGroupTabs();
   generatorConfigPresetList.replaceChildren();
-  const visibleImageGenerators = generators.filter((g) =>
-    g.kind !== "describe" && !generatorConfigDraft.hiddenGeneratorKeys.includes(g.key));
-  for (const preset of generatorConfigDraft.presets) {
-    const card = document.createElement("fieldset");
-    card.className = "generator-config-preset";
-    const top = document.createElement("div");
-    top.className = "generator-config-preset-head";
-    const name = document.createElement("input");
-    name.type = "text";
-    name.maxLength = 30;
-    name.value = preset.name;
-    name.placeholder = "button name";
-    name.setAttribute("aria-label", "Personal generator button name");
-    name.addEventListener("input", () => { preset.name = name.value; });
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.textContent = "delete";
-    remove.addEventListener("click", () => {
-      generatorConfigDraft.presets =
-        generatorConfigDraft.presets.filter((candidate) => candidate.id !== preset.id);
-      renderGeneratorConfigPresets();
-    });
-    top.append(name, remove);
-    card.appendChild(top);
-    const targets = document.createElement("div");
-    targets.className = "generator-config-preset-targets";
-    for (const generator of visibleImageGenerators) {
-      const label = document.createElement("label");
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.checked = preset.generatorKeys.includes(generator.key);
-      checkbox.addEventListener("change", () => {
-        const keys = new Set(preset.generatorKeys);
-        if (checkbox.checked) keys.add(generator.key);
-        else keys.delete(generator.key);
-        preset.generatorKeys = [...keys];
-      });
-      label.append(checkbox, document.createTextNode(generator.label));
-      targets.appendChild(label);
+  const preset = generatorConfigDraft.presets.find(
+    (candidate) => candidate.id === generatorConfigActivePresetId);
+  if (!preset) {
+    const empty = document.createElement("p");
+    empty.className = "generator-config-empty";
+    empty.textContent = "No personal groups yet. Create one to add a complete generator selection button.";
+    generatorConfigPresetList.appendChild(empty);
+    return;
+  }
+
+  const card = document.createElement("fieldset");
+  card.className = "generator-config-preset";
+  const top = document.createElement("div");
+  top.className = "generator-config-preset-head";
+  const name = document.createElement("input");
+  name.type = "text";
+  name.maxLength = 30;
+  name.value = preset.name;
+  name.placeholder = "group name";
+  name.setAttribute("aria-label", "Personal generator group name");
+  name.addEventListener("input", () => {
+    preset.name = name.value;
+    renderGeneratorConfigGroupTabs();
+  });
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "delete group";
+  remove.addEventListener("click", () => {
+    generatorConfigDraft.presets =
+      generatorConfigDraft.presets.filter((candidate) => candidate.id !== preset.id);
+    generatorConfigActivePresetId = generatorConfigDraft.presets[0]?.id || null;
+    renderGeneratorConfigPresets();
+  });
+  top.append(name, remove);
+  card.appendChild(top);
+
+  const section = document.createElement("section");
+  section.className = "generator-config-target-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "image generators in this group";
+  section.appendChild(heading);
+  const grid = document.createElement("div");
+  grid.className = "generator-config-choice-grid";
+  const visibleImageGenerators = generators.filter((generator) =>
+    generator.kind !== "describe"
+    && !generatorConfigDraft.hiddenGeneratorKeys.includes(generator.key));
+  for (const generator of visibleImageGenerators) {
+    const choice = document.createElement("label");
+    choice.className = "generator-config-choice";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = preset.generatorKeys.includes(generator.key);
+    checkbox.disabled = !generator.available;
+    choice.classList.toggle("selected", checkbox.checked);
+    choice.classList.toggle("unavailable", checkbox.disabled);
+    if (!generator.available) {
+      choice.title = `Unavailable now: ${generator.availabilityProblem || "not configured"}`;
     }
-    card.appendChild(targets);
-    generatorConfigPresetList.appendChild(card);
+    const text = document.createElement("span");
+    text.textContent = generator.label;
+    checkbox.addEventListener("change", () => {
+      const keys = new Set(preset.generatorKeys);
+      if (checkbox.checked) keys.add(generator.key);
+      else keys.delete(generator.key);
+      preset.generatorKeys = [...keys];
+      choice.classList.toggle("selected", checkbox.checked);
+    });
+    choice.append(checkbox, text);
+    grid.appendChild(choice);
+  }
+  if (visibleImageGenerators.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "generator-config-empty";
+    empty.textContent = "Show at least one image generator before configuring this group.";
+    grid.appendChild(empty);
+  }
+  section.appendChild(grid);
+  card.appendChild(section);
+  generatorConfigPresetList.appendChild(card);
+}
+
+function setGeneratorConfigView(view) {
+  generatorConfigView = view;
+  for (const button of el("generator-config-tabs").querySelectorAll("[data-generator-config-view]")) {
+    const active = button.dataset.generatorConfigView === view;
+    button.setAttribute("aria-selected", String(active));
+    button.classList.toggle("selected", active);
+  }
+  for (const candidate of ["shown", "defaults", "groups"]) {
+    el(`generator-config-${candidate}-panel`).hidden = candidate !== view;
   }
 }
 
 function renderGeneratorConfig() {
   el("generator-config-show-image").checked = generatorConfigDraft.showImageSection;
   el("generator-config-show-describe").checked = generatorConfigDraft.showDescribeSection;
-  renderGeneratorConfigItems();
+  renderGeneratorConfigChoices(generatorConfigShown, "shown");
+  renderGeneratorConfigChoices(generatorConfigDefaults, "defaults");
   renderGeneratorConfigPresets();
+  setGeneratorConfigView(generatorConfigView);
 }
 
 function openGeneratorConfig() {
   generatorConfigDraft = copyGeneratorPreferences(generatorPreferences);
   generatorConfigStatus.textContent = "";
+  generatorConfigActivePresetId = generatorConfigDraft.presets[0]?.id || null;
+  generatorConfigView = "shown";
   renderGeneratorConfig();
   generatorConfigDialog.showModal();
+}
+
+for (const button of el("generator-config-tabs").querySelectorAll("[data-generator-config-view]")) {
+  button.addEventListener("click", () => setGeneratorConfigView(button.dataset.generatorConfigView));
 }
 
 el("generator-config-toggle").addEventListener("click", openGeneratorConfig);
@@ -1664,8 +1763,10 @@ el("generator-config-add-preset").addEventListener("click", () => {
     ? crypto.randomUUID().replaceAll("-", "")
     : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
   generatorConfigDraft.presets.push({ id, name: "", generatorKeys: [] });
+  generatorConfigActivePresetId = id;
   renderGeneratorConfigPresets();
-  generatorConfigPresetList.lastElementChild?.querySelector("input[type=text]")?.focus();
+  setGeneratorConfigView("groups");
+  generatorConfigPresetList.querySelector("input[type=text]")?.focus();
 });
 generatorConfigForm.addEventListener("submit", async (event) => {
   event.preventDefault();
