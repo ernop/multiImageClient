@@ -19,7 +19,7 @@ namespace MultiImageClient
         private static readonly string[] BillingMarkers =
         {
             "paymentrequired", "payment required", "insufficient balance",
-            "insufficient credit", "out of credit", "billing", "quota",
+            "insufficient credit", "not enough credit", "out of credit", "billing", "quota",
             "recharge", "exceeded your current", "402",
         };
 
@@ -97,6 +97,12 @@ namespace MultiImageClient
             if (provider == null)
             {
                 return null;
+            }
+            if (billing && string.Equals(provider, "Recraft", StringComparison.Ordinal))
+            {
+                return new Hint(
+                    "Recraft API units are exhausted — buy more API units, then resend (no restart needed)",
+                    billingUrl);
             }
 
             return billing

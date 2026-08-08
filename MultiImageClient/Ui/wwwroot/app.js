@@ -23,6 +23,7 @@ let inputImageItems = [];    // [{ file: Blob, url: objectURL }]
 let maxInputImages = 4;
 let generators = [];         // from /api/config
 let videoSource = null;       // { jobId, generator, index, url }
+let videoDialogSelectionVersion = 0;
 let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
 let spellfix = { available: false, availabilityProblem: "configuration not loaded" };
 let spellfixPrevious = null;  // prompt text as it was before the last fix, for undo
@@ -3067,22 +3068,74 @@ const genLabel = (key) => key === "grok-web-video"
   ? "grok-web video"
   : (generators.find((g) => g.key === key) || { label: key }).label;
 
-function openVideoDialog(jobId, generator, index, url, sourcePrompt, videoOptions = {}) {
+function clearVideoDialogPresentation() {
+  videoSource = null;
+  const preview = el("video-source-preview");
+  preview.hidden = true;
+  preview.removeAttribute("src");
+  preview.alt = "";
+  el("video-prompt").value = "";
+  el("video-mode").value = "normal";
+  el("video-duration").value = "15";
+  el("video-resolution").value = "480p";
+  el("video-aspect").value = "source";
+  el("video-error").textContent = "";
+  el("video-error").classList.remove("loading");
+  el("video-form").removeAttribute("aria-busy");
+  el("video-submit").disabled = false;
+}
+
+async function openVideoDialog(jobId, generator, index, url, sourcePrompt, videoOptions = {}) {
+  // A closed dialog must retain no prior item's pixels or chrome. Present the
+  // new item's fields with a neutral loading state, then reveal its source
+  // image only after that exact image has decoded.
+  clearVideoDialogPresentation();
+  const selectionVersion = ++videoDialogSelectionVersion;
   videoSource = { jobId, generator, index, url };
-  el("video-source-preview").src = url;
+  const preview = el("video-source-preview");
   el("video-prompt").value = sourcePrompt || "";
   el("video-mode").value = videoOptions.mode || "normal";
   el("video-duration").value = String(videoOptions.durationSeconds || 15);
   el("video-resolution").value = videoOptions.resolution || "480p";
   el("video-aspect").value = videoOptions.aspectRatio || "source";
-  el("video-error").textContent = "";
+  const error = el("video-error");
+  error.textContent = "loading selected source image…";
+  error.classList.add("loading");
+  el("video-form").setAttribute("aria-busy", "true");
+  el("video-submit").disabled = true;
+  preview.src = url;
   videoDialog.showModal();
   el("video-prompt").focus();
+
+  try {
+    await preview.decode();
+    if (selectionVersion !== videoDialogSelectionVersion || !videoDialog.open) return;
+    if (!preview.naturalWidth || !preview.naturalHeight) {
+      throw new Error("The selected source image decoded without dimensions.");
+    }
+    preview.alt = "Selected source image";
+    preview.hidden = false;
+    error.textContent = "";
+    error.classList.remove("loading");
+    el("video-form").removeAttribute("aria-busy");
+    el("video-submit").disabled = false;
+  } catch {
+    if (selectionVersion !== videoDialogSelectionVersion || !videoDialog.open) return;
+    preview.hidden = true;
+    preview.removeAttribute("src");
+    error.textContent = "The selected source image could not be loaded.";
+    error.classList.remove("loading");
+    el("video-form").removeAttribute("aria-busy");
+  }
 }
 
 el("video-cancel").addEventListener("click", () => videoDialog.close());
 videoDialog.addEventListener("click", (e) => {
   if (e.target === videoDialog) videoDialog.close();
+});
+videoDialog.addEventListener("close", () => {
+  videoDialogSelectionVersion++;
+  clearVideoDialogPresentation();
 });
 el("video-form").addEventListener("submit", async (e) => {
   e.preventDefault();

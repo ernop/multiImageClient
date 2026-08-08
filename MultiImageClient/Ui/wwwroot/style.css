@@ -2027,6 +2027,7 @@ body.image-viewer-open { overflow: hidden; }
 }
 #video-duration { width: 58px; }
 #video-error { min-height: 20px; color: var(--err); font-size: 13px; font-weight: 700; }
+#video-error.loading { color: var(--accent-dark); }
 .video-dialog-actions { display: flex; justify-content: flex-end; padding: 0 16px 16px; }
 #video-submit {
   font: inherit;
