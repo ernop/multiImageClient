@@ -35,6 +35,7 @@
   "SaveJsonLog": true,
   "EnableGenerationArchive": true,
   "GenerationArchiveDbPath": "Optional: local SQLite audit database path. Leave blank to use ImageDownloadBaseFolder/generation-history.sqlite3.",
+  "UiCommunityDbPath": "",
   "EnableLogging": true,
   "AnnotationSide": "right",
   "FlatImageMirrorPath": "",
