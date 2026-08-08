@@ -102,10 +102,14 @@ let imageViewerPreloadActive = 0;
 // ahead-of-travel neighbors over stale far-behind fetches still queued.
 const imageViewerPreloadWaiters = [];
 const imageViewerCache = new Map();
-// ±10 is enough to scrub Left/Right without hitching; travel direction only
-// reorders priority inside the window (ahead first), not its shape.
+// ±10 is enough to scrub Left/Right without hitching. Keep prompt-jump landing
+// points warm too: Ctrl+Left/Right selects the first image of another prompt,
+// which may sit well outside the flat-image window when jobs have many results.
+// Every render recenters this bounded working set around the current item.
 const ImageViewerPreloadAhead = 10;
 const ImageViewerPreloadBehind = 10;
+const ImageViewerPreloadNextPrompts = 3;
+const ImageViewerPreloadPreviousPrompts = 2;
 const ImageViewerPreloadConcurrency = 6;
 const ImageViewerPageJumpSize = 5;
 const ImageViewerWheelThreshold = 80;
@@ -3018,14 +3022,12 @@ function loadImageViewerEntry(url, priority) {
   return entry;
 }
 
-// Build the ±10 preload window. Priority bands (lower = sooner):
-//   0     current output
-//   1     current input (compare mode)
-//   2+d   ahead-of-travel neighbor at distance d
-//   1000+d behind-travel neighbor at distance d
-// Travel bias (imageViewerNavDelta) only reorders inside the window — both
-// sides stay warm so a reverse turn does not hitch. The render path never
-// clears the previous decoded frame until the next blob is ready.
+// Build the bounded preload working set. Once the current frame is ready, the
+// first speculative fetches are the next flat item plus the first image of the
+// next three and previous two prompts. Those are the Ctrl+Left/Right landing
+// points. The remaining ±10 flat-image runway follows, biased toward travel.
+// The render path never clears the previous decoded frame until the next blob
+// is ready.
 function prepareImageViewerWindow(prompts, current) {
   const allItems = prompts.flatMap((prompt) => prompt.items);
   const currentIndex = allItems.findIndex((item) =>
@@ -3051,6 +3053,16 @@ function prepareImageViewerWindow(prompts, current) {
     if (prompt && prompt.hasInput) want(imageViewerInputUrl(item.jobId), priority + 0.5);
   };
 
+  const considerPromptFirst = (promptIndex, priority) => {
+    if (promptIndex < 0 || promptIndex >= prompts.length) return;
+    const item = prompts[promptIndex].items[0];
+    if (!item) return;
+    want(item.url, priority);
+    if (imageViewerCompareInput && prompts[promptIndex].hasInput) {
+      want(imageViewerInputUrl(item.jobId), priority + 0.5);
+    }
+  };
+
   want(current.item.url, 0);
   if (imageViewerCompareInput && current.prompt.hasInput) {
     want(imageViewerInputUrl(current.item.jobId), 1);
@@ -3059,8 +3071,25 @@ function prepareImageViewerWindow(prompts, current) {
   // after is speculative runway.
   const immediateCount = schedule.length;
 
-  for (let distance = 1; distance <= ImageViewerPreloadAhead; distance++) {
-    consider(currentIndex + aheadSign * distance, 2 + distance);
+  // Fill the first six speculative network slots with the most likely single
+  // step plus every prompt-jump landing point. Direction changes reverse which
+  // prompt side starts first without removing either side from the cache.
+  consider(currentIndex + aheadSign, 2);
+  const nextPromptCount = aheadSign > 0
+    ? ImageViewerPreloadNextPrompts
+    : ImageViewerPreloadPreviousPrompts;
+  const previousPromptCount = aheadSign > 0
+    ? ImageViewerPreloadPreviousPrompts
+    : ImageViewerPreloadNextPrompts;
+  for (let distance = 1; distance <= nextPromptCount; distance++) {
+    considerPromptFirst(current.promptIndex + aheadSign * distance, 10 + distance);
+  }
+  for (let distance = 1; distance <= previousPromptCount; distance++) {
+    considerPromptFirst(current.promptIndex - aheadSign * distance, 100 + distance);
+  }
+
+  for (let distance = 2; distance <= ImageViewerPreloadAhead; distance++) {
+    consider(currentIndex + aheadSign * distance, 200 + distance);
   }
   for (let distance = 1; distance <= ImageViewerPreloadBehind; distance++) {
     consider(currentIndex - aheadSign * distance, 1000 + distance);
