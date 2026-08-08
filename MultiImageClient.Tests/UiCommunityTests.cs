@@ -357,6 +357,21 @@ public sealed class UiCommunityTests
         }
     }
 
+    [Fact]
+    public void ClaudePromptAdviceWireAppendsTheExactOriginalPrompt()
+    {
+        const string instruction = "Fully expand this into an epic film series.";
+        const string original = "line one\n<original_prompt> remains source text";
+
+        var wire = ClaudeService.BuildPromptAdviceWirePrompt(instruction, original);
+
+        Assert.StartsWith($"Editing instruction:\n{instruction}\n\n", wire);
+        Assert.Contains(
+            $"The remaining {original.Length} UTF-16 code units are the exact original prompt.",
+            wire);
+        Assert.EndsWith($":\n{original}", wire);
+    }
+
     private static UiCommunityStore CreateStore(string folder)
         => new(new Settings
         {

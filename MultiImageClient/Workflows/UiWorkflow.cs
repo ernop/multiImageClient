@@ -41,7 +41,9 @@ namespace MultiImageClient
     ///   GET  /api/input-images                 distinct user-uploaded input images, newest first
     ///                                          (SHA-256 deduped), for the composer's load picker
     ///   GET  /api/logs/poll?after=N            current-process log lines after sequence N
-    ///   POST /api/prompt/spellfix              Claude spelling-only correction -> {corrected}
+    ///   POST /api/generator-preferences        authenticated user's chooser visibility/defaults/presets
+    ///   POST /api/prompt/advice                user-directed Claude prompt edit -> {replacement}
+    ///   GET  /api/prompt/advice/history        exact, durable Claude exchange history for this user
     ///   GET  /api/archive/days                 archived (pre-today) days with job counts
     ///   GET  /api/archive/days/{day}           one archived day's jobs + full event history
     ///   GET  /api/users                        every creator name with job counts (filter bar)
@@ -1190,42 +1192,41 @@ namespace MultiImageClient
                     ClaudeService.PromptAdviceSystemPrompt,
                     wirePrompt,
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                string rawResponse;
+                string replacement;
+                string failure;
                 try
                 {
                     var result = await claudeService.GetPromptAdviceAsync(instruction, prompt);
-                    community.CompleteClaudePromptExchange(
-                        exchange.Id,
-                        result.RawResponse,
-                        result.ResultPrompt,
-                        result.Error,
-                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    if (result.Error.Length > 0)
-                    {
-                        Logger.Log($"UI Claude advice {exchange.Id} failed for '{actorDisplay}': {result.Error}");
-                        return Results.Json(
-                            new { error = result.Error, exchangeId = exchange.Id },
-                            statusCode: 502);
-                    }
-                    Logger.Log($"UI Claude advice {exchange.Id} completed for '{actorDisplay}'.");
-                    return Results.Json(new
-                    {
-                        replacement = result.ResultPrompt,
-                        exchangeId = exchange.Id,
-                    });
+                    rawResponse = result.RawResponse;
+                    replacement = result.ResultPrompt;
+                    failure = result.Error;
                 }
                 catch (Exception ex)
                 {
-                    community.CompleteClaudePromptExchange(
-                        exchange.Id,
-                        "",
-                        "",
-                        ex.Message,
-                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    Logger.Log($"UI Claude advice {exchange.Id} failed for '{actorDisplay}': {ex.Message}");
+                    rawResponse = "";
+                    replacement = "";
+                    failure = ex.Message;
+                }
+                community.CompleteClaudePromptExchange(
+                    exchange.Id,
+                    rawResponse,
+                    replacement,
+                    failure,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                if (failure.Length > 0)
+                {
+                    Logger.Log($"UI Claude advice {exchange.Id} failed for '{actorDisplay}': {failure}");
                     return Results.Json(
-                        new { error = ex.Message, exchangeId = exchange.Id },
+                        new { error = failure, exchangeId = exchange.Id },
                         statusCode: 502);
                 }
+                Logger.Log($"UI Claude advice {exchange.Id} completed for '{actorDisplay}'.");
+                return Results.Json(new
+                {
+                    replacement,
+                    exchangeId = exchange.Id,
+                });
             });
 
             app.MapGet("/api/prompt/advice/history", (
