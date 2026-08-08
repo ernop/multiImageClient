@@ -159,6 +159,40 @@ header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
 }
 .settings-note { margin: 0; font-size: 12px; color: var(--accent-dark); }
 
+/* Model group buttons management (settings panel): one row per group with a
+   shown/hidden checkbox; user-saved groups add a delete button. */
+#gen-groups-settings { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.gen-groups-settings-note { margin: 0; font-size: 12px; color: var(--accent-dark); }
+#gen-groups-list { display: flex; flex-direction: column; gap: 4px; }
+.gen-group-row { display: flex; align-items: center; gap: 8px; }
+.gen-group-row label {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  cursor: pointer;
+  min-width: 0;
+}
+.gen-group-row input { flex: none; align-self: center; }
+.gen-group-row .gen-group-keys {
+  font-size: 11px;
+  color: var(--accent-dark);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gen-group-row .gen-group-delete {
+  margin-left: auto;
+  font: inherit;
+  font-size: 11px;
+  color: var(--err);
+  background: var(--card);
+  border: 1px solid var(--err);
+  border-radius: 3px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.gen-group-row .gen-group-delete:hover { color: #fff; background: var(--err); }
+
 body.logs-open { overflow: hidden; }
 #logs-panel {
   position: fixed;
@@ -745,6 +779,22 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   cursor: pointer;
 }
 #gen-controls button:hover { color: #fff; background: var(--accent); }
+/* Group buttons flow inline with the basic actions; #gen-groups is a pure
+   grouping node so its children join the same flex row. */
+#gen-groups { display: contents; }
+/* Saved-selection group buttons read as presets, not actions: green accent
+   (semantic color, not gray) separates them from all/none/invert. */
+#gen-controls .gen-group-btn {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+#gen-controls .gen-group-btn:hover { color: #fff; background: var(--ok); }
+#gen-group-save { font-weight: 400; }
+/* The chip-row collapse toggle sits at the far right of the controls row;
+   the note beside it summarizes the hidden selection. */
+#gens-row-toggle { margin-left: auto; font-weight: 400; }
+#gens-collapsed-note { font-size: 12px; margin-left: auto; }
+#gens-collapsed-note:not([hidden]) + #gens-row-toggle { margin-left: 0; }
 
 #gens-row {
   display: grid;
@@ -789,6 +839,9 @@ main { max-width: 1280px; margin: 0 auto; padding: 18px 22px 60px; }
   background: var(--card); cursor: pointer;
 }
 #describe-head button:hover { border-color: var(--accent); }
+#describe-row-toggle { margin-left: auto; }
+#describe-collapsed-note { font-size: 11px; margin-left: auto; }
+#describe-collapsed-note:not([hidden]) + #describe-row-toggle { margin-left: 0; }
 #describe-row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
