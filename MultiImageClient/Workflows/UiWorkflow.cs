@@ -105,6 +105,16 @@ namespace MultiImageClient
                 favorites = new UiFavoriteStore(settings);
                 visibility = new UiVisibilityStore(settings);
                 community = new UiCommunityStore(settings);
+                if (auth != null)
+                {
+                    community.ReserveLoginNames(auth.ListAccountNames());
+                }
+                foreach (var attribution in jobs.ListAuthenticatedAttributions())
+                {
+                    community.ReserveAliases(
+                        attribution.CreatorLogin,
+                        attribution.Aliases);
+                }
             }
             catch (Exception ex)
             {
@@ -114,11 +124,12 @@ namespace MultiImageClient
             var activeJobs = new ConcurrentDictionary<string, Task>();
             await using var runner = new UiJobRunner(settings, stats, options);
 
-            // Claude-backed spelling-only prompt correction ("fix spelling" in
-            // the composer). Gated on AnthropicApiKey like every other lazy key.
-            var spellfixProblem = ProviderKeyValidator.DescribeTextKeyProblem(
+            // User-directed prompt editing through Claude. The exact system
+            // prompt, instruction, source prompt, wire prompt, response, and
+            // outcome are persisted by UiCommunityStore for audit/history.
+            var claudeAdviceProblem = ProviderKeyValidator.DescribeTextKeyProblem(
                 nameof(settings.AnthropicApiKey), settings.AnthropicApiKey);
-            var claudeService = spellfixProblem == null
+            var claudeService = claudeAdviceProblem == null
                 ? new ClaudeService(settings.AnthropicApiKey, maxConcurrency: 2, stats)
                 : null;
 
@@ -241,6 +252,11 @@ namespace MultiImageClient
 
             app.MapGet("/api/config", (HttpContext ctx) =>
             {
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var profileSnapshot = community.SnapshotProfiles();
+                var currentProfile = profileSnapshot.Profiles.FirstOrDefault(profile =>
+                    string.Equals(profile.Login, authUser, StringComparison.OrdinalIgnoreCase));
+                var generatorPreferences = community.GetGeneratorPreferences(authUser);
                 // Display order: gpt-image-2, grok-*, ideogram, recraft, then the
                 // rest; unavailable targets (missing keys, gated local models)
                 // sink to the end via the stable OrderBy below.
@@ -361,11 +377,27 @@ namespace MultiImageClient
                         available = runner.IsAvailable(UiJobRunner.KeyGrokWebVideo),
                         availabilityProblem = runner.DescribeAvailabilityProblem(UiJobRunner.KeyGrokWebVideo),
                     },
-                    spellfix = new
+                    claudeAdvice = new
                     {
-                        available = spellfixProblem == null,
-                        availabilityProblem = spellfixProblem,
+                        available = claudeAdviceProblem == null,
+                        availabilityProblem = claudeAdviceProblem,
                     },
+                    generatorPreferences = generatorPreferences == null
+                        ? null
+                        : new
+                        {
+                            showImageSection = generatorPreferences.ShowImageSection,
+                            showDescribeSection = generatorPreferences.ShowDescribeSection,
+                            hiddenGeneratorKeys = generatorPreferences.HiddenGeneratorKeys,
+                            defaultSelectedKeys = generatorPreferences.DefaultSelectedKeys,
+                            presets = generatorPreferences.Presets.Select(preset => new
+                            {
+                                preset.Id,
+                                preset.Name,
+                                generatorKeys = preset.GeneratorKeys,
+                            }),
+                            updatedAtUnixMs = generatorPreferences.UpdatedAtUnixMs,
+                        },
                     // gpt-image-2 anti-murk guidance: on by default, textbox
                     // prefilled with this text, appended server-side to the
                     // gpt2 target's prompt only.
@@ -397,7 +429,14 @@ namespace MultiImageClient
                     auth = new
                     {
                         enabled = auth != null,
-                        user = ctx.Items["micUser"] as string ?? "",
+                        user = authUser,
+                        profile = currentProfile == null
+                            ? null
+                            : new
+                            {
+                                publicId = currentProfile.PublicId,
+                                displayName = currentProfile.DisplayName,
+                            },
                     },
                     notifications = new
                     {
@@ -408,19 +447,234 @@ namespace MultiImageClient
                 });
             });
 
+            app.MapPost("/api/generator-preferences", async (HttpRequest request) =>
+            {
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (authUser.Length == 0)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = "Server-persistent generator preferences require an authenticated login; open local mode stores them in this browser.",
+                    });
+                }
+                UiGeneratorPreferencesRequest? submitted;
+                try
+                {
+                    submitted = await request.ReadFromJsonAsync<UiGeneratorPreferencesRequest>();
+                }
+                catch (JsonException ex)
+                {
+                    return Results.BadRequest(new { error = $"generator preferences are not valid JSON: {ex.Message}" });
+                }
+                if (submitted == null)
+                {
+                    return Results.BadRequest(new { error = "generator preferences are required" });
+                }
+                try
+                {
+                    var normalized = NormalizeGeneratorPreferences(authUser, submitted, runner);
+                    community.SaveGeneratorPreferences(normalized);
+                    Logger.Log($"UI generator preferences: '{authUser}' updated chooser visibility, defaults, and {normalized.Presets.Count} preset(s).");
+                    return Results.Json(new
+                    {
+                        ok = true,
+                        updatedAtUnixMs = normalized.UpdatedAtUnixMs,
+                    });
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapGet("/api/profiles", (long? version, HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                var snapshot = community.SnapshotProfiles();
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var currentPublicId = UiCommunityStore.PublicIdentityId(authUser);
+                if (version == snapshot.Version)
+                {
+                    return Results.Json(new { version = snapshot.Version, unchanged = true });
+                }
+                return Results.Json(new
+                {
+                    version = snapshot.Version,
+                    unchanged = false,
+                    currentPublicId,
+                    profiles = snapshot.Profiles.Select(profile => new
+                    {
+                        publicId = profile.PublicId,
+                        displayName = profile.DisplayName,
+                    }),
+                });
+            });
+
+            app.MapPost("/api/profile", async (HttpRequest request) =>
+            {
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (authUser.Length == 0)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = "Profile-wide attribution requires an authenticated account.",
+                    });
+                }
+                var form = await request.ReadFormAsync();
+                if (!TryNormalizeCreatorName(
+                    form["displayName"].ToString(),
+                    out var displayName,
+                    out var displayError))
+                {
+                    return Results.BadRequest(new { error = displayError });
+                }
+                try
+                {
+                    var profile = community.SetProfileName(
+                        authUser,
+                        displayName,
+                        jobs.ListHistoricalAliasesForLogin(authUser),
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    Logger.Log(
+                        $"UI profile: authenticated account '{authUser}' set its public name to '{displayName}'.");
+                    return Results.Json(new
+                    {
+                        publicId = profile.PublicId,
+                        displayName = profile.DisplayName,
+                        version = community.SnapshotProfiles().Version,
+                    });
+                }
+                catch (UiProfileNameConflictException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 409);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"UI profile: rename failed for '{authUser}': {ex.Message}");
+                    return Results.Json(
+                        new { error = "The profile name change could not be persisted." },
+                        statusCode: 500);
+                }
+            });
+
+            // Explicit developer-only legacy ownership assignment. It changes
+            // exactly one job identified by id and only while CreatorLogin is
+            // still blank; CreatedBy remains untouched as the audit record.
+            app.MapPost("/api/admin/legacy-attribution", async (HttpRequest request) =>
+            {
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (!IsDeveloperLogin(authUser))
+                {
+                    return Results.Json(new { error = "not found" }, statusCode: 404);
+                }
+                if (auth == null)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = "Legacy attribution requires the authenticated shared site.",
+                    });
+                }
+                var form = await request.ReadFormAsync();
+                var jobId = form["jobId"].ToString().Trim();
+                var expectedCreatedBy = form["expectedCreatedBy"].ToString();
+                var requestedTarget = form["targetLogin"].ToString().Trim();
+                var targetLogin = auth.ListAccountNames().FirstOrDefault(account =>
+                    string.Equals(account, requestedTarget, StringComparison.OrdinalIgnoreCase));
+                if (jobId.Length == 0
+                    || expectedCreatedBy.Length == 0
+                    || targetLogin == null)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = "jobId, exact expectedCreatedBy, and an existing targetLogin are required.",
+                    });
+                }
+
+                var job = jobs.Get(jobId);
+                if (job == null)
+                {
+                    return Results.NotFound(new { error = "The exact job does not exist." });
+                }
+                if (job.CreatorLogin.Length != 0)
+                {
+                    return Results.Conflict(new
+                    {
+                        error = "This job already has an authenticated owner.",
+                    });
+                }
+                if (!string.Equals(job.CreatedBy, expectedCreatedBy, StringComparison.Ordinal))
+                {
+                    return Results.Conflict(new
+                    {
+                        error = "The job's historical attribution no longer matches expectedCreatedBy.",
+                    });
+                }
+
+                try
+                {
+                    community.ReserveAliases(targetLogin, new[] { expectedCreatedBy });
+                    var assigned = jobs.AssignLegacyCreatorLogin(
+                        jobId,
+                        expectedCreatedBy,
+                        targetLogin);
+                    var profiles = community.SnapshotProfiles();
+                    var targetProfile = profiles.Profiles.FirstOrDefault(profile =>
+                        string.Equals(
+                            profile.Login,
+                            targetLogin,
+                            StringComparison.OrdinalIgnoreCase));
+                    if (targetProfile != null)
+                    {
+                        community.SetProfileName(
+                            targetLogin,
+                            targetProfile.DisplayName,
+                            jobs.ListHistoricalAliasesForLogin(targetLogin),
+                            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    }
+                    Logger.Log(
+                        $"UI profile admin: '{authUser}' assigned legacy job {jobId} "
+                        + $"('{expectedCreatedBy}') to authenticated account '{targetLogin}'.");
+                    var latestProfiles = community.SnapshotProfiles();
+                    return Results.Json(new
+                    {
+                        jobId = assigned.Id,
+                        originalUser = assigned.CreatedBy,
+                        ownerId = UiCommunityStore.PublicIdentityId(assigned.CreatorLogin),
+                        user = latestProfiles.ResolveDisplay(
+                            assigned.CreatorLogin,
+                            assigned.CreatedBy),
+                    });
+                }
+                catch (UiProfileNameConflictException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 409);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log(
+                        $"UI profile admin: legacy assignment failed for {jobId}: {ex.Message}");
+                    return Results.Json(
+                        new { error = "The exact legacy attribution assignment failed." },
+                        statusCode: 500);
+                }
+            });
+
             // Live (hydrated) job summaries. Full multi-day history is indexed
             // on disk and served through /api/archive — this endpoint no longer
             // returns every historical job as in-process objects.
             app.MapGet("/api/jobs", (HttpContext ctx) =>
             {
                 var authUser = ctx.Items["micUser"] as string ?? "";
+                var profileSnapshot = community.SnapshotProfiles();
                 var list = jobs.ListChronological()
                     .Where(j => !visibility.IsPromptHidden(j.Id))
                     .Select(j => new
                     {
                         id = j.Id,
                         prompt = j.Prompt,
-                        user = j.CreatedBy,
+                        user = profileSnapshot.ResolveDisplay(j.CreatorLogin, j.CreatedBy),
+                        originalUser = j.CreatedBy,
+                        ownerId = UiCommunityStore.PublicIdentityId(j.CreatorLogin),
                         gens = j.GeneratorKeys,
                         hasImage = j.HasInputImage,
                         inputCount = j.InputImageCount,
@@ -452,6 +706,7 @@ namespace MultiImageClient
                 if (!TryResolveCreatorName(
                     form["user"].ToString(),
                     request.HttpContext.Items["micUser"] as string ?? "",
+                    community,
                     out var createdBy,
                     out var userError))
                 {
@@ -689,7 +944,13 @@ namespace MultiImageClient
                         }
                     });
                     admission = null;
-                    return Results.Json(new { id = job.Id });
+                    return Results.Json(new
+                    {
+                        id = job.Id,
+                        user = createdBy,
+                        originalUser = createdBy,
+                        ownerId = UiCommunityStore.PublicIdentityId(job.CreatorLogin),
+                    });
                 }
                 finally
                 {
@@ -714,6 +975,7 @@ namespace MultiImageClient
                 if (!TryResolveCreatorName(
                     form["user"].ToString(),
                     request.HttpContext.Items["micUser"] as string ?? "",
+                    community,
                     out var videoCreatedBy,
                     out var videoUserError))
                 {
@@ -870,7 +1132,13 @@ namespace MultiImageClient
                         }
                     });
                     admission = null;
-                    return Results.Json(new { id = job.Id });
+                    return Results.Json(new
+                    {
+                        id = job.Id,
+                        user = videoCreatedBy,
+                        originalUser = videoCreatedBy,
+                        ownerId = UiCommunityStore.PublicIdentityId(job.CreatorLogin),
+                    });
                 }
                 finally
                 {
@@ -878,31 +1146,126 @@ namespace MultiImageClient
                 }
             });
 
-            // Spelling-only prompt correction via Claude (temperature 0, no
-            // rephrasing). The frontend keeps the pre-fix text for its undo
-            // button; the server is stateless here.
-            app.MapPost("/api/prompt/spellfix", async (HttpRequest request) =>
+            app.MapPost("/api/prompt/advice", async (HttpRequest request) =>
             {
                 if (claudeService == null)
                 {
-                    return Results.BadRequest(new { error = spellfixProblem });
+                    return Results.BadRequest(new { error = claudeAdviceProblem });
                 }
                 var form = await request.ReadFormAsync();
                 var prompt = form["prompt"].ToString();
+                var instruction = form["instruction"].ToString().Trim();
                 if (string.IsNullOrWhiteSpace(prompt))
                 {
                     return Results.BadRequest(new { error = "prompt is empty" });
                 }
+                if (prompt.Length > 100_000)
+                {
+                    return Results.BadRequest(new { error = "prompt must be 100,000 characters or fewer" });
+                }
+                if (instruction.Length == 0 || instruction.Length > 4000)
+                {
+                    return Results.BadRequest(new { error = "Claude instruction must be between 1 and 4,000 characters" });
+                }
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (!TryResolveCreatorName(
+                    form["user"].ToString(),
+                    authUser,
+                    community,
+                    out var actorDisplay,
+                    out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+                var identityKey = authUser.Length > 0
+                    ? "login:" + authUser
+                    : "display:" + actorDisplay.ToUpperInvariant();
+                var wirePrompt = ClaudeService.BuildPromptAdviceWirePrompt(instruction, prompt);
+                var exchange = community.StartClaudePromptExchange(
+                    identityKey,
+                    actorDisplay,
+                    ClaudeService.PromptAdviceModel,
+                    instruction,
+                    prompt,
+                    ClaudeService.PromptAdviceSystemPrompt,
+                    wirePrompt,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 try
                 {
-                    var corrected = await claudeService.FixSpellingAsync(prompt);
-                    return Results.Json(new { corrected });
+                    var result = await claudeService.GetPromptAdviceAsync(instruction, prompt);
+                    community.CompleteClaudePromptExchange(
+                        exchange.Id,
+                        result.RawResponse,
+                        result.ResultPrompt,
+                        result.Error,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    if (result.Error.Length > 0)
+                    {
+                        Logger.Log($"UI Claude advice {exchange.Id} failed for '{actorDisplay}': {result.Error}");
+                        return Results.Json(
+                            new { error = result.Error, exchangeId = exchange.Id },
+                            statusCode: 502);
+                    }
+                    Logger.Log($"UI Claude advice {exchange.Id} completed for '{actorDisplay}'.");
+                    return Results.Json(new
+                    {
+                        replacement = result.ResultPrompt,
+                        exchangeId = exchange.Id,
+                    });
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log($"UI spellfix failed: {ex.Message}");
-                    return Results.Json(new { error = ex.Message }, statusCode: 502);
+                    community.CompleteClaudePromptExchange(
+                        exchange.Id,
+                        "",
+                        "",
+                        ex.Message,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    Logger.Log($"UI Claude advice {exchange.Id} failed for '{actorDisplay}': {ex.Message}");
+                    return Results.Json(
+                        new { error = ex.Message, exchangeId = exchange.Id },
+                        statusCode: 502);
                 }
+            });
+
+            app.MapGet("/api/prompt/advice/history", (
+                string? user,
+                int? limit,
+                HttpContext ctx) =>
+            {
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                if (!TryResolveCreatorName(
+                    user,
+                    authUser,
+                    community,
+                    out var actorDisplay,
+                    out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+                var identityKey = authUser.Length > 0
+                    ? "login:" + authUser
+                    : "display:" + actorDisplay.ToUpperInvariant();
+                var records = community.ReadClaudePromptExchanges(identityKey, limit ?? 50);
+                return Results.Json(new
+                {
+                    exchanges = records.Select(record => new
+                    {
+                        record.Id,
+                        record.RequestedAtUnixMs,
+                        record.CompletedAtUnixMs,
+                        actor = record.ActorDisplay,
+                        record.Model,
+                        record.Instruction,
+                        record.OriginalPrompt,
+                        record.SystemPrompt,
+                        record.WirePrompt,
+                        record.RawResponse,
+                        record.ResultPrompt,
+                        record.Status,
+                        record.Error,
+                    }),
+                });
             });
 
             // Cursor-based poll for ALL job events. Deliberately NOT a
@@ -924,7 +1287,8 @@ namespace MultiImageClient
                     envelopes,
                     jobs,
                     visibility,
-                    authUser);
+                    authUser,
+                    community.SnapshotProfiles());
                 var visibilitySnapshot = visibility.Snapshot();
                 var visibilityPayload = string.Equals(
                     visibilityVersion,
@@ -1136,6 +1500,7 @@ namespace MultiImageClient
                     return Results.BadRequest(new { error = "day must be yyyy-MM-dd" });
                 }
                 var authUser = ctx.Items["micUser"] as string ?? "";
+                var profileSnapshot = community.SnapshotProfiles();
                 var dayJobs = jobs.ListArchivedDay(parsedDay)
                     .Where(job => !visibility.IsPromptHidden(job.Id))
                     .ToList();
@@ -1151,7 +1516,8 @@ namespace MultiImageClient
                     sb.Append("{\"job\":");
                     sb.Append(SerializeJobMetadataForViewer(
                         job,
-                        CanManageVisibility(job, authUser)));
+                        CanManageVisibility(job, authUser),
+                        profileSnapshot));
                     sb.Append(",\"events\":[");
                     sb.Append(string.Join(
                         ",",
@@ -1170,7 +1536,8 @@ namespace MultiImageClient
             app.MapGet("/api/users", (HttpContext ctx) =>
             {
                 ctx.Response.Headers.CacheControl = "no-store";
-                var users = jobs.ListUsers()
+                var profileSnapshot = community.SnapshotProfiles();
+                var users = jobs.ListUsers(profileSnapshot.ResolveDisplay)
                     .Select(u => new
                     {
                         user = u.User,
@@ -1286,7 +1653,10 @@ namespace MultiImageClient
                 {
                     var snapshot = favorites.Snapshot();
                     var visibilitySnapshot = visibility.Snapshot();
-                    var combinedVersion = snapshot.Version + "." + visibilitySnapshot.Version;
+                    var profileSnapshot = community.SnapshotProfiles();
+                    var combinedVersion = snapshot.Version
+                        + "." + visibilitySnapshot.Version
+                        + "." + profileSnapshot.Version;
                     if (string.Equals(version, combinedVersion, StringComparison.Ordinal))
                     {
                         return Results.Json(new { version = combinedVersion, unchanged = true });
@@ -1304,7 +1674,8 @@ namespace MultiImageClient
                         combinedVersion,
                         visibleRecords,
                         jobs,
-                        ctx.Items["micUser"] as string ?? ""));
+                        ctx.Items["micUser"] as string ?? "",
+                        profileSnapshot));
                 }
                 catch (InvalidDataException ex)
                 {
@@ -1318,9 +1689,11 @@ namespace MultiImageClient
             app.MapPost("/api/favorites", async (HttpRequest request) =>
             {
                 var form = await request.ReadFormAsync();
+                var favoriteLogin = request.HttpContext.Items["micUser"] as string ?? "";
                 if (!TryResolveCreatorName(
                     form["user"].ToString(),
-                    request.HttpContext.Items["micUser"] as string ?? "",
+                    favoriteLogin,
+                    community,
                     out var user,
                     out var userError))
                 {
@@ -1377,7 +1750,14 @@ namespace MultiImageClient
                         ? favorites.ListImage(jobId, generator, imageIndex)
                         : favorites.ListPrompt(jobId);
                     var existing = records
-                        .FirstOrDefault(record => string.Equals(record.User, user, StringComparison.Ordinal));
+                        .FirstOrDefault(record =>
+                            favoriteLogin.Length > 0
+                                ? string.Equals(
+                                    record.UserLogin,
+                                    favoriteLogin,
+                                    StringComparison.OrdinalIgnoreCase)
+                                : record.UserLogin.Length == 0
+                                    && string.Equals(record.User, user, StringComparison.Ordinal));
                     var addedFavorite = false;
                     UiJob? favoritedJob = null;
 
@@ -1394,6 +1774,7 @@ namespace MultiImageClient
                             {
                                 Kind = "prompt",
                                 User = user,
+                                UserLogin = favoriteLogin,
                                 JobId = job.Id,
                                 Prompt = job.Prompt,
                                 CreatedBy = job.CreatedBy,
@@ -1417,6 +1798,7 @@ namespace MultiImageClient
                             {
                                 Kind = "image",
                                 User = user,
+                                UserLogin = favoriteLogin,
                                 JobId = job.Id,
                                 Generator = generator,
                                 ImageIndex = imageIndex,
@@ -1473,10 +1855,14 @@ namespace MultiImageClient
                         : kind == "image"
                             ? BuildFavoriteImageItem(
                                 records,
-                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? ""))
+                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? ""),
+                                jobs.Get(jobId),
+                                community.SnapshotProfiles())
                             : BuildFavoritePromptItem(
                                 records,
-                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? ""));
+                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? ""),
+                                jobs.Get(jobId),
+                                community.SnapshotProfiles());
                     return Results.Json(new { favorite, kind, item });
                 }
                 catch (Exception ex) when (ex is IOException or InvalidDataException)
@@ -1500,6 +1886,7 @@ namespace MultiImageClient
                 var result = community.ReadActivityAfter(after);
                 var authUser = ctx.Items["micUser"] as string ?? "";
                 var isDeveloper = IsDeveloperLogin(authUser);
+                var profileSnapshot = community.SnapshotProfiles();
                 var entries = result.Records
                     .Where(record =>
                         string.Equals(record.Audience, "all", StringComparison.Ordinal)
@@ -1518,8 +1905,12 @@ namespace MultiImageClient
                         id = record.Id,
                         at = record.AtUnixMs,
                         kind = record.Kind,
-                        actor = record.ActorDisplay,
-                        target = record.TargetDisplay,
+                        actor = profileSnapshot.ResolveDisplay(
+                            record.ActorLogin,
+                            record.ActorDisplay),
+                        target = profileSnapshot.ResolveDisplay(
+                            record.TargetLogin,
+                            record.TargetDisplay),
                         jobId = record.JobId,
                         generator = record.Generator,
                         imageIndex = record.ImageIndex,
@@ -1543,6 +1934,7 @@ namespace MultiImageClient
                 if (!TryResolveCreatorName(
                     form["user"].ToString(),
                     request.HttpContext.Items["micUser"] as string ?? "",
+                    community,
                     out var submitter,
                     out var userError))
                 {
@@ -1587,6 +1979,7 @@ namespace MultiImageClient
                         statusCode: 403);
                 }
                 var result = community.ReadRequestsAfter(after ?? 0);
+                var profiles = community.SnapshotProfiles();
                 return Results.Json(new
                 {
                     cursor = result.Cursor,
@@ -1597,7 +1990,9 @@ namespace MultiImageClient
                         id = record.Id,
                         submittedAtUnixMs = record.SubmittedAtUnixMs,
                         submitterLogin = record.SubmitterLogin,
-                        submitter = record.SubmitterDisplay,
+                        submitter = profiles.ResolveDisplay(
+                            record.SubmitterLogin,
+                            record.SubmitterDisplay),
                         body = record.Body,
                     }),
                 });
@@ -1731,7 +2126,8 @@ namespace MultiImageClient
             List<string> envelopes,
             UiJobRegistry jobs,
             UiVisibilityStore visibility,
-            string authUser)
+            string authUser,
+            UiProfileSnapshot profiles)
         {
             var visible = new List<string>(envelopes.Count);
             foreach (var envelopeJson in envelopes)
@@ -1758,6 +2154,9 @@ namespace MultiImageClient
                             $"UI job-known envelope for {jobId} has no metadata.");
                     }
                     metadata["canHide"] = CanManageVisibility(job, authUser);
+                    metadata["originalUser"] = job.CreatedBy;
+                    metadata["ownerId"] = UiCommunityStore.PublicIdentityId(job.CreatorLogin);
+                    metadata["user"] = profiles.ResolveDisplay(job.CreatorLogin, job.CreatedBy);
                     visible.Add(envelope.ToJsonString());
                     continue;
                 }
@@ -1835,28 +2234,63 @@ namespace MultiImageClient
             return changed ? evt.ToJsonString() : eventJson;
         }
 
-        private static string SerializeJobMetadataForViewer(UiJob job, bool canHide)
+        private static string SerializeJobMetadataForViewer(
+            UiJob job,
+            bool canHide,
+            UiProfileSnapshot profiles)
         {
             var metadata = JsonNode.Parse(UiJobRegistry.SerializeJobMetadata(job))?.AsObject()
                 ?? throw new InvalidDataException(
                     $"UI metadata for {job.Id} parsed to null.");
             metadata["canHide"] = canHide;
+            metadata["originalUser"] = job.CreatedBy;
+            metadata["ownerId"] = UiCommunityStore.PublicIdentityId(job.CreatorLogin);
+            metadata["user"] = profiles.ResolveDisplay(job.CreatorLogin, job.CreatedBy);
             return metadata.ToJsonString();
         }
 
-        /// Creator-name policy: every job is created under a display username
-        /// (shared site, no privacy — attribution only). The submitted name
-        /// wins; with the access gate on and no name submitted, the login
-        /// name is the declared pre-operation default. No gate + no name is
-        /// a 400. Names are trimmed, inner whitespace collapsed, 1-32 chars,
-        /// letters/digits/space/._- only.
-        private static bool TryResolveCreatorName(string? submitted, string authUser, out string name, out string error)
+        private static bool TryResolveCreatorName(
+            string? submitted,
+            string authUser,
+            UiCommunityStore community,
+            out string name,
+            out string error)
         {
-            name = System.Text.RegularExpressions.Regex.Replace((submitted ?? "").Trim(), @"\s+", " ");
-            if (name.Length == 0)
+            var profiles = community.SnapshotProfiles();
+            var profile = profiles.Profiles.FirstOrDefault(candidate =>
+                string.Equals(candidate.Login, authUser, StringComparison.OrdinalIgnoreCase));
+            if (profile != null)
             {
-                name = authUser;
+                name = profile.DisplayName;
+                error = "";
+                return true;
             }
+
+            if (!TryNormalizeCreatorName(submitted, out name, out error))
+            {
+                if (name.Length == 0 && authUser.Length > 0)
+                {
+                    return TryNormalizeCreatorName(authUser, out name, out error);
+                }
+                return false;
+            }
+            if (authUser.Length > 0 && !community.IsDisplayNameAvailable(authUser, name))
+            {
+                error = $"The name '{name}' is reserved by another account.";
+                return false;
+            }
+            return true;
+        }
+
+        private static bool TryNormalizeCreatorName(
+            string? submitted,
+            out string name,
+            out string error)
+        {
+            name = System.Text.RegularExpressions.Regex.Replace(
+                (submitted ?? "").Trim(),
+                @"\s+",
+                " ");
             if (name.Length == 0)
             {
                 error = "choose a username first (top of the page) — every job is created under a name";
@@ -1874,6 +2308,140 @@ namespace MultiImageClient
             }
             error = "";
             return true;
+        }
+
+        private sealed class UiGeneratorPreferencesRequest
+        {
+            public bool? ShowImageSection { get; init; }
+            public bool? ShowDescribeSection { get; init; }
+            public List<string> HiddenGeneratorKeys { get; init; } = new();
+            public List<string> DefaultSelectedKeys { get; init; } = new();
+            public List<UiGeneratorPresetRequest> Presets { get; init; } = new();
+        }
+
+        private sealed class UiGeneratorPresetRequest
+        {
+            public string Id { get; init; } = "";
+            public string Name { get; init; } = "";
+            public List<string> GeneratorKeys { get; init; } = new();
+        }
+
+        private static UiGeneratorPreferencesRecord NormalizeGeneratorPreferences(
+            string login,
+            UiGeneratorPreferencesRequest submitted,
+            UiJobRunner runner)
+        {
+            if (submitted.ShowImageSection == null || submitted.ShowDescribeSection == null)
+            {
+                throw new InvalidDataException(
+                    "Generator preferences must explicitly state both section visibility choices.");
+            }
+            if (submitted.HiddenGeneratorKeys.Count > 100
+                || submitted.DefaultSelectedKeys.Count > 100)
+            {
+                throw new InvalidDataException("Generator preference target lists are too large.");
+            }
+            if (submitted.Presets.Count > 20)
+            {
+                throw new InvalidDataException("At most 20 personal generator buttons may be saved.");
+            }
+
+            static List<string> DistinctKeys(
+                IEnumerable<string> values,
+                UiJobRunner runner,
+                string field)
+            {
+                var keys = values
+                    .Select(value => value?.Trim() ?? "")
+                    .Where(value => value.Length > 0)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                foreach (var key in keys)
+                {
+                    if (string.Equals(
+                        runner.DescribeAvailabilityProblem(key),
+                        $"unknown generator '{key}'",
+                        StringComparison.Ordinal))
+                    {
+                        throw new InvalidDataException(
+                            $"{field} contains unknown generator '{key}'.");
+                    }
+                }
+                return keys;
+            }
+
+            var hidden = DistinctKeys(
+                submitted.HiddenGeneratorKeys,
+                runner,
+                "hiddenGeneratorKeys");
+            var selected = DistinctKeys(
+                submitted.DefaultSelectedKeys,
+                runner,
+                "defaultSelectedKeys");
+            var hiddenSet = hidden.ToHashSet(StringComparer.Ordinal);
+            var hiddenSelected = selected.FirstOrDefault(hiddenSet.Contains);
+            if (hiddenSelected != null)
+            {
+                throw new InvalidDataException(
+                    $"Hidden generator '{hiddenSelected}' cannot also be selected by default.");
+            }
+
+            var presets = new List<UiGeneratorPresetRecord>();
+            var presetIds = new HashSet<string>(StringComparer.Ordinal);
+            var presetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var preset in submitted.Presets)
+            {
+                var id = preset.Id.Trim();
+                var name = preset.Name.Trim();
+                if (!System.Text.RegularExpressions.Regex.IsMatch(id, @"^[A-Za-z0-9_-]{1,64}$"))
+                {
+                    throw new InvalidDataException(
+                        "Every personal generator button needs a stable 1-64 character id using letters, digits, _ or -.");
+                }
+                if (name.Length == 0 || name.Length > 30)
+                {
+                    throw new InvalidDataException(
+                        "Personal generator button names must be between 1 and 30 characters.");
+                }
+                if (!presetIds.Add(id) || !presetNames.Add(name))
+                {
+                    throw new InvalidDataException(
+                        "Personal generator button ids and names must be unique.");
+                }
+                var keys = DistinctKeys(
+                    preset.GeneratorKeys,
+                    runner,
+                    $"preset '{name}'");
+                var describeKey = keys.FirstOrDefault(UiJobRunner.IsDescribeKey);
+                if (describeKey != null)
+                {
+                    throw new InvalidDataException(
+                        $"Personal image-generator button '{name}' cannot include describe target '{describeKey}'.");
+                }
+                var hiddenKey = keys.FirstOrDefault(hiddenSet.Contains);
+                if (hiddenKey != null)
+                {
+                    throw new InvalidDataException(
+                        $"Personal generator button '{name}' cannot include hidden target '{hiddenKey}'.");
+                }
+                presets.Add(new UiGeneratorPresetRecord
+                {
+                    Id = id,
+                    Name = name,
+                    GeneratorKeys = keys,
+                });
+            }
+
+            return new UiGeneratorPreferencesRecord
+            {
+                Login = login,
+                ShowImageSection = submitted.ShowImageSection.Value,
+                ShowDescribeSection = submitted.ShowDescribeSection.Value,
+                HiddenGeneratorKeys = hidden,
+                DefaultSelectedKeys = selected,
+                Presets = presets,
+                UpdatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            };
         }
 
         private sealed class FavoriteImageDescriptor
@@ -1982,7 +2550,8 @@ namespace MultiImageClient
             string version,
             List<UiFavoriteRecord> records,
             UiJobRegistry jobs,
-            string authUser)
+            string authUser,
+            UiProfileSnapshot profiles)
         {
             var imageItems = records
                 .Where(record => record.Kind == "image")
@@ -1991,17 +2560,23 @@ namespace MultiImageClient
                     record => record)
                 .Select(group => BuildFavoriteImageItem(
                     group.ToList(),
-                    CanManageVisibility(jobs.Get(group.Key.JobId), authUser)))
+                    CanManageVisibility(jobs.Get(group.Key.JobId), authUser),
+                    jobs.Get(group.Key.JobId),
+                    profiles))
                 .ToList();
             var promptItems = records
                 .Where(record => record.Kind == "prompt")
                 .GroupBy(record => record.JobId, StringComparer.Ordinal)
                 .Select(group => BuildFavoritePromptItem(
                     group.ToList(),
-                    CanManageVisibility(jobs.Get(group.Key), authUser)))
+                    CanManageVisibility(jobs.Get(group.Key), authUser),
+                    jobs.Get(group.Key),
+                    profiles))
                 .ToList();
             var users = records
-                .GroupBy(record => record.User, StringComparer.Ordinal)
+                .GroupBy(
+                    record => profiles.ResolveDisplay(record.UserLogin, record.User),
+                    StringComparer.Ordinal)
                 .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(group => new
                 {
@@ -2023,7 +2598,9 @@ namespace MultiImageClient
 
         private static object BuildFavoriteImageItem(
             List<UiFavoriteRecord> records,
-            bool canHide)
+            bool canHide,
+            UiJob? job = null,
+            UiProfileSnapshot? profiles = null)
         {
             if (records.Count == 0)
             {
@@ -2055,7 +2632,12 @@ namespace MultiImageClient
                 imageIndex = first.ImageIndex,
                 generatorImageCount = first.GeneratorImageCount,
                 prompt = first.Prompt,
-                createdBy = first.CreatedBy,
+                createdBy = job != null && profiles != null
+                    ? profiles.ResolveDisplay(job.CreatorLogin, job.CreatedBy)
+                    : first.CreatedBy,
+                ownerId = job == null
+                    ? ""
+                    : UiCommunityStore.PublicIdentityId(job.CreatorLogin),
                 jobCreatedAtUnixMs = first.JobCreatedAtUnixMs,
                 hasInputImage = first.HasInputImage,
                 imageUrl = first.ImageUrl,
@@ -2063,15 +2645,20 @@ namespace MultiImageClient
                 size = first.Size,
                 canHide,
                 users = records
-                    .OrderBy(record => record.User, StringComparer.OrdinalIgnoreCase)
-                    .Select(record => record.User)
+                    .Select(record => profiles?.ResolveDisplay(
+                        record.UserLogin,
+                        record.User) ?? record.User)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(user => user, StringComparer.OrdinalIgnoreCase)
                     .ToList(),
             };
         }
 
         private static object BuildFavoritePromptItem(
             List<UiFavoriteRecord> records,
-            bool canHide)
+            bool canHide,
+            UiJob? job = null,
+            UiProfileSnapshot? profiles = null)
         {
             if (records.Count == 0)
             {
@@ -2094,13 +2681,21 @@ namespace MultiImageClient
             {
                 jobId = first.JobId,
                 prompt = first.Prompt,
-                createdBy = first.CreatedBy,
+                createdBy = job != null && profiles != null
+                    ? profiles.ResolveDisplay(job.CreatorLogin, job.CreatedBy)
+                    : first.CreatedBy,
+                ownerId = job == null
+                    ? ""
+                    : UiCommunityStore.PublicIdentityId(job.CreatorLogin),
                 jobCreatedAtUnixMs = first.JobCreatedAtUnixMs,
                 hasInputImage = first.HasInputImage,
                 canHide,
                 users = records
-                    .OrderBy(record => record.User, StringComparer.OrdinalIgnoreCase)
-                    .Select(record => record.User)
+                    .Select(record => profiles?.ResolveDisplay(
+                        record.UserLogin,
+                        record.User) ?? record.User)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(user => user, StringComparer.OrdinalIgnoreCase)
                     .ToList(),
             };
         }

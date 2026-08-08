@@ -25,8 +25,11 @@ let generators = [];         // from /api/config
 let videoSource = null;       // { jobId, generator, index, url }
 let videoDialogSelectionVersion = 0;
 let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
-let spellfix = { available: false, availabilityProblem: "configuration not loaded" };
-let spellfixPrevious = null;  // prompt text as it was before the last fix, for undo
+let claudeAdvice = { available: false, availabilityProblem: "configuration not loaded" };
+let promptAdvicePrevious = null;  // exact prompt from before the last Claude edit
+let generatorPreferences = null;
+const GeneratorPreferencesLocalKey = "mic_generator_preferences_v1";
+const ClaudeAdviceInstructionKey = "mic_claude_advice_instruction_v1";
 // gpt-image-2 anti-murk guidance defaults from /api/config; the live control
 // state lives in the DOM and persists per-browser in localStorage.
 let gpt2Guidance = { defaultEnabled: true, defaultText: "" };
@@ -40,10 +43,14 @@ const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
 // the key bump retires stored copies of the old default so every browser
 // re-prefills from the current server default.
 const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
-// Shared-site identity + filters. The creator name is browser-local state
-// (localStorage) sent with every job; auth (when the server gate is on)
-// seeds it with the login name. Filter selection persists per browser.
-let authInfo = { enabled: false, user: "" };
+// Shared-site identity + filters. Authenticated accounts may explicitly set a
+// server-side profile name; it then presents every job securely linked by
+// CreatorLogin under that current name while job.json retains its original
+// CreatedBy attribution.
+let authInfo = { enabled: false, user: "", profile: null };
+let profileServerVersion = -1;
+let profileDisplays = new Map(); // opaque owner id -> current display name
+let profilePollInFlight = false;
 const UsernameKey = "mic_username";
 const UserFilterKey = "mic_user_filter_v1";
 let knownUsers = new Map();  // user -> job count (live-accumulated)
@@ -336,6 +343,87 @@ document.addEventListener("keydown", (e) => {
 
 // ---------- config / generator toggles ----------
 
+function defaultGeneratorPreferences() {
+  return {
+    showImageSection: true,
+    showDescribeSection: true,
+    hiddenGeneratorKeys: [],
+    defaultSelectedKeys: generators.filter((g) => g.defaultOn).map((g) => g.key),
+    presets: [],
+  };
+}
+
+function normalizeGeneratorPreferences(raw) {
+  const known = new Set(generators.map((g) => g.key));
+  const imageKeys = new Set(generators.filter((g) => g.kind !== "describe").map((g) => g.key));
+  if (!raw || typeof raw !== "object") throw new Error("generator preferences are malformed");
+  if (typeof raw.showImageSection !== "boolean" ||
+      typeof raw.showDescribeSection !== "boolean" ||
+      !Array.isArray(raw.hiddenGeneratorKeys) ||
+      !Array.isArray(raw.defaultSelectedKeys) ||
+      !Array.isArray(raw.presets)) {
+    throw new Error("generator preferences are incomplete");
+  }
+  const exactKeys = (values, field) => {
+    const result = [];
+    for (const value of values) {
+      if (typeof value !== "string" || !known.has(value)) {
+        throw new Error(`${field} contains unknown generator ${String(value)}`);
+      }
+      if (!result.includes(value)) result.push(value);
+    }
+    return result;
+  };
+  const hiddenGeneratorKeys = exactKeys(raw.hiddenGeneratorKeys, "hiddenGeneratorKeys");
+  const hidden = new Set(hiddenGeneratorKeys);
+  const defaultSelectedKeys = exactKeys(raw.defaultSelectedKeys, "defaultSelectedKeys");
+  for (const key of defaultSelectedKeys) {
+    if (hidden.has(key)) throw new Error(`hidden generator ${key} is selected by default`);
+  }
+  if (raw.presets.length > 20) throw new Error("too many personal generator buttons");
+  const ids = new Set();
+  const names = new Set();
+  const presets = raw.presets.map((preset) => {
+    if (!preset || typeof preset.id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,64}$/.test(preset.id) ||
+        typeof preset.name !== "string" ||
+        !preset.name.trim() || preset.name.trim().length > 30 ||
+        !Array.isArray(preset.generatorKeys)) {
+      throw new Error("a personal generator button is malformed");
+    }
+    const name = preset.name.trim();
+    if (ids.has(preset.id) || names.has(name.toLocaleLowerCase())) {
+      throw new Error("personal generator button names and ids must be unique");
+    }
+    ids.add(preset.id);
+    names.add(name.toLocaleLowerCase());
+    const generatorKeys = exactKeys(preset.generatorKeys, `preset ${name}`);
+    for (const key of generatorKeys) {
+      if (!imageKeys.has(key)) throw new Error(`preset ${name} contains a describe target`);
+      if (hidden.has(key)) throw new Error(`preset ${name} contains hidden generator ${key}`);
+    }
+    return { id: preset.id, name, generatorKeys };
+  });
+  return {
+    showImageSection: raw.showImageSection,
+    showDescribeSection: raw.showDescribeSection,
+    hiddenGeneratorKeys,
+    defaultSelectedKeys,
+    presets,
+  };
+}
+
+function loadGeneratorPreferences(cfg) {
+  if (cfg.generatorPreferences) {
+    return normalizeGeneratorPreferences(cfg.generatorPreferences);
+  }
+  if (!cfg.auth?.enabled) {
+    const stored = localStorage.getItem(GeneratorPreferencesLocalKey);
+    if (stored !== null) return normalizeGeneratorPreferences(JSON.parse(stored));
+  }
+  return defaultGeneratorPreferences();
+}
+
 async function loadConfig() {
   const resp = await fetch(apiUrl("api/config"));
   if (resp.status === 401) { location.reload(); return; }
@@ -348,14 +436,15 @@ async function loadConfig() {
   const cfg = await resp.json();
   generators = cfg.generators;
   videoGeneration = cfg.videoGeneration || videoGeneration;
-  spellfix = cfg.spellfix || spellfix;
-  applySpellfixAvailability();
+  claudeAdvice = cfg.claudeAdvice || claudeAdvice;
+  applyClaudeAdviceAvailability();
   gpt2Guidance = cfg.gpt2Guidance || gpt2Guidance;
   describeConfig = cfg.describe || describeConfig;
   if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
     maxInputImages = cfg.maxInputImages;
   }
   authInfo = cfg.auth || authInfo;
+  generatorPreferences = loadGeneratorPreferences(cfg);
   notificationConfig = cfg.notifications || notificationConfig;
   applyAuthState();
   initializeActivityConfig();
@@ -438,7 +527,7 @@ async function loadConfig() {
     cb.dataset.kind = g.kind || "image";
     cb.dataset.requiresImage = String(!!g.requiresImage);
     cb.disabled = !g.available;
-    cb.checked = g.available && g.defaultOn;
+    cb.checked = g.available && generatorPreferences.defaultSelectedKeys.includes(g.key);
     cb.addEventListener("change", () => {
       label.classList.toggle("checked", cb.checked);
       updateGeneratorCount();
@@ -469,9 +558,13 @@ async function loadConfig() {
   // (updateGeneratorCompatibility enforces it, matching the server's rule).
   gensRow.innerHTML = "";
   describeRow.innerHTML = "";
+  const hiddenGeneratorKeys = new Set(generatorPreferences.hiddenGeneratorKeys);
   for (const g of generators) {
+    if (hiddenGeneratorKeys.has(g.key)) continue;
     (g.kind === "describe" ? describeRow : gensRow).appendChild(buildGenChip(g));
   }
+  renderGeneratorPresetButtons();
+  applyGeneratorSectionVisibility();
   // Visibility (needs an attached image + at least one describe target) is
   // owned by updateGeneratorCompatibility, called next.
   updateGeneratorCompatibility();
@@ -480,6 +573,8 @@ async function loadConfig() {
 function hasInputImages() {
   return inputImageItems.length > 0;
 }
+
+let compatibilityPreviouslyHadImage = false;
 
 function updateGeneratorCompatibility() {
   // imageCapable comes from /api/config so the server stays the single
@@ -490,12 +585,15 @@ function updateGeneratorCompatibility() {
   // (Recraft image-to-image can't override output AR). Multi-image jobs do
   // not lock generator chips: non-gpt2 targets simply receive image 0.
   const hasImage = hasInputImages();
+  const gainedFirstImage = hasImage && !compatibilityPreviouslyHadImage;
+  compatibilityPreviouslyHadImage = hasImage;
   gensRow.classList.toggle("has-image", hasImage);
   describeRow.classList.toggle("has-image", hasImage);
   // Without an attached image there is nothing to describe, so the whole
   // describe section disappears rather than showing a row of disabled chips.
   // (Any checked describe chips are unchecked below via requiresImage.)
-  describeSection.hidden = !hasImage || describeRow.children.length === 0;
+  const showDescribeSection = generatorPreferences?.showDescribeSection !== false;
+  describeSection.hidden = !showDescribeSection || !hasImage || describeRow.children.length === 0;
   for (const btn of document.querySelectorAll("#gen-controls .image-only-action")) {
     btn.hidden = !hasImage;
   }
@@ -516,6 +614,14 @@ function updateGeneratorCompatibility() {
     const missingRequiredImage = cb.dataset.requiresImage === "true" && !hasImage;
     cb.disabled = !providerAvailable || aspectIncompatible || missingRequiredImage;
     if (aspectIncompatible || missingRequiredImage)
+    {
+      cb.checked = false;
+    }
+    else if (gainedFirstImage && isDescribe && showDescribeSection)
+    {
+      cb.checked = generatorPreferences.defaultSelectedKeys.includes(cb.value);
+    }
+    if (isDescribe && !showDescribeSection)
     {
       cb.checked = false;
     }
@@ -1370,6 +1476,235 @@ async function pollDeveloperRequests() {
   }
 }
 
+function applyGeneratorSectionVisibility() {
+  const showImage = generatorPreferences?.showImageSection !== false;
+  gensRow.hidden = !showImage;
+  el("opts-row").hidden = !showImage;
+  for (const control of document.querySelectorAll(".generator-main-control")) {
+    control.classList.toggle("preference-hidden", !showImage);
+  }
+  if (!showImage) {
+    for (const cb of gensRow.querySelectorAll("input")) {
+      cb.checked = false;
+      cb.closest(".gen-toggle").classList.remove("checked");
+    }
+  }
+  updateGeneratorCount();
+}
+
+function applyGeneratorPreset(preset) {
+  const wanted = new Set(preset.generatorKeys);
+  for (const cb of gensRow.querySelectorAll("input")) {
+    cb.checked = !cb.disabled && wanted.has(cb.value);
+    cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
+  }
+  updateGeneratorCount();
+}
+
+function renderGeneratorPresetButtons() {
+  const host = el("gen-personal-presets");
+  host.replaceChildren();
+  for (const preset of generatorPreferences?.presets || []) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "generator-personal-preset";
+    button.textContent = preset.name;
+    button.title = `Set the complete image-generator selection to “${preset.name}”`;
+    button.addEventListener("click", () => applyGeneratorPreset(preset));
+    host.appendChild(button);
+  }
+}
+
+const generatorConfigDialog = el("generator-config-dialog");
+const generatorConfigForm = el("generator-config-form");
+const generatorConfigItems = el("generator-config-items");
+const generatorConfigPresetList = el("generator-config-preset-list");
+const generatorConfigStatus = el("generator-config-status");
+let generatorConfigDraft = null;
+
+function copyGeneratorPreferences(source) {
+  return {
+    showImageSection: source.showImageSection,
+    showDescribeSection: source.showDescribeSection,
+    hiddenGeneratorKeys: [...source.hiddenGeneratorKeys],
+    defaultSelectedKeys: [...source.defaultSelectedKeys],
+    presets: source.presets.map((preset) => ({
+      id: preset.id,
+      name: preset.name,
+      generatorKeys: [...preset.generatorKeys],
+    })),
+  };
+}
+
+function setDraftKey(listName, key, enabled) {
+  const values = new Set(generatorConfigDraft[listName]);
+  if (enabled) values.add(key);
+  else values.delete(key);
+  generatorConfigDraft[listName] = [...values];
+}
+
+function renderGeneratorConfigItems() {
+  generatorConfigItems.replaceChildren();
+  const hidden = new Set(generatorConfigDraft.hiddenGeneratorKeys);
+  const selected = new Set(generatorConfigDraft.defaultSelectedKeys);
+  for (const [kind, title] of [["image", "make image"], ["describe", "describe image"]]) {
+    const section = document.createElement("section");
+    section.className = "generator-config-item-section";
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    section.appendChild(heading);
+    for (const generator of generators.filter((g) =>
+      (g.kind === "describe" ? "describe" : "image") === kind)) {
+      const row = document.createElement("div");
+      row.className = "generator-config-item";
+      const label = document.createElement("strong");
+      label.textContent = generator.label;
+      const showLabel = document.createElement("label");
+      const show = document.createElement("input");
+      show.type = "checkbox";
+      show.checked = !hidden.has(generator.key);
+      showLabel.append(show, document.createTextNode(" show"));
+      const defaultLabel = document.createElement("label");
+      const defaultOn = document.createElement("input");
+      defaultOn.type = "checkbox";
+      defaultOn.checked = selected.has(generator.key);
+      defaultOn.disabled = !show.checked;
+      defaultLabel.append(defaultOn, document.createTextNode(" selected by default"));
+      show.addEventListener("change", () => {
+        setDraftKey("hiddenGeneratorKeys", generator.key, !show.checked);
+        if (!show.checked) {
+          setDraftKey("defaultSelectedKeys", generator.key, false);
+          for (const preset of generatorConfigDraft.presets) {
+            preset.generatorKeys = preset.generatorKeys.filter((key) => key !== generator.key);
+          }
+        }
+        renderGeneratorConfig();
+      });
+      defaultOn.addEventListener("change", () =>
+        setDraftKey("defaultSelectedKeys", generator.key, defaultOn.checked));
+      row.append(label, showLabel, defaultLabel);
+      section.appendChild(row);
+    }
+    generatorConfigItems.appendChild(section);
+  }
+}
+
+function renderGeneratorConfigPresets() {
+  generatorConfigPresetList.replaceChildren();
+  const visibleImageGenerators = generators.filter((g) =>
+    g.kind !== "describe" && !generatorConfigDraft.hiddenGeneratorKeys.includes(g.key));
+  for (const preset of generatorConfigDraft.presets) {
+    const card = document.createElement("fieldset");
+    card.className = "generator-config-preset";
+    const top = document.createElement("div");
+    top.className = "generator-config-preset-head";
+    const name = document.createElement("input");
+    name.type = "text";
+    name.maxLength = 30;
+    name.value = preset.name;
+    name.placeholder = "button name";
+    name.setAttribute("aria-label", "Personal generator button name");
+    name.addEventListener("input", () => { preset.name = name.value; });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "delete";
+    remove.addEventListener("click", () => {
+      generatorConfigDraft.presets =
+        generatorConfigDraft.presets.filter((candidate) => candidate.id !== preset.id);
+      renderGeneratorConfigPresets();
+    });
+    top.append(name, remove);
+    card.appendChild(top);
+    const targets = document.createElement("div");
+    targets.className = "generator-config-preset-targets";
+    for (const generator of visibleImageGenerators) {
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = preset.generatorKeys.includes(generator.key);
+      checkbox.addEventListener("change", () => {
+        const keys = new Set(preset.generatorKeys);
+        if (checkbox.checked) keys.add(generator.key);
+        else keys.delete(generator.key);
+        preset.generatorKeys = [...keys];
+      });
+      label.append(checkbox, document.createTextNode(generator.label));
+      targets.appendChild(label);
+    }
+    card.appendChild(targets);
+    generatorConfigPresetList.appendChild(card);
+  }
+}
+
+function renderGeneratorConfig() {
+  el("generator-config-show-image").checked = generatorConfigDraft.showImageSection;
+  el("generator-config-show-describe").checked = generatorConfigDraft.showDescribeSection;
+  renderGeneratorConfigItems();
+  renderGeneratorConfigPresets();
+}
+
+function openGeneratorConfig() {
+  generatorConfigDraft = copyGeneratorPreferences(generatorPreferences);
+  generatorConfigStatus.textContent = "";
+  renderGeneratorConfig();
+  generatorConfigDialog.showModal();
+}
+
+el("generator-config-toggle").addEventListener("click", openGeneratorConfig);
+el("generator-config-close").addEventListener("click", () => generatorConfigDialog.close());
+el("generator-config-cancel").addEventListener("click", () => generatorConfigDialog.close());
+el("generator-config-show-image").addEventListener("change", (event) => {
+  generatorConfigDraft.showImageSection = event.target.checked;
+});
+el("generator-config-show-describe").addEventListener("change", (event) => {
+  generatorConfigDraft.showDescribeSection = event.target.checked;
+});
+el("generator-config-add-preset").addEventListener("click", () => {
+  const id = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID().replaceAll("-", "")
+    : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  generatorConfigDraft.presets.push({ id, name: "", generatorKeys: [] });
+  renderGeneratorConfigPresets();
+  generatorConfigPresetList.lastElementChild?.querySelector("input[type=text]")?.focus();
+});
+generatorConfigForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  generatorConfigStatus.className = "";
+  let normalized;
+  try {
+    normalized = normalizeGeneratorPreferences(generatorConfigDraft);
+  } catch (error) {
+    generatorConfigStatus.textContent = String(error);
+    generatorConfigStatus.className = "error";
+    return;
+  }
+  const save = el("generator-config-save");
+  save.disabled = true;
+  generatorConfigStatus.textContent = "saving…";
+  try {
+    if (authInfo.enabled) {
+      const response = await fetch(apiUrl("api/generator-preferences"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(normalized),
+      });
+      if (response.status === 401) { location.reload(); return; }
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    } else {
+      localStorage.setItem(GeneratorPreferencesLocalKey, JSON.stringify(normalized));
+    }
+    generatorPreferences = normalized;
+    generatorConfigDialog.close();
+    location.reload();
+  } catch (error) {
+    generatorConfigStatus.textContent = String(error);
+    generatorConfigStatus.className = "error";
+  } finally {
+    save.disabled = false;
+  }
+});
+
 function setAllGenerators(mode) {
   for (const cb of gensRow.querySelectorAll("input:not(:disabled)")) {
     cb.checked = mode === "enable" ? true : mode === "disable" ? false : !cb.checked;
@@ -1931,10 +2266,14 @@ loadInspirationState();
 
 // ---------- shared-site identity: username + person filters ----------
 
-// Every job is created under a display name (attribution, not privacy —
-// everyone sees everyone's work by design). The name lives in this browser's
-// localStorage; when the server's access gate is on, the login name seeds it.
+// Every job is created under a display name (attribution, not privacy).
+// Local mode keeps the browser-local name. On an authenticated site, the user
+// can explicitly make the edited name their account profile; the server then
+// applies it to all CreatorLogin-linked history without changing original
+// job.json attribution.
 const usernameInput = el("username-input");
+const profileNameSave = el("profile-name-save");
+const profileNameStatus = el("profile-name-status");
 const logoutBtn = el("logout");
 usernameInput.value = localStorage.getItem(UsernameKey) || "";
 
@@ -1942,19 +2281,151 @@ function currentUsername() {
   return usernameInput.value.trim().replace(/\s+/g, " ");
 }
 
+function updateProfileNameControl() {
+  if (!authInfo.enabled || !authInfo.user) {
+    profileNameSave.hidden = true;
+    profileNameStatus.textContent = "";
+    return;
+  }
+  const currentProfileName = authInfo.profile?.displayName || "";
+  profileNameSave.hidden = currentUsername() === currentProfileName && !!currentProfileName;
+  profileNameSave.textContent = currentProfileName
+    ? "rename everywhere"
+    : "apply name to all my history";
+  profileNameSave.title = currentProfileName
+    ? "Use this name for every creation securely linked to your account; original job records remain unchanged"
+    : "Create your account profile and use this name for all securely linked past and future creations";
+}
+
+usernameInput.addEventListener("input", () => {
+  updateProfileNameControl();
+  profileNameStatus.textContent = "";
+});
+
 usernameInput.addEventListener("change", () => {
   localStorage.setItem(UsernameKey, currentUsername());
   favoriteMutationError = null;
   refreshFavoritePresentation();
+  updateProfileNameControl();
 });
 
 function applyAuthState() {
   logoutBtn.hidden = !authInfo.enabled;
-  if (authInfo.enabled && authInfo.user && !currentUsername()) {
-    usernameInput.value = authInfo.user;
-    localStorage.setItem(UsernameKey, authInfo.user);
+  if (authInfo.enabled && authInfo.user) {
+    const serverName = authInfo.profile?.displayName || "";
+    if (serverName) {
+      usernameInput.value = serverName;
+      localStorage.setItem(UsernameKey, serverName);
+    } else if (!currentUsername()) {
+      usernameInput.value = authInfo.user;
+      localStorage.setItem(UsernameKey, authInfo.user);
+    }
   }
+  updateProfileNameControl();
 }
+
+function applyProfileDisplays() {
+  const renamedFilters = new Map();
+  for (const card of document.querySelectorAll("#jobs .job, #archive .job")) {
+    const ownerId = card.dataset.ownerId || "";
+    if (!ownerId || !profileDisplays.has(ownerId)) continue;
+    const displayName = profileDisplays.get(ownerId);
+    const oldName = card.dataset.user || "";
+    if (oldName === displayName) continue;
+    if (oldName) renamedFilters.set(oldName, displayName);
+    card.dataset.user = displayName;
+    const label = card.querySelector(".job-user");
+    if (label) {
+      label.textContent = displayName;
+      const original = card.dataset.originalUser || "";
+      label.title = original && original !== displayName
+        ? `Current profile name; originally attributed as ${original}`
+        : "";
+    }
+  }
+  let filtersChanged = false;
+  for (const [oldName, displayName] of renamedFilters) {
+    if (!selectedUserFilter.delete(oldName)) continue;
+    selectedUserFilter.add(displayName);
+    filtersChanged = true;
+  }
+  if (filtersChanged) persistUserFilter();
+  applyUserFilterAll();
+}
+
+async function pollProfiles(force = false) {
+  if (profilePollInFlight) return;
+  profilePollInFlight = true;
+  try {
+    const query = !force && profileServerVersion >= 0
+      ? `?version=${encodeURIComponent(profileServerVersion)}`
+      : "";
+    const resp = await fetch(apiUrl(`api/profiles${query}`));
+    if (resp.status === 401) { location.reload(); return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const body = await resp.json();
+    profileServerVersion = Number(body.version);
+    if (body.unchanged) return;
+    if (!Array.isArray(body.profiles)) throw new Error("profile response is malformed");
+    profileDisplays = new Map(body.profiles.map((profile) => [
+      String(profile.publicId || ""),
+      String(profile.displayName || ""),
+    ]));
+    const currentPublicId = String(body.currentPublicId || "");
+    if (currentPublicId && profileDisplays.has(currentPublicId)) {
+      const oldServerName = authInfo.profile?.displayName || "";
+      const currentDisplay = profileDisplays.get(currentPublicId);
+      authInfo.profile = { publicId: currentPublicId, displayName: currentDisplay };
+      if (document.activeElement !== usernameInput &&
+          (!oldServerName || currentUsername() === oldServerName || currentUsername() === authInfo.user)) {
+        usernameInput.value = currentDisplay;
+        localStorage.setItem(UsernameKey, currentDisplay);
+      }
+      updateProfileNameControl();
+    }
+    applyProfileDisplays();
+    await loadKnownUsers();
+    pollFavorites();
+  } catch { /* job metadata remains usable with its recorded attribution */ }
+  finally { profilePollInFlight = false; }
+}
+
+profileNameSave.addEventListener("click", async () => {
+  const displayName = currentUsername();
+  if (!displayName) {
+    profileNameStatus.textContent = "choose a name first";
+    return;
+  }
+  profileNameSave.disabled = true;
+  profileNameStatus.textContent = "";
+  try {
+    const form = new FormData();
+    form.append("displayName", displayName);
+    const resp = await fetch(apiUrl("api/profile"), { method: "POST", body: form });
+    const body = await resp.json();
+    if (!resp.ok) {
+      profileNameStatus.textContent = body.error || `HTTP ${resp.status}`;
+      return;
+    }
+    const oldName = authInfo.profile?.displayName || "";
+    authInfo.profile = {
+      publicId: body.publicId,
+      displayName: body.displayName,
+    };
+    localStorage.setItem(UsernameKey, body.displayName);
+    if (oldName && selectedUserFilter.delete(oldName)) {
+      selectedUserFilter.add(body.displayName);
+      persistUserFilter();
+    }
+    profileNameStatus.textContent = "updated across your linked history";
+    updateProfileNameControl();
+    await pollProfiles(true);
+  } catch (err) {
+    profileNameStatus.textContent = `profile update failed: ${err}`;
+  } finally {
+    profileNameSave.disabled = false;
+  }
+});
 
 logoutBtn.addEventListener("click", async () => {
   try {
@@ -2831,7 +3302,12 @@ async function submit() {
       inputImageItems.length > 0,
       Date.now(),
       inputImageItems.length,
-      { user, canHide: !!authInfo.user });
+      {
+        user: body.user || user,
+        originalUser: body.originalUser || body.user || user,
+        ownerId: body.ownerId || "",
+        canHide: !!authInfo.user,
+      });
   } catch (err) {
     sendError.textContent = String(err);
   } finally {
@@ -2847,68 +3323,163 @@ promptBox.addEventListener("keydown", (e) => {
   }
 });
 
-// ---------- fix spelling (Claude, spelling only) + undo ----------
+// ---------- user-directed Claude prompt advice + durable exchange history ----------
 
-// Browser spellcheck suggestions aren't scriptable, so "accept all" runs the
-// prompt through a server-side Claude call constrained to spelling-only
-// corrections. Undo restores the exact pre-fix text.
-const spellfixBtn = el("spellfix");
-const spellfixUndoBtn = el("spellfix-undo");
+const promptAdviceBtn = el("prompt-advice");
+const promptAdviceUndoBtn = el("prompt-advice-undo");
+const claudeAdviceDialog = el("claude-advice-dialog");
+const claudeAdviceForm = el("claude-advice-form");
+const claudeAdviceInstruction = el("claude-advice-instruction");
+const claudeAdviceWirePreview = el("claude-advice-wire-preview");
+const claudeAdviceStatus = el("claude-advice-status");
+const claudeAdviceHistory = el("claude-advice-history");
+const claudeAdviceHistoryList = el("claude-advice-history-list");
+let claudeAdviceOriginalPrompt = "";
+let claudeAdviceHistoryLoaded = false;
+const DefaultClaudeAdviceInstruction =
+  "Fix spelling and obvious typos. Improve organization only where needed, while preserving the meaning and useful detail.";
 
-function applySpellfixAvailability() {
-  spellfixBtn.disabled = !spellfix.available;
-  if (!spellfix.available) {
-    spellfixBtn.title = `Fix spelling is unavailable: ${spellfix.availabilityProblem || "not configured"}`;
+function applyClaudeAdviceAvailability() {
+  promptAdviceBtn.disabled = !claudeAdvice.available;
+  if (!claudeAdvice.available) {
+    promptAdviceBtn.title =
+      `Claude advice is unavailable: ${claudeAdvice.availabilityProblem || "not configured"}`;
   }
 }
 
-async function fixSpelling() {
+function buildClaudeAdviceWirePreview() {
+  claudeAdviceWirePreview.textContent =
+    "Editing instruction:\n" +
+    claudeAdviceInstruction.value +
+    "\n\nThe exact original prompt follows. Apply the editing instruction to it and return only its replacement.\n" +
+    "<original_prompt>\n" +
+    claudeAdviceOriginalPrompt +
+    "\n</original_prompt>";
+}
+
+async function loadClaudeAdviceHistory() {
+  claudeAdviceHistoryList.textContent = "loading…";
+  try {
+    const query = new URLSearchParams({
+      user: currentUsername(),
+      limit: "50",
+    });
+    const response = await fetch(apiUrl(`api/prompt/advice/history?${query}`));
+    if (response.status === 401) { location.reload(); return; }
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    claudeAdviceHistoryList.replaceChildren();
+    if (!body.exchanges.length) {
+      claudeAdviceHistoryList.textContent = "No prior Claude prompt exchanges.";
+      return;
+    }
+    for (const exchange of body.exchanges) {
+      const details = document.createElement("details");
+      details.className = `claude-advice-history-item ${exchange.status}`;
+      const summary = document.createElement("summary");
+      const when = new Date(exchange.requestedAtUnixMs).toLocaleString();
+      summary.textContent = `${when} — ${exchange.status} — ${exchange.instruction}`;
+      details.appendChild(summary);
+      const fields = [
+        ["model", exchange.model],
+        ["system", exchange.systemPrompt],
+        ["sent", exchange.wirePrompt],
+        ["returned", exchange.rawResponse],
+        ["applied result", exchange.resultPrompt],
+        ["error", exchange.error],
+      ];
+      for (const [label, value] of fields) {
+        if (!value) continue;
+        const heading = document.createElement("strong");
+        heading.textContent = label;
+        const pre = document.createElement("pre");
+        pre.textContent = value;
+        details.append(heading, pre);
+      }
+      claudeAdviceHistoryList.appendChild(details);
+    }
+  } catch (error) {
+    claudeAdviceHistoryList.textContent = `history unavailable: ${error}`;
+  }
+}
+
+function openClaudeAdvice() {
   const original = promptBox.value;
   if (!original.trim()) {
     sendError.textContent = "prompt is empty";
     return;
   }
   sendError.textContent = "";
-  spellfixBtn.disabled = true;
-  const idleLabel = "fix spelling (Claude)";
-  spellfixBtn.textContent = "fixing…";
-  try {
-    const form = new FormData();
-    form.append("prompt", original);
-    const resp = await fetch(apiUrl("api/prompt/spellfix"), { method: "POST", body: form });
-    const body = await resp.json();
-    if (!resp.ok) {
-      sendError.textContent = body.error || `HTTP ${resp.status}`;
-      return;
-    }
-    if (body.corrected === original) {
-      spellfixBtn.textContent = "no changes";
-      setTimeout(() => { spellfixBtn.textContent = idleLabel; }, 1600);
-      return;
-    }
-    spellfixPrevious = original;
-    promptBox.value = body.corrected;
-    spellfixUndoBtn.hidden = false;
-    if (mcpheeCtl) mcpheeCtl.refresh();
-    updatePromptLimitNotice();
-  } catch (err) {
-    sendError.textContent = String(err);
-  } finally {
-    spellfixBtn.disabled = !spellfix.available;
-    if (spellfixBtn.textContent === "fixing…") spellfixBtn.textContent = idleLabel;
-  }
+  claudeAdviceOriginalPrompt = original;
+  claudeAdviceInstruction.value =
+    localStorage.getItem(ClaudeAdviceInstructionKey) || DefaultClaudeAdviceInstruction;
+  claudeAdviceStatus.textContent = "";
+  buildClaudeAdviceWirePreview();
+  claudeAdviceHistoryLoaded = false;
+  claudeAdviceHistory.open = false;
+  claudeAdviceHistoryList.textContent = "";
+  claudeAdviceDialog.showModal();
+  claudeAdviceInstruction.focus();
 }
 
-spellfixBtn.addEventListener("click", fixSpelling);
-spellfixUndoBtn.addEventListener("click", () => {
-  if (spellfixPrevious === null) return;
-  promptBox.value = spellfixPrevious;
-  spellfixPrevious = null;
-  spellfixUndoBtn.hidden = true;
-  // The report describes changes that no longer exist once undone.
-  const report = el("spellfix-report");
-  if (report) report.hidden = true;
+promptAdviceBtn.addEventListener("click", openClaudeAdvice);
+el("claude-advice-close").addEventListener("click", () => claudeAdviceDialog.close());
+el("claude-advice-cancel").addEventListener("click", () => claudeAdviceDialog.close());
+claudeAdviceInstruction.addEventListener("input", () => {
+  localStorage.setItem(ClaudeAdviceInstructionKey, claudeAdviceInstruction.value);
+  buildClaudeAdviceWirePreview();
+});
+claudeAdviceHistory.addEventListener("toggle", () => {
+  if (claudeAdviceHistory.open && !claudeAdviceHistoryLoaded) {
+    claudeAdviceHistoryLoaded = true;
+    loadClaudeAdviceHistory();
+  }
+});
+claudeAdviceForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const instruction = claudeAdviceInstruction.value.trim();
+  if (!instruction) {
+    claudeAdviceStatus.textContent = "write an instruction first";
+    claudeAdviceStatus.className = "error";
+    return;
+  }
+  const submitButton = el("claude-advice-submit");
+  submitButton.disabled = true;
+  claudeAdviceStatus.className = "";
+  claudeAdviceStatus.textContent = "Claude is editing…";
+  try {
+    const form = new FormData();
+    form.append("instruction", instruction);
+    form.append("prompt", claudeAdviceOriginalPrompt);
+    form.append("user", currentUsername());
+    const response = await fetch(apiUrl("api/prompt/advice"), { method: "POST", body: form });
+    if (response.status === 401) { location.reload(); return; }
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    promptAdvicePrevious = claudeAdviceOriginalPrompt;
+    promptBox.value = body.replacement;
+    promptAdviceUndoBtn.hidden = false;
+    claudeAdviceDialog.close();
+    if (mcpheeCtl) mcpheeCtl.refresh();
+    if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+    updatePromptLimitNotice();
+    promptBox.focus();
+  } catch (error) {
+    claudeAdviceStatus.textContent = String(error);
+    claudeAdviceStatus.className = "error";
+    claudeAdviceHistoryLoaded = false;
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
+promptAdviceUndoBtn.addEventListener("click", () => {
+  if (promptAdvicePrevious === null) return;
+  promptBox.value = promptAdvicePrevious;
+  promptAdvicePrevious = null;
+  promptAdviceUndoBtn.hidden = true;
   if (mcpheeCtl) mcpheeCtl.refresh();
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
   updatePromptLimitNotice();
   promptBox.focus();
 });
@@ -2921,7 +3492,6 @@ spellfixUndoBtn.addEventListener("click", () => {
 let mcphee = null;
 let mcpheeCtl = null;
 let mcpheePanel = null;
-const spellfixLocalBtn = el("spellfix-local");
 const mcpheeEnabledToggle = el("mcphee-enabled-toggle");
 const mcpheePanelToggle = el("mcphee-panel-toggle");
 const spellingPanelContainer = el("spelling-panel");
@@ -2964,10 +3534,9 @@ async function initMcphee() {
     const storedEnabled = localStorage.getItem(mcpheeEnabledStorageKey);
     setMcpheeEnabled(storedEnabled !== "false", false);
   } catch (err) {
-    // Missing or malformed McPhee data is a hard failure for the local tools;
-    // the independent Claude spelling action remains available.
+    // Missing or malformed McPhee data is a hard failure for its independent
+    // spelling overlay and suggestions panel.
     console.error(err);
-    spellfixLocalBtn.title = `Local fix unavailable: ${err.message || err}`;
     mcpheeEnabledToggle.title = `Spellchecker unavailable: ${err.message || err}`;
     mcpheePanelToggle.title = `Spellchecker unavailable: ${err.message || err}`;
   }
@@ -2978,7 +3547,6 @@ function setMcpheeEnabled(enabled, persist = true) {
   mcpheeCtl.setEnabled(enabled);
   mcpheeEnabledToggle.checked = enabled;
   mcpheePanelContainer.hidden = !enabled;
-  spellfixLocalBtn.disabled = !enabled;
   if (enabled && !spellingPanelContainer.hidden) {
     mcpheeCtl.refresh(true);
     mcpheePanel.refresh();
@@ -3000,45 +3568,6 @@ mcpheePanelToggle.addEventListener("click", () => {
     mcpheeCtl.refresh(true);
     mcpheePanel.refresh();
   }
-});
-
-spellfixLocalBtn.addEventListener("click", () => {
-  if (!mcphee) return;
-  const original = promptBox.value;
-  if (!original.trim()) {
-    sendError.textContent = "prompt is empty";
-    return;
-  }
-  sendError.textContent = "";
-  const fix = mcphee.applyFixes(promptBox);
-  const idleLabel = "auto-fix typos";
-  if (!fix.applied) {
-    spellfixLocalBtn.textContent = "no changes";
-    setTimeout(() => { spellfixLocalBtn.textContent = idleLabel; }, 1600);
-    return;
-  }
-  spellfixPrevious = original;
-  spellfixUndoBtn.hidden = false;
-  mcpheeCtl.refresh();
-  if (!mcpheePanelContainer.hidden) mcpheePanel.refresh();
-  updatePromptLimitNotice();
-  // Persistent report, one change per line, visible until dismissed — so a
-  // bad correction can't flash past unnoticed (undo fix restores everything).
-  const lines = fix.wordChanges.map((c) => `${c.from} → ${c.to}`);
-  if (fix.spaceRuns) lines.push(`${fix.spaceRuns} double space${fix.spaceRuns === 1 ? "" : "s"} collapsed`);
-  const report = el("spellfix-report-lines");
-  report.innerHTML = "";
-  for (const line of lines) {
-    const div = document.createElement("div");
-    div.textContent = line;
-    report.appendChild(div);
-  }
-  el("spellfix-report").hidden = false;
-  promptBox.focus();
-});
-
-el("spellfix-report-close").addEventListener("click", () => {
-  el("spellfix-report").hidden = true;
 });
 
 initMcphee();
@@ -3173,7 +3702,12 @@ el("video-form").addEventListener("submit", async (e) => {
       true,
       Date.now(),
       1,
-      { user: currentUsername(), canHide: !!authInfo.user });
+      {
+        user: body.user || currentUsername(),
+        originalUser: body.originalUser || body.user || currentUsername(),
+        ownerId: body.ownerId || "",
+        canHide: !!authInfo.user,
+      });
   } catch (err) {
     error.textContent = String(err);
   } finally {
@@ -5131,6 +5665,16 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
   if (isPromptHidden(id)) return null;
   const existing = el(`job-${id}`);
   if (existing) {
+    if (opts.ownerId) existing.dataset.ownerId = opts.ownerId;
+    if (Object.hasOwn(opts, "originalUser")) {
+      existing.dataset.originalUser = opts.originalUser || "";
+    }
+    if (opts.user && existing.dataset.user !== opts.user) {
+      existing.dataset.user = opts.user;
+      const userLabel = existing.querySelector(".job-user");
+      if (userLabel) userLabel.textContent = opts.user;
+      applyUserFilterToCard(existing);
+    }
     if (opts.canHide && existing.dataset.canHide !== "true") {
       existing.dataset.canHide = "true";
       const copyWrap = existing.querySelector(".copy-prompt-wrap");
@@ -5156,6 +5700,8 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
   card.dataset.state = "queued";
   card.dataset.createdAt = String(createdMs);
   card.dataset.user = opts.user || "";
+  card.dataset.originalUser = opts.originalUser || opts.user || "";
+  card.dataset.ownerId = opts.ownerId || "";
   card.dataset.canHide = String(!!opts.canHide);
   // Read by the image viewer's input-comparison mode (`c`).
   card.dataset.hasInputImage = String(!!hasImage || resolvedInputCount > 0);
@@ -5234,7 +5780,11 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
     <span class="job-elapsed">elapsed 0s</span>
     <span class="job-cost"></span>
     <span class="job-connection">connecting…</span>`;
-  meta.querySelector(".job-user").textContent = opts.user || "";
+  const userLabel = meta.querySelector(".job-user");
+  userLabel.textContent = opts.user || "";
+  if (card.dataset.originalUser && card.dataset.originalUser !== card.dataset.user) {
+    userLabel.title = `Current profile name; originally attributed as ${card.dataset.originalUser}`;
+  }
   // Same-local-day jobs show just the time; older ones (archive cards, or a
   // viewer whose local date differs from the server's day bucket) include
   // the local date so the time can't be misread as today's.
@@ -5353,7 +5903,12 @@ async function pollJobEvents() {
         if (j.user && j.user === currentUsername()) ownedJobIds.add(j.id);
         addJobCard(
           j.id, j.prompt, j.gens, j.hasImage, j.createdAtUnixMs, j.inputCount,
-          { user: j.user, canHide: !!j.canHide });
+          {
+            user: j.user,
+            originalUser: j.originalUser,
+            ownerId: j.ownerId,
+            canHide: !!j.canHide,
+          });
         continue;
       }
       const card = el(`job-${envelope.jobId}`);
@@ -5733,7 +6288,13 @@ async function loadArchiveDay(day, container) {
     const j = item.job;
     const card = addJobCard(
       j.id, j.prompt, j.gens, j.hasImage, j.createdAtUnixMs, j.inputCount,
-      { user: j.user, canHide: !!j.canHide, container });
+      {
+        user: j.user,
+        originalUser: j.originalUser,
+        ownerId: j.ownerId,
+        canHide: !!j.canHide,
+        container,
+      });
     if (!card) continue;
     for (const evt of item.events) {
       applyJobEvent(j.id, card, evt);
@@ -5820,7 +6381,8 @@ async function pollRamStatus() {
 // finished jobs render completely and running ones resume live. Older days
 // hydrate lazily through the archive section below the feed.
 loadConfig()
-  .then(() => {
+  .then(async () => {
+    await pollProfiles(true);
     pollJobEvents();
     pollActivity();
     loadKnownUsers();
@@ -5828,6 +6390,7 @@ loadConfig()
     loadArchiveDays();
     pollRamStatus();
     setInterval(pollFavorites, 5000);
+    setInterval(pollProfiles, 5000);
     setInterval(pollRamStatus, 15000);
   })
   .catch((err) => {

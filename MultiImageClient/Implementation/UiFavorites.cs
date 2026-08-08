@@ -15,6 +15,7 @@ namespace MultiImageClient
         public int Version { get; init; } = 1;
         public string Kind { get; init; } = "image";
         public required string User { get; init; }
+        public string UserLogin { get; init; } = "";
         public required string JobId { get; init; }
         public string Generator { get; init; } = "";
         public int ImageIndex { get; init; } = -1;
@@ -234,17 +235,22 @@ namespace MultiImageClient
             {
                 return string.Join(
                     "\n",
-                    record.User,
+                    FavoriteOwnerKey(record),
                     record.JobId,
                     record.Generator,
                     record.ImageIndex.ToString(CultureInfo.InvariantCulture));
             }
             return string.Join(
                 "\n",
-                record.User,
+                FavoriteOwnerKey(record),
                 "prompt",
                 record.JobId);
         }
+
+        private static string FavoriteOwnerKey(UiFavoriteRecord record)
+            => record.UserLogin.Length == 0
+                ? record.User
+                : "login:" + record.UserLogin.ToUpperInvariant();
 
         private static string DescribeIdentity(UiFavoriteRecord record)
         {

@@ -46,7 +46,7 @@ namespace MultiImageClient
         /// is an access-control identity and is never supplied by the browser.
         /// Empty on jobs created without the access gate or before this field
         /// existed.
-        public string CreatorLogin { get; init; } = "";
+        public string CreatorLogin { get; set; } = "";
         public IReadOnlyList<string> InputImagePaths { get; init; } = Array.Empty<string>();
         public int InputImageWidth { get; init; }
         public int InputImageHeight { get; init; }
@@ -67,6 +67,38 @@ namespace MultiImageClient
         private readonly List<string> _events = new();
         private bool _done;
         private UiJobStorage? _storage;
+
+        internal void AssignLegacyCreatorLogin(string expectedCreatedBy, string creatorLogin)
+        {
+            lock (_lock)
+            {
+                if (CreatorLogin.Length != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Job {Id} already has an authenticated creator.");
+                }
+                if (!string.Equals(CreatedBy, expectedCreatedBy, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Job {Id} no longer has the expected historical attribution.");
+                }
+                if (_storage == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Job {Id} has no durable history storage.");
+                }
+                CreatorLogin = creatorLogin;
+                try
+                {
+                    _storage.SaveMetadata(this);
+                }
+                catch
+                {
+                    CreatorLogin = "";
+                    throw;
+                }
+            }
+        }
         private Action<UiJob, string>? _emitCallback;
 
         public bool IsDone
@@ -947,6 +979,7 @@ namespace MultiImageClient
                         FolderName = Path.GetFileName(folder),
                         CreatedAt = EnsureUtc(metadata.CreatedAt),
                         CreatedBy = metadata.CreatedBy ?? "",
+                        CreatorLogin = metadata.CreatorLogin ?? "",
                         SourceJobId = metadata.SourceJobId ?? "",
                         InputImageCount = inputPaths.Count,
                         Done = metadata.Done,
@@ -1179,6 +1212,7 @@ namespace MultiImageClient
         public required string FolderName { get; init; }
         public DateTime CreatedAt { get; init; }
         public string CreatedBy { get; init; } = "";
+        public string CreatorLogin { get; init; } = "";
         public string SourceJobId { get; init; } = "";
         public int InputImageCount { get; init; }
         public bool Done { get; init; }
@@ -1304,6 +1338,7 @@ namespace MultiImageClient
                     FolderName = job.Id,
                     CreatedAt = job.CreatedAt,
                     CreatedBy = job.CreatedBy ?? "",
+                    CreatorLogin = job.CreatorLogin ?? "",
                     SourceJobId = job.SourceJobId ?? "",
                     InputImageCount = job.InputImageCount,
                     Done = job.IsDone,
@@ -1351,6 +1386,7 @@ namespace MultiImageClient
                         FolderName = e.FolderName,
                         CreatedAt = e.CreatedAt,
                         CreatedBy = e.CreatedBy,
+                        CreatorLogin = e.CreatorLogin,
                         SourceJobId = e.SourceJobId,
                         InputImageCount = e.InputImageCount,
                         Done = done,
@@ -1542,18 +1578,84 @@ namespace MultiImageClient
             return result;
         }
 
-        /// Every distinct creator username across all history (live + archive)
-        /// with job counts, most prolific first. Empty usernames (jobs from
-        /// before attribution existed) are reported under "".
-        public List<(string User, List<string> JobIds)> ListUsers()
+        /// Every effective creator username across all history (live + archive)
+        /// with job counts, most prolific first. Authenticated jobs can resolve
+        /// through their account's current profile name without rewriting the
+        /// original CreatedBy value stored in job.json.
+        public List<(string User, List<string> JobIds)> ListUsers(
+            Func<string, string, string> displayResolver)
         {
             List<UiHistoryIndexEntry> snapshot;
             lock (_indexLock) snapshot = _index.ToList();
             return snapshot
-                .GroupBy(e => e.CreatedBy ?? "")
+                .GroupBy(e => displayResolver(e.CreatorLogin, e.CreatedBy ?? ""))
                 .OrderByDescending(g => g.Count())
                 .Select(g => (g.Key, g.Select(entry => entry.Id).ToList()))
                 .ToList();
+        }
+
+        public List<string> ListHistoricalAliasesForLogin(string creatorLogin)
+        {
+            List<UiHistoryIndexEntry> snapshot;
+            lock (_indexLock) snapshot = _index.ToList();
+            return snapshot
+                .Where(entry => string.Equals(
+                    entry.CreatorLogin,
+                    creatorLogin,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(entry => entry.CreatedBy)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        public List<(string CreatorLogin, List<string> Aliases)> ListAuthenticatedAttributions()
+        {
+            List<UiHistoryIndexEntry> snapshot;
+            lock (_indexLock) snapshot = _index.ToList();
+            return snapshot
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.CreatorLogin))
+                .GroupBy(entry => entry.CreatorLogin, StringComparer.OrdinalIgnoreCase)
+                .Select(group => (
+                    group.Key,
+                    group.Select(entry => entry.CreatedBy)
+                        .Where(name => !string.IsNullOrWhiteSpace(name))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()))
+                .ToList();
+        }
+
+        public UiJob AssignLegacyCreatorLogin(
+            string jobId,
+            string expectedCreatedBy,
+            string creatorLogin)
+        {
+            var job = Get(jobId)
+                ?? throw new InvalidOperationException($"Job {jobId} does not exist.");
+            job.AssignLegacyCreatorLogin(expectedCreatedBy, creatorLogin);
+            lock (_indexLock)
+            {
+                var index = _index.FindIndex(entry =>
+                    string.Equals(entry.Id, jobId, StringComparison.Ordinal));
+                if (index < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Job {jobId} is hydrated but missing from the history index.");
+                }
+                var entry = _index[index];
+                _index[index] = new UiHistoryIndexEntry
+                {
+                    Id = entry.Id,
+                    FolderName = entry.FolderName,
+                    CreatedAt = entry.CreatedAt,
+                    CreatedBy = entry.CreatedBy,
+                    CreatorLogin = creatorLogin,
+                    SourceJobId = entry.SourceJobId,
+                    InputImageCount = entry.InputImageCount,
+                    Done = entry.Done,
+                };
+            }
+            return job;
         }
 
         /// Input-library candidates from the disk index (user uploads only).

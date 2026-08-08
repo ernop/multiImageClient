@@ -177,6 +177,13 @@ namespace MultiImageClient
         /// explicit choice); a broken file keeps it on with zero valid tokens.
         public bool IsEnforced => CurrentFile().Enabled;
 
+        public IReadOnlyList<string> ListAccountNames()
+        {
+            return CurrentFile().Accounts
+                .Select(account => account.Username.Trim())
+                .ToList();
+        }
+
         public bool TryLogin(string username, string password, string clientIp, out string cookieValue, out string error)
         {
             cookieValue = "";
