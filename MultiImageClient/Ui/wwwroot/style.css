@@ -1270,6 +1270,16 @@ body:not(.show-costs) #cost-summary { display: none !important; }
 }
 /* Actual returned pixel size; secondary via smaller size, not desaturation. */
 .cell-size { font-size: 11px; font-weight: 600; color: var(--accent-dark); white-space: nowrap; }
+/* Provider-reported serving model (currently grok-web model_name). The
+   new-model variant flags a name outside the transport's known baseline:
+   the server-side model changed under us (e.g. Imagine Image 2.0). */
+.cell-served-model { font-size: 10px; font-weight: 700; color: var(--accent-dark); white-space: nowrap; }
+.cell-served-model.new-model {
+  padding: 1px 7px;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 8px;
+}
 .cell-cost { margin-left: auto; font-size: 12px; color: var(--accent-dark); font-weight: 700; white-space: nowrap; }
 .cell-time { font-size: 12px; color: var(--ok); font-weight: 600; }
 .cell-time.err { color: var(--err); }

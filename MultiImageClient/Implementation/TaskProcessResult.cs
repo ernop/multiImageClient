@@ -29,6 +29,14 @@ namespace MultiImageClient
         public TextGeneratorApiType TextGenerator { get; set; }
         public long CreateTotalMs { get; set; } = 0;
         public long DownloadTotalMs { get; set; } = 0;
+
+        // The model identity the provider REPORTED serving this result with,
+        // when the transport exposes one (currently grok-web's imagine
+        // WebSocket model_name/mode). Null elsewhere. Informational only:
+        // lets runs say at runtime which server-side model produced the
+        // images (e.g. after xAI's 2026-08-07 Imagine Image 2.0 rollout).
+        public string ServedModelName { get; set; }
+        public string ServedModelMode { get; set; }
         public string GeneratedMediaPath { get; set; }
         public string GeneratedMediaContentType { get; set; }
         public string GenerationAttemptId { get; set; } = "";
