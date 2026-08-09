@@ -139,6 +139,18 @@ const ImageViewerWheelThreshold = 80;
 let imageViewerNavDelta = 0;
 
 const el = (id) => document.getElementById(id);
+
+function applyEnvironmentBranding() {
+  const hostname = location.hostname.toLowerCase().replace(/\.$/, "");
+  const isOnline = hostname === "fuseki.net" || hostname.endsWith(".fuseki.net");
+  const header = document.querySelector("header");
+  el("environment-name").textContent = isOnline ? "-alpha.fuseki.net" : "-local";
+  header.classList.toggle("environment-online", isOnline);
+  header.classList.toggle("environment-local", !isOnline);
+}
+
+applyEnvironmentBranding();
+
 const startsAtDefaultView = window.location.search === "" && window.location.hash === "";
 if (startsAtDefaultView) {
   history.scrollRestoration = "manual";
@@ -150,6 +162,16 @@ const pasteHint = el("paste-hint");
 const clearBtn = el("clear-image");
 const fileInput = el("file-input");
 const promptBox = el("prompt");
+
+// The attachment target and prompt are one input row. Keep their visible
+// heights identical, including when the user vertically resizes the prompt.
+function syncPasteZoneHeight() {
+  pasteZone.style.height = `${Math.ceil(promptBox.getBoundingClientRect().height)}px`;
+}
+
+new ResizeObserver(syncPasteZoneHeight).observe(promptBox);
+syncPasteZoneHeight();
+
 const gensRow = el("gens-row");
 const describeSection = el("describe-section");
 const describeRow = el("describe-row");
@@ -560,7 +582,10 @@ async function loadConfig() {
   describeRow.innerHTML = "";
   const hiddenGeneratorKeys = new Set(generatorPreferences.hiddenGeneratorKeys);
   for (const g of generators) {
-    if (hiddenGeneratorKeys.has(g.key)) continue;
+    // The composer is an action surface, so omit targets that cannot be
+    // selected. The preferences dialog still lists unavailable targets with
+    // their configuration problem so users can manage future availability.
+    if (hiddenGeneratorKeys.has(g.key) || !g.available) continue;
     (g.kind === "describe" ? describeRow : gensRow).appendChild(buildGenChip(g));
   }
   renderGeneratorPresetButtons();
@@ -765,6 +790,15 @@ el("gpt2-guidance-reset").addEventListener("click", () => {
 // is only revealed by an explicit click inside the settings panel, and is
 // blanked again whenever the panel closes.
 const UiSettingsKey = "mic_ui_settings_v1";
+const DefaultContentMaxWidth = 1280;
+const MinContentMaxWidth = 960;
+const MaxContentMaxWidth = 2560;
+
+function normalizeContentMaxWidth(value) {
+  return Number.isFinite(value)
+    ? Math.min(MaxContentMaxWidth, Math.max(MinContentMaxWidth, Math.round(value / 40) * 40))
+    : DefaultContentMaxWidth;
+}
 
 function loadUiSettings() {
   try {
@@ -775,6 +809,7 @@ function loadUiSettings() {
       // Costs off by default so casual/shared-site visitors never see $ estimates
       // unless they opt in. Explicit true/false both stick; missing key = off.
       showCosts: saved.showCosts === true,
+      contentMaxWidth: normalizeContentMaxWidth(saved.contentMaxWidth),
       activityOwnGens: saved.activityOwnGens !== false,
       activityReturning: saved.activityReturning !== false,
       activityMyFavorites: saved.activityMyFavorites !== false,
@@ -795,6 +830,7 @@ function loadUiSettings() {
       nightHideEnabled: false,
       nightWords: "",
       showCosts: false,
+      contentMaxWidth: DefaultContentMaxWidth,
       activityOwnGens: true,
       activityReturning: true,
       activityMyFavorites: true,
@@ -822,6 +858,8 @@ const settingsPanel = el("settings-panel");
 const nightToggle = el("night-toggle");
 const nightHideEnabledBox = el("night-hide-enabled");
 const showCostsBox = el("show-costs");
+const contentWidthInput = el("content-width");
+const contentWidthValue = el("content-width-value");
 const nightWordsEditor = el("night-words-editor");
 const nightWordsBox = el("night-words");
 
@@ -888,6 +926,21 @@ function setShowCosts(enabled) {
 
 showCostsBox.addEventListener("change", () => setShowCosts(showCostsBox.checked));
 
+function applyContentWidth() {
+  const width = normalizeContentMaxWidth(uiSettings.contentMaxWidth);
+  uiSettings.contentMaxWidth = width;
+  document.documentElement.style.setProperty("--content-max-width", `${width}px`);
+  contentWidthInput.value = String(width);
+  contentWidthValue.value = `${width}px`;
+  contentWidthValue.textContent = `${width}px`;
+}
+
+contentWidthInput.addEventListener("input", () => {
+  uiSettings.contentMaxWidth = normalizeContentMaxWidth(Number(contentWidthInput.value));
+  saveUiSettings();
+  applyContentWidth();
+});
+
 // Image-viewer close handback (see imageViewerReturnSync above). The settings
 // checkbox and the viewer's `s` shortcut drive the same persisted state.
 const viewerReturnSyncBox = el("viewer-return-sync");
@@ -944,6 +997,7 @@ document.addEventListener("keydown", (event) => {
 
 applyNightMode();
 applyShowCosts();
+applyContentWidth();
 
 // ---------- floating activity center ----------
 

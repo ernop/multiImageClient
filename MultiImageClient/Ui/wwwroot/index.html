@@ -7,13 +7,12 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260808-generator-config-views">
+<link rel="stylesheet" href="style.css?v=20260809-layout-branding">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260804-spelling-panel">
 </head>
 <body>
 <header>
-  <h1>MultiImageClient</h1>
-  <span class="tagline">paste image(s), write a prompt, fan out</span>
+  <h1>MultiImageClient<span id="environment-name"></span></h1>
   <button id="night-toggle" type="button" aria-pressed="false"
     title="hide night mode — hide any job whose prompt contains a word from the hidden-word list (edit the list in settings)">night filter</button>
   <span id="ram-status" title="In-use process RAM (cgroup). The parenthetical limit is systemd MemoryHigh/Max, not usage.">RAM …</span>
@@ -77,6 +76,11 @@
     <input id="show-costs" type="checkbox">
     <span><strong>show estimated costs</strong> — per-result, per-job, and session spend estimates.
       Off by default; estimates are still computed server-side either way.</span>
+  </label>
+  <label class="settings-width-row" for="content-width">
+    <span><strong>page content width</strong> — adjust the side margins immediately.</span>
+    <input id="content-width" type="range" min="960" max="2560" step="40">
+    <output id="content-width-value" for="content-width"></output>
   </label>
   <label class="settings-row">
     <input id="viewer-return-sync" type="checkbox">
@@ -203,7 +207,7 @@
     </div>
 
     <div id="compose-right">
-      <textarea id="prompt" rows="5"
+      <textarea id="prompt" rows="8"
         placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (gpt-image-2 sees all of them in order); without one it's plain text-to-image."></textarea>
       <div id="prompt-limit-notice" hidden></div>
       <div id="spelling-panel" hidden>
@@ -511,6 +515,6 @@
 
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260804-spelling-panel"></script>
-<script src="app.js?v=20260808-generator-config-views"></script>
+<script src="app.js?v=20260809-layout-branding"></script>
 </body>
 </html>
