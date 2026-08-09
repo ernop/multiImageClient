@@ -569,13 +569,16 @@ namespace MultiImageClient
                                 break;
                         }
 
-                        if (streamErrorMessage == null && finalImages.Count == _imageCount)
+                        // Exit as soon as we have a terminal outcome. An SSE
+                        // error (e.g. moderation_blocked) used to only break the
+                        // switch and then wait for [DONE]/EOF/stall — OpenAI can
+                        // leave the socket open after the error, which held the
+                        // openai lane for 10+ minutes (2026-08-08 production).
+                        // Same for a full set of completed images: [DONE] is
+                        // framing, and waiting for it held finished results
+                        // hostage when the server lingered (observed 2026-08-05).
+                        if (streamErrorMessage != null || finalImages.Count == _imageCount)
                         {
-                            // Every requested image is in hand; [DONE] is just
-                            // stream framing, and waiting for it holds a finished
-                            // result hostage if the server lingers (observed
-                            // 2026-08-05: `completed` received, then 30+s of
-                            // silence with no [DONE]).
                             break;
                         }
                     }
