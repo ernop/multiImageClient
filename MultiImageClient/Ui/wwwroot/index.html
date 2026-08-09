@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260809-layout-branding">
+<link rel="stylesheet" href="style.css?v=20260809-full-width-endpoints">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260804-spelling-panel">
 </head>
 <body>
@@ -176,71 +176,76 @@
 
 <main>
   <section id="composer">
-    <div id="compose-left">
-      <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse. Up to 4 images; gpt-image-2 receives all, other generators only the first.">
-        <div id="paste-hint">
-          <strong>Ctrl+V</strong> to paste an image<br>
-          or drop / click to browse
-        </div>
-        <div id="input-thumbs" hidden></div>
-        <p id="multi-input-hint" hidden>
-          gpt-image-2 gets these in order — say how to use each in the prompt.
-          Other generators only receive the first.
-        </p>
-        <button id="clear-image" type="button" hidden>&times; clear all</button>
-        <input id="file-input" type="file" accept="image/*" hidden>
-      </div>
-      <div id="input-library-control">
-        <button id="input-library-toggle" type="button" aria-expanded="false"
-          aria-controls="input-library-panel"
-          title="Pick from every image you've previously uploaded (deduplicated, newest first)">
-          load a previous image
-        </button>
-        <div id="input-library-panel" hidden>
-          <div class="input-library-head">
-            <strong>Past input images</strong>
-            <button id="input-library-close" type="button" aria-label="Close image picker">&times;</button>
+    <div id="compose-top">
+      <div id="compose-left">
+        <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse. Up to 4 images; gpt-image-2 receives all, other generators only the first.">
+          <div id="paste-hint">
+            <strong>Ctrl+V</strong> to paste an image<br>
+            or drop / click to browse
           </div>
-          <div id="input-library-results" role="listbox" aria-label="Previously uploaded images"></div>
+          <div id="input-thumbs" hidden></div>
+          <p id="multi-input-hint" hidden>
+            gpt-image-2 gets these in order — say how to use each in the prompt.
+            Other generators only receive the first.
+          </p>
+          <button id="clear-image" type="button" hidden>&times; clear all</button>
+          <input id="file-input" type="file" accept="image/*" hidden>
+        </div>
+        <div id="input-library-control">
+          <button id="input-library-toggle" type="button" aria-expanded="false"
+            aria-controls="input-library-panel"
+            title="Pick from every image you've previously uploaded (deduplicated, newest first)">
+            load a previous image
+          </button>
+          <div id="input-library-panel" hidden>
+            <div class="input-library-head">
+              <strong>Past input images</strong>
+              <button id="input-library-close" type="button" aria-label="Close image picker">&times;</button>
+            </div>
+            <div id="input-library-results" role="listbox" aria-label="Previously uploaded images"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="compose-right">
+        <textarea id="prompt" rows="8"
+          placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (gpt-image-2 sees all of them in order); without one it's plain text-to-image."></textarea>
+        <div id="prompt-limit-notice" hidden></div>
+        <div id="spelling-panel" hidden>
+          <label id="spelling-enabled-control">
+            <input id="mcphee-enabled-toggle" type="checkbox" disabled checked>
+            Enable spellchecker
+          </label>
+          <div id="mcphee-panel"></div>
+        </div>
+
+        <div id="compose-actions">
+          <div id="prompt-tools">
+            <button id="mcphee-panel-toggle" type="button" disabled aria-expanded="false"
+              aria-controls="spelling-panel" title="Open spelling suggestions and settings">spelling</button>
+            <button id="prompt-advice" type="button"
+              title="Give Claude your own editing instruction, with this exact prompt appended as source text">get Claude's advice</button>
+            <button id="prompt-advice-undo" type="button" hidden
+              title="Restore the exact prompt from before Claude edited it">undo Claude edit</button>
+          </div>
         </div>
       </div>
     </div>
 
-    <div id="compose-right">
-      <textarea id="prompt" rows="8"
-        placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (gpt-image-2 sees all of them in order); without one it's plain text-to-image."></textarea>
-      <div id="prompt-limit-notice" hidden></div>
-      <div id="spelling-panel" hidden>
-        <label id="spelling-enabled-control">
-          <input id="mcphee-enabled-toggle" type="checkbox" disabled checked>
-          Enable spellchecker
-        </label>
-        <div id="mcphee-panel"></div>
-      </div>
-
-      <div id="compose-actions">
-        <div id="gen-controls">
-          <button id="gens-enable-all" class="generator-main-control" type="button">Enable all</button>
-          <button id="gens-disable-all" class="generator-main-control" type="button">Disable all</button>
-          <button id="gens-toggle-all" class="generator-main-control" type="button">Toggle all</button>
-          <span id="gen-personal-presets" class="generator-main-control"></span>
-          <button id="gens-enable-image-capable" type="button"
-            class="image-only-action generator-main-control" hidden
-            title="Enable every available endpoint that accepts the attached image">Enable image-capable</button>
-          <button id="gens-disable-text-only" type="button"
-            class="image-only-action generator-main-control" hidden
-            title="Disable endpoints that can't accept the attached image (they'd run from the prompt text only)">Disable text-only</button>
-          <button id="generator-config-toggle" type="button" aria-label="Configure generator chooser"
-            title="Configure visible targets, defaults, and personal generator buttons">⚙</button>
-        </div>
-        <div id="prompt-tools">
-          <button id="mcphee-panel-toggle" type="button" disabled aria-expanded="false"
-            aria-controls="spelling-panel" title="Open spelling suggestions and settings">spelling</button>
-          <button id="prompt-advice" type="button"
-            title="Give Claude your own editing instruction, with this exact prompt appended as source text">get Claude's advice</button>
-          <button id="prompt-advice-undo" type="button" hidden
-            title="Restore the exact prompt from before Claude edited it">undo Claude edit</button>
-        </div>
+    <div id="endpoint-picker">
+      <div id="gen-controls">
+        <button id="gens-enable-all" class="generator-main-control" type="button">Enable all</button>
+        <button id="gens-disable-all" class="generator-main-control" type="button">Disable all</button>
+        <button id="gens-toggle-all" class="generator-main-control" type="button">Toggle all</button>
+        <span id="gen-personal-presets" class="generator-main-control"></span>
+        <button id="gens-enable-image-capable" type="button"
+          class="image-only-action generator-main-control" hidden
+          title="Enable every available endpoint that accepts the attached image">Enable image-capable</button>
+        <button id="gens-disable-text-only" type="button"
+          class="image-only-action generator-main-control" hidden
+          title="Disable endpoints that can't accept the attached image (they'd run from the prompt text only)">Disable text-only</button>
+        <button id="generator-config-toggle" type="button" aria-label="Configure generator chooser"
+          title="Configure visible targets, defaults, and personal generator buttons">⚙</button>
       </div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
 
@@ -306,6 +311,8 @@
       <div id="describe-section" hidden>
         <div id="describe-head">
           <strong>describe</strong>
+          <button id="describe-collapse-toggle" type="button" aria-expanded="true"
+            aria-controls="describe-row">− collapse</button>
           <span id="describe-head-note">image &rarr; text — describes the attached image(s); your prompt is the instruction (blank = standard "describe this image"); output options above don't apply</span>
           <button id="describe-enable-all" type="button" title="Enable every available describe endpoint">all</button>
           <button id="describe-disable-all" type="button" title="Disable every describe endpoint">none</button>
@@ -515,6 +522,6 @@
 
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260804-spelling-panel"></script>
-<script src="app.js?v=20260809-layout-branding"></script>
+<script src="app.js?v=20260809-full-width-endpoints"></script>
 </body>
 </html>

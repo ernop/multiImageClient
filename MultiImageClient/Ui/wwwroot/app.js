@@ -810,6 +810,7 @@ function loadUiSettings() {
       // unless they opt in. Explicit true/false both stick; missing key = off.
       showCosts: saved.showCosts === true,
       contentMaxWidth: normalizeContentMaxWidth(saved.contentMaxWidth),
+      describeExpanded: saved.describeExpanded !== false,
       activityOwnGens: saved.activityOwnGens !== false,
       activityReturning: saved.activityReturning !== false,
       activityMyFavorites: saved.activityMyFavorites !== false,
@@ -831,6 +832,7 @@ function loadUiSettings() {
       nightWords: "",
       showCosts: false,
       contentMaxWidth: DefaultContentMaxWidth,
+      describeExpanded: true,
       activityOwnGens: true,
       activityReturning: true,
       activityMyFavorites: true,
@@ -860,6 +862,7 @@ const nightHideEnabledBox = el("night-hide-enabled");
 const showCostsBox = el("show-costs");
 const contentWidthInput = el("content-width");
 const contentWidthValue = el("content-width-value");
+const describeCollapseToggle = el("describe-collapse-toggle");
 const nightWordsEditor = el("night-words-editor");
 const nightWordsBox = el("night-words");
 
@@ -941,6 +944,22 @@ contentWidthInput.addEventListener("input", () => {
   applyContentWidth();
 });
 
+function applyDescribeExpanded() {
+  const expanded = uiSettings.describeExpanded;
+  describeSection.classList.toggle("collapsed", !expanded);
+  describeCollapseToggle.setAttribute("aria-expanded", String(expanded));
+  describeCollapseToggle.textContent = expanded ? "− collapse" : "+ expand";
+  describeCollapseToggle.title = expanded
+    ? "Collapse describe endpoints"
+    : "Expand describe endpoints";
+}
+
+describeCollapseToggle.addEventListener("click", () => {
+  uiSettings.describeExpanded = !uiSettings.describeExpanded;
+  saveUiSettings();
+  applyDescribeExpanded();
+});
+
 // Image-viewer close handback (see imageViewerReturnSync above). The settings
 // checkbox and the viewer's `s` shortcut drive the same persisted state.
 const viewerReturnSyncBox = el("viewer-return-sync");
@@ -998,6 +1017,7 @@ document.addEventListener("keydown", (event) => {
 applyNightMode();
 applyShowCosts();
 applyContentWidth();
+applyDescribeExpanded();
 
 // ---------- floating activity center ----------
 

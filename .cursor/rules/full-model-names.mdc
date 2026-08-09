@@ -1,0 +1,11 @@
+---
+description: Require complete model names on every user-facing surface
+alwaysApply: true
+---
+
+# Full Model Names
+
+- Always display the complete configured/catalog model or generator name in every user-facing surface.
+- Never abbreviate, ellipsize, clamp, truncate, or hide any part of a model name.
+- Constrained layouts must wrap or reflow surrounding metadata and controls so the full name remains visible. A tooltip does not substitute for visible text.
+- Internal keys may remain in diagnostics, but they must not replace the full display name in UI, documentation, release notes, or other user-facing prose.

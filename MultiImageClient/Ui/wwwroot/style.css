@@ -472,12 +472,19 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 
 #composer {
   display: flex;
+  flex-direction: column;
   gap: 16px;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 5px;
   padding: 16px;
   box-shadow: 0 2px 8px rgba(20, 22, 31, 0.06);
+}
+
+#compose-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
 }
 
 #compose-left {
@@ -697,6 +704,7 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 }
 
 #compose-right { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+#endpoint-picker { display: flex; flex-direction: column; gap: 10px; }
 
 #prompt {
   width: 100%;
@@ -742,8 +750,8 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 #mcphee-panel .mcphee-panel-ignore,
 #mcphee-panel .mcphee-panel-dictcount { color: var(--accent-dark); }
 
-/* Bulk generator actions and prompt-scoped actions share the row immediately
-   below the prompt, with each group adjacent to the side it acts from. */
+/* Prompt-scoped actions stay immediately below the prompt. Generator controls
+   live in the full-width endpoint picker below the image/prompt row. */
 #compose-actions {
   display: flex;
   align-items: center;
@@ -815,6 +823,7 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
    reuse .gen-toggle; the whole section only renders while an image is
    attached — without one there is nothing to describe. */
 #describe-section { display: flex; flex-direction: column; gap: 5px; }
+#describe-section[hidden] { display: none; }
 #describe-head { display: flex; align-items: baseline; gap: 7px; font-size: 13px; }
 #describe-head-note { font-size: 11px; }
 #describe-head button {
@@ -829,6 +838,11 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
   grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
   gap: 7px;
 }
+#describe-section.collapsed { gap: 0; }
+#describe-section.collapsed #describe-head-note,
+#describe-section.collapsed #describe-enable-all,
+#describe-section.collapsed #describe-disable-all,
+#describe-section.collapsed #describe-row { display: none; }
 
 #opts-row { display: flex; flex-wrap: wrap; align-items: center; gap: 13px; font-size: 13px; }
 #opts-row label { display: inline-flex; align-items: center; gap: 4px; }
@@ -1735,13 +1749,16 @@ body.image-viewer-open { overflow: hidden; }
 #image-viewer-meta-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 #image-viewer-generator {
+  min-width: 0;
   font-size: 13px;
   font-weight: 700;
   color: var(--accent-dark);
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 #image-viewer-dimensions {
   font-size: 12px;
@@ -1928,31 +1945,29 @@ body.image-viewer-open { overflow: hidden; }
 }
 #image-viewer-window.side-status #image-viewer-meta-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 4px 7px;
 }
 #image-viewer-window.side-status #image-viewer-generator {
-  grid-column: 1;
+  grid-column: 1 / -1;
   grid-row: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 #image-viewer-window.side-status #image-viewer-dimensions {
-  grid-column: 2;
-  grid-row: 1;
+  grid-column: 1;
+  grid-row: 2;
 }
 #image-viewer-window.side-status #image-viewer-position {
-  grid-column: 3;
-  grid-row: 1;
+  grid-column: 2;
+  grid-row: 2;
 }
 #image-viewer-window.side-status #image-viewer-help-toggle {
-  grid-column: 4;
-  grid-row: 1;
+  grid-column: 3;
+  grid-row: 2;
 }
 #image-viewer-window.side-status #image-viewer-actions {
   display: grid;
   grid-column: 1 / -1;
-  grid-row: 2;
+  grid-row: 3;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 4px;
   margin-left: 0;
@@ -2457,6 +2472,9 @@ body.image-viewer-open { overflow: hidden; }
 @media (max-width: 700px) {
   #environment-name { display: block; font-size: 11px; letter-spacing: 0; }
   #people-bar, #favorites-bar { width: calc(100% - 20px); margin: 8px auto 0; }
+  #compose-top { flex-direction: column; }
+  #compose-left { flex: 0 0 auto; width: 100%; }
+  #compose-right { width: 100%; }
   #generator-config-shown,
   #generator-config-defaults { grid-template-columns: 1fr; }
   .generator-config-choice-grid { grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); }
