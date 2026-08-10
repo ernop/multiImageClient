@@ -74,6 +74,10 @@ namespace MultiImageClient
             "Render in normal daytime lighting. Absolutely do not make the image dim, murky, grimy, "
             + "muddy, gloomy, shadow-choked, underexposed, hazy, dusk-like, night-like, or dark. "
             + "No smudged, muddy, overly fine micro-texture.";
+        private const int MaxGeneratorExtraTextChars = 16000;
+        private const int MaxGeneratorNotesChars = 16000;
+        private const int MaxGeneratorConfigurationTotalChars = 128000;
+        private const int MaxJobExtraTextTotalChars = 64000;
 
         public async Task RunAsync(Settings settings, MultiClientRunStats stats, RunOptions options)
         {
@@ -335,6 +339,10 @@ namespace MultiImageClient
                     // warn before submit; the server truncates over-limit prompts
                     // at the provider send stage (grok-web: GrokWebClient).
                     maxPromptChars = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptChars : null,
+                    defaultExtraText = g.key == UiJobRunner.KeyGpt2
+                        ? DefaultGpt2GuidanceText
+                        : "",
+                    defaultNotes = "",
                     // Default-on set for new windows: gpt-image-2, Recraft V4.1,
                     // grok-web pro, Ideogram 4.0, FLUX.2 Pro Preview, Nano Banana 2.
                     defaultOn = g.key is UiJobRunner.KeyGpt2
@@ -398,8 +406,20 @@ namespace MultiImageClient
                                 preset.Name,
                                 generatorKeys = preset.GeneratorKeys,
                             }),
+                            endpointConfigurations =
+                                generatorPreferences.EndpointConfigurations.Select(configuration => new
+                                {
+                                    configuration.Key,
+                                    configuration.ExtraText,
+                                    configuration.Notes,
+                                }),
                             updatedAtUnixMs = generatorPreferences.UpdatedAtUnixMs,
                         },
+                    generatorEndpointConfiguration = new
+                    {
+                        maxExtraTextChars = MaxGeneratorExtraTextChars,
+                        maxNotesChars = MaxGeneratorNotesChars,
+                    },
                     // gpt-image-2 anti-murk guidance: on by default, textbox
                     // prefilled with this text, appended server-side to the
                     // gpt2 target's prompt only.
@@ -759,6 +779,15 @@ namespace MultiImageClient
                         error = $"Unknown output shape '{shape}'. Expected one of: {string.Join(", ", UiShapeMapping.Shapes)}.",
                     });
                 }
+                Dictionary<string, string> generatorExtraTexts;
+                try
+                {
+                    generatorExtraTexts = ParseGeneratorExtraTexts(form, genKeys);
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
 
                 // Uploaded images (clipboard paste / drag-drop / file picker)
                 // are persisted under the day folder so job inputs are archived
@@ -833,27 +862,6 @@ namespace MultiImageClient
                     }
                 }
 
-                // gpt-image-2 anti-murk guidance. Missing fields (an older
-                // window still open from before this control existed) get the
-                // declared defaults — enabled with the standard text — chosen
-                // before the job starts, exactly like the other option defaults.
-                var gpt2GuidanceEnabled = !string.Equals(
-                    form["gpt2GuidanceEnabled"].ToString(),
-                    "false",
-                    StringComparison.OrdinalIgnoreCase);
-                var gpt2GuidanceText = form.ContainsKey("gpt2GuidanceText")
-                    ? form["gpt2GuidanceText"].ToString().Trim()
-                    : DefaultGpt2GuidanceText;
-                // Enabled-but-blank falls back to the default text. A browser
-                // that persisted an emptied textbox stripped the guidance from
-                // every gpt2 call for two days (2026-07-31 → 08-02; ultra-dark
-                // output) while the toggle still said on. Turning guidance off
-                // is the toggle's job; blank text never silently disables it.
-                if (gpt2GuidanceEnabled && string.IsNullOrWhiteSpace(gpt2GuidanceText))
-                {
-                    gpt2GuidanceText = DefaultGpt2GuidanceText;
-                }
-
                 if (!runner.TryAcquireJobAdmission(out var admission))
                 {
                     DeleteRejectedJobInputs(savedInputs.Select(saved => saved.Path));
@@ -881,8 +889,7 @@ namespace MultiImageClient
                         ImageCount = n,
                         Shape = shape,
                         Detail = (form["detail"].ToString() ?? "standard").Trim().ToLowerInvariant(),
-                        Gpt2GuidanceEnabled = gpt2GuidanceEnabled,
-                        Gpt2GuidanceText = gpt2GuidanceText,
+                        GeneratorExtraTexts = generatorExtraTexts,
                     };
                     jobs.Add(job);
                     try
@@ -923,8 +930,7 @@ namespace MultiImageClient
                         quality = spec.Quality,
                         moderation = spec.Moderation,
                         n = spec.ImageCount,
-                        gpt2GuidanceEnabled = spec.Gpt2GuidanceEnabled,
-                        gpt2GuidanceText = spec.Gpt2GuidanceText,
+                        generatorExtraTexts = spec.GeneratorExtraTexts,
                         prompt,
                         at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     });
@@ -2250,6 +2256,106 @@ namespace MultiImageClient
             return metadata.ToJsonString();
         }
 
+        private static Dictionary<string, string> ParseGeneratorExtraTexts(
+            IFormCollection form,
+            IReadOnlyCollection<string> selectedGeneratorKeys)
+        {
+            var selected = selectedGeneratorKeys.ToHashSet(StringComparer.Ordinal);
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            // Deterministic compatibility for browser windows opened before
+            // per-endpoint configuration existed. Their two legacy gpt2 fields
+            // keep the old declared default and explicit off-switch semantics.
+            if (!form.ContainsKey("generatorExtraTexts"))
+            {
+                if (!selected.Contains(UiJobRunner.KeyGpt2))
+                {
+                    return result;
+                }
+                var enabled = !string.Equals(
+                    form["gpt2GuidanceEnabled"].ToString(),
+                    "false",
+                    StringComparison.OrdinalIgnoreCase);
+                if (!enabled)
+                {
+                    return result;
+                }
+                var legacyText = form.ContainsKey("gpt2GuidanceText")
+                    ? form["gpt2GuidanceText"].ToString().Trim()
+                    : DefaultGpt2GuidanceText;
+                result[UiJobRunner.KeyGpt2] = string.IsNullOrWhiteSpace(legacyText)
+                    ? DefaultGpt2GuidanceText
+                    : legacyText;
+                return result;
+            }
+
+            var raw = form["generatorExtraTexts"].ToString();
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(raw);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException(
+                    $"Per-generator extra text is not valid JSON: {ex.Message}",
+                    ex);
+            }
+
+            using (document)
+            {
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new InvalidDataException(
+                        "Per-generator extra text must be a JSON object keyed by generator.");
+                }
+
+                var totalChars = 0;
+                var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    var key = property.Name;
+                    if (!UiJobRunner.IsImageGeneratorKey(key))
+                    {
+                        throw new InvalidDataException(
+                            $"Per-generator extra text contains unknown image generator '{key}'.");
+                    }
+                    if (!selected.Contains(key))
+                    {
+                        throw new InvalidDataException(
+                            $"Per-generator extra text contains unselected generator '{key}'.");
+                    }
+                    if (!seenKeys.Add(key))
+                    {
+                        throw new InvalidDataException(
+                            $"Per-generator extra text contains duplicate generator '{key}'.");
+                    }
+                    if (property.Value.ValueKind != JsonValueKind.String)
+                    {
+                        throw new InvalidDataException(
+                            $"Per-generator extra text for '{key}' must be a string.");
+                    }
+                    var value = (property.Value.GetString() ?? "").Trim();
+                    if (value.Length > MaxGeneratorExtraTextChars)
+                    {
+                        throw new InvalidDataException(
+                            $"Per-generator extra text for '{key}' exceeds {MaxGeneratorExtraTextChars:N0} characters.");
+                    }
+                    totalChars += value.Length;
+                    if (totalChars > MaxJobExtraTextTotalChars)
+                    {
+                        throw new InvalidDataException(
+                            $"Per-generator extra text exceeds {MaxJobExtraTextTotalChars:N0} characters in total.");
+                    }
+                    if (value.Length > 0)
+                    {
+                        result.Add(key, value);
+                    }
+                }
+            }
+            return result;
+        }
+
         private static bool TryResolveCreatorName(
             string? submitted,
             string authUser,
@@ -2318,6 +2424,7 @@ namespace MultiImageClient
             public List<string> HiddenGeneratorKeys { get; init; } = new();
             public List<string> DefaultSelectedKeys { get; init; } = new();
             public List<UiGeneratorPresetRequest> Presets { get; init; } = new();
+            public List<UiGeneratorEndpointConfigurationRequest> EndpointConfigurations { get; init; } = new();
         }
 
         private sealed class UiGeneratorPresetRequest
@@ -2325,6 +2432,13 @@ namespace MultiImageClient
             public string Id { get; init; } = "";
             public string Name { get; init; } = "";
             public List<string> GeneratorKeys { get; init; } = new();
+        }
+
+        private sealed class UiGeneratorEndpointConfigurationRequest
+        {
+            public string Key { get; init; } = "";
+            public string? ExtraText { get; init; }
+            public string? Notes { get; init; }
         }
 
         private static UiGeneratorPreferencesRecord NormalizeGeneratorPreferences(
@@ -2345,6 +2459,10 @@ namespace MultiImageClient
             if (submitted.Presets.Count > 20)
             {
                 throw new InvalidDataException("At most 20 personal generator buttons may be saved.");
+            }
+            if (submitted.EndpointConfigurations.Count > UiJobRunner.ImageGeneratorKeys.Length)
+            {
+                throw new InvalidDataException("Too many per-endpoint generator configurations were submitted.");
             }
 
             static List<string> DistinctKeys(
@@ -2433,6 +2551,52 @@ namespace MultiImageClient
                 });
             }
 
+            var endpointConfigurations = new List<UiGeneratorEndpointConfigurationRecord>();
+            var configuredKeys = new HashSet<string>(StringComparer.Ordinal);
+            var configurationChars = 0;
+            foreach (var configuration in submitted.EndpointConfigurations)
+            {
+                var key = configuration.Key.Trim();
+                if (!UiJobRunner.IsImageGeneratorKey(key))
+                {
+                    throw new InvalidDataException(
+                        $"Per-endpoint configuration contains unknown image generator '{key}'.");
+                }
+                if (!configuredKeys.Add(key))
+                {
+                    throw new InvalidDataException(
+                        $"Per-endpoint configuration contains duplicate generator '{key}'.");
+                }
+                if (configuration.ExtraText == null && configuration.Notes == null)
+                {
+                    throw new InvalidDataException(
+                        $"Per-endpoint configuration for '{key}' contains no overrides.");
+                }
+                if (configuration.ExtraText?.Length > MaxGeneratorExtraTextChars)
+                {
+                    throw new InvalidDataException(
+                        $"Extra text for '{key}' exceeds {MaxGeneratorExtraTextChars:N0} characters.");
+                }
+                if (configuration.Notes?.Length > MaxGeneratorNotesChars)
+                {
+                    throw new InvalidDataException(
+                        $"Private notes for '{key}' exceed {MaxGeneratorNotesChars:N0} characters.");
+                }
+                configurationChars += configuration.ExtraText?.Length ?? 0;
+                configurationChars += configuration.Notes?.Length ?? 0;
+                if (configurationChars > MaxGeneratorConfigurationTotalChars)
+                {
+                    throw new InvalidDataException(
+                        $"Per-endpoint configuration exceeds {MaxGeneratorConfigurationTotalChars:N0} characters in total.");
+                }
+                endpointConfigurations.Add(new UiGeneratorEndpointConfigurationRecord
+                {
+                    Key = key,
+                    ExtraText = configuration.ExtraText,
+                    Notes = configuration.Notes,
+                });
+            }
+
             return new UiGeneratorPreferencesRecord
             {
                 Login = login,
@@ -2441,6 +2605,7 @@ namespace MultiImageClient
                 HiddenGeneratorKeys = hidden,
                 DefaultSelectedKeys = selected,
                 Presets = presets,
+                EndpointConfigurations = endpointConfigurations,
                 UpdatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             };
         }

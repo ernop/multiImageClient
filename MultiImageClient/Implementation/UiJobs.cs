@@ -1694,15 +1694,11 @@ namespace MultiImageClient
         /// capped by each backend's envelope).
         public string Detail { get; init; } = "standard";
 
-        /// gpt-image-2 anti-murk guidance (on by default): when enabled and
-        /// non-empty, this text is appended to the prompt sent to the gpt2
-        /// target only — both /generations and /edits, since both ride the
-        /// same UI key. Every other target receives the untouched prompt.
-        /// Exists because gpt-image-2 habitually drifts into dark, murky,
-        /// underexposed output unless told not to on EVERY call (see the
-        /// Universal Image Prompt Defaults policy).
-        public bool Gpt2GuidanceEnabled { get; init; } = true;
-        public string Gpt2GuidanceText { get; init; } = "";
+        /// Exact per-generator suffixes chosen before the job starts. Each
+        /// non-empty value is appended only to that generator's private copy
+        /// of the prompt and recorded as a ManualSuffixation transformation.
+        public IReadOnlyDictionary<string, string> GeneratorExtraTexts { get; init; }
+            = new Dictionary<string, string>(StringComparer.Ordinal);
         public string VideoMode { get; init; } = "normal";
         public int VideoDurationSeconds { get; init; } = 15;
         public string VideoResolution { get; init; } = "480p";
@@ -2222,6 +2218,47 @@ namespace MultiImageClient
         public const string KeyDescribeGemini = "describe-gemini";
         public const string KeyDescribeGrok = "describe-grok";
 
+        public static readonly string[] ImageGeneratorKeys =
+        {
+            KeyGpt2,
+            KeyGpt1,
+            KeyGpt1Mini,
+            KeyIdeogram,
+            KeyIdeogramV3,
+            KeyIdeogramV2,
+            KeyRecraft,
+            KeyRecraftV41Utility,
+            KeyRecraftV41Pro,
+            KeyRecraftV41Vector,
+            KeyRecraftV3,
+            KeyRecraftV4,
+            KeyRecraftV4Pro,
+            KeyBfl,
+            KeyBflFlux2Pro,
+            KeyBflFlux2Max,
+            KeyBflFlux2Flex,
+            KeyBflFlux2Klein4b,
+            KeyBflFlux2Klein9bPreview,
+            KeyBflFlux2Klein9b,
+            KeyBflKontextPro,
+            KeyBflKontextMax,
+            KeyBflFlux11Ultra,
+            KeyBflFlux11,
+            KeyBflFluxPro,
+            KeyBflFluxDev,
+            KeyKrea,
+            KeyKreaTurbo,
+            KeyKreaLarge,
+            KeyGoogle,
+            KeyGooglePro,
+            KeyLocalKlein,
+            KeyLocalZImage,
+            KeyGrokWeb,
+            KeyGrokApi,
+            KeyGrokApiPro,
+            KeyMetaWeb,
+        };
+
         public static readonly string[] DescribeKeys =
         {
             KeyDescribeIdeogram,
@@ -2233,6 +2270,9 @@ namespace MultiImageClient
 
         public static bool IsDescribeKey(string key)
             => DescribeKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
+
+        public static bool IsImageGeneratorKey(string key)
+            => ImageGeneratorKeys.Contains(key, StringComparer.Ordinal);
 
         // Declared pre-operation default: used as the wire instruction when a
         // describe-only job is submitted with a blank prompt (the server
@@ -2965,24 +3005,21 @@ namespace MultiImageClient
                     }
 
                     copy = pd.Copy();
-                    // gpt-image-2 only: append the anti-murk guidance as a recorded
-                    // prompt-transformation step, so the archive, annotations, and
-                    // sidecar logs all show the exact text that went to OpenAI.
-                    // Other generators keep the untouched prompt (their copies are
-                    // made from the shared pd independently).
-                    if (key == KeyGpt2
-                        && spec.Gpt2GuidanceEnabled
-                        && !string.IsNullOrWhiteSpace(spec.Gpt2GuidanceText))
+                    // Each generator gets an independent prompt copy. Append only
+                    // that endpoint's configured text and record the exact wire
+                    // prompt in the normal transformation/archive pipeline.
+                    if (spec.GeneratorExtraTexts.TryGetValue(key, out var extraText)
+                        && !string.IsNullOrWhiteSpace(extraText))
                     {
-                        var guided = $"{copy.Prompt}\n\n{spec.Gpt2GuidanceText.Trim()}";
-                        copy.ReplacePrompt(guided, guided, TransformationType.ManualSuffixation);
+                        var suffixed = $"{copy.Prompt}\n\n{extraText.Trim()}";
+                        copy.ReplacePrompt(suffixed, suffixed, TransformationType.ManualSuffixation);
                     }
                     else if (key == KeyGpt2)
                     {
-                        // Loud on purpose: a guidance-free gpt2 call reliably
-                        // comes back dark and murky, and this once went
+                        // Loud on purpose: gpt-image-2 without the default
+                        // anti-murk suffix reliably comes back darker, and this once went
                         // unnoticed for two days (2026-07-31 → 08-02).
-                        Logger.Log($"[ui #{job.Id}]   gpt2 anti-murk guidance is OFF for this call — expect darker output");
+                        Logger.Log($"[ui #{job.Id}]   gpt-image-2 extra text is blank for this call — anti-murk guidance was not sent");
                     }
                     if (key == KeyGrokWebVideo && !string.IsNullOrWhiteSpace(job.SourceGenerator))
                     {

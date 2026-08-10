@@ -30,18 +30,15 @@ let promptAdvicePrevious = null;  // exact prompt from before the last Claude ed
 let generatorPreferences = null;
 const GeneratorPreferencesLocalKey = "mic_generator_preferences_v1";
 const ClaudeAdviceInstructionKey = "mic_claude_advice_instruction_v1";
-// gpt-image-2 anti-murk guidance defaults from /api/config; the live control
-// state lives in the DOM and persists per-browser in localStorage.
-let gpt2Guidance = { defaultEnabled: true, defaultText: "" };
+let generatorEndpointConfiguration = { maxExtraTextChars: 16000, maxNotesChars: 16000 };
 // Standard instruction the server substitutes for blank describe-only jobs;
 // the composer applies the same text at submit so the card shows exactly
 // what was recorded.
 let describeConfig = { defaultInstruction: "" };
 let notificationConfig = { isDeveloper: false, maxRequestChars: 4000, returnAfterHours: 6 };
 const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
-// V2: the default guidance text was replaced on 2026-07-31 (user request);
-// the key bump retires stored copies of the old default so every browser
-// re-prefills from the current server default.
+// Legacy per-browser keys are migrated into the gpt-image-2 endpoint
+// configuration so an existing explicit off-switch or custom suffix survives.
 const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
 // Shared-site identity + filters. Authenticated accounts may explicitly set a
 // server-side profile name; it then presents every job securely linked by
@@ -372,6 +369,7 @@ function defaultGeneratorPreferences() {
     hiddenGeneratorKeys: [],
     defaultSelectedKeys: generators.filter((g) => g.defaultOn).map((g) => g.key),
     presets: [],
+    endpointConfigurations: [],
   };
 }
 
@@ -383,7 +381,8 @@ function normalizeGeneratorPreferences(raw) {
       typeof raw.showDescribeSection !== "boolean" ||
       !Array.isArray(raw.hiddenGeneratorKeys) ||
       !Array.isArray(raw.defaultSelectedKeys) ||
-      !Array.isArray(raw.presets)) {
+      !Array.isArray(raw.presets) ||
+      (raw.endpointConfigurations !== undefined && !Array.isArray(raw.endpointConfigurations))) {
     throw new Error("generator preferences are incomplete");
   }
   const exactKeys = (values, field) => {
@@ -426,13 +425,98 @@ function normalizeGeneratorPreferences(raw) {
     }
     return { id: preset.id, name, generatorKeys };
   });
+  const endpointConfigurations = [];
+  const configuredKeys = new Set();
+  let configurationChars = 0;
+  for (const configuration of raw.endpointConfigurations || []) {
+    if (!configuration || typeof configuration !== "object" || Array.isArray(configuration) ||
+        typeof configuration.key !== "string" || !imageKeys.has(configuration.key) ||
+        configuredKeys.has(configuration.key)) {
+      throw new Error("a per-endpoint generator configuration is malformed");
+    }
+    const extraText = configuration.extraText === null || configuration.extraText === undefined
+      ? null
+      : configuration.extraText;
+    const notes = configuration.notes === null || configuration.notes === undefined
+      ? null
+      : configuration.notes;
+    if ((extraText !== null && typeof extraText !== "string") ||
+        (notes !== null && typeof notes !== "string") ||
+        (extraText === null && notes === null)) {
+      throw new Error(`per-endpoint configuration for ${configuration.key} is malformed`);
+    }
+    if (extraText !== null && extraText.length > generatorEndpointConfiguration.maxExtraTextChars) {
+      throw new Error(`extra text for ${configuration.key} is too long`);
+    }
+    if (notes !== null && notes.length > generatorEndpointConfiguration.maxNotesChars) {
+      throw new Error(`private notes for ${configuration.key} are too long`);
+    }
+    configurationChars += (extraText?.length || 0) + (notes?.length || 0);
+    if (configurationChars > 128000) {
+      throw new Error("per-endpoint generator configuration is too large");
+    }
+    configuredKeys.add(configuration.key);
+    endpointConfigurations.push({ key: configuration.key, extraText, notes });
+  }
   return {
     showImageSection: raw.showImageSection,
     showDescribeSection: raw.showDescribeSection,
     hiddenGeneratorKeys,
     defaultSelectedKeys,
     presets,
+    endpointConfigurations,
   };
+}
+
+function endpointGenerator(key) {
+  return generators.find((generator) => generator.key === key && generator.kind !== "describe") || null;
+}
+
+function endpointConfigurationOverride(key, preferences = generatorPreferences) {
+  return preferences?.endpointConfigurations?.find((configuration) => configuration.key === key) || null;
+}
+
+function effectiveEndpointField(key, field, preferences = generatorPreferences) {
+  const generator = endpointGenerator(key);
+  if (!generator) return "";
+  const configuration = endpointConfigurationOverride(key, preferences);
+  const override = configuration?.[field];
+  if (override !== null && override !== undefined) return override;
+  return field === "extraText"
+    ? (generator.defaultExtraText || "")
+    : (generator.defaultNotes || "");
+}
+
+function setEndpointFieldOverride(preferences, key, field, value) {
+  const generator = endpointGenerator(key);
+  if (!generator) throw new Error(`unknown image generator ${key}`);
+  const defaultValue = field === "extraText"
+    ? (generator.defaultExtraText || "")
+    : (generator.defaultNotes || "");
+  let configuration = endpointConfigurationOverride(key, preferences);
+  if (!configuration && value !== defaultValue) {
+    configuration = { key, extraText: null, notes: null };
+    preferences.endpointConfigurations.push(configuration);
+  }
+  if (configuration) {
+    configuration[field] = value === defaultValue ? null : value;
+    if (configuration.extraText === null && configuration.notes === null) {
+      preferences.endpointConfigurations =
+        preferences.endpointConfigurations.filter((candidate) => candidate !== configuration);
+    }
+  }
+}
+
+function migrateLegacyGpt2GuidancePreference(preferences) {
+  if (endpointConfigurationOverride("gpt2", preferences)) return;
+  const storedEnabled = localStorage.getItem(Gpt2GuidanceEnabledKey);
+  const storedText = localStorage.getItem(Gpt2GuidanceTextKey);
+  if (storedEnabled === null && storedText === null) return;
+  const defaultText = endpointGenerator("gpt2")?.defaultExtraText || "";
+  const effectiveText = storedEnabled === "false"
+    ? ""
+    : (storedText && storedText.trim() ? storedText : defaultText);
+  setEndpointFieldOverride(preferences, "gpt2", "extraText", effectiveText);
 }
 
 function loadGeneratorPreferences(cfg) {
@@ -457,20 +541,21 @@ async function loadConfig() {
   }
   const cfg = await resp.json();
   generators = cfg.generators;
+  generatorEndpointConfiguration =
+    cfg.generatorEndpointConfiguration || generatorEndpointConfiguration;
   videoGeneration = cfg.videoGeneration || videoGeneration;
   claudeAdvice = cfg.claudeAdvice || claudeAdvice;
   applyClaudeAdviceAvailability();
-  gpt2Guidance = cfg.gpt2Guidance || gpt2Guidance;
   describeConfig = cfg.describe || describeConfig;
   if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
     maxInputImages = cfg.maxInputImages;
   }
   authInfo = cfg.auth || authInfo;
   generatorPreferences = loadGeneratorPreferences(cfg);
+  migrateLegacyGpt2GuidancePreference(generatorPreferences);
   notificationConfig = cfg.notifications || notificationConfig;
   applyAuthState();
   initializeActivityConfig();
-  initGpt2Guidance();
 
   // Exact code identity of the running server, embedded at build time.
   // When the build carries a real hash it links to the commit in the public
@@ -536,9 +621,10 @@ async function loadConfig() {
   const buildGenChip = (g) => {
     const label = document.createElement("label");
     label.className = "gen-toggle" + (g.available ? "" : " unavailable");
-    label.title = g.available
+    const baseTitle = g.available
       ? g.detail
       : `${g.detail} — NOT AVAILABLE: ${g.availabilityProblem || "missing configuration"}`;
+    label.title = generatorChooserTitle(g.key, baseTitle);
 
     const cb = document.createElement("input");
     cb.type = "checkbox";
@@ -655,33 +741,49 @@ function updateGeneratorCompatibility() {
     label.classList.toggle("checked", cb.checked);
     if (missingRequiredImage)
     {
-      label.title = `${genLabel(cb.value)} describes an attached image — attach one to enable it`;
+      label.title = generatorChooserTitle(
+        cb.value,
+        `${genLabel(cb.value)} describes an attached image — attach one to enable it`);
     }
     else if (aspectIncompatible)
     {
-      label.title = `${genLabel(cb.value)} cannot override output AR with an input image; choose match input image to use it`;
+      label.title = generatorChooserTitle(
+        cb.value,
+        `${genLabel(cb.value)} cannot override output AR with an input image; choose match input image to use it`);
     }
     else if (hasImage && !imageCapable)
     {
-      label.title = `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`;
+      label.title = generatorChooserTitle(
+        cb.value,
+        `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`);
     }
     else if (hasImage && inputImageItems.length > 1 && cb.value !== "gpt2" && imageCapable && !isDescribe)
     {
-      label.title = `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (gpt-image-2 receives all)`;
+      label.title = generatorChooserTitle(
+        cb.value,
+        `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (gpt-image-2 receives all)`);
     }
     else if (hasImage && inputImageItems.length > 1 && isDescribe)
     {
-      label.title = `${genLabel(cb.value)} will describe each of the ${inputImageItems.length} attached images separately`;
+      label.title = generatorChooserTitle(
+        cb.value,
+        `${genLabel(cb.value)} will describe each of the ${inputImageItems.length} attached images separately`);
     }
     else
     {
       const g = generators.find((entry) => entry.key === cb.value);
-      label.title = g?.available
+      const baseTitle = g?.available
         ? g.detail
         : `${g?.detail || cb.value} — NOT AVAILABLE: ${g?.availabilityProblem || "missing configuration"}`;
+      label.title = generatorChooserTitle(cb.value, baseTitle);
     }
   }
   updateGeneratorCount();
+}
+
+function generatorChooserTitle(key, baseTitle) {
+  const notes = effectiveEndpointField(key, "notes").trim();
+  return notes ? `${baseTitle}\n\nYour private notes:\n${notes}` : baseTitle;
 }
 
 function allGeneratorInputs() {
@@ -716,71 +818,31 @@ function updateGeneratorCount() {
 const promptLimitNotice = el("prompt-limit-notice");
 
 function updatePromptLimitNotice() {
-  const length = promptBox.value.trim().length;
+  const promptLength = promptBox.value.trim().length;
   const affected = [...gensRow.querySelectorAll("input:checked")]
-    .map((cb) => generators.find((g) => g.key === cb.value))
-    .filter((g) => g && g.maxPromptChars && length > g.maxPromptChars);
+    .map((cb) => {
+      const generator = generators.find((g) => g.key === cb.value);
+      const extraLength = effectiveEndpointField(cb.value, "extraText").trim().length;
+      const wireLength = promptLength + (promptLength && extraLength ? 2 : 0) + extraLength;
+      return { generator, wireLength };
+    })
+    .filter(({ generator, wireLength }) =>
+      generator && generator.maxPromptChars && wireLength > generator.maxPromptChars);
   if (affected.length === 0) {
     promptLimitNotice.hidden = true;
     promptLimitNotice.textContent = "";
     return;
   }
-  const parts = affected.map((g) => `${g.label} (max ${g.maxPromptChars.toLocaleString()})`);
+  const parts = affected.map(({ generator, wireLength }) =>
+    `${generator.label} (${wireLength.toLocaleString()} chars; max ${generator.maxPromptChars.toLocaleString()})`);
   promptLimitNotice.textContent =
-    `prompt is ${length.toLocaleString()} chars — over the limit for ${parts.join(", ")}. ` +
-    `You can still generate; the prompt will be sent truncated to ` +
+    `Prompt plus endpoint extra text is over the limit for ${parts.join(", ")}. ` +
+    `You can still generate; the combined prompt will be sent truncated to ` +
     `${affected.length === 1 ? "that target" : "those targets"} (other targets get the full text).`;
   promptLimitNotice.hidden = false;
 }
 
 promptBox.addEventListener("input", updatePromptLimitNotice);
-
-// ---------- gpt-image-2 anti-murk guidance (lives in the settings panel) ----------
-
-// gpt-image-2 habitually drifts into dark, murky, underexposed output, so a
-// default-on toggle appends corrective guidance (editable below it) to every
-// prompt sent to the gpt2 target — and only that target; the server does the
-// appending and records it as a prompt-transformation step. State persists
-// in this browser's localStorage only; defaults come from /api/config.
-const gpt2GuidanceEnabledBox = el("gpt2-guidance-enabled");
-const gpt2GuidanceTextBox = el("gpt2-guidance-text");
-
-function applyGpt2GuidanceEnabledState() {
-  gpt2GuidanceTextBox.disabled = !gpt2GuidanceEnabledBox.checked;
-}
-
-function initGpt2Guidance() {
-  const storedEnabled = localStorage.getItem(Gpt2GuidanceEnabledKey);
-  gpt2GuidanceEnabledBox.checked = storedEnabled === null
-    ? gpt2Guidance.defaultEnabled
-    : storedEnabled === "true";
-  // A stored EMPTY text is treated as unset and re-prefilled: the checkbox is
-  // the only off-switch. A browser that persisted an emptied textbox silently
-  // stripped the guidance from every gpt2 call 2026-07-31 → 08-02 (ultra-dark
-  // output) while the toggle still said on.
-  const storedText = localStorage.getItem(Gpt2GuidanceTextKey);
-  gpt2GuidanceTextBox.value = storedText === null || storedText.trim() === ""
-    ? gpt2Guidance.defaultText
-    : storedText;
-  applyGpt2GuidanceEnabledState();
-}
-
-gpt2GuidanceEnabledBox.addEventListener("change", () => {
-  localStorage.setItem(Gpt2GuidanceEnabledKey, String(gpt2GuidanceEnabledBox.checked));
-  applyGpt2GuidanceEnabledState();
-});
-gpt2GuidanceTextBox.addEventListener("input", () => {
-  // Never persist blank guidance text (see initGpt2Guidance).
-  if (gpt2GuidanceTextBox.value.trim() === "") {
-    localStorage.removeItem(Gpt2GuidanceTextKey);
-  } else {
-    localStorage.setItem(Gpt2GuidanceTextKey, gpt2GuidanceTextBox.value);
-  }
-});
-el("gpt2-guidance-reset").addEventListener("click", () => {
-  gpt2GuidanceTextBox.value = gpt2Guidance.defaultText;
-  localStorage.removeItem(Gpt2GuidanceTextKey);
-});
 
 // ---------- settings & hide night mode ----------
 
@@ -865,8 +927,497 @@ const contentWidthValue = el("content-width-value");
 const describeCollapseToggle = el("describe-collapse-toggle");
 const nightWordsEditor = el("night-words-editor");
 const nightWordsBox = el("night-words");
+const configExportJson = el("config-export-json");
+const configImportJson = el("config-import-json");
+const configTransferStatus = el("config-transfer-status");
+const ConfigTransferFormat = "MultiImageClient personalized configuration";
+const ConfigTransferVersion = 1;
+const ConfigTransferMaxChars = 1_000_000;
 
 let nightMatchers = null; // compiled lazily, invalidated when the list changes
+
+function requireConfigObject(value, path, requiredKeys) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+  const actualKeys = Object.keys(value).sort();
+  const expectedKeys = [...requiredKeys].sort();
+  if (actualKeys.length !== expectedKeys.length ||
+      actualKeys.some((key, index) => key !== expectedKeys[index])) {
+    const missing = expectedKeys.filter((key) => !actualKeys.includes(key));
+    const unknown = actualKeys.filter((key) => !expectedKeys.includes(key));
+    const details = [
+      missing.length ? `missing ${missing.join(", ")}` : "",
+      unknown.length ? `unknown ${unknown.join(", ")}` : "",
+    ].filter(Boolean).join("; ");
+    throw new Error(`${path} has the wrong fields${details ? `: ${details}` : ""}`);
+  }
+  return value;
+}
+
+function requireConfigBoolean(value, path) {
+  if (typeof value !== "boolean") throw new Error(`${path} must be true or false`);
+  return value;
+}
+
+function requireConfigString(value, path, maxLength = 100_000, allowBlank = true) {
+  if (typeof value !== "string") throw new Error(`${path} must be text`);
+  if (value.length > maxLength) throw new Error(`${path} is longer than ${maxLength} characters`);
+  if (!allowBlank && !value.trim()) throw new Error(`${path} cannot be blank`);
+  return value;
+}
+
+function requireConfigNumber(value, path, min, max) {
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`${path} must be a number from ${min} through ${max}`);
+  }
+  return value;
+}
+
+function requireConfigNullableNumber(value, path) {
+  if (value !== null && !Number.isFinite(value)) {
+    throw new Error(`${path} must be a finite number or null`);
+  }
+  return value;
+}
+
+function requireConfigStringArray(value, path, options = {}) {
+  const maxItems = options.maxItems ?? 5000;
+  const maxItemLength = options.maxItemLength ?? 200;
+  if (!Array.isArray(value) || value.length > maxItems) {
+    throw new Error(`${path} must be an array with at most ${maxItems} entries`);
+  }
+  const result = [];
+  const seen = new Set();
+  for (let index = 0; index < value.length; index++) {
+    const item = requireConfigString(value[index], `${path}[${index}]`, maxItemLength, false);
+    if (seen.has(item)) throw new Error(`${path} contains duplicate entry ${item}`);
+    seen.add(item);
+    result.push(item);
+  }
+  return result;
+}
+
+function parseConfigStorageJson(key, defaultValue) {
+  const stored = localStorage.getItem(key);
+  if (stored === null) return defaultValue;
+  try {
+    return JSON.parse(stored);
+  } catch (error) {
+    throw new Error(`browser setting ${key} contains malformed JSON: ${error.message || error}`);
+  }
+}
+
+function effectiveSpellingWords(storageKey, methodName) {
+  if (mcphee && typeof mcphee[methodName] === "function") {
+    return mcphee[methodName]();
+  }
+  return parseConfigStorageJson(storageKey, []);
+}
+
+function buildPersonalConfiguration() {
+  if (!generatorPreferences) {
+    throw new Error("server configuration is still loading");
+  }
+  const creatingAs = authInfo.profile?.displayName || currentUsername();
+  const gpt2ExtraText = effectiveEndpointField("gpt2", "extraText");
+  const gpt2DefaultText = endpointGenerator("gpt2")?.defaultExtraText || "";
+  return {
+    format: ConfigTransferFormat,
+    version: ConfigTransferVersion,
+    creatingAs,
+    peopleFilters: [...selectedUserFilter],
+    generatorPreferences: JSON.parse(JSON.stringify(generatorPreferences)),
+    uiSettings: { ...uiSettings },
+    gptImage2Guidance: {
+      enabled: gpt2ExtraText.trim().length > 0,
+      text: gpt2ExtraText.trim().length > 0 ? gpt2ExtraText : gpt2DefaultText,
+    },
+    promptTools: {
+      claudeAdviceInstruction:
+        localStorage.getItem(ClaudeAdviceInstructionKey) || DefaultClaudeAdviceInstruction,
+    },
+    spelling: {
+      enabled: localStorage.getItem(mcpheeEnabledStorageKey) !== "false",
+      customDictionary: effectiveSpellingWords("mic_spellwell_custom_dict", "listCustomWords"),
+      ignoredWords: effectiveSpellingWords("mic_spellwell_custom_dict:ignored", "listIgnoredWords"),
+      notRareWords: effectiveSpellingWords("mic_spellwell_custom_dict:notrare", "listNotRareWords"),
+      formality: localStorage.getItem("mic_mcphee_formality") || "standard",
+      ruleOverrides: parseConfigStorageJson("mic_mcphee_rule_overrides", {}),
+    },
+    inspirationLibrary: {
+      custom: JSON.parse(JSON.stringify(inspirationState.custom)),
+      favorites: [...inspirationState.favorites],
+      recent: [...inspirationState.recent],
+    },
+    viewer: {
+      compareWithInput: imageViewerCompareInput,
+      closeHandback: imageViewerReturnSync,
+    },
+    videoAudio: {
+      volume: sharedVideoVolume,
+      muted: sharedVideoMuted,
+    },
+    costSummaryCollapsed,
+  };
+}
+
+function refreshConfigExport() {
+  configTransferStatus.textContent = "";
+  configTransferStatus.className = "";
+  try {
+    const text = JSON.stringify(buildPersonalConfiguration(), null, 2);
+    if (text.length > ConfigTransferMaxChars) {
+      throw new Error(`configuration exceeds the ${ConfigTransferMaxChars.toLocaleString()} character export limit`);
+    }
+    configExportJson.value = text;
+    return text;
+  } catch (error) {
+    configExportJson.value = "";
+    configTransferStatus.textContent = String(error.message || error);
+    configTransferStatus.className = "error";
+    return null;
+  }
+}
+
+function normalizeImportedCreatingAs(value) {
+  const normalized = requireConfigString(value, "creatingAs", 32).trim().replace(/\s+/g, " ");
+  if (normalized && !/^[A-Za-z0-9 ._-]+$/.test(normalized)) {
+    throw new Error("creatingAs may only contain letters, digits, spaces, and . _ -");
+  }
+  return normalized;
+}
+
+function normalizeImportedUiSettings(raw) {
+  const keys = [
+    "nightHideEnabled", "nightWords", "showCosts", "contentMaxWidth", "describeExpanded",
+    "activityOwnGens", "activityReturning", "activityMyFavorites", "activitySharedFavorites",
+    "activityRequestAlerts", "activitySound", "activityBrowserPopup", "activityExpanded",
+    "activityLeft", "activityTop", "activityWidth", "activityHeight",
+  ];
+  requireConfigObject(raw, "uiSettings", keys);
+  const booleanKeys = keys.filter((key) =>
+    !["nightWords", "contentMaxWidth", "activityLeft", "activityTop", "activityWidth", "activityHeight"].includes(key));
+  const normalized = {};
+  for (const key of booleanKeys) normalized[key] = requireConfigBoolean(raw[key], `uiSettings.${key}`);
+  normalized.nightWords = requireConfigString(raw.nightWords, "uiSettings.nightWords");
+  const width = requireConfigNumber(
+    raw.contentMaxWidth,
+    "uiSettings.contentMaxWidth",
+    MinContentMaxWidth,
+    MaxContentMaxWidth);
+  if (!Number.isInteger(width) || width % 40 !== 0) {
+    throw new Error("uiSettings.contentMaxWidth must use 40-pixel steps");
+  }
+  normalized.contentMaxWidth = width;
+  for (const key of ["activityLeft", "activityTop", "activityWidth", "activityHeight"]) {
+    normalized[key] = requireConfigNullableNumber(raw[key], `uiSettings.${key}`);
+  }
+  return normalized;
+}
+
+function normalizeImportedSpelling(raw) {
+  requireConfigObject(raw, "spelling", [
+    "enabled", "customDictionary", "ignoredWords", "notRareWords", "formality", "ruleOverrides",
+  ]);
+  const formality = requireConfigString(raw.formality, "spelling.formality", 20, false);
+  if (!["casual", "standard", "strict"].includes(formality)) {
+    throw new Error("spelling.formality must be casual, standard, or strict");
+  }
+  const submittedOverrides = raw.ruleOverrides;
+  if (!submittedOverrides || typeof submittedOverrides !== "object" || Array.isArray(submittedOverrides)) {
+    throw new Error("spelling.ruleOverrides must be an object");
+  }
+  const overrideKeys = Object.keys(submittedOverrides);
+  if (overrideKeys.some((key) => !["rules", "params"].includes(key))) {
+    throw new Error("spelling.ruleOverrides contains an unknown field");
+  }
+  const ruleOverrides = {};
+  if (submittedOverrides.rules !== undefined) {
+    const rules = submittedOverrides.rules;
+    if (!rules || typeof rules !== "object" || Array.isArray(rules)) {
+      throw new Error("spelling.ruleOverrides.rules must be an object");
+    }
+    const allowedRules = new Set([
+      "misspelled", "unknown", "doublespace", "sentenceCapitalization",
+      "terminalPunctuation", "echo", "obscureRepeat", "culture",
+    ]);
+    ruleOverrides.rules = {};
+    for (const [key, value] of Object.entries(rules)) {
+      if (!allowedRules.has(key)) {
+        throw new Error(`spelling.ruleOverrides.rules contains unknown rule ${key}`);
+      }
+      ruleOverrides.rules[key] = requireConfigBoolean(
+        value,
+        `spelling.ruleOverrides.rules.${key}`);
+    }
+  }
+  if (submittedOverrides.params !== undefined) {
+    const params = submittedOverrides.params;
+    if (!params || typeof params !== "object" || Array.isArray(params)) {
+      throw new Error("spelling.ruleOverrides.params must be an object");
+    }
+    const allowedParams = new Set(["echoWindowWords", "echoCommonRank", "obscureRank"]);
+    ruleOverrides.params = {};
+    for (const [key, value] of Object.entries(params)) {
+      if (!allowedParams.has(key)) {
+        throw new Error(`spelling.ruleOverrides.params contains unknown parameter ${key}`);
+      }
+      const normalized = requireConfigNumber(
+        value,
+        `spelling.ruleOverrides.params.${key}`,
+        1,
+        1_000_000);
+      if (!Number.isInteger(normalized)) {
+        throw new Error(`spelling.ruleOverrides.params.${key} must be an integer`);
+      }
+      ruleOverrides.params[key] = normalized;
+    }
+  }
+  return {
+    enabled: requireConfigBoolean(raw.enabled, "spelling.enabled"),
+    customDictionary: requireConfigStringArray(raw.customDictionary, "spelling.customDictionary"),
+    ignoredWords: requireConfigStringArray(raw.ignoredWords, "spelling.ignoredWords"),
+    notRareWords: requireConfigStringArray(raw.notRareWords, "spelling.notRareWords"),
+    formality,
+    ruleOverrides,
+  };
+}
+
+function normalizeImportedInspirationLibrary(raw) {
+  requireConfigObject(raw, "inspirationLibrary", ["custom", "favorites", "recent"]);
+  if (!Array.isArray(raw.custom) || raw.custom.length > 500) {
+    throw new Error("inspirationLibrary.custom must contain at most 500 entries");
+  }
+  const custom = raw.custom.map((item, index) => {
+    requireConfigObject(item, `inspirationLibrary.custom[${index}]`, ["id", "category", "label", "text"]);
+    const normalized = {
+      id: requireConfigString(item.id, `inspirationLibrary.custom[${index}].id`, 100, false),
+      category: requireConfigString(item.category, `inspirationLibrary.custom[${index}].category`, 20, false),
+      label: requireConfigString(item.label, `inspirationLibrary.custom[${index}].label`, 200, false),
+      text: requireConfigString(item.text, `inspirationLibrary.custom[${index}].text`, 10_000, false),
+    };
+    if (!normalized.id.startsWith("custom-") || normalized.category !== "custom") {
+      throw new Error(`inspirationLibrary.custom[${index}] must use a custom- id and custom category`);
+    }
+    return normalized;
+  });
+  const customIds = requireConfigStringArray(
+    custom.map((item) => item.id),
+    "inspirationLibrary custom ids",
+    { maxItems: 500, maxItemLength: 100 });
+  const validIds = new Set([...inspirationCore.map((item) => item.id), ...customIds]);
+  const normalizeReferences = (value, path, maxItems) => {
+    const references = requireConfigStringArray(value, path, { maxItems, maxItemLength: 100 });
+    for (const id of references) {
+      if (!validIds.has(id)) throw new Error(`${path} references unknown inspiration ${id}`);
+    }
+    return references;
+  };
+  return {
+    custom,
+    favorites: normalizeReferences(raw.favorites, "inspirationLibrary.favorites", 1000),
+    recent: normalizeReferences(raw.recent, "inspirationLibrary.recent", 12),
+  };
+}
+
+function normalizeImportedPersonalConfiguration(raw) {
+  requireConfigObject(raw, "configuration", [
+    "format", "version", "creatingAs", "peopleFilters", "generatorPreferences", "uiSettings",
+    "gptImage2Guidance", "promptTools", "spelling", "inspirationLibrary", "viewer",
+    "videoAudio", "costSummaryCollapsed",
+  ]);
+  if (raw.format !== ConfigTransferFormat) {
+    throw new Error(`format must be exactly "${ConfigTransferFormat}"`);
+  }
+  if (raw.version !== ConfigTransferVersion) {
+    throw new Error(`unsupported configuration version ${String(raw.version)}; expected ${ConfigTransferVersion}`);
+  }
+  const creatingAs = normalizeImportedCreatingAs(raw.creatingAs);
+  const peopleFilters = requireConfigStringArray(raw.peopleFilters, "peopleFilters", {
+    maxItems: 500,
+    maxItemLength: 32,
+  });
+  for (const name of peopleFilters) {
+    if (!/^[A-Za-z0-9 ._-]+$/.test(name)) {
+      throw new Error(`peopleFilters contains invalid username ${name}`);
+    }
+  }
+  const importedPreferencesHadEndpointConfigurations =
+    Object.hasOwn(raw.generatorPreferences, "endpointConfigurations");
+  const generatorPreferencesValue = normalizeGeneratorPreferences(raw.generatorPreferences);
+  const gptGuidance = requireConfigObject(
+    raw.gptImage2Guidance,
+    "gptImage2Guidance",
+    ["enabled", "text"]);
+  const normalizedGptGuidance = {
+    enabled: requireConfigBoolean(gptGuidance.enabled, "gptImage2Guidance.enabled"),
+    text: requireConfigString(gptGuidance.text, "gptImage2Guidance.text", 20_000, false),
+  };
+  const legacyGpt2ExtraText = normalizedGptGuidance.enabled ? normalizedGptGuidance.text : "";
+  if (importedPreferencesHadEndpointConfigurations) {
+    if (effectiveEndpointField("gpt2", "extraText", generatorPreferencesValue) !== legacyGpt2ExtraText) {
+      throw new Error(
+        "gptImage2Guidance conflicts with generatorPreferences.endpointConfigurations for gpt-image-2");
+    }
+  } else {
+    setEndpointFieldOverride(
+      generatorPreferencesValue,
+      "gpt2",
+      "extraText",
+      legacyGpt2ExtraText);
+  }
+  const promptTools = requireConfigObject(
+    raw.promptTools,
+    "promptTools",
+    ["claudeAdviceInstruction"]);
+  const viewer = requireConfigObject(raw.viewer, "viewer", ["compareWithInput", "closeHandback"]);
+  const videoAudio = requireConfigObject(raw.videoAudio, "videoAudio", ["volume", "muted"]);
+  return {
+    creatingAs,
+    peopleFilters,
+    generatorPreferences: generatorPreferencesValue,
+    uiSettings: normalizeImportedUiSettings(raw.uiSettings),
+    gptImage2Guidance: normalizedGptGuidance,
+    promptTools: {
+      claudeAdviceInstruction: requireConfigString(
+        promptTools.claudeAdviceInstruction,
+        "promptTools.claudeAdviceInstruction",
+        4000,
+        false),
+    },
+    spelling: normalizeImportedSpelling(raw.spelling),
+    inspirationLibrary: normalizeImportedInspirationLibrary(raw.inspirationLibrary),
+    viewer: {
+      compareWithInput: requireConfigBoolean(viewer.compareWithInput, "viewer.compareWithInput"),
+      closeHandback: requireConfigBoolean(viewer.closeHandback, "viewer.closeHandback"),
+    },
+    videoAudio: {
+      volume: requireConfigNumber(videoAudio.volume, "videoAudio.volume", 0, 1),
+      muted: requireConfigBoolean(videoAudio.muted, "videoAudio.muted"),
+    },
+    costSummaryCollapsed: requireConfigBoolean(raw.costSummaryCollapsed, "costSummaryCollapsed"),
+  };
+}
+
+function importedConfigurationStorageWrites(config) {
+  const writes = new Map([
+    [UsernameKey, config.creatingAs],
+    [UserFilterKey, JSON.stringify(config.peopleFilters)],
+    [UiSettingsKey, JSON.stringify(config.uiSettings)],
+    [Gpt2GuidanceEnabledKey, String(config.gptImage2Guidance.enabled)],
+    [Gpt2GuidanceTextKey, config.gptImage2Guidance.text],
+    [ClaudeAdviceInstructionKey, config.promptTools.claudeAdviceInstruction],
+    [mcpheeEnabledStorageKey, String(config.spelling.enabled)],
+    ["mic_spellwell_custom_dict", JSON.stringify(config.spelling.customDictionary)],
+    ["mic_spellwell_custom_dict:ignored", JSON.stringify(config.spelling.ignoredWords)],
+    ["mic_spellwell_custom_dict:notrare", JSON.stringify(config.spelling.notRareWords)],
+    ["mic_mcphee_formality", config.spelling.formality],
+    ["mic_mcphee_rule_overrides", JSON.stringify(config.spelling.ruleOverrides)],
+    [InspirationStorageKey, JSON.stringify(config.inspirationLibrary)],
+    ["imageViewerCompareInput", String(config.viewer.compareWithInput)],
+    ["imageViewerReturnSync", String(config.viewer.closeHandback)],
+    [VideoAudioStorageKey, JSON.stringify(config.videoAudio)],
+    [CostSummaryCollapsedKey, String(config.costSummaryCollapsed)],
+  ]);
+  if (!authInfo.enabled) {
+    writes.set(GeneratorPreferencesLocalKey, JSON.stringify(config.generatorPreferences));
+  }
+  return writes;
+}
+
+function applyLocalStorageWrites(writes) {
+  const previous = new Map();
+  for (const key of writes.keys()) previous.set(key, localStorage.getItem(key));
+  try {
+    for (const [key, value] of writes) localStorage.setItem(key, value);
+  } catch (error) {
+    for (const [key, value] of previous) {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    }
+    throw error;
+  }
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    }
+  };
+}
+
+async function importPersonalConfiguration() {
+  configTransferStatus.className = "";
+  const text = configImportJson.value;
+  if (!text.trim()) throw new Error("paste configuration JSON first");
+  if (text.length > ConfigTransferMaxChars) {
+    throw new Error(`configuration exceeds the ${ConfigTransferMaxChars.toLocaleString()} character import limit`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`configuration is not valid JSON: ${error.message || error}`);
+  }
+  const config = normalizeImportedPersonalConfiguration(parsed);
+  const accountDisplayName = authInfo.profile?.displayName || "";
+  if (accountDisplayName && config.creatingAs !== accountDisplayName) {
+    throw new Error(
+      `creatingAs is "${config.creatingAs}", but this signed-in profile is "${accountDisplayName}". ` +
+      "Account-wide profile renaming remains an explicit action beside the creating-as field.");
+  }
+
+  const rollbackLocal = applyLocalStorageWrites(importedConfigurationStorageWrites(config));
+  try {
+    if (authInfo.enabled) {
+      const response = await fetch(apiUrl("api/generator-preferences"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config.generatorPreferences),
+      });
+      if (response.status === 401) {
+        rollbackLocal();
+        location.reload();
+        return;
+      }
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    }
+  } catch (error) {
+    rollbackLocal();
+    throw new Error(`generator preferences were not imported: ${error.message || error}`);
+  }
+  configTransferStatus.textContent = "configuration imported — reloading…";
+  configTransferStatus.className = "success";
+  location.reload();
+}
+
+el("config-export-refresh").addEventListener("click", refreshConfigExport);
+el("config-export-copy").addEventListener("click", async () => {
+  const text = refreshConfigExport();
+  if (text === null) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    configTransferStatus.textContent = "configuration JSON copied";
+    configTransferStatus.className = "success";
+  } catch (error) {
+    configTransferStatus.textContent = `could not copy JSON: ${error.message || error}`;
+    configTransferStatus.className = "error";
+  }
+});
+el("config-import-apply").addEventListener("click", async () => {
+  const button = el("config-import-apply");
+  button.disabled = true;
+  configTransferStatus.textContent = "validating…";
+  configTransferStatus.className = "";
+  try {
+    await importPersonalConfiguration();
+  } catch (error) {
+    configTransferStatus.textContent = String(error.message || error);
+    configTransferStatus.className = "error";
+    button.disabled = false;
+  }
+});
 
 function getNightMatchers() {
   if (nightMatchers) return nightMatchers;
@@ -984,7 +1535,9 @@ function setSettingsOpen(open) {
   settingsPanel.hidden = !open;
   settingsToggle.setAttribute("aria-expanded", String(open));
   settingsToggle.classList.toggle("open", open);
-  if (!open) {
+  if (open) {
+    refreshConfigExport();
+  } else {
     // Reopening always requires the explicit "modify list" click again, and
     // the closed panel keeps no readable copy of the list in the DOM.
     nightWordsEditor.hidden = true;
@@ -1595,10 +2148,13 @@ const generatorConfigShown = el("generator-config-shown");
 const generatorConfigDefaults = el("generator-config-defaults");
 const generatorConfigGroupTabs = el("generator-config-group-tabs");
 const generatorConfigPresetList = el("generator-config-preset-list");
+const generatorConfigEndpointList = el("generator-config-endpoint-list");
+const generatorConfigEndpointEditor = el("generator-config-endpoint-editor");
 const generatorConfigStatus = el("generator-config-status");
 let generatorConfigDraft = null;
 let generatorConfigView = "shown";
 let generatorConfigActivePresetId = null;
+let generatorConfigActiveEndpointKey = null;
 
 function copyGeneratorPreferences(source) {
   return {
@@ -1610,6 +2166,11 @@ function copyGeneratorPreferences(source) {
       id: preset.id,
       name: preset.name,
       generatorKeys: [...preset.generatorKeys],
+    })),
+    endpointConfigurations: source.endpointConfigurations.map((configuration) => ({
+      key: configuration.key,
+      extraText: configuration.extraText,
+      notes: configuration.notes,
     })),
   };
 }
@@ -1789,6 +2350,122 @@ function renderGeneratorConfigPresets() {
   generatorConfigPresetList.appendChild(card);
 }
 
+function refreshGeneratorEndpointListMarkers() {
+  for (const button of generatorConfigEndpointList.querySelectorAll("button[data-generator-key]")) {
+    const key = button.dataset.generatorKey;
+    const extraText = effectiveEndpointField(key, "extraText", generatorConfigDraft).trim();
+    const notes = effectiveEndpointField(key, "notes", generatorConfigDraft).trim();
+    const badges = button.querySelector(".generator-endpoint-badges");
+    badges.replaceChildren();
+    for (const [text, present] of [["extra text", extraText.length > 0], ["notes", notes.length > 0]]) {
+      if (!present) continue;
+      const badge = document.createElement("span");
+      badge.textContent = text;
+      badges.appendChild(badge);
+    }
+    button.classList.toggle("selected", key === generatorConfigActiveEndpointKey);
+    button.classList.toggle("customized", !!endpointConfigurationOverride(key, generatorConfigDraft));
+  }
+}
+
+function renderGeneratorConfigEndpointEditor() {
+  generatorConfigEndpointEditor.replaceChildren();
+  const generator = endpointGenerator(generatorConfigActiveEndpointKey);
+  if (!generator) {
+    const empty = document.createElement("p");
+    empty.className = "generator-config-empty";
+    empty.textContent = "No image endpoint is available to configure.";
+    generatorConfigEndpointEditor.appendChild(empty);
+    return;
+  }
+
+  const heading = document.createElement("h3");
+  heading.textContent = generator.label;
+  const detail = document.createElement("p");
+  detail.className = "generator-endpoint-detail";
+  detail.textContent = generator.detail;
+  generatorConfigEndpointEditor.append(heading, detail);
+
+  const buildField = (field, title, description, maxLength) => {
+    const wrapper = document.createElement("section");
+    wrapper.className = "generator-endpoint-field";
+    const fieldHead = document.createElement("div");
+    const label = document.createElement("label");
+    const textareaId = `generator-endpoint-${field}`;
+    label.htmlFor = textareaId;
+    label.textContent = title;
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.textContent = "reset to default";
+    reset.title = `Restore the server-provided default ${title.toLowerCase()} for ${generator.label}`;
+    fieldHead.append(label, reset);
+    const explanation = document.createElement("p");
+    explanation.textContent = description;
+    const textarea = document.createElement("textarea");
+    textarea.id = textareaId;
+    textarea.rows = field === "extraText" ? 7 : 6;
+    textarea.maxLength = maxLength;
+    textarea.spellcheck = field === "notes";
+    textarea.value = effectiveEndpointField(generator.key, field, generatorConfigDraft);
+    textarea.addEventListener("input", () => {
+      setEndpointFieldOverride(generatorConfigDraft, generator.key, field, textarea.value);
+      refreshGeneratorEndpointListMarkers();
+    });
+    reset.addEventListener("click", () => {
+      const defaultValue = field === "extraText"
+        ? (generator.defaultExtraText || "")
+        : (generator.defaultNotes || "");
+      textarea.value = defaultValue;
+      setEndpointFieldOverride(generatorConfigDraft, generator.key, field, defaultValue);
+      refreshGeneratorEndpointListMarkers();
+      textarea.focus();
+    });
+    wrapper.append(fieldHead, explanation, textarea);
+    return wrapper;
+  };
+
+  generatorConfigEndpointEditor.append(
+    buildField(
+      "extraText",
+      "Append extra text",
+      "Appended only to this endpoint's prompt after a blank line. Leave blank to send the composer prompt unchanged.",
+      generatorEndpointConfiguration.maxExtraTextChars),
+    buildField(
+      "notes",
+      "Private notes",
+      "Visible only in your generator configuration and chooser tooltip. Never sent to providers or stored with jobs.",
+      generatorEndpointConfiguration.maxNotesChars));
+}
+
+function renderGeneratorConfigEndpoints() {
+  const imageGenerators = generators.filter((generator) => generator.kind !== "describe");
+  if (!generatorConfigActiveEndpointKey ||
+      !imageGenerators.some((generator) => generator.key === generatorConfigActiveEndpointKey)) {
+    generatorConfigActiveEndpointKey = imageGenerators[0]?.key || null;
+  }
+  generatorConfigEndpointList.replaceChildren();
+  for (const generator of imageGenerators) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.generatorKey = generator.key;
+    button.title = generator.detail;
+    const name = document.createElement("span");
+    name.className = "generator-endpoint-name";
+    name.textContent = generator.label;
+    const badges = document.createElement("span");
+    badges.className = "generator-endpoint-badges";
+    button.append(name, badges);
+    button.addEventListener("click", () => {
+      generatorConfigActiveEndpointKey = generator.key;
+      refreshGeneratorEndpointListMarkers();
+      renderGeneratorConfigEndpointEditor();
+    });
+    generatorConfigEndpointList.appendChild(button);
+  }
+  refreshGeneratorEndpointListMarkers();
+  renderGeneratorConfigEndpointEditor();
+}
+
 function setGeneratorConfigView(view) {
   generatorConfigView = view;
   for (const button of el("generator-config-tabs").querySelectorAll("[data-generator-config-view]")) {
@@ -1796,7 +2473,7 @@ function setGeneratorConfigView(view) {
     button.setAttribute("aria-selected", String(active));
     button.classList.toggle("selected", active);
   }
-  for (const candidate of ["shown", "defaults", "groups"]) {
+  for (const candidate of ["shown", "defaults", "groups", "endpoint"]) {
     el(`generator-config-${candidate}-panel`).hidden = candidate !== view;
   }
 }
@@ -1807,6 +2484,7 @@ function renderGeneratorConfig() {
   renderGeneratorConfigChoices(generatorConfigShown, "shown");
   renderGeneratorConfigChoices(generatorConfigDefaults, "defaults");
   renderGeneratorConfigPresets();
+  renderGeneratorConfigEndpoints();
   setGeneratorConfigView(generatorConfigView);
 }
 
@@ -1814,6 +2492,8 @@ function openGeneratorConfig() {
   generatorConfigDraft = copyGeneratorPreferences(generatorPreferences);
   generatorConfigStatus.textContent = "";
   generatorConfigActivePresetId = generatorConfigDraft.presets[0]?.id || null;
+  generatorConfigActiveEndpointKey =
+    generators.find((generator) => generator.kind !== "describe")?.key || null;
   generatorConfigView = "shown";
   renderGeneratorConfig();
   generatorConfigDialog.showModal();
@@ -1870,6 +2550,8 @@ generatorConfigForm.addEventListener("submit", async (event) => {
       localStorage.setItem(GeneratorPreferencesLocalKey, JSON.stringify(normalized));
     }
     generatorPreferences = normalized;
+    localStorage.removeItem(Gpt2GuidanceEnabledKey);
+    localStorage.removeItem(Gpt2GuidanceTextKey);
     generatorConfigDialog.close();
     location.reload();
   } catch (error) {
@@ -3455,8 +4137,13 @@ async function submit() {
   form.append("quality", el("opt-quality").value);
   form.append("moderation", el("opt-moderation").value);
   form.append("n", el("opt-n").value);
-  form.append("gpt2GuidanceEnabled", String(gpt2GuidanceEnabledBox.checked));
-  form.append("gpt2GuidanceText", gpt2GuidanceTextBox.value);
+  const generatorExtraTexts = {};
+  for (const key of gens) {
+    if (isDescribeGenKey(key)) continue;
+    const extraText = effectiveEndpointField(key, "extraText").trim();
+    if (extraText) generatorExtraTexts[key] = extraText;
+  }
+  form.append("generatorExtraTexts", JSON.stringify(generatorExtraTexts));
   inputImageItems.forEach((item, index) => {
     const name = item.file.name && item.file.name.includes(".")
       ? item.file.name
@@ -4181,12 +4868,22 @@ function getImageViewerPrompts() {
       describeComments: link.dataset.describeComments || "",
     }));
     if (items.length === 0) continue;
+    let generatorExtraTexts = {};
+    if (card.dataset.generatorExtraTexts) {
+      try {
+        generatorExtraTexts = JSON.parse(card.dataset.generatorExtraTexts);
+      } catch {
+        generatorExtraTexts = {};
+      }
+    }
     prompts.push({
       jobId,
       prompt: card.querySelector(".job-prompt").textContent,
       hasInput: card.dataset.hasInputImage === "true",
       gpt2Guidance: card.dataset.gpt2Guidance || "",         // "sent" | "off" | "" (unknown)
       gpt2GuidanceText: card.dataset.gpt2GuidanceText || "",
+      generatorExtraTexts,
+      generatorExtraTextsKnown: card.dataset.generatorExtraTextsKnown === "true",
       items,
     });
   }
@@ -4559,22 +5256,26 @@ function toggleImageViewerCompare() {
   renderImageViewer();
 }
 
-// Below the prompt, state plainly whether the anti-murk guidance rode along
-// with the viewed gpt2 image. Green = the exact appended text; red = a gpt2
-// image that went out WITHOUT it. Silence here once hid a two-day stretch of
-// guidance-free (ultra-dark) generations, so absence is now a visible state.
+// The appended text is item-specific chrome: show only the suffix that rode
+// with the exact endpoint currently visible. gpt-image-2 additionally keeps
+// a visible blank state because omitting its default anti-murk text once went
+// unnoticed for two days.
 function renderImageViewerGuidance(current) {
-  const state = current && current.item.generator === "gpt2"
-    ? current.prompt.gpt2Guidance
-    : "";
-  if (state === "sent") {
+  const key = current?.item?.generator || "";
+  const extraText = current?.prompt?.generatorExtraTexts?.[key] || "";
+  const legacyGpt2State = key === "gpt2" ? current?.prompt?.gpt2Guidance : "";
+  const legacyGpt2Text = current?.prompt?.gpt2GuidanceText || "";
+  const sentText = extraText || (legacyGpt2State === "sent" ? legacyGpt2Text : "");
+  if (sentText) {
     imageViewerGuidance.hidden = false;
     imageViewerGuidance.className = "sent";
-    imageViewerGuidance.textContent = `+ gpt-image-2 guidance: ${current.prompt.gpt2GuidanceText}`;
-  } else if (state === "off") {
+    imageViewerGuidance.textContent = `+ appended extra text for ${genLabel(key)}: ${sentText}`;
+  } else if (key === "gpt2" &&
+      (current?.prompt?.generatorExtraTextsKnown || legacyGpt2State === "off")) {
     imageViewerGuidance.hidden = false;
     imageViewerGuidance.className = "off";
-    imageViewerGuidance.textContent = "anti-murk guidance was NOT sent with this image";
+    imageViewerGuidance.textContent =
+      "gpt-image-2 extra text was blank — anti-murk guidance was not sent with this image";
   } else {
     imageViewerGuidance.hidden = true;
     imageViewerGuidance.className = "";
@@ -6133,6 +6834,15 @@ function applyJobEvent(id, card, evt) {
     if (evt.quality) card.dataset.optQuality = evt.quality;
     if (evt.moderation) card.dataset.optModeration = evt.moderation;
     if (evt.n) card.dataset.optN = String(evt.n);
+    if (evt.generatorExtraTexts && typeof evt.generatorExtraTexts === "object" &&
+        !Array.isArray(evt.generatorExtraTexts)) {
+      const extraTexts = {};
+      for (const [key, value] of Object.entries(evt.generatorExtraTexts)) {
+        if (typeof value === "string" && value.trim()) extraTexts[key] = value;
+      }
+      card.dataset.generatorExtraTexts = JSON.stringify(extraTexts);
+      card.dataset.generatorExtraTextsKnown = "true";
+    }
     // What the gpt2 target actually received: "sent" (guidance text rode
     // along) or "off" (toggle disabled). Absent on events recorded before
     // this control existed — the viewer then makes no claim either way.

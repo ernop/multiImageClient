@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260809-full-width-endpoints">
+<link rel="stylesheet" href="style.css?v=20260810-endpoint-text-notes">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260809-mcphee-3-9-0">
 </head>
 <body>
@@ -89,19 +89,37 @@
       image and focus it. Off = the page stays exactly where it was.
       Press <kbd>s</kbd> inside the viewer to toggle instantly.</span>
   </label>
-  <div id="gpt2-guidance-row">
-    <label id="gpt2-guidance-toggle"
-      title="gpt-image-2 habitually drifts into dark, murky, underexposed output. While this is on, the text below is appended to the prompt sent to gpt-image-2 on every job (and only to gpt-image-2 — other generators get your prompt untouched).">
-      <input id="gpt2-guidance-enabled" type="checkbox" checked>
-      include special guidance to gpt-image-2 to not produce such dark murky images
+  <section id="config-transfer" aria-labelledby="config-transfer-heading">
+    <div class="settings-subhead">
+      <strong id="config-transfer-heading">personal configuration import / export</strong>
+      <span>Move the complete configuration shown by this page to another browser.</span>
+    </div>
+    <label class="config-transfer-field" for="config-export-json">
+      export JSON
+      <textarea id="config-export-json" rows="9" readonly spellcheck="false"
+        aria-describedby="config-transfer-note"></textarea>
     </label>
-    <button id="gpt2-guidance-reset" type="button"
-      title="Restore the default guidance text">reset text</button>
-    <textarea id="gpt2-guidance-text" rows="4" spellcheck="false"
-      aria-label="Guidance text appended to every gpt-image-2 prompt"></textarea>
-  </div>
-  <p class="settings-note">Stored only in this browser (localStorage). Hidden jobs still exist on the
-    server and on disk; other browsers keep their own settings.</p>
+    <div class="config-transfer-actions">
+      <button id="config-export-refresh" type="button">refresh JSON</button>
+      <button id="config-export-copy" type="button">copy JSON</button>
+    </div>
+    <label class="config-transfer-field" for="config-import-json">
+      import JSON
+      <textarea id="config-import-json" rows="7" spellcheck="false"
+        placeholder="Paste a MultiImageClient personalized configuration object here"></textarea>
+    </label>
+    <div class="config-transfer-actions">
+      <span id="config-transfer-status" role="status"></span>
+      <button id="config-import-apply" type="button">import config</button>
+    </div>
+    <p class="settings-note" id="config-transfer-note">
+      Includes the creating-as name, generator chooser, display and activity settings,
+      prompt tools, personal spelling data, inspiration library, viewer behavior, and media preferences.
+      It never includes login credentials, cookies, jobs, favorites, or viewed-image history.
+    </p>
+  </section>
+  <p class="settings-note">Browser settings stay in localStorage. Authenticated generator chooser
+    settings also persist to the signed-in account. Hidden jobs still exist on the server and on disk.</p>
 </div>
 
 <section id="logs-panel" hidden aria-label="Live application logs">
@@ -402,16 +420,17 @@
 <dialog id="generator-config-dialog">
   <form id="generator-config-form">
     <div class="compact-dialog-head">
-      <h2>Generator chooser</h2>
+      <h2>Generator configuration</h2>
       <button id="generator-config-close" type="button" aria-label="Close">&times;</button>
     </div>
     <p class="compact-dialog-note">
-      Choose what appears in your composer, what starts selected, and the named groups that replace your complete image-generator selection.
+      Choose what appears in your composer, what starts selected, named groups, and private per-endpoint prompt text and notes.
     </p>
     <div id="generator-config-tabs" role="tablist" aria-label="Generator chooser settings">
       <button type="button" role="tab" data-generator-config-view="shown" aria-selected="true">shown</button>
       <button type="button" role="tab" data-generator-config-view="defaults" aria-selected="false">defaults</button>
       <button type="button" role="tab" data-generator-config-view="groups" aria-selected="false">groups</button>
+      <button type="button" role="tab" data-generator-config-view="endpoint" aria-selected="false">per endpoint</button>
     </div>
     <section id="generator-config-shown-panel" class="generator-config-panel" role="tabpanel">
       <p>Toggle which targets exist in your normal composer. Hidden targets can only be restored here.</p>
@@ -431,6 +450,16 @@
         <button id="generator-config-add-preset" type="button">+ new group</button>
       </div>
       <div id="generator-config-preset-list"></div>
+    </section>
+    <section id="generator-config-endpoint-panel" class="generator-config-panel" role="tabpanel" hidden>
+      <p>
+        Extra text is appended only to the selected endpoint's copy of each prompt.
+        Notes are private configuration: they are never sent to a provider or attached to a job.
+      </p>
+      <div class="generator-endpoint-layout">
+        <div id="generator-config-endpoint-list" aria-label="Image endpoints"></div>
+        <div id="generator-config-endpoint-editor"></div>
+      </div>
     </section>
     <div class="compact-dialog-actions">
       <span id="generator-config-status"></span>
@@ -522,6 +551,6 @@
 
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260809-mcphee-3-9-0"></script>
-<script src="app.js?v=20260809-full-width-endpoints"></script>
+<script src="app.js?v=20260810-endpoint-text-notes"></script>
 </body>
 </html>

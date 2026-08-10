@@ -76,6 +76,13 @@ namespace MultiImageClient
         public List<string> GeneratorKeys { get; init; } = new();
     }
 
+    public sealed class UiGeneratorEndpointConfigurationRecord
+    {
+        public string Key { get; init; } = "";
+        public string? ExtraText { get; init; }
+        public string? Notes { get; init; }
+    }
+
     public sealed class UiGeneratorPreferencesRecord
     {
         public string Login { get; init; } = "";
@@ -84,6 +91,7 @@ namespace MultiImageClient
         public List<string> HiddenGeneratorKeys { get; init; } = new();
         public List<string> DefaultSelectedKeys { get; init; } = new();
         public List<UiGeneratorPresetRecord> Presets { get; init; } = new();
+        public List<UiGeneratorEndpointConfigurationRecord> EndpointConfigurations { get; init; } = new();
         public long UpdatedAtUnixMs { get; init; }
     }
 
@@ -206,6 +214,7 @@ namespace MultiImageClient
                         hidden_generator_keys_json TEXT NOT NULL,
                         default_selected_keys_json TEXT NOT NULL,
                         presets_json TEXT NOT NULL,
+                        endpoint_configurations_json TEXT NOT NULL DEFAULT '[]',
                         updated_at_unix_ms INTEGER NOT NULL
                     );
 
@@ -229,6 +238,11 @@ namespace MultiImageClient
                         ON ui_claude_prompt_exchanges(identity_key, requested_at_unix_ms DESC);
                     """;
                 command.ExecuteNonQuery();
+                EnsureColumn(
+                    connection,
+                    "ui_generator_preferences",
+                    "endpoint_configurations_json",
+                    "TEXT NOT NULL DEFAULT '[]'");
             }
         }
 
@@ -247,7 +261,8 @@ namespace MultiImageClient
                     """
                     SELECT show_image_section, show_describe_section,
                            hidden_generator_keys_json, default_selected_keys_json,
-                           presets_json, updated_at_unix_ms
+                           presets_json, endpoint_configurations_json,
+                           updated_at_unix_ms
                     FROM ui_generator_preferences
                     WHERE login = $login;
                     """;
@@ -268,7 +283,11 @@ namespace MultiImageClient
                         DefaultSelectedKeys = DeserializeList(reader.GetString(3)),
                         Presets = JsonSerializer.Deserialize<List<UiGeneratorPresetRecord>>(
                             reader.GetString(4)) ?? new List<UiGeneratorPresetRecord>(),
-                        UpdatedAtUnixMs = reader.GetInt64(5),
+                        EndpointConfigurations =
+                            JsonSerializer.Deserialize<List<UiGeneratorEndpointConfigurationRecord>>(
+                                reader.GetString(5))
+                            ?? new List<UiGeneratorEndpointConfigurationRecord>(),
+                        UpdatedAtUnixMs = reader.GetInt64(6),
                     };
                 }
                 catch (JsonException ex)
@@ -295,16 +314,18 @@ namespace MultiImageClient
                     INSERT INTO ui_generator_preferences(
                         login, show_image_section, show_describe_section,
                         hidden_generator_keys_json, default_selected_keys_json,
-                        presets_json, updated_at_unix_ms)
+                        presets_json, endpoint_configurations_json,
+                        updated_at_unix_ms)
                     VALUES(
                         $login, $showImage, $showDescribe, $hidden, $selected,
-                        $presets, $updated)
+                        $presets, $endpointConfigurations, $updated)
                     ON CONFLICT(login) DO UPDATE SET
                         show_image_section = excluded.show_image_section,
                         show_describe_section = excluded.show_describe_section,
                         hidden_generator_keys_json = excluded.hidden_generator_keys_json,
                         default_selected_keys_json = excluded.default_selected_keys_json,
                         presets_json = excluded.presets_json,
+                        endpoint_configurations_json = excluded.endpoint_configurations_json,
                         updated_at_unix_ms = excluded.updated_at_unix_ms;
                     """;
                 command.Parameters.AddWithValue("$login", login);
@@ -313,6 +334,9 @@ namespace MultiImageClient
                 command.Parameters.AddWithValue("$hidden", JsonSerializer.Serialize(preferences.HiddenGeneratorKeys));
                 command.Parameters.AddWithValue("$selected", JsonSerializer.Serialize(preferences.DefaultSelectedKeys));
                 command.Parameters.AddWithValue("$presets", JsonSerializer.Serialize(preferences.Presets));
+                command.Parameters.AddWithValue(
+                    "$endpointConfigurations",
+                    JsonSerializer.Serialize(preferences.EndpointConfigurations));
                 command.Parameters.AddWithValue("$updated", preferences.UpdatedAtUnixMs);
                 command.ExecuteNonQuery();
             }
@@ -913,6 +937,30 @@ namespace MultiImageClient
             var connection = new SqliteConnection(_connectionString);
             connection.Open();
             return connection;
+        }
+
+        private static void EnsureColumn(
+            SqliteConnection connection,
+            string table,
+            string column,
+            string declaration)
+        {
+            using (var check = connection.CreateCommand())
+            {
+                check.CommandText = $"PRAGMA table_info({table});";
+                using var reader = check.ExecuteReader();
+                while (reader.Read())
+                {
+                    if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return;
+                    }
+                }
+            }
+
+            using var alter = connection.CreateCommand();
+            alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {declaration};";
+            alter.ExecuteNonQuery();
         }
 
         private static long ReadMaxId(SqliteConnection connection, string table, string column)
