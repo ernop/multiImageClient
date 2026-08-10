@@ -1,0 +1,31 @@
+---
+description: Keep portable personal configuration import/export complete
+alwaysApply: true
+---
+
+# Personal Configuration Transfer Coverage
+
+Every new durable user-controlled option must join the portable personal
+configuration JSON in the same change that introduces the option.
+
+This includes browser-local and account-persisted settings: display choices,
+filters, defaults, presets, per-endpoint text or notes, prompt tools,
+dictionaries, viewer behavior, activity preferences, and media preferences.
+
+When adding or changing one:
+
+1. Add its effective value to `buildPersonalConfiguration()` in
+   `MultiImageClient/Ui/wwwroot/app.js`.
+2. Add strict typed validation to
+   `normalizeImportedPersonalConfiguration()` or its nested normalizer.
+3. Add the exact localStorage write or authenticated server persistence path,
+   including rollback on failed server persistence.
+4. Keep the settings-panel coverage note and `AGENTS.md` accurate.
+5. Bump `ConfigTransferVersion` only for an incompatible schema change, and
+   reject unsupported versions rather than guessing.
+6. Verify export → import → reload round-trip behavior and malformed-input
+   rejection.
+
+Do not export credentials, cookies, provider keys, job/content history,
+favorites, or usage markers merely because they share storage. The transfer
+schema is explicit and typed; never replace it with a raw localStorage dump.
