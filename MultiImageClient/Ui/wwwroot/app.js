@@ -1736,8 +1736,27 @@ function appendActivity(message, options = {}) {
   row.className = `activity-row${options.tone ? ` ${options.tone}` : ""}`;
   row.querySelector("time").textContent = new Date(options.at || Date.now())
     .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  row.querySelector(".activity-message").textContent = message;
-  activityLatest.textContent = message;
+  const messageElement = row.querySelector(".activity-message");
+  messageElement.replaceChildren();
+  if (options.decoration) {
+    row.classList.add(options.decoration.className);
+    const icons = document.createElement("span");
+    icons.className = "activity-decoration-icons";
+    icons.textContent = options.decoration.icons;
+    icons.setAttribute("aria-hidden", "true");
+    const copy = document.createElement("span");
+    copy.textContent = message;
+    const tieIn = document.createElement("span");
+    tieIn.className = "activity-decoration-tie-in";
+    tieIn.textContent = options.decoration.tieIn;
+    messageElement.append(icons, copy, tieIn);
+  } else {
+    messageElement.textContent = message;
+  }
+  const latestMessage = options.decoration
+    ? `${options.decoration.icons} ${message}`
+    : message;
+  activityLatest.textContent = latestMessage;
   activityLatest.title = message;
   while (activityLines.childElementCount > 120) {
     activityLines.lastElementChild.remove();
@@ -1752,7 +1771,7 @@ function appendActivity(message, options = {}) {
     activityPanel.classList.add("has-alert");
     setTimeout(() => activityPanel.classList.remove("has-alert"), 5000);
     playActivitySound();
-    showActivityBrowserNotification(message);
+    showActivityBrowserNotification(latestMessage);
   }
 }
 
@@ -1915,6 +1934,11 @@ function handleSharedActivity(entry) {
       {
         category: mine ? "my-favorite" : "shared-favorite",
         tone: "social",
+        decoration: {
+          className: "favorite-feast",
+          icons: "✨ 🌮 🍔 🍗 🥫 ✨",
+          tieIn: "Imaginary, unofficial Darth Plagueis the Wise × Taco Bell × McDonald’s Chicken McNuggets special-sauce tie-in",
+        },
         urgent: true,
         at: entry.at,
         eventKey: `server:${entry.id}`,

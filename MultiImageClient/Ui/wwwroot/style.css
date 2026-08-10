@@ -421,6 +421,35 @@ body.logs-open { overflow: hidden; }
 .activity-row.success .activity-message { color: var(--ok); }
 .activity-row.error .activity-message { color: var(--err); font-weight: 700; }
 .activity-row.social .activity-message { color: var(--accent-dark); }
+.activity-row.favorite-feast {
+  background: linear-gradient(90deg, #57217d 0 5px, #fff4a8 5px 100%);
+  border-bottom-color: #d51f2b;
+}
+.favorite-feast .activity-message {
+  display: grid;
+  gap: 1px;
+  color: #42145f;
+}
+.activity-decoration-icons {
+  width: max-content;
+  color: #c5152f;
+  font-size: 15px;
+  letter-spacing: 1px;
+  filter: drop-shadow(0 1px 0 #fff);
+  animation: favorite-feast-sparkle 900ms ease-in-out 3 alternate;
+}
+.activity-decoration-tie-in {
+  color: #7a1f52;
+  font-size: 9px;
+  font-weight: 800;
+}
+@keyframes favorite-feast-sparkle {
+  from { transform: scale(0.92) rotate(-1deg); filter: drop-shadow(0 1px 0 #fff); }
+  to { transform: scale(1.08) rotate(1deg); filter: drop-shadow(0 1px 3px #f5bd16); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-decoration-icons { animation: none; }
+}
 #activity-options {
   display: grid;
   gap: 6px;
