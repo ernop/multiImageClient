@@ -18,8 +18,8 @@
 //   const sw = await McPhee.create({
 //     affUrl: "mcphee/vendor/typo/en_US.aff",
 //     dicUrl: "mcphee/vendor/typo/en_US.dic",
-//     freqUrl: "mcphee/vendor/wordfreq/en-30k.txt", // optional; powers the
-//                                                      // repetition detectors
+//     freqUrl: "mcphee/vendor/wordfreq/en-30k.txt", // optional; powers
+//                                                     // word-frequency rules
 //     extraWords: ["recraft", "grok"],            // project jargon, always ok
 //     customDictStorageKey: "myapp_mcphee",     // localStorage, user-grown
 //     profile: "standard",                         // default rule profile
@@ -41,11 +41,12 @@
 //
 // Repetition detectors (the McPhee rules — a distinctive word ordinarily
 // earns one appearance per piece, and bunched ordinary words betray the ear):
-//   echo           the same content word (case/possessive/plural-folded)
+//   echo           the same content word or exact multi-word phrase
 //                  reappears within echoWindowWords words (default 50).
-//                  Function words and words ranked more common than
-//                  echoCommonRank (default 2000) in the frequency list are
-//                  exempt.
+//                  Single-word echoes exempt function words and words ranked
+//                  more common than echoCommonRank (default 2000); phrase
+//                  echoes inspect every dictionary-known word, including
+//                  function words, without a curated phrase list.
 //   obscureRepeat  a dictionary word ranked rarer than obscureRank (default
 //                  10000) — or absent from the frequency list entirely —
 //                  used 2+ times anywhere in the text. Requires freqUrl.
@@ -54,7 +55,7 @@
 // list (checker.markNotRare(word) — the correction for frequency-list gaps
 // such as contractions). There is no autofix — word choice is the author's
 // call; the panel offers hover-to-scroll and a session-scoped dismiss per
-// word (checker.ignoreRepeat(word)).
+// word or phrase (checker.ignoreRepeat(value)).
 //
 // Highlighting model (deliberately NOT the browser's red squiggles):
 //   .mcphee-mark-misspelled      lowercase word not in any dictionary -> pink
@@ -71,7 +72,7 @@
 //   .mcphee-mark-capitalization  lowercase sentence-start word -> orange
 //   .mcphee-mark-punctuation     text ends without terminal punctuation
 //                                   (last character boxed) -> orange outline
-//   .mcphee-mark-echo            same word reused nearby -> lavender
+//   .mcphee-mark-echo            same word or phrase reused nearby -> lavender
 //   .mcphee-mark-obscure         rare word reused in the text -> green
 //   .mcphee-mark-culture         proper name written lowercase (jupiter,
 //                                   japanese, usa) -> teal, with the cased fix
@@ -81,7 +82,7 @@
 var McPhee = (function () {
   "use strict";
 
-  var VERSION = "3.8.2";
+  var VERSION = "3.9.0";
 
   var WORD_RE = /[A-Za-z]+(?:['\u2019][A-Za-z]+)*/g;
   var TOKEN_RE = /([A-Za-z]+(?:['\u2019][A-Za-z]+)*)|( {2,})/g;
@@ -93,9 +94,9 @@ var McPhee = (function () {
   // Named rule profiles, presented in UIs as the formality ladder:
   // casual < standard ("normal") < strict ("formal"). "casual" is the
   // no-nagging mode for contexts where lowercase proper nouns ("japanese"),
-  // lowercase i, and unpunctuated prose are the author's intent. "strict"
-  // also requires sentence capitalization and terminal punctuation. Exact
-  // parameters for every rule are documented in
+  // lowercase i, and unpunctuated prose are the author's intent; "strict"
+  // demands the full rigamarole: sentences start capitalized, text ends
+  // punctuated. Exact parameters for every rule are documented in
   // docs/integration.md ("Rule catalog").
   var PROFILES = {
     standard: {
@@ -125,8 +126,8 @@ var McPhee = (function () {
 
   // ---------- culture rule: nation/group/language names ----------
   // Proper nouns of nationality, place, language, religion, and ethnicity
-  // written in lowercase ("japanese", "usa", "english") use a separate
-  // category so they remain distinct from unknown-word flags. The list
+  // written in lowercase ("japanese", "usa", "english") get their own
+  // gentle category instead of drowning among unknown-word flags. The list
   // is deliberately conservative: entries whose lowercase form is a common
   // English word (turkey, china, polish, us...) are excluded because
   // flagging them would produce constant false positives — "Black" as an
@@ -169,6 +170,26 @@ var McPhee = (function () {
   function pluralKey(norm) {
     return norm.length > 4 && norm.slice(-1) === "s" && norm.slice(-2) !== "ss"
       ? norm.slice(0, -1) : norm;
+  }
+
+  // Exact phrase matching is case/apostrophe-insensitive but deliberately
+  // does not stem: "at all" matches "At all", while two phrases with
+  // different nouns or inflections remain different phrases.
+  function phraseTokenNorm(word) {
+    return word.toLowerCase().replace(/\u2019/g, "'");
+  }
+
+  // Session-dismissal key for either a word or a phrase. Words retain the
+  // historical possessive/plural folding; phrases use their exact normalized
+  // token sequence.
+  function repeatKey(value) {
+    var tokens = [];
+    WORD_RE.lastIndex = 0;
+    var m;
+    while ((m = WORD_RE.exec(String(value))) !== null) {
+      tokens.push(phraseTokenNorm(m[0]));
+    }
+    return tokens.length > 1 ? tokens.join(" ") : pluralKey(normWord(String(value)));
   }
 
   // Classic finger-slips whose right answer typo-js ranks poorly or misses
@@ -337,10 +358,11 @@ var McPhee = (function () {
     this.loadNotRareWords();
   }
 
-  // Session-scoped: silences echo/obscureRepeat for this word until reload.
-  // Permanent exemption = add the word to the personal dictionary.
-  Checker.prototype.ignoreRepeat = function (word) {
-    this.ignoredRepeats.add(pluralKey(normWord(String(word))));
+  // Session-scoped: silences echo/obscureRepeat for this word or exact phrase
+  // until reload. Permanent word exemption = add it to the personal
+  // dictionary.
+  Checker.prototype.ignoreRepeat = function (value) {
+    this.ignoredRepeats.add(repeatKey(value));
   };
 
   // Frequency rank of a word's normal form, plural-folded; Infinity when the
@@ -565,8 +587,9 @@ var McPhee = (function () {
   //                  the issue carries collapseTo, the run's correct form)
   //   capitalization lowercase sentence-start word that IS in the dictionary
   //   punctuation    the text ends without terminal punctuation
-  //   echo           same content word reused within echoWindowWords words
-  //                  (carries norm + distance, both occurrences flagged)
+  //   echo           same content word or exact phrase reused within
+  //                  echoWindowWords words (carries norm + distance, every
+  //                  occurrence flagged; phrase issues also carry phraseWords)
   //   obscure        rare word (rank >= obscureRank or unranked) used 2+
   //                  times anywhere (carries norm + count, all flagged)
   //   culture        proper name written lowercase — curated list plus
@@ -636,8 +659,11 @@ var McPhee = (function () {
         }
       }
     }
+    var phraseCovered = rules.echo
+      ? this.addPhraseRepetitionIssues(text, words, excludedList, issues)
+      : new Set();
     if (rules.echo || rules.obscureRepeat) {
-      this.addRepetitionIssues(words, rules, issues);
+      this.addRepetitionIssues(words, rules, issues, phraseCovered);
     }
     if (rules.terminalPunctuation) {
       var trimmed = text.replace(/\s+$/, "");
@@ -649,7 +675,168 @@ var McPhee = (function () {
     return issues;
   };
 
-  // The McPhee detectors. Both work on the words the dictionary already
+  // Finds every exact repeated multi-word sequence without a phrase list.
+  // Candidate starts within echoWindowWords are compared, extended to their
+  // maximal identical sequence, and collapsed so nested subphrases do not
+  // produce duplicate rows. Phrase spans never cross punctuation, exclusion
+  // zones, misspellings, or other active issues. More specific phrase echoes
+  // claim their component words so the panel does not also report a weaker
+  // single-word echo for the same occurrences.
+  Checker.prototype.addPhraseRepetitionIssues = function (text, words, excludedList, issues) {
+    var covered = new Set();
+    if (words.length < 4) return covered;
+
+    var norms = new Array(words.length);
+    var valid = new Array(words.length);
+    for (var i = 0; i < words.length; i++) {
+      var norm = phraseTokenNorm(words[i].value);
+      norms[i] = norm;
+      valid[i] = words[i].cls === "ok"
+        && !this.customWords.has(norm) && !this.extraWords.has(norm);
+    }
+
+    // A phrase can contain whitespace but not punctuation or an excluded
+    // range. Segment numbers make that boundary check constant-time during
+    // candidate extension.
+    var segments = new Array(words.length);
+    var segment = 0;
+    var rangeIndex = 0;
+    segments[0] = segment;
+    for (i = 1; i < words.length; i++) {
+      var gapStart = words[i - 1].end;
+      var gapEnd = words[i].start;
+      while (rangeIndex < excludedList.length && excludedList[rangeIndex][1] <= gapStart) {
+        rangeIndex++;
+      }
+      var crossesExcluded = rangeIndex < excludedList.length
+        && excludedList[rangeIndex][0] < gapEnd
+        && excludedList[rangeIndex][1] > gapStart;
+      if (crossesExcluded || !/^\s+$/.test(text.slice(gapStart, gapEnd))) segment++;
+      segments[i] = segment;
+    }
+
+    var candidates = new Map();
+    for (i = 0; i < words.length; i++) {
+      if (!valid[i]) continue;
+      for (var j = i + 2; j < words.length && j - i <= this.echoWindowWords; j++) {
+        if (!valid[j] || norms[i] !== norms[j]) continue;
+
+        // A matching token immediately to the left means this pair belongs
+        // to a longer phrase beginning there; only its leftmost start should
+        // create a candidate.
+        if (i > 0 && j > 0
+          && valid[i - 1] && valid[j - 1]
+          && segments[i - 1] === segments[i]
+          && segments[j - 1] === segments[j]
+          && norms[i - 1] === norms[j - 1]) {
+          continue;
+        }
+
+        var length = 0;
+        var maxLength = j - i; // repeated occurrences must not overlap
+        while (length < maxLength
+          && i + length < words.length && j + length < words.length
+          && valid[i + length] && valid[j + length]
+          && segments[i + length] === segments[i]
+          && segments[j + length] === segments[j]
+          && norms[i + length] === norms[j + length]) {
+          length++;
+        }
+        if (length < 2) continue;
+
+        var key = norms.slice(i, i + length).join(" ");
+        var entry = candidates.get(key);
+        if (!entry) {
+          entry = { key: key, wordCount: length, indexes: new Set(), minDistance: j - i };
+          candidates.set(key, entry);
+        }
+        entry.indexes.add(i);
+        entry.indexes.add(j);
+        entry.minDistance = Math.min(entry.minDistance, j - i);
+      }
+    }
+
+    var occupiedByOtherIssues = issues.map(function (issue) {
+      return [issue.start, issue.end];
+    });
+    function overlapsRanges(start, end, ranges) {
+      for (var r = 0; r < ranges.length; r++) {
+        if (ranges[r][0] < end && ranges[r][1] > start) return true;
+      }
+      return false;
+    }
+
+    var groups = [];
+    candidates.forEach(function (entry) {
+      var indexes = Array.from(entry.indexes).sort(function (a, b) { return a - b; });
+      var usable = [];
+      var lastEndIndex = -1;
+      indexes.forEach(function (index) {
+        var endIndex = index + entry.wordCount - 1;
+        if (index < lastEndIndex) return;
+        var start = words[index].start;
+        var end = words[endIndex].end;
+        if (overlapsRanges(start, end, occupiedByOtherIssues)) return;
+        usable.push(index);
+        lastEndIndex = index + entry.wordCount;
+      });
+      if (usable.length >= 2) {
+        entry.indexes = usable;
+        entry.coverage = usable.length * entry.wordCount;
+        groups.push(entry);
+      }
+    });
+
+    // Prefer the candidate that explains the most repeated text. This keeps
+    // a longer repeated phrase instead of every nested bigram, while a
+    // shorter phrase wins when it genuinely occurs in more places.
+    groups.sort(function (a, b) {
+      return b.coverage - a.coverage
+        || b.indexes.length - a.indexes.length
+        || b.wordCount - a.wordCount
+        || a.minDistance - b.minDistance
+        || a.indexes[0] - b.indexes[0];
+    });
+
+    var self = this;
+    groups.forEach(function (entry) {
+      var available = entry.indexes.filter(function (index) {
+        for (var k = index; k < index + entry.wordCount; k++) {
+          if (covered.has(k)) return false;
+        }
+        return true;
+      });
+      if (available.length < 2) return;
+
+      var minDistance = Infinity;
+      for (var a = 1; a < available.length; a++) {
+        minDistance = Math.min(minDistance, available[a] - available[a - 1]);
+      }
+      available.forEach(function (index) {
+        for (var k = index; k < index + entry.wordCount; k++) covered.add(k);
+      });
+
+      // Dismissing a phrase also suppresses the weaker component-word echoes
+      // that the phrase had superseded.
+      if (self.ignoredRepeats.has(entry.key)) return;
+      available.forEach(function (index) {
+        var endIndex = index + entry.wordCount - 1;
+        issues.push({
+          kind: "echo",
+          value: text.slice(words[index].start, words[endIndex].end),
+          start: words[index].start,
+          end: words[endIndex].end,
+          classification: "echo",
+          norm: entry.key,
+          distance: minDistance,
+          phraseWords: entry.wordCount,
+        });
+      });
+    });
+    return covered;
+  };
+
+  // The word-level McPhee detectors. Both work on the words the dictionary
   // accepts (misspellings are someone else's problem) minus function words,
   // dictionary/jargon words, and session-dismissed words.
   //   echo:          keep the last position of each normal form; a
@@ -660,11 +847,11 @@ var McPhee = (function () {
   //                  obscureRank; 2+ uses flag every occurrence not already
   //                  flagged as an echo. Needs the frequency list — without
   //                  it there is no notion of "obscure".
-  Checker.prototype.addRepetitionIssues = function (words, rules, issues) {
+  Checker.prototype.addRepetitionIssues = function (words, rules, issues, phraseCovered) {
     var norms = new Array(words.length);
     for (var i = 0; i < words.length; i++) {
       var w = words[i];
-      if (w.cls !== "ok") { norms[i] = null; continue; }
+      if (w.cls !== "ok" || phraseCovered.has(i)) { norms[i] = null; continue; }
       var n = normWord(w.value);
       if (n.length < 4 || STOPWORDS.has(n)
         || this.customWords.has(n) || this.extraWords.has(n)
@@ -908,8 +1095,9 @@ var McPhee = (function () {
 
   Checker.prototype.renderHtml = function (text, opts) {
     var issues = this.analyze(text, opts);
-    // Issues can overlap only at the tail (punctuation over a flagged last
-    // word); keep the earlier-starting issue and drop the overlapper.
+    // Repetition analysis suppresses weaker overlapping candidates; the only
+    // remaining overlap can be a tail punctuation issue. Keep the
+    // earlier-starting issue and drop the overlapper.
     issues.sort(function (a, b) { return a.start - b.start || a.end - b.end; });
     var out = [];
     var last = 0;
@@ -1054,8 +1242,8 @@ var McPhee = (function () {
       refresh();
     });
     resizeObserver.observe(textarea);
-    // Programmatic .value writes fire no event. A periodic refresh keeps the
-    // overlay synchronized without requiring every caller to invoke refresh().
+    // Programmatic .value writes fire no event; a light poll keeps the
+    // overlay honest without every caller having to remember refresh().
     var pollTimer = setInterval(refresh, 700);
     refresh();
 
@@ -1416,7 +1604,7 @@ var McPhee = (function () {
         if (level.id === currentProfile) b.classList.add("mcphee-formality-selected");
         bar.appendChild(b);
       });
-      var cfg = button("config", "mcphee-formality-config", function () {
+      var cfg = button("\u2699 config", "mcphee-formality-config", function () {
         showConfig = !showConfig;
         render();
       });
@@ -1432,7 +1620,7 @@ var McPhee = (function () {
       unknown: "unknown words (blue)",
       doublespace: "extra spaces (yellow)",
       culture: "lowercase nation/group names (teal)",
-      echo: "same word nearby (lavender)",
+      echo: "same word or phrase nearby (lavender)",
       obscureRepeat: "rare word reused (green)",
       sentenceCapitalization: "sentence capitalization (orange)",
       terminalPunctuation: "terminal punctuation",
@@ -1577,7 +1765,7 @@ var McPhee = (function () {
       }
       // Manual escape hatch: full overlay regeneration (styles, geometry,
       // marks) plus a fresh panel, for when anything looks stale.
-      var recheckBtn = button("recheck", "mcphee-panel-recheck", function () {
+      var recheckBtn = button("\u21bb recheck", "mcphee-panel-recheck", function () {
         refreshOverlay();
         render();
       });
@@ -1936,7 +2124,7 @@ var McPhee = (function () {
       handle = document.createElement("button");
       handle.type = "button";
       handle.className = "mcphee-drawer-handle";
-      handle.textContent = "spelling";
+      handle.textContent = "\u2713 spelling";
       handle.addEventListener("click", function () { api.toggleDrawer(); });
       document.body.appendChild(handle);
     }
@@ -1963,7 +2151,7 @@ var McPhee = (function () {
     var panelContainer = document.createElement("div");
 
     function applyMode() {
-      modeBtn.textContent = mode === "inline" ? "side drawer" : "dock inline";
+      modeBtn.textContent = mode === "inline" ? "\u21e5 side drawer" : "\u21e4 dock inline";
       modeBtn.title = mode === "inline"
         ? "Move the panel into a slide-out drawer at the screen edge"
         : "Dock the panel beside the text";
@@ -2124,9 +2312,10 @@ var McPhee = (function () {
     ];
     if (options.freqUrl) {
       // Rank list: one word per line, most common first (line number = rank).
-      // Optional — without it, echo falls back to the stopword list alone and
-      // obscureRepeat stays inert. A load failure degrades the same way
-      // rather than killing the spellchecker.
+      // Optional — without it, single-word echo falls back to the stopword
+      // list alone, phrase echo still works, and obscureRepeat stays inert. A
+      // load failure degrades the same way rather than killing the
+      // spellchecker.
       loads.push(fetch(options.freqUrl).then(function (r) {
         return r.ok ? r.text() : null;
       }).catch(function () { return null; }));

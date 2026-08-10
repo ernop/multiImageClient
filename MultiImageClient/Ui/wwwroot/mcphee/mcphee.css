@@ -82,13 +82,14 @@
   border-radius: 2px;
 }
 
-/* Echo: the same content word reused nearby — both occurrences lavender. */
+/* Echo: the same content word or phrase reused nearby — every occurrence
+   lavender. */
 .mcphee-mark-echo { background: #e6d9f7; }
 
 /* Obscure repeat: a rare word used more than once in the text — light green. */
 .mcphee-mark-obscure { background: #d5efd5; }
 
-/* Culture: lowercase nation/group/language/religion name — teal. */
+/* Culture: lowercase nation/group/language/religion name — gentle teal. */
 .mcphee-mark-culture { background: #c9ecea; }
 
 /* Hover highlight: while the pointer is on a panel row, every occurrence of
