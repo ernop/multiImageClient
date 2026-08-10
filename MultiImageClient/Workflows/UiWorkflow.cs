@@ -273,7 +273,7 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyKrea, label = "Krea 2 Medium", detail = "Krea's own foundation image model, not an aggregated third-party model. Best for expressive illustration and stable general use. An attached image is sent as a 0.6-strength style reference; auto matches its nearest native aspect ratio. The API currently accepts 1K only, so detail has no effect. n runs separate generations." },
                     new { key = UiJobRunner.KeyKreaTurbo, label = "Krea 2 Medium Turbo", detail = "Krea's fastest and least expensive Krea 2 variant. An attached image is sent as a 0.6-strength style reference. The API currently accepts 1K only; n runs separate generations." },
                     new { key = UiJobRunner.KeyKreaLarge, label = "Krea 2 Large", detail = "Krea's highest-fidelity Krea 2 variant, strongest for photorealism, raw texture, grain, and expressive styles. An attached image is sent as a 0.6-strength style reference. The API currently accepts 1K only; n runs separate generations." },
-                    new { key = UiJobRunner.KeyIdeogram, label = "Ideogram V4", detail = "Ideogram 4.0 text-to-image, 2K-native (detail tier has no effect). The v4 endpoint takes no input image, so on image jobs it runs from the prompt alone. It also currently ignores num_images and returns 1." },
+                    new { key = UiJobRunner.KeyIdeogram, label = "Ideogram 4.0", detail = "Ideogram 4.0. Without an attachment it uses Generate; with one it uses Remix and lets Ideogram choose source influence from the instruction. Auto matches the source to the nearest published 2K resolution; explicit shape overrides it. Detail has no effect. n runs separate generations." },
                     new { key = UiJobRunner.KeyIdeogramV3, label = "Ideogram V3", detail = "Ideogram 3.0. A pasted image is used as a style reference and the default AR matches the source; explicit AR choices and n up to 8 are honored. Without an image it runs text-to-image (auto = square)." },
                     new { key = UiJobRunner.KeyIdeogramV2, label = "Ideogram V2", detail = "Ideogram 2.0 through the legacy text-to-image endpoint. Shape and Magic Prompt are honored; detail and n have no effect. An attached image is not sent." },
                     new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1. A pasted image runs image-to-image and inherently keeps the source dimensions. That endpoint exposes no size override, so Recraft is unavailable for image jobs with an explicit output AR. n up to 6." },
@@ -336,7 +336,7 @@ namespace MultiImageClient
                     // at the provider send stage (grok-web: GrokWebClient).
                     maxPromptChars = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptChars : null,
                     // Default-on set for new windows: gpt-image-2, Recraft V4.1,
-                    // grok-web pro, Ideogram V4, FLUX.2 Pro Preview, Nano Banana 2.
+                    // grok-web pro, Ideogram 4.0, FLUX.2 Pro Preview, Nano Banana 2.
                     defaultOn = g.key is UiJobRunner.KeyGpt2
                         or UiJobRunner.KeyRecraft
                         or UiJobRunner.KeyGrokWeb

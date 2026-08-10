@@ -85,9 +85,9 @@ namespace MultiImageClient
             if (IdeogramV3RefusedCount > 0)
                 nonZeroStats.Add($"Ideogram v3 Refused:{IdeogramV3RefusedCount}");
             if (IdeogramV4RequestCount > 0)
-                nonZeroStats.Add($"Ideogram v4 Requests:{IdeogramV4RequestCount}");
+                nonZeroStats.Add($"Ideogram 4.0 Requests:{IdeogramV4RequestCount}");
             if (IdeogramV4RefusedCount > 0)
-                nonZeroStats.Add($"Ideogram v4 Refused:{IdeogramV4RefusedCount}");
+                nonZeroStats.Add($"Ideogram 4.0 Refused:{IdeogramV4RefusedCount}");
 
             if (GptImageOneRequestCount > 0)
                 nonZeroStats.Add($"GPT Image One Requests:{GptImageOneRequestCount}");

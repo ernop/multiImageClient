@@ -22,8 +22,8 @@ Paste an idea — or an image — and see what today’s image generators do wit
 |---|---|
 | **OpenAI gpt-image-2** | Text-to-image and image edit; multiple images per run; high detail sizes |
 | **OpenAI gpt-image-1 / mini** | Text-to-image; multiple images per run |
-| **Ideogram V4** | Text-to-image with strong in-image text |
-| **Ideogram V3** | Text-to-image and style/reference from an attached image |
+| **Ideogram 4.0** | Text-to-image and prompt-guided Remix from an attached image; strong in-image text |
+| **Ideogram 3.0** | Text-to-image and style/reference from an attached image |
 | **Black Forest Labs (Flux)** | Text-to-image; optional style/reference from an attached image |
 | **Krea 2** | Krea's own Turbo, Medium, and Large models; text-to-image and style-reference generation |
 | **Recraft** | Text-to-image and image-to-image |

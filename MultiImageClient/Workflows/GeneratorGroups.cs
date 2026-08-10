@@ -138,7 +138,7 @@ namespace MultiImageClient
                 new("openai.gpt-image-2.low.square", "gpt-image-2 low square", "OpenAI", GptImage2LowSquare),
                 new("openai.gpt-image-1.low.square", "gpt-image-1 low square", "OpenAI", GptImage1LowSquare),
                 new("openai.gpt-image-1-mini.low.square", "gpt-image-1-mini low square", "OpenAI", GptImageMiniLowSquare),
-                new("ideogram.v4.default.square", "Ideogram V4 DEFAULT square", "Ideogram", IdeogramV4_Square),
+                new("ideogram.v4.default.square", "Ideogram 4.0 DEFAULT square", "Ideogram", IdeogramV4_Square),
                 new("bfl.flux-2-pro-preview.square", "BFL Flux 2 Pro Preview square", "BFL", BFLFlux2ProPreview_Square),
                 new("krea.krea-2-medium.square", "Krea 2 Medium square", "Krea", Krea2Medium_Square),
                 new("recraft.v4-1.any.square", "Recraft V4.1 any square", "Recraft", RecraftV41AnyStyle),
@@ -391,11 +391,9 @@ namespace MultiImageClient
                 "", _stats, "");
 
         // ---------- Ideogram 4.0 (released 2026-06-03) ----------
-        // JSON endpoint /v1/ideogram-v4/generate; 2K-native resolutions only
-        // ("2048x2048", "2304x1728", "2560x1440", ...). rendering_speed:
-        // FLASH (cheapest) | TURBO | DEFAULT | QUALITY. No style_type /
-        // magic_prompt knobs — text_prompt is auto-expanded server-side into
-        // the structured JSON prompt contract.
+        // Multipart endpoints /v1/ideogram-v4/generate and /remix; 1K and
+        // 2K-native resolutions. FLASH remains in Ideogram's shared enum but
+        // the current v4 endpoint rejects it.
 
         private IdeogramV4Generator IdeogramV4_Square() =>
             new IdeogramV4Generator(_settings.IdeogramApiKey, _concurrency,
@@ -404,10 +402,6 @@ namespace MultiImageClient
         private IdeogramV4Generator IdeogramV4_Wide_Quality() =>
             new IdeogramV4Generator(_settings.IdeogramApiKey, _concurrency,
                 "2560x1440", IdeogramRenderingSpeed.QUALITY, _stats, "");
-
-        private IdeogramV4Generator IdeogramV4_Flash() =>
-            new IdeogramV4Generator(_settings.IdeogramApiKey, _concurrency,
-                "2048x2048", IdeogramRenderingSpeed.FLASH, _stats, "");
 
         // ---------- Black Forest Labs (Flux) ----------
 

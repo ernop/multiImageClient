@@ -12,6 +12,7 @@ public class UiShapeMappingTests
         Assert.Equal("", UiShapeMapping.GrokAspect("auto"));
         Assert.Equal("", UiShapeMapping.GoogleAspect("auto"));
         Assert.Equal("1:1", UiShapeMapping.KreaAspect("auto"));
+        Assert.Equal("", UiShapeMapping.IdeogramV4Resolution("auto"));
     }
 
     [Theory]
@@ -112,6 +113,27 @@ public class UiShapeMappingTests
     }
 
     [Theory]
+    [InlineData(1600, 900, "2560x1440")]
+    [InlineData(900, 1600, "1440x2560")]
+    [InlineData(800, 1600, "1440x2880")]
+    [InlineData(1000, 3000, "1024x3072")]
+    public void IdeogramV4RemixAutoUsesClosestPublishedResolution(
+        int width,
+        int height,
+        string expected)
+    {
+        Assert.Equal(
+            expected,
+            UiShapeMapping.IdeogramV4Resolution("auto", width, height));
+    }
+
+    [Fact]
+    public void Ideogram40IsImageCapable()
+    {
+        Assert.True(UiJobRunner.IsImageCapable(UiJobRunner.KeyIdeogram));
+    }
+
+    [Theory]
     [InlineData(1200, 900, "standard")]
     [InlineData(900, 1200, "high")]
     [InlineData(2100, 900, "max")]
@@ -154,6 +176,8 @@ public class UiShapeMappingTests
             () => UiShapeMapping.GrokAspect("auto", 100, 0));
         Assert.Throws<InvalidOperationException>(
             () => UiShapeMapping.Gpt2Size("auto", "standard", 0, 100));
+        Assert.Throws<InvalidOperationException>(
+            () => UiShapeMapping.IdeogramV4Resolution("auto", 0, 100));
     }
 
     [Fact]

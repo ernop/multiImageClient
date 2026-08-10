@@ -15,10 +15,44 @@ namespace IdeogramAPIClient
     {
         private readonly HttpClient _httpClient;
         private const string BaseUrl = "https://api.ideogram.ai";
+        private const long IdeogramV4MaxInputImageBytes = 10_000_000;
+        private static readonly HashSet<string> IdeogramV4Resolutions = new(StringComparer.Ordinal)
+        {
+            "2048x2048",
+            "1440x2880", "2880x1440",
+            "1664x2496", "2496x1664",
+            "1792x2240", "2240x1792",
+            "1440x2560", "2560x1440",
+            "1600x2560", "2560x1600",
+            "1728x2304", "2304x1728",
+            "1296x3168", "3168x1296",
+            "1152x2944", "2944x1152",
+            "1248x3328", "3328x1248",
+            "1280x3072", "3072x1280",
+            "1024x3072", "3072x1024",
+            "1024x1024",
+            "896x1120", "1120x896",
+            "864x1152", "1152x864",
+            "832x1248", "1248x832",
+            "800x1280", "1280x800",
+            "720x1280", "1280x720",
+            "720x1440", "1440x720",
+            "512x1536", "1536x512",
+        };
 
         public IdeogramClient(string apiKey)
+            : this(apiKey, new HttpClient())
         {
-            _httpClient = new HttpClient();
+        }
+
+        public IdeogramClient(string apiKey, HttpMessageHandler handler)
+            : this(apiKey, new HttpClient(handler))
+        {
+        }
+
+        private IdeogramClient(string apiKey, HttpClient httpClient)
+        {
+            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
             _httpClient.DefaultRequestHeaders.Add("Api-Key", apiKey);
             _httpClient.BaseAddress = new Uri(BaseUrl);
         }
@@ -72,7 +106,7 @@ namespace IdeogramAPIClient
                     error: error,
                     metadata: new { operation = "generate-image", apiVersion = "legacy" });
             }
-        }        
+        }
 
         public async Task<IdeogramV3GenerateResponse> GenerateImageV3Async(IdeogramV3GenerateRequest request)
         {
@@ -171,29 +205,103 @@ namespace IdeogramAPIClient
             }
         }
 
-        /// Ideogram 4.0 (2026-06-03): plain JSON POST, unlike v3's multipart
-        /// form. 2K-native output, rendering_speed FLASH|TURBO|DEFAULT|QUALITY.
+        /// Ideogram 4.0 text generation. The current endpoint consumes
+        /// multipart form data and does not expose seed or num_images.
         public async Task<IdeogramV4GenerateResponse> GenerateImageV4Async(IdeogramV4GenerateRequest request)
         {
             if (request == null)
                 throw new ArgumentNullException(nameof(request));
 
             if (string.IsNullOrWhiteSpace(request.TextPrompt))
-                throw new ArgumentException("TextPrompt is required for Ideogram v4 generation.", nameof(request));
+                throw new ArgumentException("TextPrompt is required for Ideogram 4.0 generation.", nameof(request));
 
-            var jsonRequest = JsonConvert.SerializeObject(request, new JsonSerializerSettings
+            ValidateV4Options(request.Resolution, request.RenderingSpeed);
+
+            using var formData = new MultipartFormDataContent();
+            formData.Add(new StringContent(request.TextPrompt), "text_prompt");
+            AddStringPart(formData, "resolution", request.Resolution);
+            AddEnumPart(formData, "rendering_speed", request.RenderingSpeed);
+            AddBoolPart(formData, "enable_copyright_detection", request.EnableCopyrightDetection);
+
+            var traceRequest = new Dictionary<string, object>
             {
-                NullValueHandling = NullValueHandling.Ignore,
-            });
-            var httpContent = new StringContent(jsonRequest, System.Text.Encoding.UTF8, "application/json");
-            const string endpoint = "/v1/ideogram-v4/generate";
+                ["text_prompt"] = request.TextPrompt,
+            };
+            AddTraceString(traceRequest, "resolution", request.Resolution);
+            AddTraceString(traceRequest, "rendering_speed", request.RenderingSpeed?.ToString());
+            if (request.EnableCopyrightDetection.HasValue)
+            {
+                traceRequest["enable_copyright_detection"] = request.EnableCopyrightDetection.Value;
+            }
+
+            return await PostV4Async(
+                "/v1/ideogram-v4/generate",
+                formData,
+                traceRequest,
+                "generate-image");
+        }
+
+        /// Ideogram 4.0 image remix. The source image is the exact image whose
+        /// metadata is recorded in the request trace; image bytes are never
+        /// written to the trace.
+        public async Task<IdeogramV4GenerateResponse> RemixImageV4Async(IdeogramV4RemixRequest request)
+        {
+            if (request == null)
+                throw new ArgumentNullException(nameof(request));
+            if (string.IsNullOrWhiteSpace(request.TextPrompt))
+                throw new ArgumentException("TextPrompt is required for Ideogram 4.0 Remix.", nameof(request));
+            if (request.Image == null)
+                throw new ArgumentException("Image is required for Ideogram 4.0 Remix.", nameof(request));
+
+            ValidateV4Options(request.Resolution, request.RenderingSpeed);
+            ValidateV4Image(request.Image);
+
+            using var formData = new MultipartFormDataContent();
+            var imageContent = new ByteArrayContent(request.Image.Content);
+            imageContent.Headers.ContentType = new MediaTypeHeaderValue(request.Image.ContentType);
+            formData.Add(imageContent, "image", request.Image.FileName);
+            formData.Add(new StringContent(request.TextPrompt), "text_prompt");
+            AddIntPart(formData, "image_weight", request.ImageWeight);
+            AddStringPart(formData, "resolution", request.Resolution);
+            AddEnumPart(formData, "rendering_speed", request.RenderingSpeed);
+            AddBoolPart(formData, "enable_copyright_detection", request.EnableCopyrightDetection);
+
+            var traceRequest = new Dictionary<string, object>
+            {
+                ["image"] = DescribeFiles(new[] { request.Image }).Single(),
+                ["text_prompt"] = request.TextPrompt,
+            };
+            if (request.ImageWeight.HasValue)
+            {
+                traceRequest["image_weight"] = request.ImageWeight.Value;
+            }
+            AddTraceString(traceRequest, "resolution", request.Resolution);
+            AddTraceString(traceRequest, "rendering_speed", request.RenderingSpeed?.ToString());
+            if (request.EnableCopyrightDetection.HasValue)
+            {
+                traceRequest["enable_copyright_detection"] = request.EnableCopyrightDetection.Value;
+            }
+
+            return await PostV4Async(
+                "/v1/ideogram-v4/remix",
+                formData,
+                traceRequest,
+                "remix-image");
+        }
+
+        private async Task<IdeogramV4GenerateResponse> PostV4Async(
+            string endpoint,
+            HttpContent content,
+            object traceRequest,
+            string operation)
+        {
             var startedAtUtc = DateTime.UtcNow;
             HttpResponseMessage? response = null;
             string? responseContent = null;
             Exception? error = null;
             try
             {
-                response = await _httpClient.PostAsync(endpoint, httpContent);
+                response = await _httpClient.PostAsync(endpoint, content);
                 responseContent = await response.Content.ReadAsStringAsync();
                 if (!response.IsSuccessStatusCode)
                 {
@@ -203,7 +311,7 @@ namespace IdeogramAPIClient
                 var generateResponse = JsonConvert.DeserializeObject<IdeogramV4GenerateResponse>(responseContent);
                 if (generateResponse == null)
                 {
-                    throw new InvalidDataException("Failed to deserialize Ideogram v4 response.");
+                    throw new InvalidDataException("Failed to deserialize Ideogram 4.0 response.");
                 }
 
                 return generateResponse;
@@ -221,11 +329,11 @@ namespace IdeogramAPIClient
                     "POST",
                     BaseUrl + endpoint,
                     startedAtUtc,
-                    request: jsonRequest,
+                    request: traceRequest,
                     response: responseContent,
                     statusCode: response == null ? null : (int)response.StatusCode,
                     error: error,
-                    metadata: new { operation = "generate-image", apiVersion = "v4" });
+                    metadata: new { operation, apiVersion = "v4" });
             }
         }
 
@@ -314,6 +422,14 @@ namespace IdeogramAPIClient
             }
         }
 
+        private static void AddBoolPart(MultipartFormDataContent formData, string name, bool? value)
+        {
+            if (value.HasValue)
+            {
+                formData.Add(new StringContent(value.Value ? "true" : "false"), name);
+            }
+        }
+
         private static void AddTraceString(Dictionary<string, object> request, string name, string? value)
         {
             if (!string.IsNullOrWhiteSpace(value))
@@ -359,6 +475,68 @@ namespace IdeogramAPIClient
                 })
                 .ToArray()
                 ?? Array.Empty<object>();
+        }
+
+        private static void ValidateV4Options(
+            string? resolution,
+            IdeogramRenderingSpeed? renderingSpeed)
+        {
+            if (!string.IsNullOrWhiteSpace(resolution)
+                && !IdeogramV4Resolutions.Contains(resolution))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(resolution),
+                    resolution,
+                    "Resolution is not in Ideogram 4.0's current published resolution set.");
+            }
+            if (renderingSpeed == IdeogramRenderingSpeed.FLASH)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(renderingSpeed),
+                    renderingSpeed,
+                    "Ideogram 4.0 currently rejects rendering_speed=FLASH.");
+            }
+        }
+
+        private static void ValidateV4Image(IdeogramFile image)
+        {
+            if (image.Content.Length == 0)
+            {
+                throw new ArgumentException("Ideogram 4.0 remix image is empty.", nameof(image));
+            }
+            if (image.Content.LongLength > IdeogramV4MaxInputImageBytes)
+            {
+                throw new ArgumentException(
+                    $"Ideogram 4.0 remix image exceeds the {IdeogramV4MaxInputImageBytes:N0}-byte limit.",
+                    nameof(image));
+            }
+            if (image.ContentType is not ("image/png" or "image/jpeg" or "image/webp"))
+            {
+                throw new ArgumentException(
+                    $"Ideogram 4.0 remix only accepts PNG, JPEG, or WEBP; received '{image.ContentType}'.",
+                    nameof(image));
+            }
+            var bytes = image.Content;
+            var matchesDeclaredType = image.ContentType switch
+            {
+                "image/png" => bytes.Length >= 8
+                    && bytes[0] == 0x89 && bytes[1] == 0x50
+                    && bytes[2] == 0x4E && bytes[3] == 0x47,
+                "image/jpeg" => bytes.Length >= 3
+                    && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF,
+                "image/webp" => bytes.Length >= 12
+                    && bytes[0] == 'R' && bytes[1] == 'I'
+                    && bytes[2] == 'F' && bytes[3] == 'F'
+                    && bytes[8] == 'W' && bytes[9] == 'E'
+                    && bytes[10] == 'B' && bytes[11] == 'P',
+                _ => false,
+            };
+            if (!matchesDeclaredType)
+            {
+                throw new ArgumentException(
+                    $"Ideogram 4.0 remix image bytes do not match declared type '{image.ContentType}'.",
+                    nameof(image));
+            }
         }
     }
 }

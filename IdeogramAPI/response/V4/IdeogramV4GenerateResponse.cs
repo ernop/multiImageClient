@@ -4,11 +4,9 @@ using Newtonsoft.Json;
 
 namespace IdeogramAPIClient
 {
-    /// Response from POST /v1/ideogram-v4/generate. The per-image objects
-    /// share the v3 wire shape (url / prompt / resolution / is_image_safe /
-    /// seed) so we reuse IdeogramV3ImageObject. Note: in v4, `prompt` comes
-    /// back as the model's expanded STRUCTURED JSON prompt (a serialized
-    /// object), not a plain rewritten sentence.
+    /// Response shared by the Ideogram 4.0 generate and remix endpoints. The
+    /// per-image objects share the v3 wire shape (url / prompt / resolution /
+    /// is_image_safe / seed), so we reuse IdeogramV3ImageObject.
     public class IdeogramV4GenerateResponse
     {
         /// Always "url" for this endpoint shape.

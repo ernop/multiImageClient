@@ -1769,6 +1769,22 @@ namespace MultiImageClient
             (IdeogramAPIClient.IdeogramAspectRatio.ASPECT_3_1, 3, 1),
         };
 
+        private static readonly (string Name, int Width, int Height)[] IdeogramV4Resolutions =
+        {
+            ("2048x2048", 2048, 2048),
+            ("1440x2880", 1440, 2880), ("2880x1440", 2880, 1440),
+            ("1664x2496", 1664, 2496), ("2496x1664", 2496, 1664),
+            ("1792x2240", 1792, 2240), ("2240x1792", 2240, 1792),
+            ("1440x2560", 1440, 2560), ("2560x1440", 2560, 1440),
+            ("1600x2560", 1600, 2560), ("2560x1600", 2560, 1600),
+            ("1728x2304", 1728, 2304), ("2304x1728", 2304, 1728),
+            ("1296x3168", 1296, 3168), ("3168x1296", 3168, 1296),
+            ("1152x2944", 1152, 2944), ("2944x1152", 2944, 1152),
+            ("1248x3328", 1248, 3328), ("3328x1248", 3328, 1248),
+            ("1280x3072", 1280, 3072), ("3072x1280", 3072, 1280),
+            ("1024x3072", 1024, 3072), ("3072x1024", 3072, 1024),
+        };
+
         public static bool IsKnownShape(string shape)
         {
             var value = (shape ?? "").Trim().ToLowerInvariant();
@@ -1793,6 +1809,9 @@ namespace MultiImageClient
                 .First()
                 .Aspect;
         }
+
+        public static string IdeogramV4ResolutionForInput(int width, int height)
+            => NearestAspect(width, height, IdeogramV4Resolutions);
 
         /// gpt-image-2 size string. All values are multiples of 16, within
         /// the [655360, 8294400] pixel envelope, edges < 3840 (2880x2880 is
@@ -1909,11 +1928,20 @@ namespace MultiImageClient
         public static string GrokResolution(string detail)
             => Norm(detail, Details) == "standard" ? "1k" : "2k";
 
-        /// Ideogram v4 resolution string. v4 is 2K-native — detail has no
-        /// effect, only shape. Empty = API default (2048x2048).
-        public static string IdeogramV4Resolution(string shape)
+        /// Ideogram v4 resolution string. Detail has no effect. Text-to-image
+        /// auto omits the field; Remix auto chooses the closest published 2K
+        /// resolution to the source image.
+        public static string IdeogramV4Resolution(
+            string shape,
+            int inputWidth = 0,
+            int inputHeight = 0)
         {
-            return Norm(shape, Shapes) switch
+            var normalizedShape = Norm(shape, Shapes);
+            if (normalizedShape == "auto" && (inputWidth != 0 || inputHeight != 0))
+            {
+                return IdeogramV4ResolutionForInput(inputWidth, inputHeight);
+            }
+            return normalizedShape switch
             {
                 "square" => "2048x2048",
                 "landscape" => "2496x1664",
@@ -2318,6 +2346,7 @@ namespace MultiImageClient
             KeyKrea,
             KeyKreaTurbo,
             KeyKreaLarge,
+            KeyIdeogram,
             KeyIdeogramV3,
             KeyRecraft,
             KeyRecraftV41Utility,
@@ -2369,6 +2398,7 @@ namespace MultiImageClient
                 or KeyBflFlux2Klein9bPreview or KeyBflFlux2Klein9b
                 or KeyBflKontextPro or KeyBflKontextMax => "edit/reference source",
             KeyBflFlux11Ultra or KeyBflFlux11 or KeyBflFluxDev => "image remix/reference source",
+            KeyIdeogram => "image remix source",
             KeyGoogle or KeyGooglePro or KeyIdeogramV3
                 or KeyKrea or KeyKreaTurbo or KeyKreaLarge => "style/reference image",
             KeyGrokWebVideo => "video source",
@@ -3634,20 +3664,20 @@ namespace MultiImageClient
 
                 case KeyIdeogram:
                     {
-                        // V4 is a dedicated text-only target now (split from V3 on
-                        // 2026-07-28 at the user's request): the v4 endpoint is
-                        // JSON-only with no reference-image support, so on image
-                        // jobs it runs from the prompt alone (see ImageCapableKeys)
-                        // — Ideogram's text-to-image is good enough to want even
-                        // when an image is attached. v4 is 2K-native: shape maps to
-                        // a documented resolution (detail has no effect).
+                        // Ideogram 4.0 uses /generate without an input and the
+                        // dedicated /remix endpoint when one is attached. Detail
+                        // has no effect; auto Remix maps to the nearest published
+                        // 2K resolution so the source is not cropped to square.
                         RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
                         return new IdeogramV4Generator(
                             _settings.IdeogramApiKey, maxConcurrency: 1,
-                            UiShapeMapping.IdeogramV4Resolution(spec.Shape),
+                            UiShapeMapping.IdeogramV4Resolution(
+                                spec.Shape,
+                                job.InputImageWidth,
+                                job.InputImageHeight),
                             IdeogramRenderingSpeed.DEFAULT,
                             _stats, "ideogram ui",
-                            imageCount: 1);
+                            inputImagePath: job.HasInputImage ? job.InputImagePath : null);
                     }
 
                 case KeyIdeogramV3:

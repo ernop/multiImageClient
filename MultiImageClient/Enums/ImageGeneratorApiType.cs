@@ -45,8 +45,8 @@ namespace MultiImageClient
         // and returns a rendered "video card" for the combined grid.
         GrokImagineVideo = 24,
 
-        // Ideogram 4.0 (released 2026-06-03): POST /v1/ideogram-v4/generate,
-        // JSON body, 2K-native output, rendering_speed FLASH|TURBO|DEFAULT|QUALITY.
+        // Ideogram 4.0 (released 2026-06-03): multipart /generate for text
+        // prompts and /remix for one attached image. Current v4 rejects FLASH.
         IdeogramV4 = 25,
 
         // Recraft V4.1 family (2026). API model strings recraftv4_1 / recraftv4_1_pro.
