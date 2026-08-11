@@ -2428,6 +2428,14 @@ namespace MultiImageClient
         public const string KeyDescribeGemini = "describe-gemini";
         public const string KeyDescribeGrok = "describe-grok";
 
+        // Layout map (image → labeled section-map IMAGE). Lives in the
+        // describe chooser section (requires an attached image, output
+        // options don't apply) but returns a normal image gen-result: Gemini
+        // names the main sections/topics with bounding boxes under a strict
+        // JSON contract, and the server renders them as a flat-color map
+        // with a numbered legend baked into the PNG.
+        public const string KeyLayoutMap = "layout-map";
+
         public static readonly string[] ImageGeneratorKeys =
         {
             KeyGpt2,
@@ -2482,6 +2490,16 @@ namespace MultiImageClient
         public static bool IsDescribeKey(string key)
             => DescribeKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
 
+        public static bool IsLayoutMapKey(string key)
+            => string.Equals(key, KeyLayoutMap, StringComparison.OrdinalIgnoreCase);
+
+        // Analysis targets (describe + layout map) share the describe
+        // section's rules: they require an attached image, ignore the output
+        // options row, may run with a blank composer prompt, and contribute
+        // no cell to the image contact sheet.
+        public static bool IsAnalysisKey(string key)
+            => IsDescribeKey(key) || IsLayoutMapKey(key);
+
         public static bool IsImageGeneratorKey(string key)
             => ImageGeneratorKeys.Contains(key, StringComparer.Ordinal);
 
@@ -2523,13 +2541,10 @@ namespace MultiImageClient
         private const int DescribeMaxTokens = 1200;
         private const float DescribeTemperature = 0.2f;
 
-        // Strict parse of the {description, comments} reply contract. A reply
-        // that is not the required JSON object, or whose description is blank,
-        // is a hard failure (fail closed — never present chatty free text as
-        // if it were the structured description). The only tolerated cosmetic
-        // deviation is a markdown code fence around the object, stripped
-        // deterministically; a missing "comments" field means no comments.
-        private static (string Description, string Comments) ParseDescribeJsonReply(string raw)
+        // The only tolerated cosmetic deviation across the structured-reply
+        // parsers: a markdown code fence wrapped around the JSON object,
+        // stripped deterministically.
+        private static string StripMarkdownFence(string raw)
         {
             var s = raw.Trim();
             if (s.StartsWith("```", StringComparison.Ordinal))
@@ -2541,6 +2556,18 @@ namespace MultiImageClient
                     s = s.Substring(firstNewline + 1, lastFence - firstNewline - 1).Trim();
                 }
             }
+            return s;
+        }
+
+        // Strict parse of the {description, comments} reply contract. A reply
+        // that is not the required JSON object, or whose description is blank,
+        // is a hard failure (fail closed — never present chatty free text as
+        // if it were the structured description). The only tolerated cosmetic
+        // deviation is a markdown code fence around the object, stripped
+        // deterministically; a missing "comments" field means no comments.
+        private static (string Description, string Comments) ParseDescribeJsonReply(string raw)
+        {
+            var s = StripMarkdownFence(raw);
             try
             {
                 using var doc = JsonDocument.Parse(s);
@@ -2564,6 +2591,120 @@ namespace MultiImageClient
             {
                 throw new InvalidDataException(
                     $"describe reply did not follow the required JSON contract ({ex.Message}); reply starts: {Truncate(raw, 300)}");
+            }
+        }
+
+        // Layout-map wire contract: the whole feature depends on this reply
+        // being machine-readable, so it is forced JSON (Gemini additionally
+        // gets responseMimeType application/json) and parsed fail-closed.
+        // Coordinates use Gemini's native detection convention: integers
+        // 0-1000 relative to the image, [ymin, xmin, ymax, xmax].
+        public const string LayoutMapJsonContract =
+            "Divide this image into its main visual sections and topics. Reply with ONLY a JSON "
+            + "object, no text outside it:\n"
+            + "{\"summary\": \"<one concise sentence stating the image's overall subject>\", "
+            + "\"regions\": [{\"label\": \"<2-4 word name of this section or topic>\", "
+            + "\"box\": [ymin, xmin, ymax, xmax]}]}\n"
+            + "Rules: box coordinates are integers from 0 to 1000 relative to the image "
+            + "(y increases downward, x increases rightward), with ymin < ymax and xmin < xmax. "
+            + "Return 1 to 8 regions (usually 3 to 6), ordered from the most background/largest "
+            + "to the most foreground/smallest. Together the regions should cover every major "
+            + "area of the image. Labels must be concrete and specific to THIS image.";
+
+        private const int LayoutMapMaxRegions = 8;
+
+        // Strict parse of the layout-map reply. Non-object JSON, a blank
+        // summary, zero or more than 8 regions, a blank label, or a malformed
+        // box (wrong arity, out of 0-1000 range, or inverted min/max) is a
+        // hard failure for the whole target. Numeric box values are accepted
+        // as any JSON number and rounded to integers — a cosmetic tolerance
+        // like the markdown fence, never a correlation guess. Public because
+        // it is a pure contract function exercised directly by tests.
+        public static (string Summary, List<UiLayoutMapRegion> Regions) ParseLayoutMapJsonReply(string raw)
+        {
+            var s = StripMarkdownFence(raw);
+            try
+            {
+                using var doc = JsonDocument.Parse(s);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    throw new JsonException("the reply's JSON root is not an object");
+                }
+                if (!root.TryGetProperty("summary", out var summaryEl)
+                    || summaryEl.ValueKind != JsonValueKind.String
+                    || string.IsNullOrWhiteSpace(summaryEl.GetString()))
+                {
+                    throw new JsonException("the reply lacks a non-empty string \"summary\" field");
+                }
+                if (!root.TryGetProperty("regions", out var regionsEl)
+                    || regionsEl.ValueKind != JsonValueKind.Array)
+                {
+                    throw new JsonException("the reply lacks a \"regions\" array");
+                }
+                var count = regionsEl.GetArrayLength();
+                if (count < 1 || count > LayoutMapMaxRegions)
+                {
+                    throw new JsonException(
+                        $"the reply has {count} regions; the contract requires 1 to {LayoutMapMaxRegions}");
+                }
+
+                var regions = new List<UiLayoutMapRegion>(count);
+                var index = 0;
+                foreach (var regionEl in regionsEl.EnumerateArray())
+                {
+                    index++;
+                    if (regionEl.ValueKind != JsonValueKind.Object)
+                    {
+                        throw new JsonException($"region {index} is not an object");
+                    }
+                    if (!regionEl.TryGetProperty("label", out var labelEl)
+                        || labelEl.ValueKind != JsonValueKind.String
+                        || string.IsNullOrWhiteSpace(labelEl.GetString()))
+                    {
+                        throw new JsonException($"region {index} lacks a non-empty string \"label\"");
+                    }
+                    var label = labelEl.GetString()!.Trim();
+                    if (label.Length > 200)
+                    {
+                        throw new JsonException(
+                            $"region {index}'s label is {label.Length} characters; the contract asks for a short name");
+                    }
+                    if (!regionEl.TryGetProperty("box", out var boxEl)
+                        || boxEl.ValueKind != JsonValueKind.Array
+                        || boxEl.GetArrayLength() != 4)
+                    {
+                        throw new JsonException($"region {index} lacks a 4-element \"box\" array");
+                    }
+                    var box = new int[4];
+                    var boxIndex = 0;
+                    foreach (var coordEl in boxEl.EnumerateArray())
+                    {
+                        if (coordEl.ValueKind != JsonValueKind.Number)
+                        {
+                            throw new JsonException($"region {index}'s box contains a non-numeric coordinate");
+                        }
+                        var value = (int)Math.Round(coordEl.GetDouble(), MidpointRounding.AwayFromZero);
+                        if (value < 0 || value > 1000)
+                        {
+                            throw new JsonException(
+                                $"region {index}'s box coordinate {value} is outside 0-1000");
+                        }
+                        box[boxIndex++] = value;
+                    }
+                    if (box[0] >= box[2] || box[1] >= box[3])
+                    {
+                        throw new JsonException(
+                            $"region {index}'s box [{string.Join(", ", box)}] does not satisfy ymin < ymax and xmin < xmax");
+                    }
+                    regions.Add(new UiLayoutMapRegion(label, box[0], box[1], box[2], box[3]));
+                }
+                return (summaryEl.GetString()!.Trim(), regions);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException(
+                    $"layout-map reply did not follow the required JSON contract ({ex.Message}); reply starts: {Truncate(raw, 300)}");
             }
         }
 
@@ -2657,6 +2798,7 @@ namespace MultiImageClient
                 or KeyKrea or KeyKreaTurbo or KeyKreaLarge => "style/reference image",
             KeyGrokWebVideo => "video source",
             _ when IsDescribeKey(key) => "describe source (image \u2192 text)",
+            _ when IsLayoutMapKey(key) => "layout-map source (image \u2192 labeled section map)",
             _ => "NOT sent (text-only target, prompt only)",
         };
 
@@ -2875,6 +3017,10 @@ namespace MultiImageClient
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.GoogleGeminiApiKey), _settings.GoogleGeminiApiKey),
             KeyDescribeGrok
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.XAIGrokApiKey), _settings.XAIGrokApiKey),
+            // Layout map rides the same Gemini vision transport as
+            // describe-gemini, so it shares that key gate exactly.
+            KeyLayoutMap
+                => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.GoogleGeminiApiKey), _settings.GoogleGeminiApiKey),
             _ => $"unknown generator '{key}'",
         };
 
@@ -2986,13 +3132,14 @@ namespace MultiImageClient
                 finalizationAcquired = true;
                 try
                 {
-                    // Describe results are text-only and videos are already
-                    // directly playable/downloadable; neither contributes a cell
-                    // to an image contact sheet. A job containing only those
-                    // result kinds builds no sheet at all.
+                    // Describe results are text-only, layout maps are derived
+                    // analysis artifacts, and videos are already directly
+                    // playable/downloadable; none contributes a cell to an
+                    // image contact sheet. A job containing only those result
+                    // kinds builds no sheet at all.
                     var sheetResults = results
                         .Where(r =>
-                            !IsDescribeKey(r.ImageGeneratorDescription)
+                            !IsAnalysisKey(r.ImageGeneratorDescription)
                             && !string.Equals(
                                 r.ImageGeneratorDescription,
                                 KeyGrokWebVideo,
@@ -3002,7 +3149,7 @@ namespace MultiImageClient
                     {
                         var sheetKeys = spec.GeneratorKeys
                             .Where(k =>
-                                !IsDescribeKey(k)
+                                !IsAnalysisKey(k)
                                 && !string.Equals(
                                     k,
                                     KeyGrokWebVideo,
@@ -3149,6 +3296,10 @@ namespace MultiImageClient
             if (IsDescribeKey(key))
             {
                 return await RunDescribeOneAsync(job, key, pd);
+            }
+            if (IsLayoutMapKey(key))
+            {
+                return await RunLayoutMapOneAsync(job, key, pd);
             }
 
             var wallClock = Stopwatch.StartNew();
@@ -3512,6 +3663,10 @@ namespace MultiImageClient
             // thinking tokens.
             KeyDescribeGemini => 0.025m,
             KeyDescribeGrok => 0.025m,
+            // Layout map is one Gemini vision call per input image (same
+            // transport and token budget class as describe-gemini); the
+            // server-side map rendering itself costs nothing.
+            KeyLayoutMap => 0.025m,
             _ => throw new ArgumentException($"Unknown describe key '{key}'.", nameof(key)),
         };
 
@@ -3669,6 +3824,178 @@ namespace MultiImageClient
                 cost = ok ? perCallCost * texts.Count : 0m,
             });
             Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({texts.Count} description(s))" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms");
+            return result;
+        }
+
+        /// Layout map (image → labeled section-map IMAGE): one Gemini vision
+        /// call per attached input under the strict LayoutMapJsonContract,
+        /// then a server-rendered flat-color map with a numbered legend and
+        /// the model's one-sentence summary baked into the PNG. All-or-nothing
+        /// like describe (any input failing fails the whole target), but the
+        /// result is a normal image gen-result so cards, the viewer, video
+        /// follow-ups, and favorites treat it like any generated image. The
+        /// composer prompt is optional CONTEXT for the section labels, never
+        /// the contract itself. Deliberately absent from the contact sheet.
+        private async Task<TaskProcessResult> RunLayoutMapOneAsync(UiJob job, string key, PromptDetails pd)
+        {
+            var wallClock = Stopwatch.StartNew();
+            job.Emit(new
+            {
+                type = "gen-start",
+                gen = key,
+                at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
+
+            var result = new TaskProcessResult
+            {
+                PromptDetails = pd,
+                ImageGeneratorDescription = key,
+                ContentType = "image/png",
+            };
+
+            // Rendered map files, collected first and only published to the
+            // job store + event after EVERY input succeeded (all-or-nothing;
+            // the durable files themselves stay on disk either way).
+            var rendered = new List<(string Path, string Size)>();
+            string? error = null;
+            string label = key;
+            var perCallCost = 0m;
+            var sentPrompt = "";
+            try
+            {
+                if (!job.HasInputImage)
+                {
+                    throw new InvalidOperationException($"'{key}' requires an input image; this job has none.");
+                }
+                var availabilityProblem = DescribeAvailabilityProblem(key);
+                if (availabilityProblem != null)
+                {
+                    throw new InvalidOperationException(availabilityProblem);
+                }
+                RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
+                var describer = new GeminiVisionDescriber(_settings.GoogleGeminiApiKey)
+                {
+                    RequestJsonOutput = true,
+                };
+                perCallCost = DescribeCostEstimate(key);
+                label = $"{describer.GetModelName()} layout map";
+                var instruction = pd.Prompt;
+                sentPrompt = string.IsNullOrWhiteSpace(instruction)
+                    ? LayoutMapJsonContract
+                    : LayoutMapJsonContract
+                        + "\n\nUser-provided context about the image (may inform your section labels): "
+                        + instruction.Trim();
+                Logger.Log($"[ui #{job.Id}]   -> {key} ({describer.GetModelName()}, ~${perCallCost:0.###} x {job.InputImageCount} input(s))");
+
+                var today = DateTime.Now.ToString("yyyy-MM-dd-dddd");
+                var folder = Path.Combine(_settings.ImageDownloadBaseFolder, today, "LayoutMaps");
+                Directory.CreateDirectory(folder);
+
+                for (var i = 0; i < job.InputImageCount; i++)
+                {
+                    var imageBytes = await File.ReadAllBytesAsync(job.InputImagePaths[i]);
+                    ImageInfo info;
+                    using (var infoStream = new MemoryStream(imageBytes, writable: false))
+                    {
+                        info = Image.Identify(infoStream);
+                    }
+                    if (info == null || info.Width <= 0 || info.Height <= 0)
+                    {
+                        throw new InvalidDataException(
+                            $"input image {i + 1} of {job.InputImageCount} could not be decoded for its dimensions.");
+                    }
+                    var raw = await describer.DescribeImageAsync(
+                        imageBytes,
+                        sentPrompt,
+                        maxTokens: DescribeMaxTokens,
+                        temperature: DescribeTemperature);
+                    if (string.IsNullOrWhiteSpace(raw))
+                    {
+                        throw new InvalidDataException(
+                            $"{key} returned no reply for input image {i + 1} of {job.InputImageCount}.");
+                    }
+                    var (summary, regions) = ParseLayoutMapJsonReply(raw.Trim());
+                    Logger.Log($"[ui #{job.Id}]   {key} input {i + 1}: {regions.Count} region(s) — "
+                        + string.Join("; ", regions.Select(r => r.Label)));
+
+                    var mapPath = Path.Combine(
+                        folder,
+                        $"{DateTime.Now:HHmmss_fff}_{job.Id}_map{i}.png");
+                    using (var map = UiLayoutMapRenderer.Render(info.Width, info.Height, regions, summary))
+                    {
+                        await map.SaveAsPngAsync(mapPath);
+                        rendered.Add((mapPath, $"{map.Width}x{map.Height}"));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[ui #{job.Id}]   <- EXCEPTION from {key}: {ex.Message}");
+                error = ex.Message;
+                rendered.Clear();
+            }
+
+            var ok = error == null && rendered.Count == job.InputImageCount && rendered.Count > 0;
+            var urls = new List<string>();
+            var thumbs = new List<string>();
+            if (ok)
+            {
+                try
+                {
+                    for (var i = 0; i < rendered.Count; i++)
+                    {
+                        job.StoreImagePath(key, i, rendered[i].Path, "image/png");
+                        if (_b2 != null)
+                        {
+                            // Retry x3 inside; throws on final failure, failing
+                            // this target visibly. Never a local URL substitute.
+                            urls.Add(await UploadResultToB2Async(job, key, i, rendered[i].Path, "image/png"));
+                        }
+                        else
+                        {
+                            urls.Add($"/api/jobs/{job.Id}/images/{key}/{i}");
+                        }
+                        thumbs.Add($"/api/jobs/{job.Id}/images/{key}/{i}?thumb=1");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"[ui #{job.Id}]   <- EXCEPTION publishing {key} maps: {ex.Message}");
+                    error = ex.Message;
+                    ok = false;
+                    urls.Clear();
+                    thumbs.Clear();
+                }
+            }
+
+            result.IsSuccess = ok;
+            if (!ok)
+            {
+                result.ErrorMessage = error ?? "Layout map completed without producing a map image.";
+            }
+
+            var elapsed = wallClock.ElapsedMilliseconds;
+            var actionHint = ok ? null : ProviderActionHints.For(key, result.ErrorMessage);
+            job.Emit(new
+            {
+                type = "gen-result",
+                gen = key,
+                ok,
+                error = ok ? "" : result.ErrorMessage,
+                errorHint = actionHint?.Text,
+                errorHintUrl = actionHint?.Url,
+                ms = elapsed,
+                images = urls,
+                thumbs = _b2 != null && ok ? thumbs : null,
+                mediaType = ok ? "image/png" : "",
+                label,
+                size = ok ? rendered[0].Size : null,
+                // The exact wire prompt (contract + optional user context),
+                // recorded on the persisted event like describe's.
+                sentPrompt,
+                cost = ok ? perCallCost * urls.Count : 0m,
+            });
+            Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({urls.Count} map(s))" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms");
             return result;
         }
 
