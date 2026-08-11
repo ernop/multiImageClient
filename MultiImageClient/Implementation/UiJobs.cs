@@ -3299,9 +3299,9 @@ namespace MultiImageClient
                     // kinds builds no sheet at all.
                     var sheetResults = results
                         .Where(r =>
-                            !IsAnalysisKey(r.ImageGeneratorDescription)
+                            !IsAnalysisKey(r.GeneratorKey)
                             && !string.Equals(
-                                r.ImageGeneratorDescription,
+                                r.GeneratorKey,
                                 KeyGrokWebVideo,
                                 StringComparison.OrdinalIgnoreCase))
                         .ToArray();
@@ -3622,7 +3622,8 @@ namespace MultiImageClient
             var merged = new TaskProcessResult
             {
                 PromptDetails = pd,
-                ImageGeneratorDescription = key,
+                GeneratorKey = key,
+                ImageGeneratorDescription = GeneratorPresentation.UiContactSheetLabel(key),
                 ContentType = "image/png",
             };
             string firstImagePath = null;
@@ -3856,6 +3857,8 @@ namespace MultiImageClient
             {
                 label = string.IsNullOrEmpty(label) ? $"{urls.Count}/{want} imgs" : $"{label} · {urls.Count}/{want} imgs";
             }
+            merged.ImageGeneratorDescription =
+                GeneratorPresentation.UiContactSheetLabel(key, label);
 
             var ok = urls.Count > 0;
             merged.IsSuccess = ok;
@@ -4070,6 +4073,7 @@ namespace MultiImageClient
             var result = new TaskProcessResult
             {
                 PromptDetails = pd,
+                GeneratorKey = key,
                 ImageGeneratorDescription = key,
                 ContentType = "text/plain",
             };
@@ -4196,6 +4200,7 @@ namespace MultiImageClient
             var result = new TaskProcessResult
             {
                 PromptDetails = pd,
+                GeneratorKey = key,
                 ImageGeneratorDescription = key,
                 ContentType = "image/png",
             };

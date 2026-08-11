@@ -210,7 +210,7 @@ namespace MultiImageClient
                 {
                     Success = true,
                     Result = "successX",
-                    Generator = result.ImageGeneratorDescription,
+                    Generator = GeneratorPresentation.ContactSheetLabel(result),
                     PromptText = GetDisplayPrompt(result),
                     TimingLabel = FormatTiming(result.CreateTotalMs + result.DownloadTotalMs),
                     SourceResolutionLabel = $"{sourceWidth}x{sourceHeight}",
@@ -235,13 +235,20 @@ namespace MultiImageClient
                                              .DefaultIfEmpty(PlaceholderWidth)
                                              .Max();
 
-            int subtitleHeight = MeasureImageSubdescriptionHeight(loadedImages, generatorFont);
+            var timingFont = FontUtils.CreateFont(Math.Max(8, generatorFont.Size * 0.75f), FontStyle.Regular);
+            int subtitleHeight = loadedImages
+                .Select(li => MeasureCompositeLabelHeight(
+                    li.Generator,
+                    BuildSecondaryLabel(li),
+                    generatorFont,
+                    timingFont,
+                    Math.Max(1, li.Width - UIConstants.Padding * 2)))
+                .DefaultIfEmpty(0)
+                .Max();
             int subtitleBlockHeight = Math.Max(UIConstants.Padding * 2, subtitleHeight + UIConstants.Padding * 2);
             int totalHeight = maxImageHeight + subtitleBlockHeight;
 
             var layoutImage = ImageUtils.CreateStandardImage(totalWidth, totalHeight, UIConstants.White);
-
-            var timingFont = FontUtils.CreateFont(Math.Max(8, generatorFont.Size * 0.75f), FontStyle.Regular);
 
             layoutImage.Mutate(ctx =>
             {
@@ -264,7 +271,16 @@ namespace MultiImageClient
                     float labelY = maxImageHeight + UIConstants.Padding;
 
                     var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
-                    DrawCompositeLabelLine(ctx, li.Generator, li.TimingLabel, generatorFont, timingFont, labelColor, centerX, labelY);
+                    DrawCompositeLabelLine(
+                        ctx,
+                        li.Generator,
+                        BuildSecondaryLabel(li),
+                        generatorFont,
+                        timingFont,
+                        labelColor,
+                        centerX,
+                        labelY,
+                        Math.Max(1, li.Width - UIConstants.Padding * 2));
 
                     currentX += li.Width;
                 }
@@ -275,18 +291,16 @@ namespace MultiImageClient
 
 
 
-        /// Renders a generator label as a single horizontal line with a clear
-        /// typographic hierarchy:
+        /// Renders a generator label with a clear typographic hierarchy:
         ///
         ///   [primary font (bold)] gpt-image-2   [secondary font] medium  square  1m 4s
         ///
-        /// The first whitespace-delimited token of <paramref name="fullLabel"/>
-        /// (typically the model id) stays in the primary font; the rest of
-        /// the label plus the optional timing ("1m 4s") collapses into one
-        /// secondary-font string drawn to its right. All pieces share a
-        /// single bottom pixel (descenders included) so nothing sits visually
-        /// lower than anything else. Color comes from <paramref name="color"/>
-        /// � no gray text, per AGENTS.md.
+        /// When it fits, the first whitespace-delimited token of
+        /// <paramref name="fullLabel"/> stays in the primary font and the rest
+        /// plus timing/resolution sits beside it in the secondary font on one
+        /// shared baseline. If that complete line would exceed the cell, the
+        /// full producer label wraps above a separately wrapped secondary
+        /// line. Nothing is clipped or abbreviated.
         private static void DrawCompositeLabelLine(
             IImageProcessingContext ctx,
             string fullLabel,
@@ -295,7 +309,8 @@ namespace MultiImageClient
             Font secondaryFont,
             Color color,
             float centerX,
-            float labelY)
+            float labelY,
+            float availableWidth)
         {
             if (string.IsNullOrWhiteSpace(fullLabel) && string.IsNullOrWhiteSpace(timingLabel)) return;
 
@@ -346,6 +361,40 @@ namespace MultiImageClient
             }
 
             float totalWidth = primaryBounds.Width + gap + secondaryWidth;
+            if (totalWidth > availableWidth)
+            {
+                var wrappedPrimary = FontUtils.CreateTextOptions(
+                    primaryFont,
+                    HorizontalAlignment.Center,
+                    VerticalAlignment.Top,
+                    UIConstants.LineSpacing);
+                wrappedPrimary.Origin = new PointF(centerX, labelY);
+                wrappedPrimary.WrappingLength = availableWidth;
+                ctx.DrawTextStandard(wrappedPrimary, trimmed, color);
+
+                if (!string.IsNullOrWhiteSpace(timingLabel))
+                {
+                    var primaryHeight = ImageUtils.MeasureTextHeight(
+                        trimmed,
+                        primaryFont,
+                        UIConstants.LineSpacing,
+                        availableWidth);
+                    var descenderReserve = (int)Math.Ceiling(
+                        primaryFont.Size * LabelDescenderReserveFraction);
+                    var wrappedSecondary = FontUtils.CreateTextOptions(
+                        secondaryFont,
+                        HorizontalAlignment.Center,
+                        VerticalAlignment.Top,
+                        UIConstants.LineSpacing);
+                    wrappedSecondary.Origin = new PointF(
+                        centerX,
+                        labelY + primaryHeight + descenderReserve);
+                    wrappedSecondary.WrappingLength = availableWidth;
+                    ctx.DrawTextStandard(wrappedSecondary, timingLabel, color);
+                }
+                return;
+            }
+
             float startX = centerX - totalWidth / 2f;
 
             // Draw primary first at (startX, labelY) with Top alignment so
@@ -422,6 +471,7 @@ namespace MultiImageClient
                     images[i],
                     Math.Max(columnWidths[col], 1),
                     generatorFont,
+                    timingFont,
                     cellPromptFont,
                     includeCellPrompts || images[i].IsInput);
                 rowTextHeights[row] = Math.Max(rowTextHeights[row], textHeight);
@@ -480,14 +530,25 @@ namespace MultiImageClient
                             ? UIConstants.Black
                             : li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
                         var labelY = textBandY + UIConstants.Padding;
-                        DrawCompositeLabelLine(ctx, li.Generator, BuildSecondaryLabel(li), generatorFont, timingFont, labelColor, centerX, labelY);
+                        DrawCompositeLabelLine(
+                            ctx,
+                            li.Generator,
+                            BuildSecondaryLabel(li),
+                            generatorFont,
+                            timingFont,
+                            labelColor,
+                            centerX,
+                            labelY,
+                            Math.Max(1, columnWidth - UIConstants.Padding * 2));
                         // Input cells always render their role text so the
                         // image's function in this job is stated on the sheet
                         // itself, regardless of the per-cell prompt setting.
                         if ((includeCellPrompts || li.IsInput) && !string.IsNullOrWhiteSpace(li.PromptText))
                         {
                             var wrappingWidth = Math.Max(1, columnWidth - UIConstants.Padding * 2);
-                            var promptY = labelY + MeasureCellLabelHeight(li, columnWidth, generatorFont) + UIConstants.Padding / 2f;
+                            var promptY = labelY
+                                + MeasureCellLabelHeight(li, columnWidth, generatorFont, timingFont)
+                                + UIConstants.Padding / 2f;
                             var promptOpts = FontUtils.CreateTextOptions(cellPromptFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
                             promptOpts.Origin = new PointF(columnX + UIConstants.Padding, promptY);
                             promptOpts.WrappingLength = wrappingWidth;
@@ -987,23 +1048,6 @@ namespace MultiImageClient
             }
         }
 
-        private static int MeasureImageSubdescriptionHeight(IEnumerable<LoadedImage> loadedImages, Font generatorFont)
-        {
-            int measured = loadedImages
-                .Select(li => $"{li.Result} {li.Generator}" ?? "missing")
-                .Select(label => ImageUtils.MeasureTextHeight(label, generatorFont, UIConstants.LineSpacing))
-                .DefaultIfEmpty(0)
-                .Max();
-            // Add descender reserve: TextMeasurer.MeasureBounds can
-            // under-report for fonts at this size, clipping the tails
-            // of g/p/y/j. See AGENTS.md > Visual & Typography Policy.
-            int descenderReserve = (int)Math.Ceiling(generatorFont.Size * LabelDescenderReserveFraction);
-            return measured + descenderReserve;
-        }
-
-        
-
-
         public static LoadedImage GetPlaceholder(TaskProcessResult result)
         {
             // Try to match what the real image WOULD have been, so the
@@ -1031,7 +1075,7 @@ namespace MultiImageClient
                 Image = null,
                 Success = false,
                 Result = result.ErrorMessage ?? "ErrorX",
-                Generator = result.ImageGeneratorDescription,
+                Generator = GeneratorPresentation.ContactSheetLabel(result),
                 PromptText = GetDisplayPrompt(result),
                 TimingLabel = FormatTiming(result.CreateTotalMs + result.DownloadTotalMs),
                 SourceResolutionLabel = $"{width}x{height}",
@@ -1055,10 +1099,15 @@ namespace MultiImageClient
             LoadedImage loadedImage,
             int columnWidth,
             Font generatorFont,
+            Font timingFont,
             Font promptFont,
             bool includePrompt)
         {
-            var labelHeight = MeasureCellLabelHeight(loadedImage, columnWidth, generatorFont);
+            var labelHeight = MeasureCellLabelHeight(
+                loadedImage,
+                columnWidth,
+                generatorFont,
+                timingFont);
             var promptHeight = 0;
             if (includePrompt && !string.IsNullOrWhiteSpace(loadedImage.PromptText))
             {
@@ -1072,14 +1121,84 @@ namespace MultiImageClient
                 UIConstants.Padding + labelHeight + promptHeight + UIConstants.Padding);
         }
 
-        private static int MeasureCellLabelHeight(LoadedImage loadedImage, int columnWidth, Font generatorFont)
+        private static int MeasureCellLabelHeight(
+            LoadedImage loadedImage,
+            int columnWidth,
+            Font generatorFont,
+            Font timingFont)
         {
-            var label = string.Join(" ", new[] { loadedImage.Generator, BuildSecondaryLabel(loadedImage) }
-                .Where(s => !string.IsNullOrWhiteSpace(s)));
             var wrappingWidth = Math.Max(1, columnWidth - UIConstants.Padding * 2);
-            var measured = ImageUtils.MeasureTextHeight(label, generatorFont, UIConstants.LineSpacing, wrappingWidth);
-            int descenderReserve = (int)Math.Ceiling(generatorFont.Size * LabelDescenderReserveFraction);
-            return measured + descenderReserve;
+            return MeasureCompositeLabelHeight(
+                loadedImage.Generator,
+                BuildSecondaryLabel(loadedImage),
+                generatorFont,
+                timingFont,
+                wrappingWidth);
+        }
+
+        private static int MeasureCompositeLabelHeight(
+            string fullLabel,
+            string? secondaryLabel,
+            Font primaryFont,
+            Font secondaryFont,
+            float availableWidth)
+        {
+            var trimmed = (fullLabel ?? string.Empty).Trim();
+            var firstSpace = trimmed.IndexOf(' ');
+            var primary = firstSpace < 0 ? trimmed : trimmed[..firstSpace];
+            var remainder = firstSpace < 0 ? "" : trimmed[(firstSpace + 1)..].Trim();
+            var secondary = string.Join(
+                "  ",
+                new[] { remainder, secondaryLabel }
+                    .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+            var primaryOptions = FontUtils.CreateTextOptions(
+                primaryFont,
+                HorizontalAlignment.Left,
+                VerticalAlignment.Top,
+                UIConstants.LineSpacing);
+            var primaryBounds = string.IsNullOrEmpty(primary)
+                ? new FontRectangle(0, 0, 0, 0)
+                : TextMeasurer.MeasureBounds(primary, primaryOptions);
+            var secondaryOptions = FontUtils.CreateTextOptions(
+                secondaryFont,
+                HorizontalAlignment.Left,
+                VerticalAlignment.Top,
+                UIConstants.LineSpacing);
+            var secondaryBounds = string.IsNullOrEmpty(secondary)
+                ? new FontRectangle(0, 0, 0, 0)
+                : TextMeasurer.MeasureBounds(secondary, secondaryOptions);
+            var gap = string.IsNullOrEmpty(primary) || string.IsNullOrEmpty(secondary)
+                ? 0f
+                : Math.Max(8f, primaryFont.Size * 0.6f);
+            var descenderReserve = (int)Math.Ceiling(
+                primaryFont.Size * LabelDescenderReserveFraction);
+
+            if (primaryBounds.Width + gap + secondaryBounds.Width <= availableWidth)
+            {
+                return (int)Math.Ceiling(Math.Max(
+                    primaryBounds.Height,
+                    secondaryBounds.Height)) + descenderReserve;
+            }
+
+            var primaryHeight = ImageUtils.MeasureTextHeight(
+                trimmed,
+                primaryFont,
+                UIConstants.LineSpacing,
+                availableWidth) + descenderReserve;
+            if (string.IsNullOrWhiteSpace(secondaryLabel))
+            {
+                return primaryHeight;
+            }
+            var secondaryDescenderReserve = (int)Math.Ceiling(
+                secondaryFont.Size * LabelDescenderReserveFraction);
+            return primaryHeight
+                + ImageUtils.MeasureTextHeight(
+                    secondaryLabel,
+                    secondaryFont,
+                    UIConstants.LineSpacing,
+                    availableWidth)
+                + secondaryDescenderReserve;
         }
 
         private static string? GetDisplayPrompt(TaskProcessResult result)

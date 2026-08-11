@@ -599,11 +599,17 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 #paste-zone.dragover { background: #dde2f7; border-style: solid; }
 #paste-zone.has-image {
   flex-direction: column;
+  /* Centering an overflowing flex column creates negative overflow above
+     scrollTop=0, making the first row—and its remove buttons—unreachable. */
+  align-items: stretch;
+  justify-content: flex-start;
   gap: 6px;
   padding: 8px;
   background: var(--card);
   border-style: solid;
   cursor: default;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 #paste-hint { text-align: center; font-size: 14px; line-height: 1.7; color: var(--accent-dark); padding: 10px; }
 #input-thumbs {

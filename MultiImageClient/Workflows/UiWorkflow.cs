@@ -327,7 +327,9 @@ namespace MultiImageClient
                 .Select(g => new
                 {
                     g.key,
-                    g.label,
+                    // One canonical catalog name also leads the contact-sheet
+                    // producer label; internal keys never become display text.
+                    label = GeneratorPresentation.UiDisplayName(g.key),
                     g.detail,
                     available = runner.IsAvailable(g.key),
                     availabilityProblem = runner.DescribeAvailabilityProblem(g.key),

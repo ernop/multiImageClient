@@ -25,6 +25,9 @@ namespace MultiImageClient
         public string ContentType { get; set; }
         public PromptDetails PromptDetails { get; set; }
         public ImageGeneratorApiType ImageGenerator { get; set; }
+        // Stable application/catalog identity. ImageGeneratorDescription is
+        // presentational provider detail and must not be used as an internal key.
+        public string GeneratorKey { get; set; } = "";
         public required string ImageGeneratorDescription { get; set; }
         public TextGeneratorApiType TextGenerator { get; set; }
         public long CreateTotalMs { get; set; } = 0;
