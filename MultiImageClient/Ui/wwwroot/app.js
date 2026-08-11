@@ -6994,6 +6994,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
       <div class="cell-head">
         <span class="cell-name"></span>
         <span class="cell-size"></span>
+        <span class="cell-served-model"></span>
         <span class="cell-cost"></span>
         <span class="cell-time"></span>
       </div>
@@ -7273,6 +7274,27 @@ function applyJobEvent(id, card, evt) {
         || (evt.label && (/ \u00b7 (\d+x\d+)$/.exec(evt.label) || [])[1])
         || "";
       cell.querySelector(".cell-size").textContent = sizeText;
+      // Provider-REPORTED serving model, when the transport exposes one
+      // (grok-web model_name). Highlighted when the server-side model isn't
+      // the known baseline — that's how "you're on the new model" surfaces
+      // at runtime without any client-side pinning.
+      const servedEl = cell.querySelector(".cell-served-model");
+      if (servedEl) {
+        if (evt.servedModel) {
+          servedEl.textContent = evt.servedModelIsNew
+            ? `${evt.servedModel} — new model!`
+            : evt.servedModel;
+          servedEl.classList.toggle("new-model", !!evt.servedModelIsNew);
+          const modePart = evt.servedModelMode ? ` (mode ${evt.servedModelMode})` : "";
+          servedEl.title = evt.servedModelIsNew
+            ? `The provider reported serving model "${evt.servedModel}"${modePart} — not the previously observed model on this transport.`
+            : `The provider reported serving model "${evt.servedModel}"${modePart}.`;
+        } else {
+          servedEl.textContent = "";
+          servedEl.classList.remove("new-model");
+          servedEl.removeAttribute("title");
+        }
+      }
       if (evt.label) cell.querySelector(".cell-head").title = evt.label;
       cell.dataset.cost = String(evt.cost || 0);
       cell.dataset.imgCount = String(evt.images.filter(Boolean).length);

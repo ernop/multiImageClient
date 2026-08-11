@@ -3197,6 +3197,8 @@ namespace MultiImageClient
             long createMs = 0, downloadMs = 0;
             string label = null;
             string firstError = null;
+            string servedModel = null;
+            string servedModelMode = null;
 
             for (var attempt = 0; attempt < want; attempt++)
             {
@@ -3354,6 +3356,8 @@ namespace MultiImageClient
                         totalCost += costEstimate;
                         createMs += result.CreateTotalMs;
                         downloadMs += result.DownloadTotalMs;
+                        servedModel ??= result.ServedModelName;
+                        servedModelMode ??= result.ServedModelMode;
                         if (label == null)
                         {
                             label = copy.RuntimeMeta.TryGetValue("label", out var l) && !string.IsNullOrEmpty(l)
@@ -3483,6 +3487,15 @@ namespace MultiImageClient
                 mediaType,
                 label = label ?? key,
                 size = actualSize,
+                // Provider-REPORTED serving model, when the transport exposes
+                // one (grok-web model_name/mode). servedModelIsNew flags names
+                // outside the transport's known baseline so the card can say
+                // "you're on the new model" at runtime (e.g. after xAI's
+                // 2026-08-07 Imagine Image 2.0 rollout). Display only.
+                servedModel,
+                servedModelMode,
+                servedModelIsNew = servedModel != null
+                    && !GrokWebClient.IsBaselineServedModel(servedModel),
                 videoMode = key == KeyGrokWebVideo ? spec.VideoMode : null,
                 videoDurationSeconds = key == KeyGrokWebVideo
                     ? spec.VideoDurationSeconds
