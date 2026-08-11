@@ -1388,7 +1388,11 @@ body:not(.show-costs) #cost-summary { display: none !important; }
 /* Folded strip of the durably kept in-process streamed previews (gpt-image-2
    partials), present on successful and failed cells alike. Collapsed by
    default; thumbs only load on first expand. Secondary by SIZE, not by gray. */
-.progress-previews { margin-top: 2px; }
+.progress-previews {
+  margin-top: 2px;
+  flex-basis: 100%;     /* own row under the result in the flex cell */
+  grid-column: 1 / -1;  /* full width if the cell is a multi-image grid */
+}
 .progress-previews > summary {
   cursor: pointer;
   width: fit-content;
