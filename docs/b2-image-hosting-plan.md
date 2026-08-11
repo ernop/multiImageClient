@@ -391,6 +391,17 @@ previews alongside hosted URLs so cards never pull full hosted bytes;
 B2 object and verifies its SHA-256 against the recorded content hash.
 Inputs and SVG remain local (v1 scope).
 
+**Thumb expiry (2026-08-11, owner decision):** card thumbs are derived data
+whenever their source is still obtainable, so `UiThumbExpiry` sweeps
+`UiHistory/{id}/thumbs/` every 6 hours and deletes thumbs older than 2 days
+whose source image is either still on local disk or recorded on B2
+(`CdnKey` + `ContentSha256`). Thumbs whose source is gone forever (pre-B2
+raws lost to old disk-pressure cleanups) are never deleted — they are the
+last remaining visual for those cards. The image route rebuilds missing
+thumbs on demand; for evicted originals it streams the exact recorded B2
+object to a temp file, verifies its SHA-256, and rebuilds from the file
+stream (single-flight per image, at most 3 concurrent B2 regens).
+
 **Executed 2026-08-10/11, zero failures on both installs.** Dev
 (keep-raws mode): 1,790 images / 5.21 GiB uploaded, 334 event logs
 rewritten, nothing deleted. Production (eviction mode): 1,236 images /

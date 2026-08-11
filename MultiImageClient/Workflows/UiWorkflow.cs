@@ -1357,7 +1357,7 @@ namespace MultiImageClient
                     "application/json");
             });
 
-            app.MapGet("/api/jobs/{id}/images/{gen}/{n:int}", (string id, string gen, int n, HttpContext ctx) =>
+            app.MapGet("/api/jobs/{id}/images/{gen}/{n:int}", async (string id, string gen, int n, HttpContext ctx) =>
             {
                 // A miss is transient (job unknown here, or bytes not landed
                 // yet); never let a 404 become heuristically cacheable.
@@ -1413,7 +1413,20 @@ namespace MultiImageClient
                     }
                     else
                     {
-                        return Results.NotFound();
+                        // Expired thumb whose local original was evicted after
+                        // its verified B2 upload: rebuild from the exact
+                        // recorded hosted object (SHA-verified, single-flight,
+                        // capped concurrency).
+                        var rebuilt = await runner.TryRebuildCardPreviewFromHostedAsync(job, gen, n);
+                        if (rebuilt == null)
+                        {
+                            return Results.NotFound();
+                        }
+                        fileResult = Results.File(
+                            Path.GetFullPath(rebuilt.Value.Path),
+                            rebuilt.Value.ContentType,
+                            enableRangeProcessing: true);
+                        bytesAreFinal = true;
                     }
                 }
                 else if (job.TryGetImagePath(gen, n, out var path, out var pathType))
@@ -2093,7 +2106,14 @@ namespace MultiImageClient
 
             using var livenessGuard = new UiLivenessGuard(options.UiPort);
             livenessGuard.Start();
+            // Thumbs older than 2 days whose source remains obtainable (local
+            // original, or the recorded B2 object) are deleted and rebuilt on
+            // demand by the image route; irreplaceable thumbs are kept.
+            using var thumbExpiryCts = new CancellationTokenSource();
+            var thumbExpiryLoop = Task.Run(
+                () => UiThumbExpiry.RunLoopAsync(settings, thumbExpiryCts.Token));
             await app.RunAsync();
+            thumbExpiryCts.Cancel();
 
             var remaining = activeJobs.Values.ToArray();
             if (remaining.Length > 0)

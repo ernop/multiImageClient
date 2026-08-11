@@ -458,6 +458,24 @@ namespace MultiImageClient
             return true;
         }
 
+        /// Builds and persists the disk thumb from an explicit source file —
+        /// used by hosted-thumb regeneration, where the verified B2 download
+        /// sits in a temp file because the local original was evicted.
+        public bool TryBuildCardPreviewFromSource(
+            string genKey, int n, string sourcePath, string sourceContentType,
+            out string path, out string contentType)
+        {
+            if (!TryBuildAndPersistCardPreview(
+                $"{genKey}/{n}", sourcePath, sourceContentType,
+                out path, out contentType, out _))
+            {
+                path = "";
+                contentType = "";
+                return false;
+            }
+            return true;
+        }
+
         /// In-memory / ephemeral preview path (streaming partials with no durable
         /// original yet). Never enters multi-MB originals into the process LRU.
         public bool TryGetCardPreviewBytes(string genKey, int n, out byte[] bytes, out string contentType)
@@ -3287,6 +3305,93 @@ namespace MultiImageClient
                     $"Hosted copy of {job.Id}/{key} does not match its recorded SHA-256 — refusing to reuse unverifiable bytes.");
             }
             return (downloaded, info.ContentType);
+        }
+
+        // Hosted-thumb regeneration: expired disk thumbs are rebuilt on demand
+        // from the exact recorded B2 object when the local original was
+        // evicted. Single-flight per image (Lazy so a GetOrAdd race never
+        // starts a second download) and a small global cap so opening an old
+        // archive day cannot stampede B2 with dozens of full-original fetches.
+        private static readonly SemaphoreSlim ThumbRegenLimit = new(3);
+        private readonly ConcurrentDictionary<string, Lazy<Task<(string Path, string ContentType)?>>> _thumbRegens = new();
+
+        public async Task<(string Path, string ContentType)?> TryRebuildCardPreviewFromHostedAsync(
+            UiJob job, string gen, int n)
+        {
+            if (_b2 == null)
+            {
+                return null;
+            }
+            var flightKey = $"{job.Id}/{gen}/{n}";
+            var lazy = _thumbRegens.GetOrAdd(
+                flightKey,
+                _ => new Lazy<Task<(string, string)?>>(() => RebuildCardPreviewFromHostedAsync(job, gen, n)));
+            try
+            {
+                return await lazy.Value;
+            }
+            finally
+            {
+                _thumbRegens.TryRemove(flightKey, out _);
+            }
+        }
+
+        private async Task<(string Path, string ContentType)?> RebuildCardPreviewFromHostedAsync(
+            UiJob job, string gen, int n)
+        {
+            var key = $"{gen}/{n}";
+            var info = job.ListPersistedImages()
+                .FirstOrDefault(i => string.Equals(i.Key, key, StringComparison.Ordinal));
+            if (info == null
+                || string.IsNullOrWhiteSpace(info.CdnKey)
+                || string.IsNullOrWhiteSpace(info.ContentSha256)
+                || !info.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+            await ThumbRegenLimit.WaitAsync();
+            try
+            {
+                // A concurrent request for a sibling image of the same job may
+                // have rebuilt this thumb while we queued.
+                if (job.TryGetCardPreviewPath(gen, n, out var existingPath, out var existingType))
+                {
+                    return (existingPath, existingType);
+                }
+                var temp = Path.Combine(Path.GetTempPath(), $"mic-thumb-regen-{Guid.NewGuid():N}");
+                try
+                {
+                    await _b2.DownloadToFileAsync(info.CdnKey, temp, CancellationToken.None);
+                    string sha;
+                    using (var stream = File.OpenRead(temp))
+                    {
+                        sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+                    }
+                    if (!string.Equals(sha, info.ContentSha256, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Logger.Log($"UI job {job.Id}: hosted copy of {key} does not match its recorded SHA-256 — refusing to rebuild its thumb.");
+                        return null;
+                    }
+                    if (!job.TryBuildCardPreviewFromSource(gen, n, temp, info.ContentType, out var path, out var type))
+                    {
+                        return null;
+                    }
+                    return (path, type);
+                }
+                finally
+                {
+                    try { File.Delete(temp); } catch { /* best-effort temp cleanup */ }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI job {job.Id}: hosted thumb rebuild for {key} failed: {ex.Message}");
+                return null;
+            }
+            finally
+            {
+                ThumbRegenLimit.Release();
+            }
         }
 
         internal static string ExtensionForHostedFile(string contentType, string localPath)

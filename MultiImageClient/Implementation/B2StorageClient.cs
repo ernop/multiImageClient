@@ -64,6 +64,23 @@ namespace MultiImageClient
             return await response.Content.ReadAsByteArrayAsync(cancellationToken);
         }
 
+        /// Streams one hosted object to a local file (anonymous public GET)
+        /// without buffering it in the heap. Throws on any non-success status.
+        public async Task DownloadToFileAsync(string objectKey, string destinationPath, CancellationToken cancellationToken)
+        {
+            var url = DownloadUrlFor(objectKey);
+            using var response = await _http.GetAsync(
+                url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(
+                    $"B2 download of '{objectKey}' failed: HTTP {(int)response.StatusCode}");
+            }
+            await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using var destination = File.Create(destinationPath);
+            await source.CopyToAsync(destination, cancellationToken);
+        }
+
         /// ui/{jobId}/{gen}/{n}-{128-bit random hex}.{ext} — the random
         /// segment IS the access capability; never mint a key without it.
         public static string BuildObjectKey(string jobId, string generatorKey, int index, string extension)
