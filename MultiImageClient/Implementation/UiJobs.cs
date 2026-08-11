@@ -2750,6 +2750,35 @@ namespace MultiImageClient
         public static bool IsImageCapable(string key)
             => ImageCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
 
+        // Targets the owner live-validated (2026-08-11) as actually FOLLOWING
+        // a composition sketch — obeying the drawn regions' placement and
+        // coverage while repainting in the prompt's style. Everything else
+        // either never receives the attachment (text-only targets), copies
+        // the sketch's flat-color look instead of treating it as layout
+        // guidance (Recraft image-to-image, style-reference targets), or was
+        // tested and did not interpret the sketch (including Nano Banana Pro
+        // and Ideogram 4.0 Remix). "FLUX.2 Pro" covers both the Preview and
+        // pinned targets because they share one request contract. Exposed
+        // per-generator as sketchCapable in /api/config; the composer uses it
+        // for the sketch dialog's auto-deselect and the chip warning tint —
+        // never hardcode this set in app.js.
+        public static readonly string[] SketchCapableKeys =
+        {
+            KeyGpt2,
+            KeyGrokWeb,
+            KeyGrokWebChat,
+            KeyGrokApi,
+            KeyGrokApiPro,
+            KeyBfl,
+            KeyBflFlux2Pro,
+            KeyBflFlux2Max,
+            KeyBflFlux2Flex,
+            KeyGoogle,
+        };
+
+        public static bool IsSketchCapable(string key)
+            => SketchCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
+
         public bool IsImageCapableForCurrentSettings(string key)
             => IsImageCapable(key)
                 || ((key.Equals(KeyGrokWeb, StringComparison.OrdinalIgnoreCase)

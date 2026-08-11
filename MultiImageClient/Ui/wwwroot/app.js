@@ -694,6 +694,7 @@ async function loadConfig() {
     cb.dataset.imageAspectOverride = String(!!g.imageAspectOverride);
     cb.dataset.kind = g.kind || "image";
     cb.dataset.requiresImage = String(!!g.requiresImage);
+    cb.dataset.sketchCapable = String(!!g.sketchCapable);
     cb.disabled = !g.available;
     cb.checked = g.available && generatorPreferences.defaultSelectedKeys.includes(g.key);
     cb.addEventListener("change", () => {
@@ -770,10 +771,16 @@ function updateGeneratorCompatibility() {
   for (const btn of document.querySelectorAll("#gen-controls .image-only-action")) {
     btn.hidden = !hasImage;
   }
+  // A composition sketch is attached (tracked by exact File identity from
+  // the sketch dialog). Media targets that were live-tested as NOT following
+  // sketches stay selectable but turn amber with an explanatory tooltip.
+  const sketchAttached = hasImage && sketchIsAttached();
   for (const cb of allGeneratorInputs()) {
     const providerAvailable = cb.dataset.available === "true";
     const imageCapable = cb.dataset.imageCapable === "true";
     const isDescribe = cb.dataset.kind === "describe";
+    const sketchUnsupported =
+      sketchAttached && !isDescribe && cb.dataset.sketchCapable !== "true";
     // Describe endpoints consume the image itself and ignore output-AR
     // options entirely, so the AR-override disable never applies to them.
     const aspectIncompatible =
@@ -801,6 +808,7 @@ function updateGeneratorCompatibility() {
     const label = cb.closest(".gen-toggle");
     label.classList.toggle("unavailable", cb.disabled);
     label.classList.toggle("checked", cb.checked);
+    label.classList.toggle("sketch-unsupported", sketchUnsupported);
     if (missingRequiredImage)
     {
       const requiresImageReason = isDescribe
@@ -813,6 +821,18 @@ function updateGeneratorCompatibility() {
       label.title = generatorChooserTitle(
         cb.value,
         `${genLabel(cb.value)} cannot override output AR with an input image; choose match input image to use it`);
+    }
+    else if (sketchUnsupported && imageCapable)
+    {
+      label.title = generatorChooserTitle(
+        cb.value,
+        `${genLabel(cb.value)} was tested with composition sketches and does NOT follow them — it receives the sketch but tends to copy its flat-color look or ignore the layout. You can still run it.`);
+    }
+    else if (sketchUnsupported)
+    {
+      label.title = generatorChooserTitle(
+        cb.value,
+        `${genLabel(cb.value)} never receives the attached sketch (text-only target) — only the legend text reaches it, so it cannot follow the drawn layout. You can still run it from the prompt.`);
     }
     else if (hasImage && !imageCapable)
     {
@@ -3050,6 +3070,15 @@ function sketchBlank() {
 }
 sketchBlank();
 
+// Whether the composer currently holds this session's sketch attachment,
+// by exact File identity. Removing the sketch thumbnail (or clear all)
+// makes this false without extra bookkeeping. Sketches restored through
+// "set active" on an old job are ordinary attachments and are not tracked.
+function sketchIsAttached() {
+  return sketchAttachedFile != null
+    && inputImageItems.some((item) => item.file === sketchAttachedFile);
+}
+
 for (const [index, color] of SketchPalette.entries()) {
   const row = document.createElement("div");
   row.className = "sketch-color-row";
@@ -3252,6 +3281,24 @@ async function attachSketch() {
     return;
   }
   sketchAttachedFile = file;
+  // Only some models were live-tested as actually following sketches
+  // (server truth: sketchCapable in /api/config). Default-on toggle:
+  // deselect the media targets that can't, leaving describe/analysis
+  // selections alone. Re-enabling one later is allowed — its chip turns
+  // amber via updateGeneratorCompatibility as the standing reminder.
+  if (el("sketch-autodeselect").checked) {
+    for (const cb of allGeneratorInputs()) {
+      if (cb.checked
+          && cb.dataset.kind !== "describe"
+          && cb.dataset.sketchCapable !== "true") {
+        cb.checked = false;
+      }
+    }
+  }
+  // Re-run compatibility now that the sketch attachment is registered:
+  // applies the amber sketch-unsupported tint/tooltips and syncs the
+  // checked-state classes of anything just deselected.
+  updateGeneratorCompatibility();
   upsertSketchLegendInPrompt(buildSketchLegendParagraph(used));
   sketchDialog.close();
 }
