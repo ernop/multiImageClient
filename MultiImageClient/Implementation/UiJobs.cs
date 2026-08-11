@@ -2407,6 +2407,7 @@ namespace MultiImageClient
         public const string KeyLocalKlein = "local-klein";
         public const string KeyLocalZImage = "local-zimage";
         public const string KeyGrokWeb = "grok-web";
+        public const string KeyGrokWebChat = "grok-web-chat";
         public const string KeyGrokWebVideo = "grok-web-video";
         public const string KeyGrokApi = "grok-api";
         public const string KeyGrokApiPro = "grok-api-pro";
@@ -2463,6 +2464,7 @@ namespace MultiImageClient
             KeyLocalKlein,
             KeyLocalZImage,
             KeyGrokWeb,
+            KeyGrokWebChat,
             KeyGrokApi,
             KeyGrokApiPro,
             KeyMetaWeb,
@@ -2611,11 +2613,13 @@ namespace MultiImageClient
 
         public bool IsImageCapableForCurrentSettings(string key)
             => IsImageCapable(key)
-                || (key.Equals(KeyGrokWeb, StringComparison.OrdinalIgnoreCase)
+                || ((key.Equals(KeyGrokWeb, StringComparison.OrdinalIgnoreCase)
+                        || key.Equals(KeyGrokWebChat, StringComparison.OrdinalIgnoreCase))
                     && _grokWebStatsigSigner != null);
 
         public string? DescribeImageCapabilityProblem(string key)
             => key.Equals(KeyGrokWeb, StringComparison.OrdinalIgnoreCase)
+                    || key.Equals(KeyGrokWebChat, StringComparison.OrdinalIgnoreCase)
                 ? _grokWebStatsigProblem
                 : null;
 
@@ -2639,6 +2643,7 @@ namespace MultiImageClient
         {
             KeyGpt2 or KeyGrokApi or KeyGrokApiPro => "edit source",
             KeyGrokWeb when _grokWebStatsigSigner != null => "edit source",
+            KeyGrokWebChat => "edit source (chat door)",
             KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
                 or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
                 or KeyRecraftV4Pro => "image-to-image source",
@@ -2846,6 +2851,11 @@ namespace MultiImageClient
                 ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
                 : null,
             KeyGrokWebVideo => ResolveGrokWebCookiePath() == null
+                ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
+                : _grokWebStatsigProblem,
+            // Chat-door image path: always signed app-chat, so it needs both
+            // the cookie file and current statsig signing material.
+            KeyGrokWebChat => ResolveGrokWebCookiePath() == null
                 ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
                 : _grokWebStatsigProblem,
             KeyGrokApi or KeyGrokApiPro
@@ -3196,18 +3206,21 @@ namespace MultiImageClient
                 try
                 {
                     IImageGenerator generator;
-                    if (key is KeyGrokWeb or KeyGrokWebVideo)
+                    if (key is KeyGrokWeb or KeyGrokWebVideo or KeyGrokWebChat)
                     {
                         var cookiePath = ResolveGrokWebCookiePath()
                             ?? throw new InvalidOperationException("grok-web cookie file not found (settings.json GrokWebCookiePath or --grok-web-cookies)");
                         grokWebClient = GrokWebClient.FromCookieFile(
                             cookiePath,
                             statsigSigner: _grokWebStatsigSigner);
-                        generator = key == KeyGrokWebVideo
-                            ? await BuildGrokWebVideoAsync(grokWebClient, job, spec)
-                            : job.HasInputImage && _grokWebStatsigSigner != null
+                        generator = key switch
+                        {
+                            KeyGrokWebVideo => await BuildGrokWebVideoAsync(grokWebClient, job, spec),
+                            KeyGrokWebChat => await BuildGrokWebChatEditAsync(grokWebClient, spec, job),
+                            _ => job.HasInputImage && _grokWebStatsigSigner != null
                                 ? await BuildGrokWebEditAsync(grokWebClient, spec, job)
-                                : BuildGrokWeb(grokWebClient, spec);
+                                : BuildGrokWeb(grokWebClient, spec),
+                        };
                     }
                     else if (key == KeyMetaWeb)
                     {
@@ -3703,6 +3716,34 @@ namespace MultiImageClient
                 enableSideBySide: _options.GrokWebSideBySide,
                 settings: _settings,
                 captureSessions: false);
+        }
+
+        private async Task<IImageGenerator> BuildGrokWebChatEditAsync(
+            GrokWebClient client,
+            UiJobSpec spec,
+            UiJob job)
+        {
+            if (_grokWebStatsigSigner == null)
+            {
+                throw new InvalidOperationException(
+                    _grokWebStatsigProblem
+                    ?? "Grok web chat-door image path is not configured.");
+            }
+            if (!job.HasInputImage || string.IsNullOrWhiteSpace(job.InputImagePath))
+            {
+                throw new InvalidOperationException(
+                    "grok-web-chat requires an attached image; it edits the image through a chat message.");
+            }
+
+            // Empty means inherit/derive from the submitted source image.
+            var aspectRatio = UiShapeMapping.GrokAspect(spec.Shape);
+            return await GrokWebImagineChatEditGenerator.CreateAsync(
+                client,
+                job.InputImagePath,
+                maxConcurrency: 1,
+                _stats,
+                chatModel: GrokWebClient.DefaultChatModel,
+                aspectRatio: aspectRatio);
         }
 
         private async Task<IImageGenerator> BuildGrokWebVideoAsync(

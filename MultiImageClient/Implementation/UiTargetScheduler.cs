@@ -140,6 +140,7 @@ namespace MultiImageClient
                 UiJobRunner.KeyGrokApi or UiJobRunner.KeyGrokApiPro => LaneXaiApi,
                 UiJobRunner.KeyGrokWebVideo => LaneGrokWebBrowser,
                 UiJobRunner.KeyGrokWeb => LaneGrokWebWs,
+                UiJobRunner.KeyGrokWebChat => LaneGrokWebWs,
                 UiJobRunner.KeyMetaWeb => LaneMetaWeb,
                 UiJobRunner.KeyGoogle or UiJobRunner.KeyGooglePro => LaneGoogle,
                 UiJobRunner.KeyBfl or UiJobRunner.KeyBflFlux2Pro

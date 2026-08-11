@@ -36,7 +36,8 @@ namespace MultiImageClient
             }
 
             if (apiType is ImageGeneratorApiType.GrokWebImagine or ImageGeneratorApiType.GrokWebImaginePro
-                or ImageGeneratorApiType.GrokWebImagineVideo or ImageGeneratorApiType.GrokWebImagineEdit)
+                or ImageGeneratorApiType.GrokWebImagineVideo or ImageGeneratorApiType.GrokWebImagineEdit
+                or ImageGeneratorApiType.GrokWebImagineChat)
             {
                 return DescribeGrokWebCookieProblem(settings);
             }

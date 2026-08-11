@@ -228,6 +228,12 @@ namespace MultiImageClient
         /// loaded settings file, and exit.
         public bool GrokWebCaptureStatsig { get; set; }
 
+        /// Dev-only: send a chat-door app-chat message (optionally with an
+        /// --input-image attached) to discover/validate the exact grok-web chat
+        /// image-generation request/response schema, print the raw response,
+        /// and exit. Not a production path.
+        public bool GrokWebChatProbe { get; set; }
+
         /// If true, run GrokArchive.SyncAsync and exit: back-read the entire
         /// reachable grok-api history (xAI Files API inventory + re-pollable
         /// video request_ids + local JSON logs) into grok_ledger.jsonl and
@@ -489,6 +495,9 @@ namespace MultiImageClient
                         break;
                     case "--grok-web-capture-statsig":
                         o.GrokWebCaptureStatsig = true;
+                        break;
+                    case "--grok-web-chat-probe":
+                        o.GrokWebChatProbe = true;
                         break;
                     case "--provider-sample-showcase":
                         o.ProviderSampleShowcase = true;

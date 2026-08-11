@@ -48,6 +48,7 @@ namespace MultiImageClient
             switch (generatorKey)
             {
                 case UiJobRunner.KeyGrokWeb:
+                case UiJobRunner.KeyGrokWebChat:
                 case UiJobRunner.KeyGrokWebVideo:
                     return new Hint(
                         "grok.com session cookies look expired/invalid — log in at grok.com and re-export cookies to the GrokWebCookiePath file, then restart",

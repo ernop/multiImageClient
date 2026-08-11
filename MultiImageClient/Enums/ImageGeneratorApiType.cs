@@ -107,6 +107,12 @@ namespace MultiImageClient
         Krea2Medium = 45,
         Krea2Large = 46,
 
+        // grok-web "chat door" image path: the uploaded image is sent as a
+        // normal app-chat conversation message and a chat model (grok-3) reads
+        // it, expands the instruction, and orchestrates imagine-image-edit.
+        // Distinct from GrokWebImagineEdit (direct imagine-image-edit modelName).
+        GrokWebImagineChat = 47,
+
         WorkflowMock = 1000,
     }
 }

@@ -1032,6 +1032,58 @@ namespace MultiImageClient
                 cancellationToken);
         }
 
+        // "Chat door" image path: send the uploaded image as a normal
+        // conversation message and let a chat model (grok-3) read it, expand
+        // the instruction, and orchestrate imagine-image-edit. Distinct from
+        // RunImageEditAsync (direct imagine-image-edit modelName). Request shape
+        // validated live 2026-08-10: signed POST /rest/app-chat/conversations/new
+        // with modelName=<chat model>, message, fileAttachments=[assetId],
+        // enableImageGeneration=true. The final image returns inside
+        // result.response.cardAttachment.jsonData.image_chunk.imageUrl
+        // (parsed by CollectImageUrlFromCardJson).
+        public const string DefaultChatModel = "grok-3";
+
+        public async Task<GrokWebAppChatResult> RunImageChatEditAsync(
+            string prompt,
+            GrokWebAsset sourceAsset,
+            string? chatModel = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (_appChatBrowser == null && _statsigSigner == null)
+            {
+                throw new GrokWebException(
+                    "Grok web chat image path requires current x-statsig-id signing material "
+                    + "or the Playwright browser transport.");
+            }
+            if (string.IsNullOrWhiteSpace(sourceAsset.AssetId))
+            {
+                throw new GrokWebException(
+                    "Grok web chat image path requires a source asset id from upload.");
+            }
+
+            var model = string.IsNullOrWhiteSpace(chatModel) ? DefaultChatModel : chatModel;
+            var message = prompt ?? string.Empty;
+            var payload = new
+            {
+                temporary = false,
+                modelName = model,
+                message,
+                fileAttachments = new[] { sourceAsset.AssetId },
+                imageAttachments = Array.Empty<string>(),
+                disableSearch = false,
+                enableImageGeneration = true,
+                enableImageStreaming = true,
+                sendFinalMetadata = true,
+            };
+
+            var parentPostId = sourceAsset.PostId ?? sourceAsset.AssetId;
+            return await RunAppChatAsync(
+                payload,
+                parentPostId,
+                GrokWebAppChatTrigger.ImageEdit,
+                cancellationToken);
+        }
+
         public static string NormalizeVideoMode(string? mode)
         {
             var normalized = (mode ?? "").Trim().ToLowerInvariant() switch
@@ -1230,6 +1282,48 @@ namespace MultiImageClient
                 AssetId = assetId,
                 MediaUrl = mediaUrl,
             };
+        }
+
+        // Dev-only diagnostic: sign and POST an arbitrary app-chat payload to
+        // /rest/app-chat/conversations/new and return the raw newline-delimited
+        // response verbatim, without parsing. Used by --grok-web-chat-probe to
+        // discover the exact chat-door request/response schema against the live
+        // endpoint. Not used by any production path.
+        public async Task<string> DebugPostAppChatRawAsync(
+            object payload,
+            CancellationToken cancellationToken = default)
+        {
+            if (_statsigSigner == null)
+            {
+                throw new GrokWebException(
+                    "grok-web chat probe requires configured x-statsig-id signing material.");
+            }
+
+            const string path = "/rest/app-chat/conversations/new";
+            using var request = new HttpRequestMessage(HttpMethod.Post, path)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(payload),
+                    Encoding.UTF8,
+                    "application/json"),
+            };
+            request.Headers.TryAddWithoutValidation("Accept", "*/*");
+            request.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+            request.Headers.TryAddWithoutValidation("sec-ch-ua", "\"Chromium\";v=\"136\", \"Google Chrome\";v=\"136\", \"Not.A/Brand\";v=\"99\"");
+            request.Headers.TryAddWithoutValidation("sec-ch-ua-mobile", "?0");
+            request.Headers.TryAddWithoutValidation("sec-ch-ua-platform", "\"Windows\"");
+            request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
+            request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
+            request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
+            request.Headers.TryAddWithoutValidation("x-statsig-id", _statsigSigner.Generate("POST", path));
+            request.Headers.TryAddWithoutValidation("x-xai-request-id", Guid.NewGuid().ToString());
+
+            using var response = await _http.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            return $"HTTP {(int)response.StatusCode}\n{body}";
         }
 
         private async Task<GrokWebAppChatResult> RunAppChatAsync(
@@ -1767,6 +1861,23 @@ namespace MultiImageClient
                         }
                     }
 
+                    // Chat-door image generation/edit (grok-3 orchestrating
+                    // imagine-image-edit) returns the final image only inside
+                    // result.response.cardAttachment.jsonData as a nested JSON
+                    // string carrying image_chunk.imageUrl. The URL is a
+                    // relative users/…/generated/… path (not an absolute
+                    // assets.grok.com URL), so the absolute-URL regex below does
+                    // not catch it. Accept only the progress=100, unmoderated,
+                    // non -part- final; the -part-0 progress=50 preview is
+                    // skipped exactly like the streaming edit path.
+                    if (response.TryGetProperty("cardAttachment", out var cardAttachment)
+                        && cardAttachment.ValueKind == JsonValueKind.Object
+                        && cardAttachment.TryGetProperty("jsonData", out var jsonDataEl)
+                        && jsonDataEl.ValueKind == JsonValueKind.String)
+                    {
+                        CollectImageUrlFromCardJson(jsonDataEl.GetString(), imageUrls);
+                    }
+
                     if (response.TryGetProperty("modelResponse", out var modelResponse)
                         && modelResponse.ValueKind == JsonValueKind.Object)
                     {
@@ -1785,6 +1896,22 @@ namespace MultiImageClient
                                 if (!string.IsNullOrWhiteSpace(url))
                                 {
                                     imageUrls.Add(url);
+                                }
+                            }
+                        }
+
+                        // The terminal modelResponse also echoes the finished
+                        // card(s) under cardAttachmentsJson[]; parse them so a
+                        // chat-door result is captured even if a mid-stream
+                        // cardAttachment line was missed.
+                        if (modelResponse.TryGetProperty("cardAttachmentsJson", out var cardsJson)
+                            && cardsJson.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var item in cardsJson.EnumerateArray())
+                            {
+                                if (item.ValueKind == JsonValueKind.String)
+                                {
+                                    CollectImageUrlFromCardJson(item.GetString(), imageUrls);
                                 }
                             }
                         }
@@ -1820,6 +1947,54 @@ namespace MultiImageClient
             catch (JsonException)
             {
                 // Ignore malformed partial lines.
+            }
+        }
+
+        // Parse a grok-web generated_image_card jsonData string and add its
+        // final image URL when present. The card's image_chunk carries a
+        // relative users/…/generated/… path plus progress/moderated flags.
+        private static void CollectImageUrlFromCardJson(string? cardJson, HashSet<string> imageUrls)
+        {
+            if (string.IsNullOrWhiteSpace(cardJson))
+            {
+                return;
+            }
+            try
+            {
+                using var card = JsonDocument.Parse(cardJson);
+                var root = card.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("image_chunk", out var chunk)
+                    || chunk.ValueKind != JsonValueKind.Object)
+                {
+                    return;
+                }
+
+                var moderated = chunk.TryGetProperty("moderated", out var modEl)
+                    && modEl.ValueKind == JsonValueKind.True;
+                var progress = chunk.TryGetProperty("progress", out var progEl)
+                    && progEl.TryGetInt32(out var prog)
+                        ? prog
+                        : -1;
+                if (moderated || progress < 100)
+                {
+                    return;
+                }
+                if (!chunk.TryGetProperty("imageUrl", out var urlEl))
+                {
+                    return;
+                }
+                var imageUrl = NormalizeAssetUrl(urlEl.GetString());
+                if (!string.IsNullOrWhiteSpace(imageUrl)
+                    && !imageUrl.Contains("-part-", StringComparison.OrdinalIgnoreCase))
+                {
+                    imageUrls.Add(imageUrl);
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed card payloads; other stream lines may carry
+                // the final image.
             }
         }
 

@@ -103,6 +103,12 @@ namespace MultiImageClient
                 return;
             }
 
+            if (options.GrokWebChatProbe)
+            {
+                await GrokWebChatProbe.RunAsync(settings, options, CancellationToken.None);
+                return;
+            }
+
             if (options.BackfillDl)
             {
                 DlMirror.Backfill(settings.ImageDownloadBaseFolder, settings.FlatImageMirrorPath);

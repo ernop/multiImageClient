@@ -803,9 +803,10 @@ function updateGeneratorCompatibility() {
     label.classList.toggle("checked", cb.checked);
     if (missingRequiredImage)
     {
-      label.title = generatorChooserTitle(
-        cb.value,
-        `${genLabel(cb.value)} describes an attached image — attach one to enable it`);
+      const requiresImageReason = isDescribe
+        ? `${genLabel(cb.value)} describes an attached image — attach one to enable it`
+        : `${genLabel(cb.value)} edits an attached image through a chat message — attach one to enable it`;
+      label.title = generatorChooserTitle(cb.value, requiresImageReason);
     }
     else if (aspectIncompatible)
     {

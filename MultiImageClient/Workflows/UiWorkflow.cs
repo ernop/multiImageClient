@@ -272,6 +272,7 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = runner.IsImageCapableForCurrentSettings(UiJobRunner.KeyGrokWeb)
                         ? "grok.com cookie session. Text-to-image uses the browser-free imagine WebSocket; attached images use browser-free x-statsig-id-signed imagine-image-edit. Auto edits inherit the source shape. Text-to-image auto requests square 1:1 because the WebSocket has no prompt-aware auto."
                         : "grok.com cookie session using the browser-free imagine WebSocket. Text-to-image only until current x-statsig-id signing material is captured; attached images are not sent. Auto requests square 1:1 because this transport has no prompt-aware auto and Grok's own default is 2:3. Side-by-side mode requests up to 4 images." },
+                    new { key = UiJobRunner.KeyGrokWebChat, label = "grok-web chat", detail = "grok.com cookie session, chat-message door. The attached image is sent as a normal chat message; a chat model (grok-3) reads it, expands your instruction into a detailed edit prompt, and edits via imagine-image-edit. Requires an attached image and current x-statsig-id signing material. Slower than direct edit because the chat model reasons first." },
                     new { key = UiJobRunner.KeyGrokApi, label = "grok-api", detail = "api.x.ai standard tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
                     new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api pro", detail = "api.x.ai pro tier. With an input, the default maps its dimensions to Grok's nearest supported AR; explicit shape, detail (1k/2k), and n are honored." },
                     new { key = UiJobRunner.KeyKrea, label = "Krea 2 Medium", detail = "Krea's own foundation image model, not an aggregated third-party model. Best for expressive illustration and stable general use. An attached image is sent as a 0.6-strength style reference; auto matches its nearest native aspect ratio. The API currently accepts 1K only, so detail has no effect. n runs separate generations." },
@@ -334,7 +335,11 @@ namespace MultiImageClient
                     // chooser section, selectable only with an image attached);
                     // everything else returns media.
                     kind = UiJobRunner.IsDescribeKey(g.key) ? "describe" : "image",
-                    requiresImage = UiJobRunner.IsDescribeKey(g.key),
+                    // Describe targets require an image (their input). grok-web-chat
+                    // also requires one: it edits the attached image through a chat
+                    // message and has no text-to-image path in this UI.
+                    requiresImage = UiJobRunner.IsDescribeKey(g.key)
+                        || g.key == UiJobRunner.KeyGrokWebChat,
                     // Known hard prompt-length caps, surfaced so the composer can
                     // warn before submit; the server truncates over-limit prompts
                     // at the provider send stage (grok-web: GrokWebClient).
