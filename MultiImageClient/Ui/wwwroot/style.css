@@ -898,6 +898,14 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 .gen-toggle.checked { border-color: var(--accent); background: #eef0fa; }
 .gen-toggle.checked:hover:not(.unavailable) { background: #dde2f9; }
 .gen-toggle.unavailable { opacity: 0.45; cursor: not-allowed; }
+/* Composition-sketch warning: while a sketch is attached, targets that were
+   live-tested as NOT following sketches turn amber. They stay selectable —
+   the tint (stronger when selected) plus the tooltip carry the warning. */
+.gen-toggle.sketch-unsupported { color: #7a4d00; border-color: #d9a521; background: #fff7e0; }
+.gen-toggle.sketch-unsupported:hover:not(.unavailable) { border-color: #b26a00; background: #ffefc7; }
+.gen-toggle.sketch-unsupported.checked { border-color: #b26a00; background: #ffe3a8; }
+.gen-toggle.sketch-unsupported.checked:hover:not(.unavailable) { background: #fdd88a; }
+.gen-toggle.sketch-unsupported input { accent-color: #b26a00; }
 /* Image-capability flag: capable targets always show the tiny picture icon;
    text-only targets show the slashed one only while an image is attached
    (that's when "your attachment won't be sent here" matters). */
@@ -2171,6 +2179,16 @@ body.image-viewer-open { overflow: hidden; }
   color: var(--accent-dark);
 }
 #sketch-legend-fields { display: flex; flex-direction: column; gap: 6px; }
+#sketch-autodeselect-control {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  cursor: pointer;
+}
 .sketch-color-row { display: flex; align-items: center; gap: 7px; }
 .sketch-swatch {
   flex: 0 0 26px;

@@ -338,6 +338,11 @@ namespace MultiImageClient
                     imageCapable = runner.IsImageCapableForCurrentSettings(g.key) || UiJobRunner.IsAnalysisKey(g.key),
                     imageCapabilityProblem = runner.DescribeImageCapabilityProblem(g.key),
                     imageAspectOverride = SupportsImageAspectOverride(runner, g.key),
+                    // Live-validated composition-sketch followers (see
+                    // UiJobRunner.SketchCapableKeys). The composer's sketch
+                    // dialog auto-deselects targets without this flag and
+                    // tints their chips amber while a sketch is attached.
+                    sketchCapable = UiJobRunner.IsSketchCapable(g.key),
                     // "describe"-kind targets analyze the attached image
                     // (describe returns text; layout map returns a rendered
                     // map image). They render as their own chooser section,

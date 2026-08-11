@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260811-sketch-composer">
+<link rel="stylesheet" href="style.css?v=20260811-sketch-capable">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260809-mcphee-3-9-0">
 </head>
 <body>
@@ -542,6 +542,11 @@
         <div id="sketch-legend-fields"><!-- one row per palette color, injected --></div>
       </div>
     </div>
+    <label id="sketch-autodeselect-control"
+      title="Only some models were live-tested as actually following composition sketches. With this on, attaching deselects the rest; re-enable any of them afterwards to run it anyway — its chip turns amber as a reminder that it won't follow the sketch.">
+      <input id="sketch-autodeselect" type="checkbox" checked>
+      also deselect models that can't follow sketches (you can re-enable them — their chips turn amber)
+    </label>
     <div class="compact-dialog-actions">
       <span id="sketch-status"></span>
       <button id="sketch-cancel" type="button">cancel</button>
@@ -604,6 +609,6 @@
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260809-mcphee-3-9-0"></script>
 <script src="personal-config.js?v=20260810-schema-v2"></script>
-<script src="app.js?v=20260811-sketch-composer"></script>
+<script src="app.js?v=20260811-sketch-capable"></script>
 </body>
 </html>
