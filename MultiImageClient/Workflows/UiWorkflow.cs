@@ -836,6 +836,17 @@ namespace MultiImageClient
                         error = $"At most {UiJobRunner.MaxInputImages} input images are accepted.",
                     });
                 }
+                UiSketchComposerState? sketchComposer;
+                try
+                {
+                    sketchComposer = UiJobRunner.ParseSketchComposerState(
+                        form["sketchComposer"].ToString(),
+                        uploadFiles.Count);
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
                 // Analysis targets have no meaning without an image; reject the
                 // job outright rather than running them against nothing.
                 if (analysisKeys.Count > 0 && uploadFiles.Count == 0)
@@ -962,6 +973,19 @@ namespace MultiImageClient
                         moderation = spec.Moderation,
                         n = spec.ImageCount,
                         generatorExtraTexts = spec.GeneratorExtraTexts,
+                        // Exact persisted identity for the sketch editor. Null
+                        // explicitly means this new job had no linked sketch;
+                        // old accepted events lack the property entirely and
+                        // therefore cannot safely identify a legacy attachment.
+                        sketchComposer = sketchComposer == null
+                            ? null
+                            : new
+                            {
+                                version = sketchComposer.Version,
+                                inputIndex = sketchComposer.InputIndex,
+                                aspect = sketchComposer.Aspect,
+                                meanings = sketchComposer.Meanings,
+                            },
                         // Keep the legacy gpt2 event fields while pre-feature
                         // browser windows remain possible. New clients use the
                         // keyed map above for every image endpoint.

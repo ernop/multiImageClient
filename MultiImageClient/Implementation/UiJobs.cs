@@ -1912,6 +1912,15 @@ namespace MultiImageClient
         public string VideoAspectRatio { get; init; } = "source";
     }
 
+    /// Exact identity and editable fields for a composition sketch attachment.
+    /// The PNG itself remains an ordinary ordered job input; InputIndex proves
+    /// which one it is when "set active" restores a completed job.
+    public sealed record UiSketchComposerState(
+        int Version,
+        int InputIndex,
+        string Aspect,
+        IReadOnlyList<string> Meanings);
+
     /// Maps the intent-level (shape, detail) pair onto each backend's actual
     /// knobs. Kept as a standalone static so future generators (and tests)
     /// can reuse the same mapping.
@@ -2368,6 +2377,18 @@ namespace MultiImageClient
         // gpt-image-2 /edits allows up to 16; four is enough for the A+B(+…)
         // gesture without turning the paste zone into a contact sheet.
         public const int MaxInputImages = 4;
+        public const int SketchComposerStateVersion = 1;
+        public const int SketchComposerMeaningCount = 8;
+        public const int SketchComposerMeaningMaxChars = 120;
+
+        private static readonly string[] SketchComposerAspects =
+        {
+            "square",
+            "landscape",
+            "portrait",
+            "wide",
+            "tall",
+        };
 
         public const string KeyGpt2 = "gpt2";
         public const string KeyGpt1 = "gpt1";
@@ -2778,6 +2799,118 @@ namespace MultiImageClient
 
         public static bool IsSketchCapable(string key)
             => SketchCapableKeys.Contains(key, StringComparer.OrdinalIgnoreCase);
+
+        /// Strictly validates browser-supplied composition-sketch identity.
+        /// Blank means this job has no editable sketch. Any supplied document
+        /// must name exactly one existing ordered input and carry every editor
+        /// field; unknown/duplicate/malformed data is rejected rather than
+        /// allowing "set active" to guess which attachment should be painted.
+        public static UiSketchComposerState? ParseSketchComposerState(
+            string raw,
+            int inputCount)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(raw);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    throw new JsonException("the root must be an object");
+                }
+
+                var expected = new HashSet<string>(
+                    new[] { "version", "inputIndex", "aspect", "meanings" },
+                    StringComparer.Ordinal);
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in root.EnumerateObject())
+                {
+                    if (!expected.Contains(property.Name))
+                    {
+                        throw new JsonException($"unknown field \"{property.Name}\"");
+                    }
+                    if (!seen.Add(property.Name))
+                    {
+                        throw new JsonException($"duplicate field \"{property.Name}\"");
+                    }
+                }
+                if (!expected.SetEquals(seen))
+                {
+                    var missing = expected.Where(name => !seen.Contains(name));
+                    throw new JsonException($"missing field(s): {string.Join(", ", missing)}");
+                }
+
+                var versionElement = root.GetProperty("version");
+                if (versionElement.ValueKind != JsonValueKind.Number
+                    || !versionElement.TryGetInt32(out var version)
+                    || version != SketchComposerStateVersion)
+                {
+                    throw new JsonException(
+                        $"version must be exactly {SketchComposerStateVersion}");
+                }
+
+                var inputIndexElement = root.GetProperty("inputIndex");
+                if (inputIndexElement.ValueKind != JsonValueKind.Number
+                    || !inputIndexElement.TryGetInt32(out var inputIndex)
+                    || inputIndex < 0
+                    || inputIndex >= inputCount)
+                {
+                    throw new JsonException(
+                        $"inputIndex must identify one of the {inputCount} uploaded input(s)");
+                }
+
+                var aspectElement = root.GetProperty("aspect");
+                if (aspectElement.ValueKind != JsonValueKind.String)
+                {
+                    throw new JsonException("aspect must be a string");
+                }
+                var aspect = aspectElement.GetString()!;
+                if (!SketchComposerAspects.Contains(aspect, StringComparer.Ordinal))
+                {
+                    throw new JsonException(
+                        $"aspect must be one of: {string.Join(", ", SketchComposerAspects)}");
+                }
+
+                var meaningsElement = root.GetProperty("meanings");
+                if (meaningsElement.ValueKind != JsonValueKind.Array
+                    || meaningsElement.GetArrayLength() != SketchComposerMeaningCount)
+                {
+                    throw new JsonException(
+                        $"meanings must contain exactly {SketchComposerMeaningCount} strings");
+                }
+                var meanings = new List<string>(SketchComposerMeaningCount);
+                var meaningIndex = 0;
+                foreach (var meaningElement in meaningsElement.EnumerateArray())
+                {
+                    if (meaningElement.ValueKind != JsonValueKind.String)
+                    {
+                        throw new JsonException($"meaning {meaningIndex} must be a string");
+                    }
+                    var meaning = meaningElement.GetString()!.Trim();
+                    if (meaning.Length > SketchComposerMeaningMaxChars
+                        || meaning.Any(char.IsControl))
+                    {
+                        throw new JsonException(
+                            $"meaning {meaningIndex} must be at most "
+                            + $"{SketchComposerMeaningMaxChars} characters with no control characters");
+                    }
+                    meanings.Add(meaning);
+                    meaningIndex++;
+                }
+
+                return new UiSketchComposerState(version, inputIndex, aspect, meanings);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException(
+                    $"sketchComposer did not follow the required identity contract ({ex.Message})",
+                    ex);
+            }
+        }
 
         public bool IsImageCapableForCurrentSettings(string key)
             => IsImageCapable(key)

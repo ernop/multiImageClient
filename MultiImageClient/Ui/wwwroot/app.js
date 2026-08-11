@@ -62,6 +62,8 @@ let generators = [];         // from /api/config
 let videoSource = null;       // { jobId, generator, index, url }
 let videoDialogSelectionVersion = 0;
 let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
+let setActiveJobVersion = 0;
+let setActiveJobController = null;
 let claudeAdvice = { available: false, availabilityProblem: "configuration not loaded" };
 let promptAdvicePrevious = null;  // exact prompt from before the last Claude edit
 let generatorPreferences = null;
@@ -2856,14 +2858,19 @@ function appendImage(fileOrBlob) {
   return true;
 }
 
-function removeInputAt(index) {
+function removeInputAt(index, { preserveSketchEditor = false } = {}) {
   if (index < 0 || index >= inputImageItems.length) return;
   const [removed] = inputImageItems.splice(index, 1);
   if (removed?.url) URL.revokeObjectURL(removed.url);
+  if (!preserveSketchEditor && removed?.file === sketchAttachedFile) {
+    resetSketchEditor();
+  }
   renderInputThumbs();
 }
 
 function clearImage() {
+  if (sketchDialog.open) sketchDialog.close();
+  resetSketchEditor();
   for (const item of inputImageItems) {
     if (item.url) URL.revokeObjectURL(item.url);
   }
@@ -2871,11 +2878,38 @@ function clearImage() {
   renderInputThumbs();
 }
 
-async function setImagesFromBlobs(blobs) {
-  clearImage();
-  for (const blob of blobs) {
-    if (!appendImage(blob)) break;
+function setImagesFromBlobs(blobs, { restoredSketch = null, sketchNotice = "" } = {}) {
+  if (!Array.isArray(blobs) || blobs.length > maxInputImages) {
+    throw new Error(`expected at most ${maxInputImages} input images`);
   }
+  const nextItems = [];
+  for (const blob of blobs) {
+    if (!blob || !blob.type.startsWith("image/")) {
+      for (const item of nextItems) URL.revokeObjectURL(item.url);
+      throw new Error("composer replacement contained a non-image attachment");
+    }
+    nextItems.push({ file: blob, url: URL.createObjectURL(blob) });
+  }
+
+  // The sketch editor is hidden before any source transition. Clear all
+  // retained pixels, labels, undo state, and attachment identity first; only
+  // then apply a fully decoded, explicitly correlated sketch restoration.
+  if (sketchDialog.open) sketchDialog.close();
+  resetSketchEditor(sketchNotice);
+  try {
+    if (restoredSketch) applyRestoredSketchEditor(nextItems, restoredSketch);
+  } catch (error) {
+    for (const item of nextItems) URL.revokeObjectURL(item.url);
+    resetSketchEditor();
+    throw error;
+  }
+
+  const previousItems = inputImageItems;
+  inputImageItems = nextItems;
+  for (const item of previousItems) {
+    if (item.url) URL.revokeObjectURL(item.url);
+  }
+  renderInputThumbs();
 }
 
 // Paste works anywhere on the page: grabbing the clipboard image is the
@@ -3063,6 +3097,8 @@ let sketchUndoStack = [];       // ImageData snapshots, oldest first
 let sketchStrokePoint = null;   // previous point while a stroke is active
 let sketchAspect = "square";    // last applied canvas shape, for revert
 let sketchAttachedFile = null;  // exact File last attached, replaced on re-attach
+let sketchAttachedState = null; // metadata captured with those exact PNG bytes
+let sketchEditorNotice = "";
 
 function sketchBlank() {
   sketchCtx.fillStyle = "#ffffff";
@@ -3070,13 +3106,131 @@ function sketchBlank() {
 }
 sketchBlank();
 
-// Whether the composer currently holds this session's sketch attachment,
-// by exact File identity. Removing the sketch thumbnail (or clear all)
-// makes this false without extra bookkeeping. Sketches restored through
-// "set active" on an old job are ordinary attachments and are not tracked.
+// Whether the composer currently holds the exact sketch attachment represented
+// by the editor. New drawings use File identity; set-active restorations bind
+// the explicitly recorded input index to its fetched Blob identity.
 function sketchIsAttached() {
   return sketchAttachedFile != null
+    && sketchAttachedState != null
     && inputImageItems.some((item) => item.file === sketchAttachedFile);
+}
+
+function resetSketchEditor(notice = "") {
+  if (sketchDialog.open) sketchDialog.close();
+  sketchAspect = "square";
+  sketchAspectSelect.value = sketchAspect;
+  const [width, height] = SketchCanvasSizes[sketchAspect];
+  sketchCanvas.width = width;
+  sketchCanvas.height = height;
+  sketchUndoStack = [];
+  sketchStrokePoint = null;
+  sketchBlank();
+  for (const meaning of sketchMeaningInputs) meaning.value = "";
+  setSketchColor(0);
+  sketchAttachedFile = null;
+  sketchAttachedState = null;
+  sketchEditorNotice = notice;
+  sketchStatus.textContent = "";
+  sketchStatus.classList.remove("error");
+}
+
+function normalizeRecordedSketchState(value, inputCount) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("recorded sketch identity is not an object");
+  }
+  const keys = Object.keys(value).sort();
+  const expectedKeys = ["aspect", "inputIndex", "meanings", "version"];
+  if (keys.length !== expectedKeys.length
+      || keys.some((key, index) => key !== expectedKeys[index])) {
+    throw new Error("recorded sketch identity has missing or unknown fields");
+  }
+  if (value.version !== 1) {
+    throw new Error(`unsupported recorded sketch identity version ${value.version}`);
+  }
+  if (!Number.isInteger(value.inputIndex)
+      || value.inputIndex < 0
+      || value.inputIndex >= inputCount) {
+    throw new Error("recorded sketch attachment index is outside this job's inputs");
+  }
+  if (!Object.hasOwn(SketchCanvasSizes, value.aspect)) {
+    throw new Error(`recorded sketch has unknown aspect ${value.aspect}`);
+  }
+  if (!Array.isArray(value.meanings)
+      || value.meanings.length !== SketchPalette.length
+      || value.meanings.some((meaning) =>
+        typeof meaning !== "string"
+        || meaning.length > 120
+        || /[\u0000-\u001f\u007f]/.test(meaning))) {
+    throw new Error("recorded sketch meanings do not match the editor contract");
+  }
+  return {
+    version: 1,
+    inputIndex: value.inputIndex,
+    aspect: value.aspect,
+    meanings: value.meanings.map((meaning) => meaning.trim()),
+  };
+}
+
+async function prepareRestoredSketch(blob, state) {
+  const bitmap = await createImageBitmap(blob);
+  const [expectedWidth, expectedHeight] = SketchCanvasSizes[state.aspect];
+  if (bitmap.width !== expectedWidth || bitmap.height !== expectedHeight) {
+    bitmap.close();
+    throw new Error(
+      `recorded sketch dimensions ${bitmap.width}×${bitmap.height} do not match `
+      + `${state.aspect} (${expectedWidth}×${expectedHeight})`);
+  }
+  return { bitmap, state };
+}
+
+function applyRestoredSketchEditor(nextItems, prepared) {
+  const { bitmap, state } = prepared;
+  try {
+    const item = nextItems[state.inputIndex];
+    if (!item || item.file.type !== "image/png") {
+      throw new Error("recorded sketch attachment is missing or is not PNG");
+    }
+    sketchAspect = state.aspect;
+    sketchAspectSelect.value = sketchAspect;
+    const [width, height] = SketchCanvasSizes[sketchAspect];
+    sketchCanvas.width = width;
+    sketchCanvas.height = height;
+    sketchCtx.clearRect(0, 0, width, height);
+    sketchCtx.drawImage(bitmap, 0, 0);
+    sketchUndoStack = [];
+    sketchStrokePoint = null;
+    state.meanings.forEach((meaning, index) => {
+      sketchMeaningInputs[index].value = meaning;
+    });
+    sketchAttachedFile = item.file;
+    sketchAttachedState = {
+      version: 1,
+      aspect: state.aspect,
+      meanings: [...state.meanings],
+    };
+    sketchEditorNotice = "";
+    setSketchColor(0);
+  } finally {
+    bitmap.close();
+  }
+}
+
+function promptHasSketchLegend(value) {
+  return value
+    .split(/\n{2,}/)
+    .some((paragraph) => paragraph.trimStart().startsWith(SketchLegendMarker));
+}
+
+function attachedSketchSubmission() {
+  if (!sketchIsAttached()) return null;
+  const inputIndex = inputImageItems.findIndex((item) => item.file === sketchAttachedFile);
+  if (inputIndex < 0) return null;
+  return {
+    version: 1,
+    inputIndex,
+    aspect: sketchAttachedState.aspect,
+    meanings: [...sketchAttachedState.meanings],
+  };
 }
 
 for (const [index, color] of SketchPalette.entries()) {
@@ -3269,11 +3423,19 @@ async function attachSketch() {
     return;
   }
   const file = new File([blob], "sketch.png", { type: "image/png" });
+  const attachedState = {
+    version: 1,
+    aspect: sketchAspect,
+    meanings: sketchMeaningInputs.map((meaning) => meaning.value.trim()),
+  };
+  const legendParagraph = buildSketchLegendParagraph(used);
   // A revised sketch replaces the previously attached one, located by exact
   // object identity — never by position or by guessing among attachments.
   if (sketchAttachedFile) {
     const previousIndex = inputImageItems.findIndex((item) => item.file === sketchAttachedFile);
-    if (previousIndex !== -1) removeInputAt(previousIndex);
+    if (previousIndex !== -1) {
+      removeInputAt(previousIndex, { preserveSketchEditor: true });
+    }
   }
   if (!appendImage(file)) {
     sketchStatus.textContent = `could not attach — all ${maxInputImages} input slots are in use`;
@@ -3281,6 +3443,8 @@ async function attachSketch() {
     return;
   }
   sketchAttachedFile = file;
+  sketchAttachedState = attachedState;
+  sketchEditorNotice = "";
   // Only some models were live-tested as actually following sketches
   // (server truth: sketchCapable in /api/config). Default-on toggle:
   // deselect the media targets that can't, leaving describe/analysis
@@ -3299,12 +3463,12 @@ async function attachSketch() {
   // applies the amber sketch-unsupported tint/tooltips and syncs the
   // checked-state classes of anything just deselected.
   updateGeneratorCompatibility();
-  upsertSketchLegendInPrompt(buildSketchLegendParagraph(used));
+  upsertSketchLegendInPrompt(legendParagraph);
   sketchDialog.close();
 }
 
 el("sketch-open").addEventListener("click", () => {
-  sketchStatus.textContent = "";
+  sketchStatus.textContent = sketchEditorNotice;
   sketchStatus.classList.remove("error");
   sketchDialog.showModal();
 });
@@ -4643,6 +4807,10 @@ async function submit() {
     return;
   }
   form.append("generatorExtraTexts", JSON.stringify(generatorExtraTexts));
+  const sketchComposer = attachedSketchSubmission();
+  if (sketchComposer) {
+    form.append("sketchComposer", JSON.stringify(sketchComposer));
+  }
   inputImageItems.forEach((item, index) => {
     const name = item.file.name && item.file.name.includes(".")
       ? item.file.name
@@ -7096,16 +7264,27 @@ function updateJobProgress(card) {
 // the job's events actually recorded them (jobs persisted before the
 // accepted event carried options restore prompt/image/generators only).
 async function setActiveFromJob(id, card) {
+  const operationVersion = ++setActiveJobVersion;
+  if (setActiveJobController) setActiveJobController.abort();
+  const controller = new AbortController();
+  setActiveJobController = controller;
+  // Neutralize the hidden editor synchronously, before the first fetch. The
+  // user can never open the previous job's sketch while this selection loads.
+  resetSketchEditor("Loading the selected job's recorded sketch identity…");
+  el("sketch-open").disabled = true;
+
   const inputCount = Math.max(
     0,
     parseInt(card.dataset.inputCount || (card.querySelector(".job-input-thumb") ? "1" : "0"), 10) || 0);
-  if (inputCount > 0) {
+  const restoredPrompt = card.querySelector(".job-prompt").textContent;
+  try {
     const blobs = [];
     for (let i = 0; i < inputCount; i++) {
-      const resp = await fetch(apiUrl(`api/jobs/${encodeURIComponent(id)}/images/input/${i}`));
+      const resp = await fetch(
+        apiUrl(`api/jobs/${encodeURIComponent(id)}/images/input/${i}`),
+        { signal: controller.signal });
       if (!resp.ok) {
-        if (i === 0) throw new Error(`input image fetch returned HTTP ${resp.status}`);
-        break;
+        throw new Error(`input image ${i} fetch returned HTTP ${resp.status}`);
       }
       const blob = await resp.blob();
       if (!blob.type.startsWith("image/")) {
@@ -7113,36 +7292,66 @@ async function setActiveFromJob(id, card) {
       }
       blobs.push(blob);
     }
-    await setImagesFromBlobs(blobs);
-  } else {
-    clearImage();
+
+    let restoredSketch = null;
+    let sketchNotice = "";
+    if (card.dataset.sketchComposer) {
+      let parsed;
+      try {
+        parsed = JSON.parse(card.dataset.sketchComposer);
+      } catch {
+        throw new Error("recorded sketch identity is not valid JSON");
+      }
+      const state = normalizeRecordedSketchState(parsed, inputCount);
+      restoredSketch = await prepareRestoredSketch(blobs[state.inputIndex], state);
+    } else if (promptHasSketchLegend(restoredPrompt)) {
+      sketchNotice = card.dataset.sketchComposerKnown === "true"
+        ? "This prompt has composition guidance but no linked editable sketch. The editor starts blank; existing attachments are unchanged."
+        : "This job predates recorded sketch identity, so no attachment can safely be chosen for editing. The editor starts blank; existing attachments are unchanged.";
+    }
+    if (operationVersion !== setActiveJobVersion) {
+      if (restoredSketch) restoredSketch.bitmap.close();
+      return;
+    }
+
+    setImagesFromBlobs(blobs, { restoredSketch, sketchNotice });
+    promptBox.value = restoredPrompt;
+    if (mcpheeCtl) mcpheeCtl.refresh();
+    if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+    const recorded = card.dataset;
+    if (recorded.optShape) el("opt-shape").value = recorded.optShape;
+    if (recorded.optDetail) el("opt-detail").value = recorded.optDetail;
+    if (recorded.optQuality) el("opt-quality").value = recorded.optQuality;
+    if (recorded.optModeration) el("opt-moderation").value = recorded.optModeration;
+    if (recorded.optN) el("opt-n").value = recorded.optN;
+    // gpt-image-2 guidance is deliberately NOT restored here: it's a global
+    // browser setting (settings modal, localStorage), not per-job composer state.
+    updateShapeOptionLabel();
+
+    const wanted = new Set([...card.querySelectorAll(".cell")].map((cell) => cell.dataset.gen));
+    // Both sections restore: describe selections come back too (the input image
+    // is already re-attached above, so their image requirement is satisfied).
+    for (const cb of allGeneratorInputs()) {
+      if (cb.dataset.available !== "true") continue;
+      cb.checked = wanted.has(cb.value);
+      cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
+    }
+    updateGeneratorCompatibility();
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    promptBox.focus({ preventScroll: true });
+  } catch (error) {
+    if (operationVersion === setActiveJobVersion) {
+      resetSketchEditor(
+        "The selected job did not finish loading, so the sketch editor remains blank.");
+    }
+    throw error;
+  } finally {
+    if (operationVersion === setActiveJobVersion) {
+      setActiveJobController = null;
+      el("sketch-open").disabled = false;
+    }
   }
-
-  promptBox.value = card.querySelector(".job-prompt").textContent;
-  if (mcpheeCtl) mcpheeCtl.refresh();
-  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
-  const recorded = card.dataset;
-  if (recorded.optShape) el("opt-shape").value = recorded.optShape;
-  if (recorded.optDetail) el("opt-detail").value = recorded.optDetail;
-  if (recorded.optQuality) el("opt-quality").value = recorded.optQuality;
-  if (recorded.optModeration) el("opt-moderation").value = recorded.optModeration;
-  if (recorded.optN) el("opt-n").value = recorded.optN;
-  // gpt-image-2 guidance is deliberately NOT restored here: it's a global
-  // browser setting (settings modal, localStorage), not per-job composer state.
-  updateShapeOptionLabel();
-
-  const wanted = new Set([...card.querySelectorAll(".cell")].map((cell) => cell.dataset.gen));
-  // Both sections restore: describe selections come back too (the input image
-  // is already re-attached above, so their image requirement is satisfied).
-  for (const cb of allGeneratorInputs()) {
-    if (cb.dataset.available !== "true") continue;
-    cb.checked = wanted.has(cb.value);
-    cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
-  }
-  updateGeneratorCompatibility();
-
-  window.scrollTo({ top: 0, behavior: "smooth" });
-  promptBox.focus({ preventScroll: true });
 }
 
 // opts: { user, container }. user is the creator display name (shared-site
@@ -7292,6 +7501,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
       try {
         await setActiveFromJob(id, card);
       } catch (err) {
+        if (err?.name === "AbortError") return;
         sendError.textContent = `set active failed: ${err}`;
         window.scrollTo({ top: 0, behavior: "smooth" });
       } finally {
@@ -7499,6 +7709,14 @@ function applyJobEvent(id, card, evt) {
       }
       card.dataset.generatorExtraTexts = JSON.stringify(extraTexts);
       card.dataset.generatorExtraTextsKnown = "true";
+    }
+    if (Object.hasOwn(evt, "sketchComposer")) {
+      card.dataset.sketchComposerKnown = "true";
+      if (evt.sketchComposer == null) {
+        delete card.dataset.sketchComposer;
+      } else {
+        card.dataset.sketchComposer = JSON.stringify(evt.sketchComposer);
+      }
     }
     // What the gpt2 target actually received: "sent" (guidance text rode
     // along) or "off" (toggle disabled). Absent on events recorded before
