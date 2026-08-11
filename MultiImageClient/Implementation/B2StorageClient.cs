@@ -61,8 +61,12 @@ namespace MultiImageClient
         /// Uploads one file. Single attempt (fresh upload URL per call, which
         /// is how B2 wants transient 50x errors handled); throws on any
         /// failure including a server-side SHA1 mismatch. Returns the B2
-        /// fileId (needed for future deletion).
-        public async Task<string> UploadFileAsync(string localPath, string objectKey, string contentType, CancellationToken cancellationToken)
+        /// fileId (needed for future deletion). `downloadFilename` (optional)
+        /// is stored as b2-content-disposition file info, which B2 serves as
+        /// the real Content-Disposition header on every anonymous download —
+        /// `inline` keeps images rendering in <img>/viewer while right-click
+        /// save-as gets this name instead of the opaque capability key.
+        public async Task<string> UploadFileAsync(string localPath, string objectKey, string contentType, string downloadFilename, CancellationToken cancellationToken)
         {
             if (!File.Exists(localPath))
             {
@@ -102,6 +106,14 @@ namespace MultiImageClient
                 request.Headers.TryAddWithoutValidation("Authorization", uploadToken);
                 request.Headers.TryAddWithoutValidation("X-Bz-File-Name", EscapeKeyForUrl(objectKey));
                 request.Headers.TryAddWithoutValidation("X-Bz-Content-Sha1", sha1Hex);
+                if (!string.IsNullOrWhiteSpace(downloadFilename))
+                {
+                    // B2 requires file-info header values to be percent-encoded;
+                    // it decodes them and serves the b2-content-disposition info
+                    // verbatim as the download's Content-Disposition header.
+                    var disposition = $"inline; filename=\"{SanitizeDownloadFilename(downloadFilename)}\"";
+                    request.Headers.TryAddWithoutValidation("X-Bz-Info-b2-content-disposition", Uri.EscapeDataString(disposition));
+                }
                 request.Content = new StreamContent(fileStream);
                 request.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType);
                 request.Content.Headers.ContentLength = new FileInfo(localPath).Length;
@@ -163,12 +175,27 @@ namespace MultiImageClient
             try
             {
                 var key = BuildObjectKey("smoke", "test", 0, "bin");
+                const string smokeDownloadName = "b2-smoke-download-name.bin";
                 Logger.Log($"b2-smoke: uploading 4096 random bytes as {key}");
-                var fileId = await UploadFileAsync(tempPath, key, "application/octet-stream", cancellationToken);
+                var fileId = await UploadFileAsync(tempPath, key, "application/octet-stream", smokeDownloadName, cancellationToken);
                 Logger.Log($"b2-smoke: upload OK (fileId {fileId}); fetching anonymously");
 
                 var url = DownloadUrlFor(key);
-                var fetched = await _http.GetByteArrayAsync(url, cancellationToken);
+                byte[] fetched;
+                using (var downloadResponse = await _http.GetAsync(url, cancellationToken))
+                {
+                    downloadResponse.EnsureSuccessStatusCode();
+                    fetched = await downloadResponse.Content.ReadAsByteArrayAsync(cancellationToken);
+                    var disposition = downloadResponse.Content.Headers.TryGetValues("Content-Disposition", out var values)
+                        ? string.Join("; ", values)
+                        : "";
+                    if (!disposition.Contains(smokeDownloadName, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"b2-smoke: download's Content-Disposition was '{disposition}', expected it to carry '{smokeDownloadName}' — b2-content-disposition file info is not being served.");
+                    }
+                    Logger.Log($"b2-smoke: Content-Disposition OK ({disposition})");
+                }
                 if (!fetched.SequenceEqual(payload))
                 {
                     throw new InvalidOperationException($"b2-smoke: downloaded bytes differ from uploaded bytes at {url}");
@@ -258,6 +285,26 @@ namespace MultiImageClient
             using var sha1 = SHA1.Create();
             var hash = await sha1.ComputeHashAsync(stream, cancellationToken);
             return Convert.ToHexString(hash).ToLowerInvariant();
+        }
+
+        /// Content-Disposition quoted-string safety: printable ASCII only,
+        /// with '"' and '\' replaced, capped at 180 chars keeping the
+        /// extension (B2 limits total file-info header bytes).
+        private static string SanitizeDownloadFilename(string filename)
+        {
+            var builder = new StringBuilder(filename.Length);
+            foreach (var c in filename)
+            {
+                builder.Append(c is >= ' ' and <= '~' && c != '"' && c != '\\' ? c : '_');
+            }
+            var safe = builder.ToString();
+            const int maxLength = 180;
+            if (safe.Length > maxLength)
+            {
+                var ext = Path.GetExtension(safe);
+                safe = safe.Substring(0, maxLength - ext.Length) + ext;
+            }
+            return safe;
         }
 
         /// B2 wants the file name URL-encoded in X-Bz-File-Name with '/'

@@ -271,6 +271,12 @@ is Stage 3 and waits on the owner's B2 signup).
   `StoreImagePath` succeed: upload that file to key
   `ui/{jobId}/{gen}/{n}-{128-bit random hex}.{ext}`
   (`RandomNumberGenerator`-sourced; the random segment is the capability).
+- Each upload stores `b2-content-disposition: inline; filename="..."` file
+  info carrying the local save's descriptive filename (added 2026-08-10). B2
+  serves it as the download's real `Content-Disposition`, so images render
+  inline as before but right-click save-as names the file after the sanitized
+  prompt + generator instead of the opaque capability key. `--b2-smoke`
+  asserts the header round-trips.
 - **Retry then hard-fail** (decision 1): 3 attempts with short backoff
   (fresh upload URL on 50x per B2 protocol); on final failure the image
   result errors visibly. No local-URL substitution, ever.

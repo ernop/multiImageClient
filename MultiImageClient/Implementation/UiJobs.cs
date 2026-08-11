@@ -227,6 +227,34 @@ namespace MultiImageClient
             StoreImage(genKey, n, Array.Empty<byte>(), contentType, durablePath);
         }
 
+        /// User-required product behavior (2026-08-10): when a streaming
+        /// generation fails after preview partials were shown (typically
+        /// gpt-image-2's final image getting moderated away), the last
+        /// streamed partial is kept visible instead of vanishing. This
+        /// persists the in-memory partial bytes for {genKey}/{n} to the job
+        /// folder and re-registers the key as path-backed, so the same stable
+        /// image URL the live preview used keeps serving that last known
+        /// state across restarts. Returns false when no ephemeral partial
+        /// exists for the key or persistence failed — the caller must not
+        /// claim a kept preview it cannot durably serve.
+        public bool TryPersistLastPartialImage(string genKey, int n)
+        {
+            var key = $"{genKey}/{n}";
+            if (_storage == null
+                || !_images.TryGetValue(key, out var v)
+                || v.Bytes == null
+                || v.Bytes.Length == 0)
+            {
+                return false;
+            }
+            if (_storage.PersistEphemeralImage(key, v.Bytes, v.ContentType) == null)
+            {
+                return false;
+            }
+            _images.TryRemove(key, out _);
+            return true;
+        }
+
         /// Records a checksum-verified B2 upload for a durably saved image.
         public bool StoreCdnReference(string genKey, int n, string cdnKey, string cdnFileId)
         {
@@ -718,6 +746,34 @@ namespace MultiImageClient
             {
                 Logger.Log($"UI history: could not save image reference: {ex.Message}");
                 return false;
+            }
+        }
+
+        /// Writes ephemeral in-memory bytes (the last streamed gpt-image-2
+        /// partial of a generation whose final never arrived) to a durable
+        /// file under the job folder and registers it in images.json under
+        /// the given key. Returns the written path, or null when the write or
+        /// registration failed — the caller must then keep the bytes in RAM.
+        public string? PersistEphemeralImage(string key, byte[] bytes, string contentType)
+        {
+            try
+            {
+                var partialsFolder = Path.Combine(_folder, "partials");
+                Directory.CreateDirectory(partialsFolder);
+                var ext = contentType switch
+                {
+                    "image/jpeg" => "jpg",
+                    "image/webp" => "webp",
+                    _ => "png",
+                };
+                var path = Path.Combine(partialsFolder, key.Replace('/', '-') + "." + ext);
+                File.WriteAllBytes(path, bytes);
+                return SaveImageReference(key, path, contentType) ? path : null;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not persist ephemeral image {key}: {ex.Message}");
+                return null;
             }
         }
 
@@ -2886,7 +2942,12 @@ namespace MultiImageClient
             {
                 try
                 {
-                    var fileId = await _b2!.UploadFileAsync(localPath, objectKey, contentType, CancellationToken.None);
+                    // The local save's descriptive filename (sanitized prompt +
+                    // generator + index) becomes the browser's save-as name via
+                    // b2-content-disposition; without it a right-click save
+                    // would get the opaque capability key.
+                    var fileId = await _b2!.UploadFileAsync(
+                        localPath, objectKey, contentType, Path.GetFileName(localPath), CancellationToken.None);
                     if (!job.StoreCdnReference(genKey, index, objectKey, fileId))
                     {
                         throw new InvalidOperationException(
@@ -3189,9 +3250,30 @@ namespace MultiImageClient
             merged.IsSuccess = ok;
             merged.CreateTotalMs = createMs;
             merged.DownloadTotalMs = downloadMs;
+            // User-required product behavior (2026-08-10): a generation that
+            // failed AFTER streaming preview partials (typically gpt-image-2's
+            // final getting moderated) keeps its last streamed partial visible
+            // instead of vanishing what the user watched arrive. The partial is
+            // persisted into the job folder and served under the same stable
+            // image URL the live preview used (so replayed gen-partial events
+            // stop 404ing after a restart too). The gen-result stays a failure:
+            // ok=false, zero cost, error text intact — the kept preview rides a
+            // separate index-aligned partialImages field and is explicitly
+            // labeled by the frontend, never presented as a result. These stay
+            // local-served even with B2 hosting on (failure artifacts are not
+            // uploaded; same v1 scope as videos/SVG).
+            List<string?>? partialUrls = null;
             if (!ok)
             {
                 merged.ErrorMessage = firstError ?? "Generation completed without returning usable image or video media.";
+                for (var partialIdx = 0; partialIdx < want; partialIdx++)
+                {
+                    if (job.TryPersistLastPartialImage(key, partialIdx))
+                    {
+                        partialUrls ??= Enumerable.Repeat<string?>(null, want).ToList();
+                        partialUrls[partialIdx] = $"/api/jobs/{job.Id}/images/{key}/{partialIdx}";
+                    }
+                }
             }
 
             // Known payment/auth failures carry a "next step" hint + the URL
@@ -3207,6 +3289,10 @@ namespace MultiImageClient
                 errorHintUrl = actionHint?.Url,
                 ms = elapsed,
                 images = urls,
+                // Failure only: last streamed preview partial(s) kept visible,
+                // index-aligned with the requested output indexes. Local URLs
+                // even when B2 hosting is on.
+                partialImages = partialUrls,
                 // Present only when B2 hosting is on: local ?thumb=1 card
                 // previews, index-aligned with `images` (whose entries are
                 // then absolute B2 URLs that have no thumb variant).

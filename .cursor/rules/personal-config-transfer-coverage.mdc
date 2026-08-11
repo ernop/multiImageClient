@@ -14,16 +14,23 @@ dictionaries, viewer behavior, activity preferences, and media preferences.
 
 When adding or changing one:
 
-1. Add its effective value to `buildPersonalConfiguration()` in
-   `MultiImageClient/Ui/wwwroot/app.js`.
-2. Add strict typed validation to
-   `normalizeImportedPersonalConfiguration()` or its nested normalizer.
-3. Add the exact localStorage write or authenticated server persistence path,
-   including rollback on failed server persistence.
+1. Add one descriptor to the canonical `personalConfigurationFields()`
+   registry in `MultiImageClient/Ui/wwwroot/app.js`, including its browser,
+   account, or hybrid persistence scope, effective-value reader, and strict
+   normalizer. Export and import must remain derived from this registry.
+2. Persist browser state only through the versioned document owned by
+   `MultiImageClient/Ui/wwwroot/personal-config.js`. Do not introduce another
+   standalone localStorage source. An independent component may keep a
+   compatibility mirror only when the canonical document remains the source
+   of truth and synchronization is explicit at the call site.
+3. Add or update authenticated server persistence where the field's declared
+   scope requires it, including local rollback on failed server persistence.
 4. Keep the settings-panel coverage note and `AGENTS.md` accurate.
-5. Bump `ConfigTransferVersion` only for an incompatible schema change, and
-   reject unsupported versions rather than guessing.
-6. Verify export → import → reload round-trip behavior and malformed-input
+5. Bump the schema version only for an incompatible change. Add one explicit
+   old-version-to-current migration and reject unknown versions rather than
+   guessing, defaulting, or retaining duplicate legacy representations.
+6. Extend `Ui/tests/personal-config.test.js`; verify exact export → import →
+   reload round trips plus malformed, missing, unknown, and unsupported-version
    rejection.
 
 Do not export credentials, cookies, provider keys, job/content history,

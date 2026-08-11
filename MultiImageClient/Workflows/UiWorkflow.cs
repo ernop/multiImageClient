@@ -41,7 +41,7 @@ namespace MultiImageClient
     ///   GET  /api/input-images                 distinct user-uploaded input images, newest first
     ///                                          (SHA-256 deduped), for the composer's load picker
     ///   GET  /api/logs/poll?after=N            current-process log lines after sequence N
-    ///   POST /api/generator-preferences        authenticated user's chooser visibility/defaults/presets
+    ///   POST /api/generator-preferences        authenticated user's chooser/defaults/presets/endpoint config
     ///   POST /api/prompt/advice                user-directed Claude prompt edit -> {replacement}
     ///   GET  /api/prompt/advice/history        exact, durable Claude exchange history for this user
     ///   GET  /api/archive/days                 archived (pre-today) days with job counts
@@ -419,6 +419,8 @@ namespace MultiImageClient
                     {
                         maxExtraTextChars = MaxGeneratorExtraTextChars,
                         maxNotesChars = MaxGeneratorNotesChars,
+                        maxConfigurationTotalChars = MaxGeneratorConfigurationTotalChars,
+                        maxJobExtraTextTotalChars = MaxJobExtraTextTotalChars,
                     },
                     // gpt-image-2 anti-murk guidance: on by default, textbox
                     // prefilled with this text, appended server-side to the
@@ -496,7 +498,10 @@ namespace MultiImageClient
                 {
                     var normalized = NormalizeGeneratorPreferences(authUser, submitted, runner);
                     community.SaveGeneratorPreferences(normalized);
-                    Logger.Log($"UI generator preferences: '{authUser}' updated chooser visibility, defaults, and {normalized.Presets.Count} preset(s).");
+                    Logger.Log(
+                        $"UI generator preferences: '{authUser}' updated chooser visibility, defaults, "
+                        + $"{normalized.Presets.Count} preset(s), and "
+                        + $"{normalized.EndpointConfigurations.Count} endpoint override(s).");
                     return Results.Json(new
                     {
                         ok = true,
@@ -931,6 +936,15 @@ namespace MultiImageClient
                         moderation = spec.Moderation,
                         n = spec.ImageCount,
                         generatorExtraTexts = spec.GeneratorExtraTexts,
+                        // Keep the legacy gpt2 event fields while pre-feature
+                        // browser windows remain possible. New clients use the
+                        // keyed map above for every image endpoint.
+                        gpt2GuidanceEnabled = spec.GeneratorExtraTexts.ContainsKey(UiJobRunner.KeyGpt2),
+                        gpt2GuidanceText = spec.GeneratorExtraTexts.TryGetValue(
+                            UiJobRunner.KeyGpt2,
+                            out var gpt2ExtraText)
+                            ? gpt2ExtraText
+                            : "",
                         prompt,
                         at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     });
@@ -1337,9 +1351,12 @@ namespace MultiImageClient
                 //
                 // Cacheability is decided per image, not per job: a durable
                 // on-disk path is only ever recorded once, when that gen/index's
-                // FINAL bytes are saved (partials live as path-less RAM bytes),
-                // so path-backed responses are immutable even while sibling
-                // generators of the same job are still running. Without this,
+                // TERMINAL bytes are saved — the final result, or the kept last
+                // preview of a generation that failed after streaming partials
+                // (in-flight partials live as path-less RAM bytes). Either way
+                // the URL's bytes never change again, so path-backed responses
+                // are immutable even while sibling generators of the same job
+                // are still running. Without this,
                 // reviewing another user's fresh multi-generator job re-fetched
                 // every already-final multi-MB original on each viewer open and
                 // navigation until the job's last generator landed.

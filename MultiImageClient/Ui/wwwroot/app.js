@@ -15,6 +15,43 @@ const apiUrl = (path) => {
   return appBase + value.replace(/^\//, "");
 };
 
+const PersonalConfigurationSchema = MultiImagePersonalConfiguration;
+let storedPersonalConfiguration = null;
+let storedPersonalConfigurationError = null;
+try {
+  storedPersonalConfiguration = PersonalConfigurationSchema.parseStored(
+    localStorage.getItem(PersonalConfigurationSchema.StorageKey));
+} catch (error) {
+  storedPersonalConfigurationError = error;
+}
+
+const storedPersonalField = (name) =>
+  storedPersonalConfiguration && Object.hasOwn(storedPersonalConfiguration, name)
+    ? storedPersonalConfiguration[name]
+    : undefined;
+
+// McPhee is a vendored independent browser component and still consumes its
+// established storage keys. The versioned personal configuration is the
+// source of truth; these keys are compatibility mirrors hydrated before
+// McPhee initializes and synchronized back after its controls change.
+function hydrateMcpheeStorageMirrors() {
+  const spelling = storedPersonalField("spelling");
+  if (!spelling || typeof spelling !== "object" || Array.isArray(spelling)) return;
+  const mirrors = [
+    ["mic_spellwell_custom_dict", spelling.customDictionary],
+    ["mic_spellwell_custom_dict:ignored", spelling.ignoredWords],
+    ["mic_spellwell_custom_dict:notrare", spelling.notRareWords],
+    ["mic_mcphee_formality", spelling.formality],
+    ["mic_mcphee_rule_overrides", spelling.ruleOverrides],
+  ];
+  for (const [key, value] of mirrors) {
+    if (value === undefined) continue;
+    localStorage.setItem(key, typeof value === "string" ? value : JSON.stringify(value));
+  }
+}
+
+hydrateMcpheeStorageMirrors();
+
 // ---------- state ----------
 
 // Ordered composer attachments. gpt-image-2 /edits receives every entry;
@@ -30,7 +67,12 @@ let promptAdvicePrevious = null;  // exact prompt from before the last Claude ed
 let generatorPreferences = null;
 const GeneratorPreferencesLocalKey = "mic_generator_preferences_v1";
 const ClaudeAdviceInstructionKey = "mic_claude_advice_instruction_v1";
-let generatorEndpointConfiguration = { maxExtraTextChars: 16000, maxNotesChars: 16000 };
+let generatorEndpointConfiguration = {
+  maxExtraTextChars: 16000,
+  maxNotesChars: 16000,
+  maxConfigurationTotalChars: 128000,
+  maxJobExtraTextTotalChars: 64000,
+};
 // Standard instruction the server substitutes for blank describe-only jobs;
 // the composer applies the same text at submit so the card shows exactly
 // what was recorded.
@@ -53,7 +95,11 @@ const UserFilterKey = "mic_user_filter_v1";
 let knownUsers = new Map();  // user -> job count (live-accumulated)
 let selectedUserFilter = new Set();  // empty = show everyone
 try {
-  for (const u of JSON.parse(localStorage.getItem(UserFilterKey) || "[]")) {
+  const savedPeopleFilters = storedPersonalField("peopleFilters");
+  const values = savedPeopleFilters === undefined
+    ? JSON.parse(localStorage.getItem(UserFilterKey) || "[]")
+    : savedPeopleFilters;
+  for (const u of values) {
     selectedUserFilter.add(String(u));
   }
 } catch { /* corrupted filter state just resets to everyone */ }
@@ -98,12 +144,14 @@ let imageViewerHelpOpen = false;
 // Global "always compare with the input image" toggle (`c` in the viewer),
 // sticky across images and page loads. Jobs without an input image show the
 // normal single-image view even while the mode is on.
-let imageViewerCompareInput = localStorage.getItem("imageViewerCompareInput") === "true";
+let imageViewerCompareInput = storedPersonalField("viewer")?.compareWithInput ??
+  (localStorage.getItem("imageViewerCompareInput") === "true");
 // Close handback ("inner movement implies outer movement"): when ON, closing
 // the viewer scrolls the page to the image that was on screen and focuses its
 // thumbnail. OFF by default — the page stays exactly where it was. Toggled in
 // the settings panel or instantly with `s` inside the viewer; per-browser.
-let imageViewerReturnSync = localStorage.getItem("imageViewerReturnSync") === "true";
+let imageViewerReturnSync = storedPersonalField("viewer")?.closeHandback ??
+  (localStorage.getItem("imageViewerReturnSync") === "true");
 // Per-browser record of every image ever displayed full-size in the viewer;
 // marks card thumbnails with a subtle accent edge. Unofficial bookkeeping
 // only — capped, oldest entries retire first.
@@ -452,7 +500,7 @@ function normalizeGeneratorPreferences(raw) {
       throw new Error(`private notes for ${configuration.key} are too long`);
     }
     configurationChars += (extraText?.length || 0) + (notes?.length || 0);
-    if (configurationChars > 128000) {
+    if (configurationChars > generatorEndpointConfiguration.maxConfigurationTotalChars) {
       throw new Error("per-endpoint generator configuration is too large");
     }
     configuredKeys.add(configuration.key);
@@ -524,6 +572,8 @@ function loadGeneratorPreferences(cfg) {
     return normalizeGeneratorPreferences(cfg.generatorPreferences);
   }
   if (!cfg.auth?.enabled) {
+    const canonical = storedPersonalField("generatorPreferences");
+    if (canonical !== undefined) return normalizeGeneratorPreferences(canonical);
     const stored = localStorage.getItem(GeneratorPreferencesLocalKey);
     if (stored !== null) return normalizeGeneratorPreferences(JSON.parse(stored));
   }
@@ -553,6 +603,12 @@ async function loadConfig() {
   authInfo = cfg.auth || authInfo;
   generatorPreferences = loadGeneratorPreferences(cfg);
   migrateLegacyGpt2GuidancePreference(generatorPreferences);
+  if (storedPersonalConfigurationError) {
+    throw storedPersonalConfigurationError;
+  }
+  if (storedPersonalConfiguration) {
+    normalizeImportedPersonalConfiguration(storedPersonalConfiguration);
+  }
   notificationConfig = cfg.notifications || notificationConfig;
   applyAuthState();
   initializeActivityConfig();
@@ -679,6 +735,8 @@ async function loadConfig() {
   // Visibility (needs an attached image + at least one describe target) is
   // owned by updateGeneratorCompatibility, called next.
   updateGeneratorCompatibility();
+  persistPersonalConfigurationSnapshot();
+  removeLegacyPersonalConfigurationStorage();
 }
 
 function hasInputImages() {
@@ -864,7 +922,10 @@ function normalizeContentMaxWidth(value) {
 
 function loadUiSettings() {
   try {
-    const saved = JSON.parse(localStorage.getItem(UiSettingsKey) || "{}");
+    const canonical = storedPersonalField("uiSettings");
+    const saved = canonical === undefined
+      ? JSON.parse(localStorage.getItem(UiSettingsKey) || "{}")
+      : canonical;
     return {
       nightHideEnabled: saved.nightHideEnabled === true,
       nightWords: typeof saved.nightWords === "string" ? saved.nightWords : "",
@@ -914,7 +975,7 @@ function loadUiSettings() {
 const uiSettings = loadUiSettings();
 
 function saveUiSettings() {
-  localStorage.setItem(UiSettingsKey, JSON.stringify(uiSettings));
+  persistPersonalConfigurationSnapshot();
 }
 
 const settingsToggle = el("settings-toggle");
@@ -930,8 +991,8 @@ const nightWordsBox = el("night-words");
 const configExportJson = el("config-export-json");
 const configImportJson = el("config-import-json");
 const configTransferStatus = el("config-transfer-status");
-const ConfigTransferFormat = "MultiImageClient personalized configuration";
-const ConfigTransferVersion = 1;
+const ConfigTransferFormat = PersonalConfigurationSchema.Format;
+const ConfigTransferVersion = PersonalConfigurationSchema.Version;
 const ConfigTransferMaxChars = 1_000_000;
 
 let nightMatchers = null; // compiled lazily, invalidated when the list changes
@@ -1015,51 +1076,92 @@ function effectiveSpellingWords(storageKey, methodName) {
   return parseConfigStorageJson(storageKey, []);
 }
 
+function personalConfigurationFields() {
+  return [
+    {
+      name: "creatingAs",
+      scope: "hybrid",
+      read: () => authInfo.profile?.displayName || currentUsername(),
+      normalize: normalizeImportedCreatingAs,
+    },
+    {
+      name: "peopleFilters",
+      scope: "browser",
+      read: () => [...selectedUserFilter],
+      normalize: normalizeImportedPeopleFilters,
+    },
+    {
+      name: "generatorPreferences",
+      scope: "hybrid",
+      read: () => {
+        if (!generatorPreferences) throw new Error("server configuration is still loading");
+        return JSON.parse(JSON.stringify(generatorPreferences));
+      },
+      normalize: normalizeGeneratorPreferences,
+    },
+    {
+      name: "uiSettings",
+      scope: "browser",
+      read: () => ({ ...uiSettings }),
+      normalize: normalizeImportedUiSettings,
+    },
+    {
+      name: "promptTools",
+      scope: "browser",
+      read: () => ({
+        claudeAdviceInstruction:
+          claudeAdviceInstruction?.value ||
+          storedPersonalField("promptTools")?.claudeAdviceInstruction ||
+          localStorage.getItem(ClaudeAdviceInstructionKey) ||
+          DefaultClaudeAdviceInstruction,
+      }),
+      normalize: normalizeImportedPromptTools,
+    },
+    {
+      name: "spelling",
+      scope: "browser",
+      read: readPersonalSpellingConfiguration,
+      normalize: normalizeImportedSpelling,
+    },
+    {
+      name: "inspirationLibrary",
+      scope: "browser",
+      read: () => ({
+        custom: JSON.parse(JSON.stringify(inspirationState.custom)),
+        favorites: [...inspirationState.favorites],
+        recent: [...inspirationState.recent],
+      }),
+      normalize: normalizeImportedInspirationLibrary,
+    },
+    {
+      name: "viewer",
+      scope: "browser",
+      read: () => ({
+        compareWithInput: imageViewerCompareInput,
+        closeHandback: imageViewerReturnSync,
+      }),
+      normalize: normalizeImportedViewer,
+    },
+    {
+      name: "videoAudio",
+      scope: "browser",
+      read: () => ({ volume: sharedVideoVolume, muted: sharedVideoMuted }),
+      normalize: normalizeImportedVideoAudio,
+    },
+    {
+      name: "costSummaryCollapsed",
+      scope: "browser",
+      read: () => costSummaryCollapsed,
+      normalize: (value) => requireConfigBoolean(value, "costSummaryCollapsed"),
+    },
+  ];
+}
+
 function buildPersonalConfiguration() {
-  if (!generatorPreferences) {
-    throw new Error("server configuration is still loading");
-  }
-  const creatingAs = authInfo.profile?.displayName || currentUsername();
-  const gpt2ExtraText = effectiveEndpointField("gpt2", "extraText");
-  const gpt2DefaultText = endpointGenerator("gpt2")?.defaultExtraText || "";
-  return {
-    format: ConfigTransferFormat,
-    version: ConfigTransferVersion,
-    creatingAs,
-    peopleFilters: [...selectedUserFilter],
-    generatorPreferences: JSON.parse(JSON.stringify(generatorPreferences)),
-    uiSettings: { ...uiSettings },
-    gptImage2Guidance: {
-      enabled: gpt2ExtraText.trim().length > 0,
-      text: gpt2ExtraText.trim().length > 0 ? gpt2ExtraText : gpt2DefaultText,
-    },
-    promptTools: {
-      claudeAdviceInstruction:
-        localStorage.getItem(ClaudeAdviceInstructionKey) || DefaultClaudeAdviceInstruction,
-    },
-    spelling: {
-      enabled: localStorage.getItem(mcpheeEnabledStorageKey) !== "false",
-      customDictionary: effectiveSpellingWords("mic_spellwell_custom_dict", "listCustomWords"),
-      ignoredWords: effectiveSpellingWords("mic_spellwell_custom_dict:ignored", "listIgnoredWords"),
-      notRareWords: effectiveSpellingWords("mic_spellwell_custom_dict:notrare", "listNotRareWords"),
-      formality: localStorage.getItem("mic_mcphee_formality") || "standard",
-      ruleOverrides: parseConfigStorageJson("mic_mcphee_rule_overrides", {}),
-    },
-    inspirationLibrary: {
-      custom: JSON.parse(JSON.stringify(inspirationState.custom)),
-      favorites: [...inspirationState.favorites],
-      recent: [...inspirationState.recent],
-    },
-    viewer: {
-      compareWithInput: imageViewerCompareInput,
-      closeHandback: imageViewerReturnSync,
-    },
-    videoAudio: {
-      volume: sharedVideoVolume,
-      muted: sharedVideoMuted,
-    },
-    costSummaryCollapsed,
-  };
+  const fields = personalConfigurationFields();
+  return PersonalConfigurationSchema.normalize(
+    PersonalConfigurationSchema.build(fields),
+    fields);
 }
 
 function refreshConfigExport() {
@@ -1088,6 +1190,19 @@ function normalizeImportedCreatingAs(value) {
   return normalized;
 }
 
+function normalizeImportedPeopleFilters(raw) {
+  const peopleFilters = requireConfigStringArray(raw, "peopleFilters", {
+    maxItems: 500,
+    maxItemLength: 32,
+  });
+  for (const name of peopleFilters) {
+    if (!/^[A-Za-z0-9 ._-]+$/.test(name)) {
+      throw new Error(`peopleFilters contains invalid username ${name}`);
+    }
+  }
+  return peopleFilters;
+}
+
 function normalizeImportedUiSettings(raw) {
   const keys = [
     "nightHideEnabled", "nightWords", "showCosts", "contentMaxWidth", "describeExpanded",
@@ -1114,6 +1229,32 @@ function normalizeImportedUiSettings(raw) {
     normalized[key] = requireConfigNullableNumber(raw[key], `uiSettings.${key}`);
   }
   return normalized;
+}
+
+function normalizeImportedPromptTools(raw) {
+  const promptTools = requireConfigObject(
+    raw,
+    "promptTools",
+    ["claudeAdviceInstruction"]);
+  return {
+    claudeAdviceInstruction: requireConfigString(
+      promptTools.claudeAdviceInstruction,
+      "promptTools.claudeAdviceInstruction",
+      4000,
+      false),
+  };
+}
+
+function readPersonalSpellingConfiguration() {
+  return {
+    enabled: storedPersonalField("spelling")?.enabled ??
+      (localStorage.getItem(mcpheeEnabledStorageKey) !== "false"),
+    customDictionary: effectiveSpellingWords("mic_spellwell_custom_dict", "listCustomWords"),
+    ignoredWords: effectiveSpellingWords("mic_spellwell_custom_dict:ignored", "listIgnoredWords"),
+    notRareWords: effectiveSpellingWords("mic_spellwell_custom_dict:notrare", "listNotRareWords"),
+    formality: localStorage.getItem("mic_mcphee_formality") || "standard",
+    ruleOverrides: parseConfigStorageJson("mic_mcphee_rule_overrides", {}),
+  };
 }
 
 function normalizeImportedSpelling(raw) {
@@ -1221,8 +1362,28 @@ function normalizeImportedInspirationLibrary(raw) {
   };
 }
 
-function normalizeImportedPersonalConfiguration(raw) {
-  requireConfigObject(raw, "configuration", [
+function normalizeImportedViewer(raw) {
+  const viewer = requireConfigObject(raw, "viewer", ["compareWithInput", "closeHandback"]);
+  return {
+    compareWithInput: requireConfigBoolean(viewer.compareWithInput, "viewer.compareWithInput"),
+    closeHandback: requireConfigBoolean(viewer.closeHandback, "viewer.closeHandback"),
+  };
+}
+
+function normalizeImportedVideoAudio(raw) {
+  const videoAudio = requireConfigObject(raw, "videoAudio", ["volume", "muted"]);
+  return {
+    volume: requireConfigNumber(videoAudio.volume, "videoAudio.volume", 0, 1),
+    muted: requireConfigBoolean(videoAudio.muted, "videoAudio.muted"),
+  };
+}
+
+function migratePersonalConfiguration(raw, targetVersion) {
+  if (raw?.version !== 1 || targetVersion !== ConfigTransferVersion) {
+    throw new Error(
+      `unsupported configuration version ${String(raw?.version)}; expected ${ConfigTransferVersion}`);
+  }
+  requireConfigObject(raw, "configuration version 1", [
     "format", "version", "creatingAs", "peopleFilters", "generatorPreferences", "uiSettings",
     "gptImage2Guidance", "promptTools", "spelling", "inspirationLibrary", "viewer",
     "videoAudio", "costSummaryCollapsed",
@@ -1230,100 +1391,80 @@ function normalizeImportedPersonalConfiguration(raw) {
   if (raw.format !== ConfigTransferFormat) {
     throw new Error(`format must be exactly "${ConfigTransferFormat}"`);
   }
-  if (raw.version !== ConfigTransferVersion) {
-    throw new Error(`unsupported configuration version ${String(raw.version)}; expected ${ConfigTransferVersion}`);
-  }
-  const creatingAs = normalizeImportedCreatingAs(raw.creatingAs);
-  const peopleFilters = requireConfigStringArray(raw.peopleFilters, "peopleFilters", {
-    maxItems: 500,
-    maxItemLength: 32,
-  });
-  for (const name of peopleFilters) {
-    if (!/^[A-Za-z0-9 ._-]+$/.test(name)) {
-      throw new Error(`peopleFilters contains invalid username ${name}`);
-    }
-  }
-  const importedPreferencesHadEndpointConfigurations =
+  const preferencesHadEndpointConfigurations =
+    raw.generatorPreferences &&
+    typeof raw.generatorPreferences === "object" &&
     Object.hasOwn(raw.generatorPreferences, "endpointConfigurations");
-  const generatorPreferencesValue = normalizeGeneratorPreferences(raw.generatorPreferences);
-  const gptGuidance = requireConfigObject(
+  const preferences = normalizeGeneratorPreferences(raw.generatorPreferences);
+  const guidance = requireConfigObject(
     raw.gptImage2Guidance,
     "gptImage2Guidance",
     ["enabled", "text"]);
-  const normalizedGptGuidance = {
-    enabled: requireConfigBoolean(gptGuidance.enabled, "gptImage2Guidance.enabled"),
-    text: requireConfigString(gptGuidance.text, "gptImage2Guidance.text", 20_000, false),
-  };
-  const legacyGpt2ExtraText = normalizedGptGuidance.enabled ? normalizedGptGuidance.text : "";
-  if (importedPreferencesHadEndpointConfigurations) {
-    if (effectiveEndpointField("gpt2", "extraText", generatorPreferencesValue) !== legacyGpt2ExtraText) {
+  const enabled = requireConfigBoolean(guidance.enabled, "gptImage2Guidance.enabled");
+  const text = requireConfigString(guidance.text, "gptImage2Guidance.text", 20_000, false);
+  const legacyExtraText = enabled ? text : "";
+  if (preferencesHadEndpointConfigurations) {
+    if (effectiveEndpointField("gpt2", "extraText", preferences) !== legacyExtraText) {
       throw new Error(
         "gptImage2Guidance conflicts with generatorPreferences.endpointConfigurations for gpt-image-2");
     }
   } else {
-    setEndpointFieldOverride(
-      generatorPreferencesValue,
-      "gpt2",
-      "extraText",
-      legacyGpt2ExtraText);
+    setEndpointFieldOverride(preferences, "gpt2", "extraText", legacyExtraText);
   }
-  const promptTools = requireConfigObject(
-    raw.promptTools,
-    "promptTools",
-    ["claudeAdviceInstruction"]);
-  const viewer = requireConfigObject(raw.viewer, "viewer", ["compareWithInput", "closeHandback"]);
-  const videoAudio = requireConfigObject(raw.videoAudio, "videoAudio", ["volume", "muted"]);
+  const portable = { ...raw };
+  delete portable.gptImage2Guidance;
+  delete portable.version;
   return {
-    creatingAs,
-    peopleFilters,
-    generatorPreferences: generatorPreferencesValue,
-    uiSettings: normalizeImportedUiSettings(raw.uiSettings),
-    gptImage2Guidance: normalizedGptGuidance,
-    promptTools: {
-      claudeAdviceInstruction: requireConfigString(
-        promptTools.claudeAdviceInstruction,
-        "promptTools.claudeAdviceInstruction",
-        4000,
-        false),
-    },
-    spelling: normalizeImportedSpelling(raw.spelling),
-    inspirationLibrary: normalizeImportedInspirationLibrary(raw.inspirationLibrary),
-    viewer: {
-      compareWithInput: requireConfigBoolean(viewer.compareWithInput, "viewer.compareWithInput"),
-      closeHandback: requireConfigBoolean(viewer.closeHandback, "viewer.closeHandback"),
-    },
-    videoAudio: {
-      volume: requireConfigNumber(videoAudio.volume, "videoAudio.volume", 0, 1),
-      muted: requireConfigBoolean(videoAudio.muted, "videoAudio.muted"),
-    },
-    costSummaryCollapsed: requireConfigBoolean(raw.costSummaryCollapsed, "costSummaryCollapsed"),
+    ...portable,
+    version: targetVersion,
+    generatorPreferences: preferences,
   };
+}
+
+function normalizeImportedPersonalConfiguration(raw) {
+  return PersonalConfigurationSchema.normalize(
+    raw,
+    personalConfigurationFields(),
+    migratePersonalConfiguration);
 }
 
 function importedConfigurationStorageWrites(config) {
   const writes = new Map([
-    [UsernameKey, config.creatingAs],
-    [UserFilterKey, JSON.stringify(config.peopleFilters)],
-    [UiSettingsKey, JSON.stringify(config.uiSettings)],
-    [Gpt2GuidanceEnabledKey, String(config.gptImage2Guidance.enabled)],
-    [Gpt2GuidanceTextKey, config.gptImage2Guidance.text],
-    [ClaudeAdviceInstructionKey, config.promptTools.claudeAdviceInstruction],
-    [mcpheeEnabledStorageKey, String(config.spelling.enabled)],
+    [PersonalConfigurationSchema.StorageKey, JSON.stringify(config)],
     ["mic_spellwell_custom_dict", JSON.stringify(config.spelling.customDictionary)],
     ["mic_spellwell_custom_dict:ignored", JSON.stringify(config.spelling.ignoredWords)],
     ["mic_spellwell_custom_dict:notrare", JSON.stringify(config.spelling.notRareWords)],
     ["mic_mcphee_formality", config.spelling.formality],
     ["mic_mcphee_rule_overrides", JSON.stringify(config.spelling.ruleOverrides)],
-    [InspirationStorageKey, JSON.stringify(config.inspirationLibrary)],
-    ["imageViewerCompareInput", String(config.viewer.compareWithInput)],
-    ["imageViewerReturnSync", String(config.viewer.closeHandback)],
-    [VideoAudioStorageKey, JSON.stringify(config.videoAudio)],
-    [CostSummaryCollapsedKey, String(config.costSummaryCollapsed)],
   ]);
-  if (!authInfo.enabled) {
-    writes.set(GeneratorPreferencesLocalKey, JSON.stringify(config.generatorPreferences));
-  }
   return writes;
+}
+
+function persistPersonalConfigurationSnapshot() {
+  const config = buildPersonalConfiguration();
+  localStorage.setItem(PersonalConfigurationSchema.StorageKey, JSON.stringify(config));
+  storedPersonalConfiguration = config;
+  storedPersonalConfigurationError = null;
+}
+
+function removeLegacyPersonalConfigurationStorage() {
+  for (const key of [
+    UsernameKey,
+    UserFilterKey,
+    GeneratorPreferencesLocalKey,
+    UiSettingsKey,
+    Gpt2GuidanceEnabledKey,
+    Gpt2GuidanceTextKey,
+    ClaudeAdviceInstructionKey,
+    mcpheeEnabledStorageKey,
+    InspirationStorageKey,
+    "imageViewerCompareInput",
+    "imageViewerReturnSync",
+    VideoAudioStorageKey,
+    CostSummaryCollapsedKey,
+  ]) {
+    localStorage.removeItem(key);
+  }
 }
 
 function applyLocalStorageWrites(writes) {
@@ -1517,7 +1658,7 @@ const viewerReturnSyncBox = el("viewer-return-sync");
 
 function setViewerReturnSync(enabled) {
   imageViewerReturnSync = enabled;
-  localStorage.setItem("imageViewerReturnSync", String(enabled));
+  persistPersonalConfigurationSnapshot();
   viewerReturnSyncBox.checked = enabled;
 }
 
@@ -2570,10 +2711,9 @@ generatorConfigForm.addEventListener("submit", async (event) => {
       if (response.status === 401) { location.reload(); return; }
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-    } else {
-      localStorage.setItem(GeneratorPreferencesLocalKey, JSON.stringify(normalized));
     }
     generatorPreferences = normalized;
+    persistPersonalConfigurationSnapshot();
     localStorage.removeItem(Gpt2GuidanceEnabledKey);
     localStorage.removeItem(Gpt2GuidanceTextKey);
     generatorConfigDialog.close();
@@ -2921,7 +3061,10 @@ let inspirationRendered = [];
 
 function loadInspirationState() {
   try {
-    const saved = JSON.parse(localStorage.getItem(InspirationStorageKey) || "{}");
+    const canonical = storedPersonalField("inspirationLibrary");
+    const saved = canonical === undefined
+      ? JSON.parse(localStorage.getItem(InspirationStorageKey) || "{}")
+      : canonical;
     inspirationState.custom = Array.isArray(saved.custom) ? saved.custom.filter(validInspirationItem) : [];
     inspirationState.favorites = Array.isArray(saved.favorites) ? saved.favorites : [];
     inspirationState.recent = Array.isArray(saved.recent) ? saved.recent : [];
@@ -2936,11 +3079,7 @@ function validInspirationItem(item) {
 }
 
 function saveInspirationState() {
-  localStorage.setItem(InspirationStorageKey, JSON.stringify({
-    custom: inspirationState.custom,
-    favorites: inspirationState.favorites,
-    recent: inspirationState.recent,
-  }));
+  persistPersonalConfigurationSnapshot();
 }
 
 function inspirationItems() {
@@ -3156,7 +3295,9 @@ const usernameInput = el("username-input");
 const profileNameSave = el("profile-name-save");
 const profileNameStatus = el("profile-name-status");
 const logoutBtn = el("logout");
-usernameInput.value = localStorage.getItem(UsernameKey) || "";
+usernameInput.value = storedPersonalField("creatingAs") ??
+  localStorage.getItem(UsernameKey) ??
+  "";
 
 function currentUsername() {
   return usernameInput.value.trim().replace(/\s+/g, " ");
@@ -3184,7 +3325,7 @@ usernameInput.addEventListener("input", () => {
 });
 
 usernameInput.addEventListener("change", () => {
-  localStorage.setItem(UsernameKey, currentUsername());
+  persistPersonalConfigurationSnapshot();
   favoriteMutationError = null;
   refreshFavoritePresentation();
   updateProfileNameControl();
@@ -3196,10 +3337,10 @@ function applyAuthState() {
     const serverName = authInfo.profile?.displayName || "";
     if (serverName) {
       usernameInput.value = serverName;
-      localStorage.setItem(UsernameKey, serverName);
+      persistPersonalConfigurationSnapshot();
     } else if (!currentUsername()) {
       usernameInput.value = authInfo.user;
-      localStorage.setItem(UsernameKey, authInfo.user);
+      persistPersonalConfigurationSnapshot();
     }
   }
   updateProfileNameControl();
@@ -3260,7 +3401,7 @@ async function pollProfiles(force = false) {
       if (document.activeElement !== usernameInput &&
           (!oldServerName || currentUsername() === oldServerName || currentUsername() === authInfo.user)) {
         usernameInput.value = currentDisplay;
-        localStorage.setItem(UsernameKey, currentDisplay);
+        persistPersonalConfigurationSnapshot();
       }
       updateProfileNameControl();
     }
@@ -3293,7 +3434,7 @@ profileNameSave.addEventListener("click", async () => {
       publicId: body.publicId,
       displayName: body.displayName,
     };
-    localStorage.setItem(UsernameKey, body.displayName);
+    persistPersonalConfigurationSnapshot();
     if (oldName && selectedUserFilter.delete(oldName)) {
       selectedUserFilter.add(body.displayName);
       persistUserFilter();
@@ -3337,7 +3478,7 @@ function applyUserFilterAll() {
 }
 
 function persistUserFilter() {
-  localStorage.setItem(UserFilterKey, JSON.stringify([...selectedUserFilter]));
+  persistPersonalConfigurationSnapshot();
 }
 
 function renderUserChips() {
@@ -4162,10 +4303,19 @@ async function submit() {
   form.append("moderation", el("opt-moderation").value);
   form.append("n", el("opt-n").value);
   const generatorExtraTexts = {};
+  let generatorExtraTextChars = 0;
   for (const key of gens) {
     if (isDescribeGenKey(key)) continue;
     const extraText = effectiveEndpointField(key, "extraText").trim();
-    if (extraText) generatorExtraTexts[key] = extraText;
+    if (extraText) {
+      generatorExtraTexts[key] = extraText;
+      generatorExtraTextChars += extraText.length;
+    }
+  }
+  if (generatorExtraTextChars > generatorEndpointConfiguration.maxJobExtraTextTotalChars) {
+    sendError.textContent =
+      `selected endpoint extra text exceeds ${generatorEndpointConfiguration.maxJobExtraTextTotalChars.toLocaleString()} characters in total`;
+    return;
   }
   form.append("generatorExtraTexts", JSON.stringify(generatorExtraTexts));
   inputImageItems.forEach((item, index) => {
@@ -4298,7 +4448,9 @@ function openClaudeAdvice() {
   sendError.textContent = "";
   claudeAdviceOriginalPrompt = original;
   claudeAdviceInstruction.value =
-    localStorage.getItem(ClaudeAdviceInstructionKey) || DefaultClaudeAdviceInstruction;
+    storedPersonalField("promptTools")?.claudeAdviceInstruction ||
+    localStorage.getItem(ClaudeAdviceInstructionKey) ||
+    DefaultClaudeAdviceInstruction;
   claudeAdviceStatus.textContent = "";
   buildClaudeAdviceWirePreview();
   claudeAdviceHistoryLoaded = false;
@@ -4312,7 +4464,7 @@ promptAdviceBtn.addEventListener("click", openClaudeAdvice);
 el("claude-advice-close").addEventListener("click", () => claudeAdviceDialog.close());
 el("claude-advice-cancel").addEventListener("click", () => claudeAdviceDialog.close());
 claudeAdviceInstruction.addEventListener("input", () => {
-  localStorage.setItem(ClaudeAdviceInstructionKey, claudeAdviceInstruction.value);
+  persistPersonalConfigurationSnapshot();
   buildClaudeAdviceWirePreview();
 });
 claudeAdviceHistory.addEventListener("toggle", () => {
@@ -4407,6 +4559,14 @@ async function initMcphee() {
     if (!(mcphee.freqRank instanceof Map) || mcphee.freqRank.size < 10000) {
       throw new Error("McPhee frequency data is missing or malformed");
     }
+    for (const methodName of ["saveCustomDict", "saveIgnoredWords", "saveNotRareWords"]) {
+      const original = mcphee[methodName].bind(mcphee);
+      mcphee[methodName] = (...args) => {
+        const result = original(...args);
+        persistPersonalConfigurationSnapshot();
+        return result;
+      };
+    }
     mcpheeCtl = mcphee.attach(promptBox);
     mcpheePanel = mcphee.attachPanel({
       textarea: promptBox,
@@ -4414,11 +4574,17 @@ async function initMcphee() {
       controller: mcpheeCtl,
       formalityStorageKey: "mic_mcphee_formality",
       ruleOverridesStorageKey: "mic_mcphee_rule_overrides",
+      onChange: persistPersonalConfigurationSnapshot,
     });
+    const persistMcpheePanelChange = () =>
+      queueMicrotask(persistPersonalConfigurationSnapshot);
+    mcpheePanelContainer.addEventListener("click", persistMcpheePanelChange);
+    mcpheePanelContainer.addEventListener("change", persistMcpheePanelChange);
     mcpheeEnabledToggle.disabled = false;
     mcpheePanelToggle.disabled = false;
-    const storedEnabled = localStorage.getItem(mcpheeEnabledStorageKey);
-    setMcpheeEnabled(storedEnabled !== "false", false);
+    const canonicalEnabled = storedPersonalField("spelling")?.enabled;
+    const legacyEnabled = localStorage.getItem(mcpheeEnabledStorageKey);
+    setMcpheeEnabled(canonicalEnabled ?? (legacyEnabled !== "false"), false);
   } catch (err) {
     // Missing or malformed McPhee data is a hard failure for its independent
     // spelling overlay and suggestions panel.
@@ -4437,7 +4603,7 @@ function setMcpheeEnabled(enabled, persist = true) {
     mcpheeCtl.refresh(true);
     mcpheePanel.refresh();
   }
-  if (persist) localStorage.setItem(mcpheeEnabledStorageKey, String(enabled));
+  if (persist) persistPersonalConfigurationSnapshot();
 }
 
 mcpheeEnabledToggle.addEventListener("change", () => {
@@ -4608,7 +4774,10 @@ let sharedVideoVolume = 0.5;
 let sharedVideoMuted = false;
 let playingVideo = null;
 try {
-  const savedVideoAudio = JSON.parse(localStorage.getItem(VideoAudioStorageKey) || "{}");
+  const canonical = storedPersonalField("videoAudio");
+  const savedVideoAudio = canonical === undefined
+    ? JSON.parse(localStorage.getItem(VideoAudioStorageKey) || "{}")
+    : canonical;
   if (Number.isFinite(savedVideoAudio.volume)
     && savedVideoAudio.volume >= 0
     && savedVideoAudio.volume <= 1) {
@@ -4637,10 +4806,7 @@ function applySharedVideoAudio() {
 function setSharedVideoAudio(volume, muted) {
   sharedVideoVolume = Math.max(0, Math.min(1, volume));
   sharedVideoMuted = muted;
-  localStorage.setItem(VideoAudioStorageKey, JSON.stringify({
-    volume: sharedVideoVolume,
-    muted: sharedVideoMuted,
-  }));
+  persistPersonalConfigurationSnapshot();
   applySharedVideoAudio();
 }
 
@@ -5276,7 +5442,7 @@ function applyImageViewerCompare(current) {
 
 function toggleImageViewerCompare() {
   imageViewerCompareInput = !imageViewerCompareInput;
-  localStorage.setItem("imageViewerCompareInput", String(imageViewerCompareInput));
+  persistPersonalConfigurationSnapshot();
   renderImageViewer();
 }
 
@@ -6402,7 +6568,8 @@ function formatCost(v) {
 // The session-spend bar collapses to just the headline total; the collapsed
 // preference sticks per browser.
 const CostSummaryCollapsedKey = "multi-image-client.cost-summary-collapsed";
-let costSummaryCollapsed = localStorage.getItem(CostSummaryCollapsedKey) === "true";
+let costSummaryCollapsed = storedPersonalField("costSummaryCollapsed") ??
+  (localStorage.getItem(CostSummaryCollapsedKey) === "true");
 let costHeadline = "";
 let costBreakdown = "";
 
@@ -6426,7 +6593,7 @@ function renderCostSummary() {
 
 el("cost-toggle").addEventListener("click", () => {
   costSummaryCollapsed = !costSummaryCollapsed;
-  localStorage.setItem(CostSummaryCollapsedKey, String(costSummaryCollapsed));
+  persistPersonalConfigurationSnapshot();
   renderCostSummary();
 });
 
@@ -7068,6 +7235,37 @@ function applyJobEvent(id, card, evt) {
           hint.appendChild(a);
         }
         status.after(hint);
+      }
+      // A generation that failed after streaming previews (e.g. gpt-image-2's
+      // final moderated away) carries the server-persisted last partial(s):
+      // keep them visible with an explicit label instead of vanishing what
+      // the user watched arrive. Deliberately NOT a viewer-walk anchor —
+      // these are pre-failure previews, not results, and stay out of
+      // favorites/video flows.
+      if (Array.isArray(evt.partialImages)) {
+        for (const [imageIndex, rawUrl] of evt.partialImages.entries()) {
+          if (!rawUrl || isImageHidden(id, evt.gen, imageIndex)) continue;
+          const url = apiUrl(rawUrl);
+          const result = document.createElement("div");
+          result.className = "media-result partial-kept";
+          const badge = document.createElement("div");
+          badge.className = "partial-kept-badge";
+          badge.textContent = "last preview before failure — not the final image";
+          const a = document.createElement("a");
+          a.href = url;
+          a.target = "_blank";
+          const img = document.createElement("img");
+          img.alt = `${genLabel(evt.gen)} last streamed preview before failure`;
+          img.src = `${url}?thumb=1`;
+          img.loading = "lazy";
+          // A hidden/evicted preview 404s; drop the tile rather than leaving
+          // a broken-image icon under the error text.
+          img.addEventListener("error", () => result.remove());
+          a.appendChild(img);
+          result.appendChild(badge);
+          result.appendChild(a);
+          images.appendChild(result);
+        }
       }
     }
     updateJobProgress(card);

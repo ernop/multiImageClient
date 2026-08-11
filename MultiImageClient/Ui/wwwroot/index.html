@@ -118,8 +118,9 @@
       It never includes login credentials, cookies, jobs, favorites, or viewed-image history.
     </p>
   </section>
-  <p class="settings-note">Browser settings stay in localStorage. Authenticated generator chooser
-    settings also persist to the signed-in account. Hidden jobs still exist on the server and on disk.</p>
+  <p class="settings-note">Browser settings stay in one versioned localStorage document.
+    Authenticated generator chooser settings also persist to the signed-in account.
+    Hidden jobs still exist on the server and on disk.</p>
 </div>
 
 <section id="logs-panel" hidden aria-label="Live application logs">
@@ -551,6 +552,7 @@
 
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260809-mcphee-3-9-0"></script>
-<script src="app.js?v=20260810-endpoint-text-notes"></script>
+<script src="personal-config.js?v=20260810-schema-v2"></script>
+<script src="app.js?v=20260810-personal-config-v2"></script>
 </body>
 </html>

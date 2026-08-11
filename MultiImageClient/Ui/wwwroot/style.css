@@ -1371,6 +1371,20 @@ body:not(.show-costs) #cost-summary { display: none !important; }
   flex-direction: column;
   gap: 6px;
 }
+/* Kept last streamed preview of a generation that failed after partials
+   (e.g. gpt-image-2 final moderated away): explicitly labeled so it is
+   never mistaken for a result. Same error-red badge language as .cell-noimg;
+   the image itself dims slightly to read as "not the final". */
+.partial-kept-badge {
+  align-self: flex-start;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--err);
+  border: 1px solid var(--err);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.media-result.partial-kept img { opacity: 0.85; }
 .cell-images img {
   max-width: 100%;
   border-radius: 4px;
