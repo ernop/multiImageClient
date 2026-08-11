@@ -377,6 +377,15 @@ server STOPPED (the tool and the server must not both write
 
 Remaining separate decision: video handling (stays local for now).
 
+**Executed 2026-08-10/11, zero failures on both installs.** Dev
+(keep-raws mode): 1,790 images / 5.21 GiB uploaded, 334 event logs
+rewritten, nothing deleted. Production (eviction mode): 1,236 images /
+5.74 GiB uploaded, 135 event logs rewritten, all 1,236 verified raws
+evicted (disk 94% → 86%). Production also reported 3,626 recorded raster
+files whose local bytes no longer exist (pre-B2 disk-pressure deletions);
+their full-res URLs already 404ed before the migration and their event
+URLs were left as-is. Videos (53 on dev) stay local per v1 scope.
+
 ## Decisions (settled by owner, 2026-08-05)
 
 1. **Upload-failure contract — DECIDED: retry, then hard-fail.** 3 attempts
