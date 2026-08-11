@@ -82,7 +82,7 @@
 var McPhee = (function () {
   "use strict";
 
-  var VERSION = "3.9.0";
+  var VERSION = "3.9.1";
 
   var WORD_RE = /[A-Za-z]+(?:['\u2019][A-Za-z]+)*/g;
   var TOKEN_RE = /([A-Za-z]+(?:['\u2019][A-Za-z]+)*)|( {2,})/g;
@@ -1167,13 +1167,38 @@ var McPhee = (function () {
     // The backdrop must mirror the textarea's CLIENT box (plus borders), not
     // its offset box: a vertical scrollbar shrinks the client width and would
     // otherwise skew where lines wrap.
+    //
+    // The client box must be measured at FULL PRECISION. The textarea wraps
+    // its text against its true fractional width (width:100% of anything is
+    // rarely a whole pixel), but clientWidth reports that width rounded to
+    // the nearest integer. A backdrop sized from the rounded value is up to
+    // half a pixel wider or narrower — enough to wrap a line one word
+    // differently whenever a word boundary lands inside the fraction. When
+    // the flipped wrap point does not change the total line count, the
+    // scrollHeight-based wrap-parity check cannot see the divergence, so
+    // every mark below it displays shifted by one word. The fraction is
+    // therefore recovered from the client rect (exact, since borders come
+    // from computed style and scrollbars occupy whole pixels) and clientWidth
+    // only contributes the integer part, resolved to whichever neighbor of
+    // the rounded value carries that fraction.
+    function exactClientSize(rounded, rectSize, borderA, borderB) {
+      var frac = (rectSize - borderA - borderB) % 1;
+      // At an exact half-pixel tie the browsers round the client size UP
+      // (verified in Firefox and Chromium: true 726.5 reports 727), so the
+      // true size sits at the lower neighbor.
+      return rounded + frac - (frac >= 0.5 ? 1 : 0);
+    }
+
     function syncGeometry() {
       var bl = parseFloat(computed.borderLeftWidth) || 0;
       var br = parseFloat(computed.borderRightWidth) || 0;
       var bt = parseFloat(computed.borderTopWidth) || 0;
       var bb = parseFloat(computed.borderBottomWidth) || 0;
-      backdrop.style.width = (textarea.clientWidth + bl + br) + "px";
-      backdrop.style.height = (textarea.clientHeight + bt + bb) + "px";
+      var rect = textarea.getBoundingClientRect();
+      backdrop.style.width =
+        (exactClientSize(textarea.clientWidth, rect.width, bl, br) + bl + br) + "px";
+      backdrop.style.height =
+        (exactClientSize(textarea.clientHeight, rect.height, bt, bb) + bt + bb) + "px";
     }
 
     // ----- overlay integrity: never display wrong highlights -----
@@ -1182,16 +1207,38 @@ var McPhee = (function () {
     //      (plus the trailing scroll-parity newline), so every mark sits on
     //      exactly the characters the analysis measured;
     //   2. wrap parity — both boxes lay the text out identically, observable
-    //      as equal scrollHeights (same wrap points => same line count).
+    //      as equal content heights (same wrap points => same line count).
     // On violation: one automatic full regeneration; if the invariant still
     // fails, the overlay HIDES itself (fail closed — a missing highlight is
     // an inconvenience, a misplaced one is misinformation), warns on the
     // console, and retries on the background poll until it verifies again.
     var integrityFailed = false;
 
+    // scrollHeight clamps to the element's own box, so comparing raw
+    // scrollHeights verifies nothing while the text fits inside the visible
+    // box — the common case of short text in a tall textarea would accept
+    // ANY wrap divergence, even a wrong font. Measuring at height:0 forces
+    // scrollHeight to report the real content height whether or not it
+    // overflows. Both writes happen inside one layout pass (no paint in
+    // between) and scrollTop is put back because shrinking clamps it.
+    function contentHeight(el) {
+      var prevHeight = el.style.height;
+      var prevMinHeight = el.style.minHeight;
+      var prevScrollTop = el.scrollTop;
+      el.style.height = "0px";
+      el.style.minHeight = "0px";
+      var h = el.scrollHeight;
+      el.style.height = prevHeight;
+      el.style.minHeight = prevMinHeight;
+      el.scrollTop = prevScrollTop;
+      return h;
+    }
+
     function verifyIntegrity() {
-      if (backdrop.textContent !== lastRendered + "\n") return false;
-      if (Math.abs(backdrop.scrollHeight - textarea.scrollHeight) > 2) return false;
+      // Reality, not belief: compare against the textarea's LIVE value, never
+      // against a variable recording what we think we rendered.
+      if (backdrop.textContent !== textarea.value + "\n") return false;
+      if (Math.abs(contentHeight(backdrop) - contentHeight(textarea)) > 2) return false;
       return true;
     }
 
@@ -1209,21 +1256,36 @@ var McPhee = (function () {
         lastRendered = null;
       }
       if (textarea.value !== lastRendered) {
-        lastRendered = textarea.value;
-        backdrop.innerHTML = self.renderHtml(textarea.value, renderOpts);
-        syncGeometry();
-        if (!verifyIntegrity()) {
-          // One self-repair attempt: re-mirror styles and re-render.
-          mirrorStyles();
+        // A render that does not COMPLETE is an integrity violation like any
+        // other: the marks on screen no longer describe the buffer. The only
+        // path to a visible overlay is a finished render plus a passed
+        // verification, so an analyzer exception hides the overlay and the
+        // background poll retries — it can never leave stale marks displayed
+        // while the state claims they are current. (lastRendered is set
+        // unconditionally so the retry is driven by integrityFailed, which
+        // forces a full regeneration, rather than by a value comparison that
+        // a thrown exception would have left lying.)
+        var ok = false;
+        var renderError = null;
+        try {
           backdrop.innerHTML = self.renderHtml(textarea.value, renderOpts);
           syncGeometry();
+          if (!verifyIntegrity()) {
+            // One self-repair attempt: re-mirror styles and re-render.
+            mirrorStyles();
+            backdrop.innerHTML = self.renderHtml(textarea.value, renderOpts);
+            syncGeometry();
+          }
+          ok = verifyIntegrity();
+        } catch (err) {
+          renderError = err;
         }
-        var ok = verifyIntegrity();
+        lastRendered = textarea.value;
         if (!ok && !integrityFailed) {
-          console.warn("McPhee: overlay integrity check failed; hiding highlights rather than showing them misaligned.", {
-            contentParity: backdrop.textContent === lastRendered + "\n",
-            backdropScrollHeight: backdrop.scrollHeight,
-            textareaScrollHeight: textarea.scrollHeight,
+          console.warn("McPhee: overlay integrity check failed; hiding highlights rather than showing them misaligned.", renderError || {
+            contentParity: backdrop.textContent === textarea.value + "\n",
+            backdropContentHeight: contentHeight(backdrop),
+            textareaContentHeight: contentHeight(textarea),
           });
         }
         integrityFailed = !ok;
