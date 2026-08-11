@@ -1385,6 +1385,32 @@ body:not(.show-costs) #cost-summary { display: none !important; }
   padding: 0 4px;
 }
 .media-result.partial-kept img { opacity: 0.85; }
+/* Folded strip of the durably kept in-process streamed previews (gpt-image-2
+   partials), present on successful and failed cells alike. Collapsed by
+   default; thumbs only load on first expand. Secondary by SIZE, not by gray. */
+.progress-previews { margin-top: 2px; }
+.progress-previews > summary {
+  cursor: pointer;
+  width: fit-content;
+  font-size: 11px;
+  color: var(--accent-dark);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.progress-previews > summary:hover { background: #eef0fa; }
+.progress-previews-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.progress-previews-strip img {
+  max-height: 96px;
+  width: auto;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  display: block;
+}
 .cell-images img {
   max-width: 100%;
   border-radius: 4px;

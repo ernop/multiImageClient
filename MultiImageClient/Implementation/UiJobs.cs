@@ -159,6 +159,9 @@ namespace MultiImageClient
             // job completes. Any bytes left here are obsolete stream partials
             // or failed-output remnants and must not live with hydrated history.
             _images.Clear();
+            // Snapshot URLs were baked into the persisted gen-result events;
+            // the arrival-order index has no post-completion consumer.
+            _partialSnapshots.Clear();
             _storage?.SaveMetadata(this);
         }
 
@@ -253,6 +256,62 @@ namespace MultiImageClient
             }
             _images.TryRemove(key, out _);
             return true;
+        }
+
+        // User-required product behavior (2026-08-10): the in-process streamed
+        // previews are wanted on SUCCESSFUL generations too, not only when the
+        // final fails. Each arriving partial is therefore persisted durably
+        // right away under its own snapshot key ("{genKey}~p{partialIndex}"),
+        // separate from the stable result key the live preview and final
+        // share, so the whole progression survives the final overwriting the
+        // stable key. Snapshot keys never appear in gen-result `images`, are
+        // never B2-uploaded or evicted, and share the hide identity of the
+        // result image they preview (see PartialSnapshotVisibilityGen).
+        private readonly ConcurrentDictionary<string, ConcurrentQueue<(int PartialIndex, int ImageIndex)>> _partialSnapshots = new();
+
+        public static string PartialSnapshotGenKey(string genKey, int partialIndex)
+            => $"{genKey}~p{partialIndex}";
+
+        /// Maps a snapshot gen key ("gpt2~p1") back to the result gen key it
+        /// previews ("gpt2") for visibility checks; non-snapshot keys map to
+        /// themselves.
+        public static string PartialSnapshotVisibilityGen(string gen)
+        {
+            var i = gen.LastIndexOf("~p", StringComparison.Ordinal);
+            return i > 0 && int.TryParse(gen.AsSpan(i + 2), out var idx) && idx >= 0
+                ? gen.Substring(0, i)
+                : gen;
+        }
+
+        /// Durably persists one in-process streamed preview the moment it
+        /// arrives (bytes go straight to disk — never retained in this job's
+        /// RAM beyond the stable-key live preview that already exists).
+        /// Returns false when persistence failed; the snapshot is then simply
+        /// absent from the progression, never substituted.
+        public bool TryPersistPartialSnapshot(string genKey, int partialIndex, int imageIndex, byte[] bytes, string contentType)
+        {
+            if (_storage == null || bytes == null || bytes.Length == 0)
+            {
+                return false;
+            }
+            var key = $"{PartialSnapshotGenKey(genKey, partialIndex)}/{imageIndex}";
+            if (_storage.PersistEphemeralImage(key, bytes, contentType) == null)
+            {
+                return false;
+            }
+            _partialSnapshots.GetOrAdd(genKey, _ => new ConcurrentQueue<(int, int)>())
+                .Enqueue((partialIndex, imageIndex));
+            return true;
+        }
+
+        /// Persisted in-process previews for one generator, in arrival order.
+        /// Only meaningful while the job is running (gen-result snapshots the
+        /// URLs into the persisted event; replay reads those, not this).
+        public List<(int PartialIndex, int ImageIndex)> GetPartialSnapshots(string genKey)
+        {
+            return _partialSnapshots.TryGetValue(genKey, out var q)
+                ? q.ToList()
+                : new List<(int, int)>();
         }
 
         /// Records a checksum-verified B2 upload for a durably saved image.
@@ -749,10 +808,11 @@ namespace MultiImageClient
             }
         }
 
-        /// Writes ephemeral in-memory bytes (the last streamed gpt-image-2
-        /// partial of a generation whose final never arrived) to a durable
-        /// file under the job folder and registers it in images.json under
-        /// the given key. Returns the written path, or null when the write or
+        /// Writes streamed gpt-image-2 preview bytes (the kept last partial of
+        /// a failed generation under its stable result key, or a per-partial
+        /// progression snapshot under a "{gen}~p{k}" key) to a durable file
+        /// under the job folder and registers it in images.json under the
+        /// given key. Returns the written path, or null when the write or
         /// registration failed — the caller must then keep the bytes in RAM.
         public string? PersistEphemeralImage(string key, byte[] bytes, string contentType)
         {
@@ -3276,6 +3336,20 @@ namespace MultiImageClient
                 }
             }
 
+            // In-process progression snapshots (persisted per-partial as the
+            // stream ran) ride the gen-result on success AND failure so the
+            // user can revisit how the image came together. Local URLs even
+            // with B2 hosting on — same v1 scope as the failure-kept preview.
+            var snapshots = job.GetPartialSnapshots(key);
+            var progressImages = snapshots.Count == 0
+                ? null
+                : snapshots.Select(s => new
+                {
+                    partialIndex = s.PartialIndex,
+                    imageIndex = s.ImageIndex,
+                    url = $"/api/jobs/{job.Id}/images/{UiJob.PartialSnapshotGenKey(key, s.PartialIndex)}/{s.ImageIndex}",
+                }).ToList();
+
             // Known payment/auth failures carry a "next step" hint + the URL
             // where it gets fixed; the card renders it under the error text.
             var actionHint = ok ? null : ProviderActionHints.For(key, merged.ErrorMessage);
@@ -3293,6 +3367,9 @@ namespace MultiImageClient
                 // index-aligned with the requested output indexes. Local URLs
                 // even when B2 hosting is on.
                 partialImages = partialUrls,
+                // Success or failure: the durably persisted in-process
+                // streamed previews, in arrival order.
+                progressImages,
                 // Present only when B2 hosting is on: local ?thumb=1 card
                 // previews, index-aligned with `images` (whose entries are
                 // then absolute B2 URLs that have no thumb variant).
@@ -3637,6 +3714,15 @@ namespace MultiImageClient
                                 // URL. Each partial replaces the previous bytes, then
                                 // RunOneAsync replaces them with the completed image.
                                 job.StoreImage(key, outputIndex, bytes, "image/png");
+                                // Independently persist this exact partial as a durable
+                                // progression snapshot so the in-process previews stay
+                                // viewable after the final lands (user-required,
+                                // 2026-08-10). Additive: a failed write only means this
+                                // step is absent from the progression strip.
+                                if (!job.TryPersistPartialSnapshot(key, partialIndex, outputIndex, bytes, "image/png"))
+                                {
+                                    Logger.Log($"[ui #{job.Id}] could not persist progression snapshot {key}~p{partialIndex}/{outputIndex}");
+                                }
                                 job.Emit(new
                                 {
                                     type = "gen-partial",

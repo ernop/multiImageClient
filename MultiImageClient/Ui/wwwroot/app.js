@@ -179,9 +179,13 @@ const ImageViewerPreloadPreviousPrompts = 2;
 const ImageViewerPreloadConcurrency = 6;
 const ImageViewerPageJumpSize = 5;
 const ImageViewerWheelThreshold = 80;
-// Last keyboard/wheel step: -1 = toward newer/previous, +1 = toward
-// older/next, 0 = open / absolute jump with no travel bias.
-let imageViewerNavDelta = 0;
+// Short-lived navigation intent. Direction is shared across one-image and
+// one-prompt movement, while kind says which landing-point family should lead
+// the next preload plan. A reversal takes effect immediately; a same-direction
+// streak lets that side occupy more of the speculative runway.
+let imageViewerNavDirection = 0;
+let imageViewerNavKind = "image";
+let imageViewerNavStreak = 0;
 
 const el = (id) => document.getElementById(id);
 
@@ -5188,8 +5192,8 @@ function releaseImageViewerPreloadSlot() {
   imageViewerPreloadActive = Math.max(0, imageViewerPreloadActive - 1);
 }
 
-function bumpImageViewerEntryPriority(entry, priority) {
-  if (!(priority < entry.priority)) return;
+function setImageViewerEntryPriority(entry, priority) {
+  if (priority === entry.priority) return;
   entry.priority = priority;
   if (!entry.waiter) return;
   entry.waiter.priority = priority;
@@ -5227,7 +5231,7 @@ function imageViewerInputUrl(jobId) {
 function loadImageViewerEntry(url, priority) {
   const existing = imageViewerCache.get(url);
   if (existing) {
-    bumpImageViewerEntryPriority(existing, priority);
+    setImageViewerEntryPriority(existing, priority);
     return existing;
   }
 
@@ -5240,6 +5244,8 @@ function loadImageViewerEntry(url, priority) {
     priority,
     waiter: null,
     acquired: false,
+    fetched: false,
+    ready: false,
   };
   entry.promise = (async () => {
     await takeImageViewerPreloadSlot(entry.priority, entry);
@@ -5257,6 +5263,7 @@ function loadImageViewerEntry(url, priority) {
 
       // Free the network slot before decode so neighbors can fetch while
       // this frame's pixels land in the decoder.
+      entry.fetched = true;
       entry.acquired = false;
       releaseImageViewerPreloadSlot();
 
@@ -5264,6 +5271,7 @@ function loadImageViewerEntry(url, priority) {
       entry.image = new Image();
       entry.image.src = entry.blobUrl;
       await entry.image.decode();
+      entry.ready = true;
       return entry;
     } finally {
       if (entry.acquired) {
@@ -5280,90 +5288,166 @@ function loadImageViewerEntry(url, priority) {
   return entry;
 }
 
-// Build the bounded preload working set. Once the current frame is ready, the
-// first speculative fetches are the next flat item plus the first image of the
-// next three and previous two prompts. Those are the Ctrl+Left/Right landing
-// points. The remaining ±10 flat-image runway follows, biased toward travel.
-// The render path never clears the previous decoded frame until the next blob
-// is ready.
+// Build a bounded, adaptive working set. Neutral opens hedge both directions.
+// Once movement starts, image steps and prompt jumps reinforce one shared
+// direction while the latest navigation kind leads its own landing-point
+// family. Every plan still keeps one opposite image and prompt landing warm.
 function prepareImageViewerWindow(prompts, current) {
   const allItems = prompts.flatMap((prompt) => prompt.items);
   const currentIndex = allItems.findIndex((item) =>
     item.jobId === current.item.jobId &&
     item.generator === current.item.generator &&
     item.imageIndex === current.item.imageIndex);
-  const aheadSign = imageViewerNavDelta < 0 ? -1 : 1;
   const promptByJobId = new Map(prompts.map((p) => [p.jobId, p]));
   const wantedUrls = new Set();
   const schedule = [];
+  let nextPriority = 0;
 
-  const want = (url, priority) => {
+  const want = (url) => {
     wantedUrls.add(url);
-    schedule.push({ url, priority });
+    schedule.push({ url, priority: nextPriority++ });
   };
 
-  const consider = (index, priority) => {
+  const consider = (index) => {
     if (index < 0 || index >= allItems.length) return;
     const item = allItems[index];
-    want(item.url, priority);
+    want(item.url);
     if (!imageViewerCompareInput) return;
     const prompt = promptByJobId.get(item.jobId);
-    if (prompt && prompt.hasInput) want(imageViewerInputUrl(item.jobId), priority + 0.5);
+    if (prompt && prompt.hasInput) want(imageViewerInputUrl(item.jobId));
   };
 
-  const considerPromptFirst = (promptIndex, priority) => {
+  const considerPromptFirst = (promptIndex) => {
     if (promptIndex < 0 || promptIndex >= prompts.length) return;
     const item = prompts[promptIndex].items[0];
     if (!item) return;
-    want(item.url, priority);
+    want(item.url);
     if (imageViewerCompareInput && prompts[promptIndex].hasInput) {
-      want(imageViewerInputUrl(item.jobId), priority + 0.5);
+      want(imageViewerInputUrl(item.jobId));
     }
   };
 
-  want(current.item.url, 0);
+  want(current.item.url);
   if (imageViewerCompareInput && current.prompt.hasInput) {
-    want(imageViewerInputUrl(current.item.jobId), 1);
+    want(imageViewerInputUrl(current.item.jobId));
   }
-  // Everything before this index is the visible presentation; everything
-  // after is speculative runway.
-  const immediateCount = schedule.length;
+  const immediateUrls = new Set(schedule.map((candidate) => candidate.url));
 
-  // Fill the first six speculative network slots with the most likely single
-  // step plus every prompt-jump landing point. Direction changes reverse which
-  // prompt side starts first without removing either side from the cache.
-  consider(currentIndex + aheadSign, 2);
-  const nextPromptCount = aheadSign > 0
-    ? ImageViewerPreloadNextPrompts
-    : ImageViewerPreloadPreviousPrompts;
-  const previousPromptCount = aheadSign > 0
-    ? ImageViewerPreloadPreviousPrompts
-    : ImageViewerPreloadNextPrompts;
-  for (let distance = 1; distance <= nextPromptCount; distance++) {
-    considerPromptFirst(current.promptIndex + aheadSign * distance, 10 + distance);
-  }
-  for (let distance = 1; distance <= previousPromptCount; distance++) {
-    considerPromptFirst(current.promptIndex - aheadSign * distance, 100 + distance);
-  }
+  if (imageViewerNavDirection === 0) {
+    // No observed preference yet: never assume Right. Put both immediate image
+    // neighbors and both prompt-jump landings at the front of the plan.
+    consider(currentIndex - 1);
+    consider(currentIndex + 1);
+    considerPromptFirst(current.promptIndex - 1);
+    considerPromptFirst(current.promptIndex + 1);
+    for (let distance = 2;
+         distance <= Math.max(ImageViewerPreloadAhead, ImageViewerPreloadBehind);
+         distance++) {
+      consider(currentIndex - distance);
+      consider(currentIndex + distance);
+    }
+    for (let distance = 2;
+         distance <= Math.max(ImageViewerPreloadNextPrompts, ImageViewerPreloadPreviousPrompts);
+         distance++) {
+      considerPromptFirst(current.promptIndex - distance);
+      considerPromptFirst(current.promptIndex + distance);
+    }
+  } else {
+    const direction = imageViewerNavDirection;
+    const opposite = -direction;
+    // One move gives the selected direction the lead. Continued movement lets
+    // up to four same-direction landings run before the opposite-side hedge.
+    const leadDepth = Math.min(4, 1 + Math.floor(imageViewerNavStreak / 2));
 
-  for (let distance = 2; distance <= ImageViewerPreloadAhead; distance++) {
-    consider(currentIndex + aheadSign * distance, 200 + distance);
-  }
-  for (let distance = 1; distance <= ImageViewerPreloadBehind; distance++) {
-    consider(currentIndex - aheadSign * distance, 1000 + distance);
+    if (imageViewerNavKind === "prompt") {
+      considerPromptFirst(current.promptIndex + direction);
+      consider(currentIndex + direction);
+      for (let distance = 2; distance <= leadDepth; distance++) {
+        considerPromptFirst(current.promptIndex + direction * distance);
+      }
+      considerPromptFirst(current.promptIndex + opposite);
+      consider(currentIndex + opposite);
+      for (let distance = 2; distance <= leadDepth; distance++) {
+        consider(currentIndex + direction * distance);
+      }
+    } else {
+      consider(currentIndex + direction);
+      considerPromptFirst(current.promptIndex + direction);
+      for (let distance = 2; distance <= leadDepth; distance++) {
+        consider(currentIndex + direction * distance);
+      }
+      consider(currentIndex + opposite);
+      considerPromptFirst(current.promptIndex + opposite);
+    }
+
+    for (let distance = 2; distance <= ImageViewerPreloadNextPrompts; distance++) {
+      considerPromptFirst(current.promptIndex + direction * distance);
+    }
+    for (let distance = 2; distance <= ImageViewerPreloadAhead; distance++) {
+      consider(currentIndex + direction * distance);
+    }
+    for (let distance = 2; distance <= ImageViewerPreloadPreviousPrompts; distance++) {
+      considerPromptFirst(current.promptIndex + opposite * distance);
+    }
+    for (let distance = 2; distance <= ImageViewerPreloadBehind; distance++) {
+      consider(currentIndex + opposite * distance);
+    }
   }
 
   for (const [url, entry] of imageViewerCache) {
     if (!wantedUrls.has(url)) discardImageViewerCacheEntry(url, entry);
   }
 
-  // Stable order: first occurrence of each URL keeps the best (lowest) priority.
+  // First occurrence is the strongest prediction. Rebuild every queued
+  // priority, including demotions, so old-direction work cannot stay ahead
+  // after the person reverses or switches between image and prompt movement.
   const seen = new Set();
-  const startSlice = (from, to) => {
+  const uniqueSchedule = [];
+  for (const candidate of schedule) {
+    if (seen.has(candidate.url)) continue;
+    seen.add(candidate.url);
+    uniqueSchedule.push(candidate);
+  }
+  uniqueSchedule.forEach((candidate, priority) => {
+    candidate.priority = priority;
+    const entry = imageViewerCache.get(candidate.url);
+    if (entry) setImageViewerEntryPriority(entry, priority);
+  });
+  sortImageViewerPreloadWaiters();
+
+  // Keep the active fetch set aligned with the latest plan. Decoded entries do
+  // not consume network slots; choose the first six entries still needing
+  // bytes, then abort only enough lower-ranked active speculation to admit
+  // those candidates. The exact selected image therefore preempts stale work.
+  const desiredActiveUrls = new Set();
+  for (const candidate of uniqueSchedule) {
+    const entry = imageViewerCache.get(candidate.url);
+    if (entry?.fetched) continue;
+    desiredActiveUrls.add(candidate.url);
+    if (desiredActiveUrls.size >= ImageViewerPreloadConcurrency) break;
+  }
+  const activeEntries = [...imageViewerCache.entries()]
+    .filter(([, entry]) => entry.acquired);
+  const desiredNotActive = [...desiredActiveUrls]
+    .filter((url) => !imageViewerCache.get(url)?.acquired).length;
+  const freeSlots = Math.max(0, ImageViewerPreloadConcurrency - activeEntries.length);
+  let preemptionsNeeded = Math.max(0, desiredNotActive - freeSlots);
+  const staleActive = activeEntries
+    .filter(([url]) => !desiredActiveUrls.has(url))
+    .sort((a, b) => b[1].priority - a[1].priority);
+  for (const [url, entry] of staleActive) {
+    if (preemptionsNeeded <= 0) break;
+    discardImageViewerCacheEntry(url, entry);
+    preemptionsNeeded--;
+  }
+
+  const immediateSchedule = uniqueSchedule
+    .filter((candidate) => immediateUrls.has(candidate.url));
+  const speculativeSchedule = uniqueSchedule
+    .filter((candidate) => !immediateUrls.has(candidate.url));
+  const startSchedule = (candidates) => {
     let currentEntry = null;
-    for (const { url, priority } of schedule.slice(from, to)) {
-      if (seen.has(url)) continue;
-      seen.add(url);
+    for (const { url, priority } of candidates) {
       const entry = loadImageViewerEntry(url, priority);
       if (url === current.item.url) currentEntry = entry;
       else entry.promise.catch(() => {});
@@ -5379,9 +5463,9 @@ function prepareImageViewerWindow(prompts, current) {
   // start only once the current frame has fetched+decoded — during warm
   // navigation the current entry is already decoded, so the runway still
   // schedules immediately and scrubbing stays hitch-free.
-  const currentEntry = startSlice(0, immediateCount);
-  const startNeighbors = () => startSlice(immediateCount, schedule.length);
-  if (currentEntry.blobUrl && currentEntry.image) {
+  const currentEntry = startSchedule(immediateSchedule);
+  const startNeighbors = () => startSchedule(speculativeSchedule);
+  if (currentEntry.ready) {
     startNeighbors();
   } else {
     const version = imageViewerRenderVersion;
@@ -5433,7 +5517,7 @@ function applyImageViewerCompare(current) {
   }
   const inputUrl = imageViewerInputUrl(current.item.jobId);
   const cached = imageViewerCache.get(inputUrl);
-  if (cached && cached.blobUrl) {
+  if (cached?.ready) {
     if (imageViewerInputImage.getAttribute("src") !== cached.blobUrl) {
       imageViewerInputImage.src = cached.blobUrl;
     }
@@ -5685,7 +5769,7 @@ async function renderImageViewer() {
     markImageViewed(latest.item);
     if (imageViewerCompareInput && latest.prompt.hasInput) {
       const inputEntry = imageViewerCache.get(imageViewerInputUrl(latest.item.jobId));
-      if (inputEntry && !inputEntry.blobUrl) {
+      if (inputEntry && !inputEntry.ready) {
         inputEntry.promise.then(() => {
           if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
           const still = locateImageViewerState(getImageViewerPrompts());
@@ -5699,7 +5783,7 @@ async function renderImageViewer() {
     return true;
   };
 
-  if (currentEntry.blobUrl && currentEntry.image) {
+  if (currentEntry.ready) {
     paint(currentEntry);
     return;
   }
@@ -5727,6 +5811,21 @@ async function renderImageViewer() {
   }
 }
 
+function recordImageViewerNavigation(direction, kind) {
+  const normalized = Math.sign(direction);
+  if (normalized === 0) {
+    imageViewerNavDirection = 0;
+    imageViewerNavKind = "image";
+    imageViewerNavStreak = 0;
+    return;
+  }
+  imageViewerNavStreak = imageViewerNavDirection === normalized
+    ? Math.min(8, imageViewerNavStreak + 1)
+    : 1;
+  imageViewerNavDirection = normalized;
+  imageViewerNavKind = kind;
+}
+
 function navigateImageViewerImage(delta) {
   const allItems = getImageViewerFlatItems();
   const prompts = getImageViewerPrompts();
@@ -5739,7 +5838,7 @@ function navigateImageViewerImage(delta) {
   if (currentIndex < 0) return;
   const targetIndex = currentIndex + delta;
   if (targetIndex < 0 || targetIndex >= allItems.length) return;
-  imageViewerNavDelta = Math.sign(delta);
+  recordImageViewerNavigation(delta, "image");
   setImageViewerIdentity(allItems[targetIndex]);
 }
 
@@ -5748,7 +5847,7 @@ function navigateImageViewerAbsolute(index) {
   if (allItems.length === 0) return;
   const targetIndex = index < 0 ? allItems.length - 1 : index;
   if (targetIndex < 0 || targetIndex >= allItems.length) return;
-  imageViewerNavDelta = 0;
+  recordImageViewerNavigation(0, "image");
   setImageViewerIdentity(allItems[targetIndex]);
 }
 
@@ -5792,7 +5891,7 @@ function navigateImageViewerHalfway(direction) {
     ? Math.floor(currentIndex / 2)
     : Math.ceil((currentIndex + lastIndex) / 2);
   if (targetIndex === currentIndex) return;
-  imageViewerNavDelta = Math.sign(direction);
+  recordImageViewerNavigation(direction, "image");
   setImageViewerIdentity(allItems[targetIndex]);
 }
 
@@ -5803,7 +5902,7 @@ function navigateImageViewerPrompt(delta) {
   const targetPrompt = prompts[current.promptIndex + delta];
   // At either boundary, keep the current prompt and return to its first image.
   // Prompt navigation never guesses a different destination.
-  imageViewerNavDelta = Math.sign(delta);
+  recordImageViewerNavigation(delta, "prompt");
   setImageViewerIdentity((targetPrompt || current.prompt).items[0]);
 }
 
@@ -6153,7 +6252,7 @@ function openImageViewer(link) {
     generator: link.dataset.generator,
     imageIndex: Number(link.dataset.imageIndex),
   };
-  imageViewerNavDelta = 0;
+  recordImageViewerNavigation(0, "image");
   hideImageViewerHelp();
   imageViewerWheelAccumulator = 0;
   imageViewer.hidden = false;
@@ -6181,7 +6280,7 @@ function closeImageViewer() {
   imageViewerState = null;
   imageViewerRenderVersion++;
   imageViewerWheelAccumulator = 0;
-  imageViewerNavDelta = 0;
+  recordImageViewerNavigation(0, "image");
   clearImageViewerPresentation();
   for (const [url, entry] of imageViewerCache) discardImageViewerCacheEntry(url, entry);
   const restore = imageViewerFocusBeforeOpen;
@@ -7009,6 +7108,50 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+// Durably persisted in-process streamed previews (gpt-image-2 partials),
+// carried on gen-result as `progressImages` for successful AND failed
+// generations — the user wants to revisit how an image came together even
+// when the final arrived fine. Rendered as a collapsed strip so a long
+// history doesn't fetch every snapshot; thumbs load on first expand.
+// Deliberately NOT viewer-walk anchors: these are process artifacts, not
+// results, and stay out of favorites/video flows.
+function buildProgressPreviews(id, evt) {
+  if (!Array.isArray(evt.progressImages)) return null;
+  const entries = evt.progressImages.filter(
+    (p) => p && p.url && !isImageHidden(id, evt.gen, p.imageIndex));
+  if (!entries.length) return null;
+  const details = document.createElement("details");
+  details.className = "progress-previews";
+  const summary = document.createElement("summary");
+  summary.textContent = `in-process previews (${entries.length})`;
+  details.appendChild(summary);
+  const strip = document.createElement("div");
+  strip.className = "progress-previews-strip";
+  details.appendChild(strip);
+  let loaded = false;
+  details.addEventListener("toggle", () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    for (const p of entries) {
+      const url = apiUrl(p.url);
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.title = `in-process preview ${p.partialIndex + 1}`;
+      const img = document.createElement("img");
+      img.alt = `${genLabel(evt.gen)} in-process preview ${p.partialIndex + 1}`;
+      img.src = `${url}?thumb=1`;
+      img.loading = "lazy";
+      // A hidden/missing snapshot 404s; drop the tile rather than leaving
+      // a broken-image icon in the strip.
+      img.addEventListener("error", () => a.remove());
+      a.appendChild(img);
+      strip.appendChild(a);
+    }
+  });
+  return details;
+}
+
 function applyJobEvent(id, card, evt) {
   if (card.dataset.state !== "done") {
     const connection = card.querySelector(".job-connection");
@@ -7210,6 +7353,10 @@ function applyJobEvent(id, card, evt) {
         applyFavoriteMarkerToAnchor(a);
         images.appendChild(result);
       }
+      // The streamed in-process previews stay revisitable after the final
+      // replaces them, folded so they never crowd the result.
+      const progress = buildProgressPreviews(id, evt);
+      if (progress) images.appendChild(progress);
       if (!imageViewer.hidden) renderImageViewer();
     } else {
       cell.dataset.state = "error";
@@ -7267,6 +7414,10 @@ function applyJobEvent(id, card, evt) {
           images.appendChild(result);
         }
       }
+      // Full streamed progression (includes the kept-last frame above as its
+      // final step) — same folded strip as on successful cells.
+      const progress = buildProgressPreviews(id, evt);
+      if (progress) images.appendChild(progress);
     }
     updateJobProgress(card);
     updateCostTotals();

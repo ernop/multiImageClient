@@ -1337,8 +1337,12 @@ namespace MultiImageClient
                 ctx.Response.Headers.CacheControl = "no-store";
                 var job = jobs.Get(id);
                 if (job == null) return Results.NotFound();
+                // In-process progression snapshots ("{gen}~p{k}") show the
+                // same content as the result image they preview, so they share
+                // its hide identity — hiding gpt2/0 must also hide gpt2~p*/0.
+                var visibilityGen = UiJob.PartialSnapshotVisibilityGen(gen);
                 if (visibility.IsPromptHidden(id)
-                    || visibility.IsImageHidden(id, gen, n)
+                    || visibility.IsImageHidden(id, visibilityGen, n)
                     || (string.Equals(gen, "grid", StringComparison.Ordinal)
                         && visibility.HasHiddenImages(id)))
                 {
