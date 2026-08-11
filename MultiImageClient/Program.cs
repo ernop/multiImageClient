@@ -121,6 +121,17 @@ namespace MultiImageClient
                 return;
             }
 
+            if (options.B2Backfill)
+            {
+                if (!settings.EnableB2ImageHosting)
+                {
+                    Console.Error.WriteLine("--b2-backfill requires EnableB2ImageHosting=true plus the B2* settings in settings.json. See docs/b2-image-hosting-plan.md.");
+                    Environment.Exit(2);
+                }
+                var exit = await B2BackfillWorkflow.RunAsync(settings, options.B2BackfillDryRun);
+                Environment.Exit(exit);
+            }
+
             if (options.GrokApiSync)
             {
                 await GrokArchive.SyncAsync(settings);

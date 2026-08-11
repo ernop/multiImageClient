@@ -360,6 +360,30 @@ namespace MultiImageClient
             return false;
         }
 
+        /// Snapshot of this job's persisted image records (images.json) for
+        /// maintenance tooling — the B2 backfill enumerates candidates here.
+        public IReadOnlyList<UiPersistedImageInfo> ListPersistedImages()
+        {
+            return _storage?.ListImages()
+                ?? (IReadOnlyList<UiPersistedImageInfo>)Array.Empty<UiPersistedImageInfo>();
+        }
+
+        /// True when the durable file for a key lives under this job's own
+        /// partials folder (kept last-preview of a failed generation, or a
+        /// progression snapshot). Those are failure/preview artifacts and are
+        /// never hosted or evicted.
+        public bool IsPartialsBackedPath(string path)
+        {
+            return _storage?.IsUnderPartialsFolder(path) == true;
+        }
+
+        /// Atomically replaces this job's persisted event log (B2 backfill URL
+        /// migration). A one-time pre-rewrite backup is retained on disk.
+        public bool TryReplacePersistedEvents(IReadOnlyList<string> lines)
+        {
+            return _storage?.TryReplaceEvents(lines) == true;
+        }
+
         public bool TryGetImage(string genKey, int n, out byte[] bytes, out string contentType)
         {
             var key = $"{genKey}/{n}";
@@ -675,6 +699,16 @@ namespace MultiImageClient
         }
     }
 
+    /// Read-only snapshot of one images.json record, exposed for maintenance
+    /// tooling (B2 backfill). Empty CdnKey = not hosted.
+    public sealed record UiPersistedImageInfo(
+        string Key,
+        string Path,
+        string ContentType,
+        string ContentSha256,
+        string CdnKey,
+        string CdnFileId);
+
     internal sealed class UiJobStorage
     {
         private static readonly JsonSerializerOptions JsonOptions = new()
@@ -775,6 +809,65 @@ namespace MultiImageClient
                 }
             }
             return list;
+        }
+
+        public List<UiPersistedImageInfo> ListImages()
+        {
+            lock (_writeLock)
+            {
+                return _images
+                    .Select(kv => new UiPersistedImageInfo(
+                        kv.Key,
+                        kv.Value.Path ?? "",
+                        kv.Value.ContentType ?? "",
+                        kv.Value.ContentSha256 ?? "",
+                        kv.Value.CdnKey ?? "",
+                        kv.Value.CdnFileId ?? ""))
+                    .ToList();
+            }
+        }
+
+        public bool IsUnderPartialsFolder(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+            var partials = Path.GetFullPath(Path.Combine(_folder, "partials"))
+                + Path.DirectorySeparatorChar;
+            return Path.GetFullPath(path).StartsWith(partials, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// Atomically replaces events.jsonl after validating every line parses
+        /// as JSON (fail closed — a malformed rewrite must never replace a
+        /// working event log). The original file is copied once to
+        /// events.jsonl.pre-b2 before the first rewrite and kept.
+        public bool TryReplaceEvents(IReadOnlyList<string> lines)
+        {
+            lock (_writeLock)
+            {
+                try
+                {
+                    foreach (var line in lines)
+                    {
+                        using var _ = JsonDocument.Parse(line);
+                    }
+                    var backup = _eventsPath + ".pre-b2";
+                    if (File.Exists(_eventsPath) && !File.Exists(backup))
+                    {
+                        File.Copy(_eventsPath, backup);
+                    }
+                    var temp = _eventsPath + ".tmp";
+                    File.WriteAllLines(temp, lines);
+                    File.Move(temp, _eventsPath, true);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"UI history: could not replace events in {_folder}: {ex.Message}");
+                    return false;
+                }
+            }
         }
 
         /// Returns true only when the path exists and was recorded in images.json.
@@ -3023,7 +3116,7 @@ namespace MultiImageClient
             }
         }
 
-        private static string ExtensionForHostedFile(string contentType, string localPath)
+        internal static string ExtensionForHostedFile(string contentType, string localPath)
         {
             switch (contentType?.ToLowerInvariant())
             {

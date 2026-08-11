@@ -340,11 +340,42 @@ B2 URLs.
 Add the settings to `/etc/multiimageclient/settings.json` with
 `B2KeepLocalRawImages: false`, redeploy. Caps & Alerts must already be set.
 
-### Stage 5 — separate follow-on
+### Stage 5 — backfill of pre-hosting history — IMPLEMENTED 2026-08-10
 
-New images stop consuming production disk once eviction mode is on, so the
-follow-on shrinks to: backfill pre-existing history into B2 and evict those
-local files, and decide video handling.
+`--b2-backfill` (and read-only `--b2-backfill-dry-run`) in
+`Implementation/B2BackfillWorkflow.cs`. One-shot migration, run with the UI
+server STOPPED (the tool and the server must not both write
+`images.json`/`events.jsonl`):
+
+- Scope: raster result/grid images in `UiHistory` without a `CdnKey`.
+  Excluded: inputs, videos/SVG (v1 scope), streamed-partial snapshots and
+  kept previews (failure artifacts stay local), and hidden prompts/images
+  (one-way hidden content is never published to the public bucket — its
+  raws stay local and are reported as skipped).
+- Per image: recorded SHA-256 re-verified against the file bytes (mismatch =
+  hard per-image failure, never uploaded), upload with the standard key
+  scheme/retry x3/Content-Disposition filename, `CdnKey`/`CdnFileId`
+  persisted post-verification.
+- Event rewrite: each job's `events.jsonl` is patched so `gen-result`
+  `images[]` and `grid` `url` carry the B2 URLs, with the index-aligned
+  local `thumbs[]` array added to pre-hosting `gen-result`s (the frontend's
+  legacy fallback appends `?thumb=1` to the main URL, which B2 ignores).
+  Replacement is exact-URL identity; unrelated lines are preserved verbatim;
+  the rewritten file must fully parse before it atomically replaces the
+  original, and the pre-rewrite log is kept once as `events.jsonl.pre-b2`.
+  `gen-partial` URLs deliberately stay local (replayed dead partials remove
+  themselves in the frontend).
+- Eviction: only when `B2KeepLocalRawImages=false`, only after a closing
+  re-read proves the persisted events hold no remaining local full-res
+  reference to the evicted keys, thumbs force-built first (the standard
+  `EvictHostedLocalRaws` path). Dev keeps everything (owner requirement
+  2026-08-10: dev-box raws are never deleted, even after upload).
+- Idempotent/resumable: `CdnKey`-bearing images are skipped, and the event
+  rewrite self-heals jobs whose uploads succeeded but whose rewrite was
+  interrupted. Failures are per-image/per-job, reported in the summary, and
+  make the process exit non-zero.
+
+Remaining separate decision: video handling (stays local for now).
 
 ## Decisions (settled by owner, 2026-08-05)
 
