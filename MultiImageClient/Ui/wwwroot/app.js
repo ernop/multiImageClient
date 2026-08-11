@@ -2994,6 +2994,279 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !inputLibraryPanel.hidden) closeInputLibrary();
 });
 
+// ---------- composition sketch composer ----------
+
+// Mouse-drawn layout sketches: rough colored regions on a white canvas, one
+// meaning per color ("red = the planet"), attached as a normal input image
+// together with a legend paragraph written into the prompt. The legend tells
+// every image model the sketch is composition guidance only — placement and
+// coverage are followed, the sketch's own look is repainted away.
+
+// Fixed, visually distinct drawing palette. Names appear verbatim in the
+// generated legend paragraph, so they stay plain color words; hex values are
+// exact-matched when detecting which colors a sketch actually uses (stroke
+// cores keep the exact fill even though edges antialias).
+const SketchPalette = [
+  { name: "red", hex: "#e53935" },
+  { name: "blue", hex: "#1e88e5" },
+  { name: "green", hex: "#43a047" },
+  { name: "orange", hex: "#fb8c00" },
+  { name: "purple", hex: "#8e24aa" },
+  { name: "cyan", hex: "#00acc1" },
+  { name: "yellow", hex: "#fdd835" },
+  { name: "brown", hex: "#6d4c41" },
+];
+// Internal canvas resolution per shape; the sketch attaches at exactly this
+// size, so match input image AR defaults follow the chosen shape.
+const SketchCanvasSizes = {
+  square: [1024, 1024],
+  landscape: [1152, 768],
+  portrait: [768, 1152],
+  wide: [1280, 720],
+  tall: [720, 1280],
+};
+// The legend paragraph starts with this exact marker so re-attaching a
+// revised sketch replaces the previous paragraph instead of stacking copies.
+const SketchLegendMarker = "Composition sketch legend:";
+const SketchUndoDepth = 25;
+
+const sketchDialog = el("sketch-dialog");
+const sketchCanvas = el("sketch-canvas");
+const sketchCtx = sketchCanvas.getContext("2d", { willReadFrequently: true });
+const sketchStatus = el("sketch-status");
+const sketchEraserBtn = el("sketch-eraser");
+const sketchAspectSelect = el("sketch-aspect");
+const sketchMeaningInputs = [];
+let sketchActiveColor = 0;      // palette index, or -1 for the eraser
+let sketchUndoStack = [];       // ImageData snapshots, oldest first
+let sketchStrokePoint = null;   // previous point while a stroke is active
+let sketchAspect = "square";    // last applied canvas shape, for revert
+let sketchAttachedFile = null;  // exact File last attached, replaced on re-attach
+
+function sketchBlank() {
+  sketchCtx.fillStyle = "#ffffff";
+  sketchCtx.fillRect(0, 0, sketchCanvas.width, sketchCanvas.height);
+}
+sketchBlank();
+
+for (const [index, color] of SketchPalette.entries()) {
+  const row = document.createElement("div");
+  row.className = "sketch-color-row";
+  const swatch = document.createElement("button");
+  swatch.type = "button";
+  swatch.className = "sketch-swatch";
+  swatch.style.background = color.hex;
+  swatch.title = `Draw with ${color.name}`;
+  swatch.setAttribute("aria-label", `Draw with ${color.name}`);
+  swatch.addEventListener("click", () => setSketchColor(index));
+  const meaning = document.createElement("input");
+  meaning.type = "text";
+  meaning.maxLength = 120;
+  meaning.autocomplete = "off";
+  meaning.placeholder = `${color.name} = …`;
+  meaning.setAttribute("aria-label", `What the ${color.name} area means`);
+  meaning.addEventListener("focus", () => setSketchColor(index));
+  sketchMeaningInputs.push(meaning);
+  row.appendChild(swatch);
+  row.appendChild(meaning);
+  el("sketch-legend-fields").appendChild(row);
+}
+
+function setSketchColor(index) {
+  sketchActiveColor = index;
+  sketchEraserBtn.setAttribute("aria-pressed", String(index === -1));
+  sketchEraserBtn.classList.toggle("active", index === -1);
+  document.querySelectorAll("#sketch-legend-fields .sketch-swatch").forEach((swatch, i) => {
+    swatch.classList.toggle("active", i === index);
+  });
+}
+setSketchColor(0);
+
+function sketchCanvasPoint(event) {
+  const rect = sketchCanvas.getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left) * (sketchCanvas.width / rect.width),
+    y: (event.clientY - rect.top) * (sketchCanvas.height / rect.height),
+  };
+}
+
+function drawSketchSegment(from, to) {
+  sketchCtx.strokeStyle = sketchActiveColor === -1
+    ? "#ffffff"
+    : SketchPalette[sketchActiveColor].hex;
+  sketchCtx.lineWidth = Number(el("sketch-brush").value);
+  sketchCtx.lineCap = "round";
+  sketchCtx.lineJoin = "round";
+  sketchCtx.beginPath();
+  sketchCtx.moveTo(from.x, from.y);
+  sketchCtx.lineTo(to.x, to.y);
+  sketchCtx.stroke();
+}
+
+sketchCanvas.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  sketchCanvas.setPointerCapture(event.pointerId);
+  sketchUndoStack.push(sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height));
+  if (sketchUndoStack.length > SketchUndoDepth) sketchUndoStack.shift();
+  sketchStrokePoint = sketchCanvasPoint(event);
+  // A click without movement still leaves a dot.
+  drawSketchSegment(sketchStrokePoint, sketchStrokePoint);
+});
+sketchCanvas.addEventListener("pointermove", (event) => {
+  if (!sketchStrokePoint) return;
+  const point = sketchCanvasPoint(event);
+  drawSketchSegment(sketchStrokePoint, point);
+  sketchStrokePoint = point;
+});
+const endSketchStroke = () => { sketchStrokePoint = null; };
+sketchCanvas.addEventListener("pointerup", endSketchStroke);
+sketchCanvas.addEventListener("pointercancel", endSketchStroke);
+
+sketchEraserBtn.addEventListener("click", () => {
+  setSketchColor(sketchActiveColor === -1 ? 0 : -1);
+});
+el("sketch-undo").addEventListener("click", () => {
+  const snapshot = sketchUndoStack.pop();
+  if (snapshot) sketchCtx.putImageData(snapshot, 0, 0);
+});
+el("sketch-clear").addEventListener("click", () => {
+  sketchUndoStack = [];
+  sketchBlank();
+});
+sketchAspectSelect.addEventListener("change", () => {
+  const next = sketchAspectSelect.value;
+  if (sketchScanColors().ink
+      && !confirm("Changing the canvas shape clears the sketch. Continue?")) {
+    sketchAspectSelect.value = sketchAspect;
+    return;
+  }
+  sketchAspect = next;
+  const [width, height] = SketchCanvasSizes[next] || SketchCanvasSizes.square;
+  sketchCanvas.width = width;
+  sketchCanvas.height = height;
+  sketchUndoStack = [];
+  sketchBlank();
+});
+
+// Which palette colors the sketch actually contains, by exact pixel match,
+// plus whether any non-white ink exists at all. Runs on attach and before a
+// destructive shape change — a full-canvas scan is a few milliseconds.
+function sketchScanColors() {
+  const data = sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height).data;
+  const paletteByRgb = new Map(SketchPalette.map((color, index) => [
+    (parseInt(color.hex.slice(1, 3), 16) << 16)
+      | (parseInt(color.hex.slice(3, 5), 16) << 8)
+      | parseInt(color.hex.slice(5, 7), 16),
+    index,
+  ]));
+  const used = new Set();
+  let ink = false;
+  for (let i = 0; i < data.length; i += 4) {
+    const rgb = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+    if (rgb !== 0xffffff) ink = true;
+    const index = paletteByRgb.get(rgb);
+    if (index !== undefined) {
+      used.add(index);
+      if (used.size === SketchPalette.length) break;
+    }
+  }
+  return { used, ink };
+}
+
+function buildSketchLegendParagraph(usedIndexes) {
+  const meanings = [...usedIndexes]
+    .sort((a, b) => a - b)
+    .map((index) => ({
+      name: SketchPalette[index].name,
+      text: sketchMeaningInputs[index].value.trim(),
+    }))
+    .filter((entry) => entry.text);
+  const colorSentence = meanings.length > 0
+    ? ` In the sketch: ${meanings.map((entry) => `${entry.name} = ${entry.text}`).join("; ")}.`
+    : "";
+  return SketchLegendMarker
+    + " one attached image is a rough hand-drawn layout sketch — flat colored regions on a white"
+    + " background — not a photo, not a style reference, and not an image to edit or preserve."
+    + " Use it only for composition: place each element where its colored region sits and give it"
+    + " roughly that share of the frame."
+    + colorSentence
+    + " Repaint everything completely in the style described by the rest of this prompt; keep"
+    + " nothing of the sketch's drawing style or flat colors, and do not render the sketch's"
+    + " colors, outlines, or any legend text in the output.";
+}
+
+// Replaces any existing legend paragraph (identified by its exact marker) or
+// appends a new one, so revising and re-attaching the sketch never stacks
+// stale legends. The rest of the prompt is untouched.
+function upsertSketchLegendInPrompt(paragraph) {
+  const kept = promptBox.value
+    .split(/\n{2,}/)
+    .filter((p) => p.trim().length > 0 && !p.trimStart().startsWith(SketchLegendMarker));
+  kept.push(paragraph);
+  promptBox.value = kept.join("\n\n");
+  if (mcpheeCtl) mcpheeCtl.refresh();
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+  updatePromptLimitNotice();
+}
+
+async function attachSketch() {
+  sketchStatus.textContent = "";
+  sketchStatus.classList.remove("error");
+  const { used, ink } = sketchScanColors();
+  if (!ink) {
+    sketchStatus.textContent = "draw something first — the canvas is blank";
+    sketchStatus.classList.add("error");
+    return;
+  }
+  if (used.size === 0) {
+    sketchStatus.textContent = "no palette colors found — draw with the palette, not only the eraser";
+    sketchStatus.classList.add("error");
+    return;
+  }
+  const unlabeled = [...used]
+    .filter((index) => !sketchMeaningInputs[index].value.trim())
+    .map((index) => SketchPalette[index].name);
+  if (unlabeled.length > 0
+      && !confirm(`No meaning written for: ${unlabeled.join(", ")}. `
+        + "Attach anyway? (unexplained colors are left out of the legend)")) {
+    return;
+  }
+  const blob = await new Promise((resolve) => sketchCanvas.toBlob(resolve, "image/png"));
+  if (!blob) {
+    sketchStatus.textContent = "could not export the sketch as a PNG";
+    sketchStatus.classList.add("error");
+    return;
+  }
+  const file = new File([blob], "sketch.png", { type: "image/png" });
+  // A revised sketch replaces the previously attached one, located by exact
+  // object identity — never by position or by guessing among attachments.
+  if (sketchAttachedFile) {
+    const previousIndex = inputImageItems.findIndex((item) => item.file === sketchAttachedFile);
+    if (previousIndex !== -1) removeInputAt(previousIndex);
+  }
+  if (!appendImage(file)) {
+    sketchStatus.textContent = `could not attach — all ${maxInputImages} input slots are in use`;
+    sketchStatus.classList.add("error");
+    return;
+  }
+  sketchAttachedFile = file;
+  upsertSketchLegendInPrompt(buildSketchLegendParagraph(used));
+  sketchDialog.close();
+}
+
+el("sketch-open").addEventListener("click", () => {
+  sketchStatus.textContent = "";
+  sketchStatus.classList.remove("error");
+  sketchDialog.showModal();
+});
+el("sketch-close").addEventListener("click", () => sketchDialog.close());
+el("sketch-cancel").addEventListener("click", () => sketchDialog.close());
+el("sketch-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  attachSketch();
+});
+
 // ---------- prompt inspiration library ----------
 
 const InspirationStorageKey = "multi-image-client.inspiration-library.v1";
@@ -6451,7 +6724,7 @@ document.addEventListener("keydown", (event) => {
   // behind the dialog.
   const formOwnsKey = event.target instanceof Element &&
     event.target.closest("input, textarea, select, [contenteditable]");
-  if (videoDialog.open || formOwnsKey) {
+  if (videoDialog.open || sketchDialog.open || formOwnsKey) {
     return;
   }
 

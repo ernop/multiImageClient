@@ -709,7 +709,8 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 /* ---------- past-input-image picker ---------- */
 
 #input-library-control { position: relative; }
-#input-library-toggle {
+#input-library-toggle,
+#sketch-open {
   width: 100%;
   padding: 5px 10px;
   color: var(--accent-dark);
@@ -719,7 +720,8 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
   font: 700 12px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
 }
-#input-library-toggle:hover, #input-library-toggle[aria-expanded="true"] {
+#input-library-toggle:hover, #input-library-toggle[aria-expanded="true"],
+#sketch-open:hover {
   color: #fff;
   background: var(--accent);
 }
@@ -2093,7 +2095,8 @@ body.image-viewer-open { overflow: hidden; }
 /* ---------- compact composer configuration dialogs ---------- */
 
 #generator-config-dialog,
-#claude-advice-dialog {
+#claude-advice-dialog,
+#sketch-dialog {
   width: min(900px, calc(100vw - 28px));
   max-height: calc(100vh - 28px);
   padding: 0;
@@ -2104,9 +2107,94 @@ body.image-viewer-open { overflow: hidden; }
   border-radius: 5px;
 }
 #generator-config-dialog::backdrop,
-#claude-advice-dialog::backdrop { background: rgba(20, 22, 31, 0.62); }
+#claude-advice-dialog::backdrop,
+#sketch-dialog::backdrop { background: rgba(20, 22, 31, 0.62); }
 #generator-config-form,
-#claude-advice-form { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; }
+#claude-advice-form,
+#sketch-form { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; }
+
+/* ---------- composition sketch dialog ---------- */
+
+#sketch-dialog { width: min(980px, calc(100vw - 28px)); }
+#sketch-body {
+  display: flex;
+  gap: 14px;
+  padding: 0 14px;
+  align-items: flex-start;
+}
+#sketch-left { flex: 1 1 auto; min-width: 0; }
+#sketch-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+#sketch-tools label { display: flex; align-items: center; gap: 5px; }
+#sketch-tools button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+#sketch-tools button.active {
+  color: #fff;
+  background: var(--accent);
+}
+#sketch-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  cursor: crosshair;
+  touch-action: none;
+}
+#sketch-right {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+#sketch-legend-help {
+  margin: 0;
+  font-size: 12px;
+  color: var(--accent-dark);
+}
+#sketch-legend-fields { display: flex; flex-direction: column; gap: 6px; }
+.sketch-color-row { display: flex; align-items: center; gap: 7px; }
+.sketch-swatch {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  border: 2px solid var(--line);
+  border-radius: 4px;
+  padding: 0;
+  cursor: pointer;
+}
+.sketch-swatch.active { outline: 3px solid var(--accent); outline-offset: 1px; }
+.sketch-color-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+@media (max-width: 900px) {
+  #sketch-body { flex-direction: column; }
+  #sketch-right { flex: 1 1 auto; width: 100%; }
+}
 .compact-dialog-head {
   display: flex;
   align-items: center;
