@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260811-attachment-scroll">
+<link rel="stylesheet" href="style.css?v=20260811-sketch-paint-tools">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260809-mcphee-3-9-0">
 </head>
 <body>
@@ -510,10 +510,10 @@
       <button id="sketch-close" type="button" aria-label="Close">&times;</button>
     </div>
     <p class="compact-dialog-note">
-      Draw rough colored regions where things should go, then say what each color means.
+      Build a spatial map of where things should go, then say what each color means.
       Attaching adds the sketch as an input image and writes one legend paragraph into your prompt:
-      image models are told to follow the sketch's placement and coverage, but to repaint everything
-      in the style the rest of your prompt describes — nothing of the sketch's look survives.
+      image models use its placement and coverage while choosing the final palette and rendering style
+      from the rest of your prompt.
     </p>
     <div id="sketch-body">
       <div id="sketch-left">
@@ -527,19 +527,58 @@
               <option value="tall">tall 9:16</option>
             </select>
           </label>
-          <label>brush <input id="sketch-brush" type="range" min="6" max="96" value="30"></label>
-          <button id="sketch-eraser" type="button" aria-pressed="false"
-            title="Paint white to erase">eraser</button>
-          <button id="sketch-undo" type="button" title="Undo the last stroke">undo</button>
-          <button id="sketch-clear" type="button" title="Clear the whole sketch">clear</button>
+          <label>size <input id="sketch-brush" type="range" min="1" max="96" value="30"></label>
+          <label>fill tolerance <input id="sketch-fill-tolerance" type="range" min="0" max="96" value="24"></label>
+          <label>shape
+            <select id="sketch-shape-style">
+              <option value="outline" selected>outline</option>
+              <option value="solid">solid</option>
+            </select>
+          </label>
+          <span id="sketch-active-indicator" aria-live="polite">
+            <span id="sketch-active-color" aria-hidden="true"></span>
+            <span id="sketch-active-label">brush · 30 px</span>
+          </span>
+          <div id="sketch-tool-buttons" role="toolbar" aria-label="Sketch drawing tools">
+            <button type="button" data-sketch-tool="pencil">pencil</button>
+            <button type="button" data-sketch-tool="brush" class="active">brush</button>
+            <button id="sketch-eraser" type="button" data-sketch-tool="eraser">eraser</button>
+            <button type="button" data-sketch-tool="fill">fill</button>
+            <button type="button" data-sketch-tool="line">line</button>
+            <button type="button" data-sketch-tool="rectangle">rectangle</button>
+            <button type="button" data-sketch-tool="rounded-rectangle">rounded rectangle</button>
+            <button type="button" data-sketch-tool="ellipse">ellipse</button>
+            <button type="button" data-sketch-tool="triangle">triangle</button>
+            <button type="button" data-sketch-tool="diamond">diamond</button>
+            <button type="button" data-sketch-tool="pentagon">pentagon</button>
+            <button type="button" data-sketch-tool="hexagon">hexagon</button>
+            <button type="button" data-sketch-tool="octagon">octagon</button>
+            <button type="button" data-sketch-tool="star">star</button>
+          </div>
+          <div id="sketch-history-controls">
+            <button id="sketch-undo" type="button" title="Undo the last editor change">undo</button>
+            <button id="sketch-redo" type="button" title="Redo the last undone editor change">redo</button>
+            <button id="sketch-clear" type="button" title="Add an undoable clear action">clear</button>
+          </div>
         </div>
-        <canvas id="sketch-canvas" width="1024" height="1024"
-          aria-label="Composition sketch canvas — draw with the mouse"></canvas>
+        <div id="sketch-canvas-wrap">
+          <canvas id="sketch-canvas" width="1024" height="1024"
+            aria-label="Composition sketch canvas — draw with the active tool"></canvas>
+          <div id="sketch-brush-cursor" aria-hidden="true"></div>
+        </div>
       </div>
       <div id="sketch-right">
         <p id="sketch-legend-help">Pick a color, draw, and write what that color's area is
           (e.g. red = <em>the planet</em>). Only colors you actually drew with go into the legend.</p>
         <div id="sketch-legend-fields"><!-- one row per palette color, injected --></div>
+        <section id="sketch-action-panel" aria-label="Sketch action stack">
+          <div id="sketch-action-head">
+            <strong>actions — back to front</strong>
+            <span id="sketch-action-count">0</span>
+          </div>
+          <p>Every committed mark is listed. Hide, remove, or move actions to rerender the map deterministically.</p>
+          <ol id="sketch-action-list"></ol>
+        </section>
       </div>
     </div>
     <label id="sketch-autodeselect-control"
@@ -609,6 +648,6 @@
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260809-mcphee-3-9-0"></script>
 <script src="personal-config.js?v=20260810-schema-v2"></script>
-<script src="app.js?v=20260811-sketch-identity"></script>
+<script src="app.js?v=20260811-sketch-paint-tools"></script>
 </body>
 </html>

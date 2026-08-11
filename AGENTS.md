@@ -157,6 +157,25 @@ The `/v1/images/generations` endpoint with `model=gpt-image-2` accepts:
 
 Pricing is token-based ($30 / 1M output tokens). Rough per-image ceilings we report: low ≈ $0.02, medium ≈ $0.08, high ≈ $0.25.
 
+## Sketch Composer Editor (later 2026-08-11 update)
+This supersedes the earlier sketch-tool and legend-wording details above. The
+sketch is described affirmatively to image endpoints as a spatial map:
+palette colors identify mapped subjects without prescribing final colors;
+outlines, scribbles, and repeated strokes define approximate regions; and
+white/unmarked areas are flexible background or negative space. The editor has
+pencil, brush, eraser, bounded tolerance fill, line, rectangle, rounded
+rectangle, ellipse, triangle, diamond, pentagon, hexagon, octagon, and star
+tools, with outline/solid shape modes and a visible cursor plus active-tool
+readout. Each committed operation is an immutable action. A 200-action cap,
+32-fill cap, 4096-point per-stroke cap, and 50-state undo/redo history bound
+browser work. Flood-fill traversal buffers are fixed to the current canvas
+size and reused. The back-to-front action list
+can hide/show, remove, or move any action and rerenders deterministically;
+clear is itself undoable. A sketch restored from a persisted job remains
+identity-safe and appears as one flattened `restored sketch base` action,
+because persisted jobs intentionally retain the exact PNG/aspect/meanings
+contract rather than guessing a pre-flattening action graph.
+
 ## Testing Guidelines
 No dedicated test project exists yet. Manually validate new workflows by running representative prompts and inspecting generated assets and metadata. When adding automated coverage, create an xUnit project referenced by the solution and ensure `dotnet test` succeeds. Capture regression prompts in `prompts.txt` with notes after bug fixes.
 

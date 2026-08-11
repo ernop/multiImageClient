@@ -3051,11 +3051,10 @@ document.addEventListener("keydown", (event) => {
 
 // ---------- composition sketch composer ----------
 
-// Mouse-drawn layout sketches: rough colored regions on a white canvas, one
-// meaning per color ("red = the planet"), attached as a normal input image
-// together with a legend paragraph written into the prompt. The legend tells
-// every image model the sketch is composition guidance only — placement and
-// coverage are followed, the sketch's own look is repainted away.
+// Layout sketches are spatial maps made from colored freehand marks, fills,
+// and shapes, with one meaning per color ("red = the planet"). The flattened
+// PNG is attached as a normal input image and the prompt receives an
+// affirmative legend describing placement, coverage, and flexible blank space.
 
 // Fixed, visually distinct drawing palette. Names appear verbatim in the
 // generated legend paragraph, so they stay plain color words; hex values are
@@ -3083,18 +3082,60 @@ const SketchCanvasSizes = {
 // The legend paragraph starts with this exact marker so re-attaching a
 // revised sketch replaces the previous paragraph instead of stacking copies.
 const SketchLegendMarker = "Composition sketch legend:";
-const SketchUndoDepth = 25;
+const SketchHistoryDepth = 50;
+const SketchActionLimit = 200;
+const SketchFillActionLimit = 32;
+const SketchStrokePointLimit = 4096;
+const SketchToolNames = {
+  pencil: "pencil",
+  brush: "brush",
+  eraser: "eraser",
+  fill: "tolerance fill",
+  line: "line",
+  rectangle: "rectangle",
+  "rounded-rectangle": "rounded rectangle",
+  ellipse: "ellipse",
+  triangle: "triangle",
+  diamond: "diamond",
+  pentagon: "pentagon",
+  hexagon: "hexagon",
+  octagon: "octagon",
+  star: "star",
+};
+const SketchShapeTools = new Set([
+  "line",
+  "rectangle",
+  "rounded-rectangle",
+  "ellipse",
+  "triangle",
+  "diamond",
+  "pentagon",
+  "hexagon",
+  "octagon",
+  "star",
+]);
 
 const sketchDialog = el("sketch-dialog");
 const sketchCanvas = el("sketch-canvas");
 const sketchCtx = sketchCanvas.getContext("2d", { willReadFrequently: true });
 const sketchStatus = el("sketch-status");
-const sketchEraserBtn = el("sketch-eraser");
 const sketchAspectSelect = el("sketch-aspect");
+const sketchBrushInput = el("sketch-brush");
+const sketchFillToleranceInput = el("sketch-fill-tolerance");
+const sketchShapeStyleSelect = el("sketch-shape-style");
+const sketchCursor = el("sketch-brush-cursor");
+const sketchActionList = el("sketch-action-list");
 const sketchMeaningInputs = [];
-let sketchActiveColor = 0;      // palette index, or -1 for the eraser
-let sketchUndoStack = [];       // ImageData snapshots, oldest first
-let sketchStrokePoint = null;   // previous point while a stroke is active
+let sketchActiveColor = 0;
+let sketchActiveTool = "brush";
+let sketchActions = [];
+let sketchHistoryPast = [];
+let sketchHistoryFuture = [];
+let sketchGesture = null;
+let sketchActionSequence = 0;
+let sketchFillVisited = new Uint32Array(0);
+let sketchFillQueue = new Int32Array(0);
+let sketchFillVisitGeneration = 0;
 let sketchAspect = "square";    // last applied canvas shape, for revert
 let sketchAttachedFile = null;  // exact File last attached, replaced on re-attach
 let sketchAttachedState = null; // metadata captured with those exact PNG bytes
@@ -3122,11 +3163,10 @@ function resetSketchEditor(notice = "") {
   const [width, height] = SketchCanvasSizes[sketchAspect];
   sketchCanvas.width = width;
   sketchCanvas.height = height;
-  sketchUndoStack = [];
-  sketchStrokePoint = null;
-  sketchBlank();
+  resetSketchActions();
   for (const meaning of sketchMeaningInputs) meaning.value = "";
   setSketchColor(0);
+  setSketchTool("brush");
   sketchAttachedFile = null;
   sketchAttachedState = null;
   sketchEditorNotice = notice;
@@ -3197,8 +3237,18 @@ function applyRestoredSketchEditor(nextItems, prepared) {
     sketchCanvas.height = height;
     sketchCtx.clearRect(0, 0, width, height);
     sketchCtx.drawImage(bitmap, 0, 0);
-    sketchUndoStack = [];
-    sketchStrokePoint = null;
+    const restoredPixels = sketchCtx.getImageData(0, 0, width, height);
+    sketchActions = [{
+      id: ++sketchActionSequence,
+      kind: "base",
+      visible: true,
+      imageData: restoredPixels,
+    }];
+    sketchHistoryPast = [];
+    sketchHistoryFuture = [];
+    sketchGesture = null;
+    renderSketchActions();
+    renderSketchActionList();
     state.meanings.forEach((meaning, index) => {
       sketchMeaningInputs[index].value = meaning;
     });
@@ -3210,6 +3260,7 @@ function applyRestoredSketchEditor(nextItems, prepared) {
     };
     sketchEditorNotice = "";
     setSketchColor(0);
+    setSketchTool("brush");
   } finally {
     bitmap.close();
   }
@@ -3257,14 +3308,412 @@ for (const [index, color] of SketchPalette.entries()) {
 }
 
 function setSketchColor(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= SketchPalette.length) return;
   sketchActiveColor = index;
-  sketchEraserBtn.setAttribute("aria-pressed", String(index === -1));
-  sketchEraserBtn.classList.toggle("active", index === -1);
+  if (sketchActiveTool === "eraser") setSketchTool("brush");
   document.querySelectorAll("#sketch-legend-fields .sketch-swatch").forEach((swatch, i) => {
     swatch.classList.toggle("active", i === index);
   });
+  updateSketchToolPresentation();
+}
+
+function setSketchTool(tool) {
+  if (!Object.hasOwn(SketchToolNames, tool)) return;
+  sketchActiveTool = tool;
+  document.querySelectorAll("#sketch-tool-buttons [data-sketch-tool]").forEach((button) => {
+    const active = button.dataset.sketchTool === tool;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  sketchShapeStyleSelect.disabled = !SketchShapeTools.has(tool) || tool === "line";
+  sketchFillToleranceInput.disabled = tool !== "fill";
+  updateSketchToolPresentation();
+}
+
+function sketchCurrentWidth() {
+  return sketchActiveTool === "pencil" ? 3 : Number(sketchBrushInput.value);
+}
+
+function sketchCurrentColor() {
+  return sketchActiveTool === "eraser" ? "#ffffff" : SketchPalette[sketchActiveColor].hex;
+}
+
+function updateSketchToolPresentation() {
+  const width = sketchCurrentWidth();
+  const color = sketchCurrentColor();
+  const extra = sketchActiveTool === "fill"
+    ? ` · tolerance ${sketchFillToleranceInput.value}`
+    : (sketchActiveTool === "pencil" || sketchActiveTool === "brush" || sketchActiveTool === "eraser"
+      || sketchActiveTool === "line" || SketchShapeTools.has(sketchActiveTool))
+      ? ` · ${width} px`
+      : "";
+  el("sketch-active-label").textContent = `${SketchToolNames[sketchActiveTool]}${extra}`;
+  el("sketch-active-color").style.background = color;
+  sketchCursor.style.background = color === "#ffffff" ? "#ffffffaa" : `${color}66`;
+}
+
+function updateSketchCursor(event) {
+  const rect = sketchCanvas.getBoundingClientRect();
+  const scale = rect.width / sketchCanvas.width;
+  const targetCursor = sketchActiveTool === "fill" || SketchShapeTools.has(sketchActiveTool);
+  const diameter = Math.max(5, Math.min(96, sketchCurrentWidth() * scale));
+  sketchCursor.style.left = `${event.clientX - rect.left}px`;
+  sketchCursor.style.top = `${event.clientY - rect.top}px`;
+  sketchCursor.style.width = `${diameter}px`;
+  sketchCursor.style.height = `${diameter}px`;
+  sketchCursor.classList.toggle("target", targetCursor);
+  sketchCursor.classList.add("visible");
+}
+
+function resetSketchActions() {
+  sketchActions = [];
+  sketchHistoryPast = [];
+  sketchHistoryFuture = [];
+  sketchGesture = null;
+  sketchBlank();
+  renderSketchActionList();
+}
+
+function rememberSketchState() {
+  sketchHistoryPast.push(sketchActions.slice());
+  if (sketchHistoryPast.length > SketchHistoryDepth) sketchHistoryPast.shift();
+  sketchHistoryFuture = [];
+}
+
+function setSketchActionStatus(message = "", isError = false) {
+  sketchStatus.textContent = message;
+  sketchStatus.classList.toggle("error", isError);
+}
+
+function commitSketchAction(action) {
+  if (sketchActions.length >= SketchActionLimit) {
+    setSketchActionStatus(
+      `This sketch already has ${SketchActionLimit} actions. Remove or combine actions before drawing more.`,
+      true);
+    renderSketchActions();
+    return false;
+  }
+  if (action.kind === "fill"
+      && sketchActions.filter((candidate) => candidate.kind === "fill").length >= SketchFillActionLimit) {
+    setSketchActionStatus(
+      `This sketch already has ${SketchFillActionLimit} fill actions. Remove one before adding another.`,
+      true);
+    renderSketchActions();
+    return false;
+  }
+  rememberSketchState();
+  sketchActions = [...sketchActions, {
+    ...action,
+    id: ++sketchActionSequence,
+    visible: true,
+  }];
+  renderSketchActions();
+  renderSketchActionList();
+  setSketchActionStatus();
+  return true;
+}
+
+function mutateSketchActions(nextActions) {
+  rememberSketchState();
+  sketchActions = nextActions;
+  renderSketchActions();
+  renderSketchActionList();
+  setSketchActionStatus();
+}
+
+function undoSketchActionChange() {
+  const previous = sketchHistoryPast.pop();
+  if (!previous) return;
+  sketchHistoryFuture.push(sketchActions.slice());
+  sketchActions = previous;
+  renderSketchActions();
+  renderSketchActionList();
+  setSketchActionStatus();
+}
+
+function redoSketchActionChange() {
+  const next = sketchHistoryFuture.pop();
+  if (!next) return;
+  sketchHistoryPast.push(sketchActions.slice());
+  sketchActions = next;
+  renderSketchActions();
+  renderSketchActionList();
+  setSketchActionStatus();
+}
+
+function sketchActionColorName(action) {
+  if (action.kind === "base") return "";
+  if (action.color === "#ffffff") return "erase";
+  return SketchPalette.find((entry) => entry.hex === action.color)?.name || action.color || "";
+}
+
+function sketchActionDescription(action) {
+  if (action.kind === "base") return "restored sketch base";
+  if (action.kind === "clear") return "clear canvas";
+  const color = sketchActionColorName(action);
+  if (action.kind === "fill") {
+    return `fill · ${color} · tolerance ${action.tolerance}`;
+  }
+  const width = `${action.width} px`;
+  if (SketchShapeTools.has(action.kind) && action.kind !== "line") {
+    return `${SketchToolNames[action.kind]} · ${color} · ${action.style} · ${width}`;
+  }
+  return `${SketchToolNames[action.kind] || action.kind} · ${color} · ${width}`;
+}
+
+function renderSketchActionList() {
+  sketchActionList.replaceChildren(...sketchActions.map((action, index) => {
+    const item = document.createElement("li");
+    item.className = "sketch-action";
+    item.classList.toggle("hidden-action", !action.visible);
+    item.dataset.actionId = String(action.id);
+
+    const visible = document.createElement("input");
+    visible.type = "checkbox";
+    visible.checked = action.visible;
+    visible.className = "sketch-action-visibility";
+    visible.title = action.visible ? "Hide this action" : "Show this action";
+    visible.setAttribute("aria-label", visible.title);
+    visible.addEventListener("change", () => {
+      const next = sketchActions.map((candidate) => candidate.id === action.id
+        ? { ...candidate, visible: visible.checked }
+        : candidate);
+      mutateSketchActions(next);
+    });
+
+    const swatch = document.createElement("span");
+    swatch.className = "sketch-action-swatch";
+    swatch.style.background = action.kind === "base"
+      ? "linear-gradient(135deg, #e53935, #1e88e5, #43a047)"
+      : action.kind === "clear" ? "#ffffff" : action.color;
+
+    const label = document.createElement("span");
+    label.className = "sketch-action-label";
+    label.textContent = `${index + 1}. ${sketchActionDescription(action)}`;
+    label.title = label.textContent;
+
+    const back = document.createElement("button");
+    back.type = "button";
+    back.textContent = "↑";
+    back.title = "Move one layer toward the back";
+    back.setAttribute("aria-label", back.title);
+    back.disabled = index === 0;
+    back.addEventListener("click", () => {
+      const next = sketchActions.slice();
+      [next[index - 1], next[index]] = [next[index], next[index - 1]];
+      mutateSketchActions(next);
+    });
+
+    const front = document.createElement("button");
+    front.type = "button";
+    front.textContent = "↓";
+    front.title = "Move one layer toward the front";
+    front.setAttribute("aria-label", front.title);
+    front.disabled = index === sketchActions.length - 1;
+    front.addEventListener("click", () => {
+      const next = sketchActions.slice();
+      [next[index], next[index + 1]] = [next[index + 1], next[index]];
+      mutateSketchActions(next);
+    });
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.className = "sketch-action-remove";
+    remove.title = "Remove this action";
+    remove.setAttribute("aria-label", remove.title);
+    remove.addEventListener("click", () => {
+      mutateSketchActions(sketchActions.filter((candidate) => candidate.id !== action.id));
+    });
+
+    item.append(visible, swatch, label, back, front, remove);
+    return item;
+  }));
+  el("sketch-action-count").textContent = `${sketchActions.length}/${SketchActionLimit}`;
+  el("sketch-undo").disabled = sketchHistoryPast.length === 0;
+  el("sketch-redo").disabled = sketchHistoryFuture.length === 0;
+}
+
+function drawSketchStroke(action, context = sketchCtx) {
+  if (!action.points.length) return;
+  context.save();
+  context.strokeStyle = action.color;
+  context.lineWidth = action.width;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.beginPath();
+  context.moveTo(action.points[0].x, action.points[0].y);
+  if (action.points.length === 1) {
+    context.lineTo(action.points[0].x, action.points[0].y);
+  } else {
+    for (let i = 1; i < action.points.length; i++) {
+      context.lineTo(action.points[i].x, action.points[i].y);
+    }
+  }
+  context.stroke();
+  context.restore();
+}
+
+function regularSketchPolygon(start, end, sides, rotation = -Math.PI / 2) {
+  const cx = (start.x + end.x) / 2;
+  const cy = (start.y + end.y) / 2;
+  const rx = Math.abs(end.x - start.x) / 2;
+  const ry = Math.abs(end.y - start.y) / 2;
+  return Array.from({ length: sides }, (_, index) => {
+    const angle = rotation + (index * Math.PI * 2 / sides);
+    return { x: cx + Math.cos(angle) * rx, y: cy + Math.sin(angle) * ry };
+  });
+}
+
+function starSketchPolygon(start, end) {
+  const cx = (start.x + end.x) / 2;
+  const cy = (start.y + end.y) / 2;
+  const rx = Math.abs(end.x - start.x) / 2;
+  const ry = Math.abs(end.y - start.y) / 2;
+  return Array.from({ length: 10 }, (_, index) => {
+    const outer = index % 2 === 0;
+    const angle = -Math.PI / 2 + (index * Math.PI / 5);
+    return {
+      x: cx + Math.cos(angle) * rx * (outer ? 1 : 0.45),
+      y: cy + Math.sin(angle) * ry * (outer ? 1 : 0.45),
+    };
+  });
+}
+
+function drawSketchShape(action, context = sketchCtx) {
+  const left = Math.min(action.start.x, action.end.x);
+  const top = Math.min(action.start.y, action.end.y);
+  const width = Math.abs(action.end.x - action.start.x);
+  const height = Math.abs(action.end.y - action.start.y);
+  context.save();
+  context.strokeStyle = action.color;
+  context.fillStyle = action.color;
+  context.lineWidth = action.width;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.beginPath();
+  if (action.kind === "line") {
+    context.moveTo(action.start.x, action.start.y);
+    context.lineTo(action.end.x, action.end.y);
+  } else if (action.kind === "rectangle") {
+    context.rect(left, top, width, height);
+  } else if (action.kind === "rounded-rectangle") {
+    const radius = Math.min(width, height) * 0.18;
+    context.moveTo(left + radius, top);
+    context.lineTo(left + width - radius, top);
+    context.arcTo(left + width, top, left + width, top + radius, radius);
+    context.lineTo(left + width, top + height - radius);
+    context.arcTo(left + width, top + height, left + width - radius, top + height, radius);
+    context.lineTo(left + radius, top + height);
+    context.arcTo(left, top + height, left, top + height - radius, radius);
+    context.lineTo(left, top + radius);
+    context.arcTo(left, top, left + radius, top, radius);
+    context.closePath();
+  } else if (action.kind === "ellipse") {
+    context.ellipse(left + width / 2, top + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+  } else {
+    const sides = { triangle: 3, diamond: 4, pentagon: 5, hexagon: 6, octagon: 8 }[action.kind];
+    const points = action.kind === "star"
+      ? starSketchPolygon(action.start, action.end)
+      : regularSketchPolygon(action.start, action.end, sides);
+    if (points.length) {
+      context.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) context.lineTo(points[i].x, points[i].y);
+      context.closePath();
+    }
+  }
+  if (action.kind !== "line" && action.style === "solid") context.fill();
+  else context.stroke();
+  context.restore();
+}
+
+function sketchHexRgb(hex) {
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ];
+}
+
+function applySketchFloodFill(action) {
+  const width = sketchCanvas.width;
+  const height = sketchCanvas.height;
+  const x = Math.max(0, Math.min(width - 1, Math.round(action.x)));
+  const y = Math.max(0, Math.min(height - 1, Math.round(action.y)));
+  const image = sketchCtx.getImageData(0, 0, width, height);
+  const data = image.data;
+  const startOffset = (y * width + x) * 4;
+  const target = [data[startOffset], data[startOffset + 1], data[startOffset + 2]];
+  const fill = sketchHexRgb(action.color);
+  if (target.every((channel, index) => channel === fill[index])) return;
+
+  const total = width * height;
+  if (sketchFillVisited.length !== total) {
+    sketchFillVisited = new Uint32Array(total);
+    sketchFillQueue = new Int32Array(total);
+    sketchFillVisitGeneration = 0;
+  }
+  sketchFillVisitGeneration++;
+  if (sketchFillVisitGeneration === 0xffffffff) {
+    sketchFillVisited.fill(0);
+    sketchFillVisitGeneration = 1;
+  }
+  const visitGeneration = sketchFillVisitGeneration;
+  let read = 0;
+  let write = 1;
+  const startIndex = y * width + x;
+  sketchFillQueue[0] = startIndex;
+  sketchFillVisited[startIndex] = visitGeneration;
+  const enqueue = (neighbor) => {
+    if (sketchFillVisited[neighbor] !== visitGeneration) {
+      sketchFillVisited[neighbor] = visitGeneration;
+      sketchFillQueue[write++] = neighbor;
+    }
+  };
+
+  while (read < write) {
+    const pixelIndex = sketchFillQueue[read++];
+    const offset = pixelIndex * 4;
+    if (Math.abs(data[offset] - target[0]) > action.tolerance
+        || Math.abs(data[offset + 1] - target[1]) > action.tolerance
+        || Math.abs(data[offset + 2] - target[2]) > action.tolerance) {
+      continue;
+    }
+    data[offset] = fill[0];
+    data[offset + 1] = fill[1];
+    data[offset + 2] = fill[2];
+    data[offset + 3] = 255;
+
+    const px = pixelIndex % width;
+    const py = Math.floor(pixelIndex / width);
+    if (px > 0) enqueue(pixelIndex - 1);
+    if (px + 1 < width) enqueue(pixelIndex + 1);
+    if (py > 0) enqueue(pixelIndex - width);
+    if (py + 1 < height) enqueue(pixelIndex + width);
+  }
+  sketchCtx.putImageData(image, 0, 0);
+}
+
+function renderSketchActions() {
+  sketchBlank();
+  for (const action of sketchActions) {
+    if (!action.visible) continue;
+    if (action.kind === "base") {
+      sketchCtx.putImageData(action.imageData, 0, 0);
+    } else if (action.kind === "clear") {
+      sketchBlank();
+    } else if (action.kind === "fill") {
+      applySketchFloodFill(action);
+    } else if (SketchShapeTools.has(action.kind)) {
+      drawSketchShape(action);
+    } else {
+      drawSketchStroke(action);
+    }
+  }
 }
 setSketchColor(0);
+setSketchTool("brush");
+renderSketchActionList();
 
 function sketchCanvasPoint(event) {
   const rect = sketchCanvas.getBoundingClientRect();
@@ -3274,49 +3723,163 @@ function sketchCanvasPoint(event) {
   };
 }
 
-function drawSketchSegment(from, to) {
-  sketchCtx.strokeStyle = sketchActiveColor === -1
-    ? "#ffffff"
-    : SketchPalette[sketchActiveColor].hex;
-  sketchCtx.lineWidth = Number(el("sketch-brush").value);
-  sketchCtx.lineCap = "round";
-  sketchCtx.lineJoin = "round";
-  sketchCtx.beginPath();
-  sketchCtx.moveTo(from.x, from.y);
-  sketchCtx.lineTo(to.x, to.y);
-  sketchCtx.stroke();
-}
-
 sketchCanvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0) return;
   event.preventDefault();
+  updateSketchCursor(event);
+  if (sketchActions.length >= SketchActionLimit) {
+    setSketchActionStatus(
+      `This sketch already has ${SketchActionLimit} actions. Remove or combine actions before drawing more.`,
+      true);
+    return;
+  }
+  const point = sketchCanvasPoint(event);
+  const color = sketchCurrentColor();
+  if (sketchActiveTool === "fill") {
+    commitSketchAction({
+      kind: "fill",
+      x: point.x,
+      y: point.y,
+      color,
+      tolerance: Number(sketchFillToleranceInput.value),
+    });
+    return;
+  }
   sketchCanvas.setPointerCapture(event.pointerId);
-  sketchUndoStack.push(sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height));
-  if (sketchUndoStack.length > SketchUndoDepth) sketchUndoStack.shift();
-  sketchStrokePoint = sketchCanvasPoint(event);
-  // A click without movement still leaves a dot.
-  drawSketchSegment(sketchStrokePoint, sketchStrokePoint);
+  if (SketchShapeTools.has(sketchActiveTool)) {
+    sketchGesture = {
+      pointerId: event.pointerId,
+      kind: "shape",
+      tool: sketchActiveTool,
+      color,
+      width: sketchCurrentWidth(),
+      style: sketchShapeStyleSelect.value,
+      start: point,
+      end: point,
+      baseImage: sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height),
+    };
+    return;
+  }
+  sketchGesture = {
+    pointerId: event.pointerId,
+    kind: "stroke",
+    tool: sketchActiveTool,
+    color,
+    width: sketchCurrentWidth(),
+    points: [point],
+  };
+  drawSketchStroke({ color, width: sketchGesture.width, points: [point] });
 });
 sketchCanvas.addEventListener("pointermove", (event) => {
-  if (!sketchStrokePoint) return;
+  updateSketchCursor(event);
+  if (!sketchGesture || sketchGesture.pointerId !== event.pointerId) return;
   const point = sketchCanvasPoint(event);
-  drawSketchSegment(sketchStrokePoint, point);
-  sketchStrokePoint = point;
+  if (sketchGesture.kind === "stroke") {
+    if (sketchGesture.points.length >= SketchStrokePointLimit) {
+      const completed = sketchGesture;
+      sketchGesture = null;
+      if (sketchCanvas.hasPointerCapture(event.pointerId)) {
+        sketchCanvas.releasePointerCapture(event.pointerId);
+      }
+      commitSketchAction({
+        kind: completed.tool,
+        color: completed.color,
+        width: completed.width,
+        points: completed.points,
+      });
+      setSketchActionStatus(
+        `Stroke committed at the ${SketchStrokePointLimit}-point safety limit. Start another stroke to continue.`);
+      return;
+    }
+    const previous = sketchGesture.points[sketchGesture.points.length - 1];
+    sketchGesture.points.push(point);
+    drawSketchStroke({
+      color: sketchGesture.color,
+      width: sketchGesture.width,
+      points: [previous, point],
+    });
+    return;
+  }
+  sketchGesture.end = point;
+  sketchCtx.putImageData(sketchGesture.baseImage, 0, 0);
+  drawSketchShape({
+    kind: sketchGesture.tool,
+    start: sketchGesture.start,
+    end: point,
+    color: sketchGesture.color,
+    width: sketchGesture.width,
+    style: sketchGesture.style,
+  });
 });
-const endSketchStroke = () => { sketchStrokePoint = null; };
-sketchCanvas.addEventListener("pointerup", endSketchStroke);
-sketchCanvas.addEventListener("pointercancel", endSketchStroke);
+function finishSketchGesture(event, cancelled = false) {
+  if (!sketchGesture || sketchGesture.pointerId !== event.pointerId) return;
+  const gesture = sketchGesture;
+  sketchGesture = null;
+  if (cancelled) {
+    renderSketchActions();
+    return;
+  }
+  if (gesture.kind === "stroke") {
+    commitSketchAction({
+      kind: gesture.tool,
+      color: gesture.color,
+      width: gesture.width,
+      points: gesture.points,
+    });
+    return;
+  }
+  const dx = Math.abs(gesture.end.x - gesture.start.x);
+  const dy = Math.abs(gesture.end.y - gesture.start.y);
+  if (gesture.tool === "line" && dx < 1 && dy < 1) {
+    renderSketchActions();
+    setSketchActionStatus("Drag to give the line a visible length.", true);
+    return;
+  }
+  if (gesture.tool !== "line" && (dx < 2 || dy < 2)) {
+    renderSketchActions();
+    setSketchActionStatus("Drag to give the shape both width and height.", true);
+    return;
+  }
+  commitSketchAction({
+    kind: gesture.tool,
+    start: gesture.start,
+    end: gesture.end,
+    color: gesture.color,
+    width: gesture.width,
+    style: gesture.style,
+  });
+}
+sketchCanvas.addEventListener("pointerup", (event) => finishSketchGesture(event));
+sketchCanvas.addEventListener("pointercancel", (event) => finishSketchGesture(event, true));
+sketchCanvas.addEventListener("pointerenter", updateSketchCursor);
+sketchCanvas.addEventListener("pointerleave", () => sketchCursor.classList.remove("visible"));
 
-sketchEraserBtn.addEventListener("click", () => {
-  setSketchColor(sketchActiveColor === -1 ? 0 : -1);
+document.querySelectorAll("#sketch-tool-buttons [data-sketch-tool]").forEach((button) => {
+  button.addEventListener("click", () => setSketchTool(button.dataset.sketchTool));
 });
-el("sketch-undo").addEventListener("click", () => {
-  const snapshot = sketchUndoStack.pop();
-  if (snapshot) sketchCtx.putImageData(snapshot, 0, 0);
-});
+sketchBrushInput.addEventListener("input", updateSketchToolPresentation);
+sketchFillToleranceInput.addEventListener("input", updateSketchToolPresentation);
+el("sketch-undo").addEventListener("click", undoSketchActionChange);
+el("sketch-redo").addEventListener("click", redoSketchActionChange);
 el("sketch-clear").addEventListener("click", () => {
-  sketchUndoStack = [];
-  sketchBlank();
+  commitSketchAction({ kind: "clear" });
+});
+sketchDialog.addEventListener("keydown", (event) => {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+  if (event.target instanceof Element
+      && event.target.closest("input, textarea, select, [contenteditable]")) {
+    return;
+  }
+  const key = event.key.toLowerCase();
+  if (key === "z" && !event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    undoSketchActionChange();
+  } else if (key === "y" || (key === "z" && event.shiftKey)) {
+    event.preventDefault();
+    event.stopPropagation();
+    redoSketchActionChange();
+  }
 });
 sketchAspectSelect.addEventListener("change", () => {
   const next = sketchAspectSelect.value;
@@ -3329,8 +3892,7 @@ sketchAspectSelect.addEventListener("change", () => {
   const [width, height] = SketchCanvasSizes[next] || SketchCanvasSizes.square;
   sketchCanvas.width = width;
   sketchCanvas.height = height;
-  sketchUndoStack = [];
-  sketchBlank();
+  resetSketchActions();
 });
 
 // Which palette colors the sketch actually contains, by exact pixel match,
@@ -3370,14 +3932,15 @@ function buildSketchLegendParagraph(usedIndexes) {
     ? ` In the sketch: ${meanings.map((entry) => `${entry.name} = ${entry.text}`).join("; ")}.`
     : "";
   return SketchLegendMarker
-    + " one attached image is a rough hand-drawn layout sketch — flat colored regions on a white"
-    + " background — not a photo, not a style reference, and not an image to edit or preserve."
-    + " Use it only for composition: place each element where its colored region sits and give it"
-    + " roughly that share of the frame."
+    + " one attached image is a spatial map for the final image. Place each named subject where"
+    + " its mapped color, outline, scribble, or group of strokes appears, using roughly that share"
+    + " of the frame. Interpret sparse lines and repeated strokes as the approximate extent of one"
+    + " mapped region. The sketch colors identify subjects; choose the final palette, materials,"
+    + " lighting, and rendering style from the rest of this prompt and from each subject's natural"
+    + " appearance. White or unmarked areas are flexible background and negative space that may be"
+    + " used as needed to make the complete composition."
     + colorSentence
-    + " Repaint everything completely in the style described by the rest of this prompt; keep"
-    + " nothing of the sketch's drawing style or flat colors, and do not render the sketch's"
-    + " colors, outlines, or any legend text in the output.";
+    + " Create a complete new image from this map and use the legend words as instructions.";
 }
 
 // Replaces any existing legend paragraph (identified by its exact marker) or
