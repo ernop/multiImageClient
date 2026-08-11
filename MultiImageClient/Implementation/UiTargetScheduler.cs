@@ -161,6 +161,9 @@ namespace MultiImageClient
                 UiJobRunner.KeyDescribeOpenAi => LaneOpenAi,
                 UiJobRunner.KeyDescribeGrok => LaneXaiApi,
                 UiJobRunner.KeyDescribeGemini => LaneGoogle,
+                // Layout map is a Gemini vision call, so it shares the
+                // google provider-account lane with its describe sibling.
+                UiJobRunner.KeyLayoutMap => LaneGoogle,
                 UiJobRunner.KeyDescribeIdeogram => LaneIdeogram,
                 UiJobRunner.KeyDescribeClaude => LaneAnthropic,
                 _ => throw new InvalidOperationException(

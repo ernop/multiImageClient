@@ -316,6 +316,12 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyDescribeClaude, label = "Claude describe (Sonnet)", detail = "Anthropic claude-sonnet-4-5 vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeGemini, label = "Gemini describe (2.5 Pro)", detail = "Google gemini-2.5-pro vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeGrok, label = "Grok describe (grok-4.3)", detail = "xAI grok-4.3 vision via api.x.ai. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    // Layout map: analysis target like describe (requires an
+                    // attached image, ignores the output-options row) but its
+                    // result is an IMAGE — a server-rendered flat-color map of
+                    // the sections Gemini identified, with a numbered legend
+                    // and one-sentence summary baked into the PNG.
+                    new { key = UiJobRunner.KeyLayoutMap, label = "Layout map (Gemini 2.5 Pro)", detail = "Google gemini-2.5-pro names each attached image's main sections and topics with bounding boxes; the server renders them as a simple flat-color map image with a numbered color legend and a one-sentence summary. Your prompt, when present, is passed as context for the section labels." },
                 }
                 .Select(g => new
                 {
@@ -324,17 +330,20 @@ namespace MultiImageClient
                     g.detail,
                     available = runner.IsAvailable(g.key),
                     availabilityProblem = runner.DescribeAvailabilityProblem(g.key),
-                    // Describe targets consume the attached image by definition
-                    // (that's their whole input), so they count as image-capable
-                    // for the chip icons and image-only bulk actions.
-                    imageCapable = runner.IsImageCapableForCurrentSettings(g.key) || UiJobRunner.IsDescribeKey(g.key),
+                    // Analysis targets (describe + layout map) consume the
+                    // attached image by definition (that's their whole input),
+                    // so they count as image-capable for the chip icons and
+                    // image-only bulk actions.
+                    imageCapable = runner.IsImageCapableForCurrentSettings(g.key) || UiJobRunner.IsAnalysisKey(g.key),
                     imageCapabilityProblem = runner.DescribeImageCapabilityProblem(g.key),
                     imageAspectOverride = SupportsImageAspectOverride(runner, g.key),
-                    // "describe" targets return text (rendered as their own
-                    // chooser section, selectable only with an image attached);
-                    // everything else returns media.
-                    kind = UiJobRunner.IsDescribeKey(g.key) ? "describe" : "image",
-                    requiresImage = UiJobRunner.IsDescribeKey(g.key),
+                    // "describe"-kind targets analyze the attached image
+                    // (describe returns text; layout map returns a rendered
+                    // map image). They render as their own chooser section,
+                    // selectable only with an image attached; everything else
+                    // returns generated media.
+                    kind = UiJobRunner.IsAnalysisKey(g.key) ? "describe" : "image",
+                    requiresImage = UiJobRunner.IsAnalysisKey(g.key),
                     // Known hard prompt-length caps, surfaced so the composer can
                     // warn before submit; the server truncates over-limit prompts
                     // at the provider send stage (grok-web: GrokWebClient).
@@ -755,10 +764,16 @@ namespace MultiImageClient
                     return Results.BadRequest(new { error = $"not available: {string.Join("; ", reasons)}" });
                 }
 
-                var describeKeys = genKeys.Where(UiJobRunner.IsDescribeKey).ToList();
+                // Analysis targets = describe + layout map: both require an
+                // attached image, and an analysis-only job may omit the
+                // prompt. The composer applies the identical substitution so
+                // the card shows exactly the recorded prompt (describe treats
+                // it as the instruction; layout map as optional label
+                // context).
+                var analysisKeys = genKeys.Where(UiJobRunner.IsAnalysisKey).ToList();
                 if (prompt.Length == 0)
                 {
-                    if (describeKeys.Count == genKeys.Count)
+                    if (analysisKeys.Count == genKeys.Count)
                     {
                         prompt = UiJobRunner.DefaultDescribeInstruction;
                     }
@@ -810,13 +825,13 @@ namespace MultiImageClient
                         error = $"At most {UiJobRunner.MaxInputImages} input images are accepted.",
                     });
                 }
-                // Describe targets have no meaning without an image; reject the
+                // Analysis targets have no meaning without an image; reject the
                 // job outright rather than running them against nothing.
-                if (describeKeys.Count > 0 && uploadFiles.Count == 0)
+                if (analysisKeys.Count > 0 && uploadFiles.Count == 0)
                 {
                     return Results.BadRequest(new
                     {
-                        error = $"These describe targets require an attached image: {string.Join(", ", describeKeys)}. Attach an image or deselect them.",
+                        error = $"These targets require an attached image: {string.Join(", ", analysisKeys)}. Attach an image or deselect them.",
                     });
                 }
 
@@ -1513,11 +1528,11 @@ namespace MultiImageClient
                     })
                     .Where(d => d.Count > 0)
                     .Select(d => new
-                {
-                    day = d.Day,
-                    label = DateTime.ParseExact(d.Day, "yyyy-MM-dd", null).ToString("dddd, MMM d, yyyy"),
-                    count = d.Count,
-                });
+                    {
+                        day = d.Day,
+                        label = DateTime.ParseExact(d.Day, "yyyy-MM-dd", null).ToString("dddd, MMM d, yyyy"),
+                        count = d.Count,
+                    });
                 return Results.Json(new { days });
             });
 
@@ -2552,11 +2567,11 @@ namespace MultiImageClient
                     preset.GeneratorKeys,
                     runner,
                     $"preset '{name}'");
-                var describeKey = keys.FirstOrDefault(UiJobRunner.IsDescribeKey);
-                if (describeKey != null)
+                var analysisKey = keys.FirstOrDefault(UiJobRunner.IsAnalysisKey);
+                if (analysisKey != null)
                 {
                     throw new InvalidDataException(
-                        $"Personal image-generator button '{name}' cannot include describe target '{describeKey}'.");
+                        $"Personal image-generator button '{name}' cannot include analysis target '{analysisKey}'.");
                 }
                 var hiddenKey = keys.FirstOrDefault(hiddenSet.Contains);
                 if (hiddenKey != null)
