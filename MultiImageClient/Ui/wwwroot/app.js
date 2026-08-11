@@ -7414,7 +7414,9 @@ function buildProgressPreviews(id, evt) {
       a.title = `in-process preview ${p.partialIndex + 1}`;
       const img = document.createElement("img");
       img.alt = `${genLabel(evt.gen)} in-process preview ${p.partialIndex + 1}`;
-      img.src = `${url}?thumb=1`;
+      // Hosted snapshots carry an explicit local ?thumb=1 card preview;
+      // appending ?thumb=1 to a B2 URL would pull the full bytes.
+      img.src = p.thumb ? apiUrl(p.thumb) : `${url}?thumb=1`;
       img.loading = "lazy";
       // A hidden/missing snapshot 404s; drop the tile rather than leaving
       // a broken-image icon in the strip.
@@ -7677,7 +7679,12 @@ function applyJobEvent(id, card, evt) {
           a.target = "_blank";
           const img = document.createElement("img");
           img.alt = `${genLabel(evt.gen)} last streamed preview before failure`;
-          img.src = `${url}?thumb=1`;
+          // Hosted kept previews carry index-aligned local thumbs in
+          // partialThumbs; ?thumb=1 on a B2 URL would pull the full bytes.
+          const keptThumb = Array.isArray(evt.partialThumbs)
+            ? evt.partialThumbs[imageIndex]
+            : null;
+          img.src = keptThumb ? apiUrl(keptThumb) : `${url}?thumb=1`;
           img.loading = "lazy";
           // A hidden/evicted preview 404s; drop the tile rather than leaving
           // a broken-image icon under the error text.

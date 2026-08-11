@@ -368,15 +368,6 @@ namespace MultiImageClient
                 ?? (IReadOnlyList<UiPersistedImageInfo>)Array.Empty<UiPersistedImageInfo>();
         }
 
-        /// True when the durable file for a key lives under this job's own
-        /// partials folder (kept last-preview of a failed generation, or a
-        /// progression snapshot). Those are failure/preview artifacts and are
-        /// never hosted or evicted.
-        public bool IsPartialsBackedPath(string path)
-        {
-            return _storage?.IsUnderPartialsFolder(path) == true;
-        }
-
         /// Atomically replaces this job's persisted event log (B2 backfill URL
         /// migration). A one-time pre-rewrite backup is retained on disk.
         public bool TryReplacePersistedEvents(IReadOnlyList<string> lines)
@@ -825,17 +816,6 @@ namespace MultiImageClient
                         kv.Value.CdnFileId ?? ""))
                     .ToList();
             }
-        }
-
-        public bool IsUnderPartialsFolder(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return false;
-            }
-            var partials = Path.GetFullPath(Path.Combine(_folder, "partials"))
-                + Path.DirectorySeparatorChar;
-            return Path.GetFullPath(path).StartsWith(partials, StringComparison.OrdinalIgnoreCase);
         }
 
         /// Atomically replaces events.jsonl after validating every line parses
@@ -3273,6 +3253,42 @@ namespace MultiImageClient
             }
         }
 
+        /// Resolves result-image bytes for internal reuse (currently the
+        /// video-source upload). Local disk first; when the local raw was
+        /// evicted after its verified B2 upload, the exact recorded object is
+        /// fetched back and its SHA-256 must match the recorded content hash —
+        /// exact identity, never a guess. Returns null when the image is
+        /// neither locally readable nor verifiably hosted.
+        public async Task<(byte[] Bytes, string ContentType)?> TryGetImageBytesIncludingHostedAsync(
+            UiJob job, string gen, int index)
+        {
+            if (job.TryGetImage(gen, index, out var bytes, out var contentType))
+            {
+                return (bytes, contentType);
+            }
+            if (_b2 == null)
+            {
+                return null;
+            }
+            var key = $"{gen}/{index}";
+            var info = job.ListPersistedImages()
+                .FirstOrDefault(i => string.Equals(i.Key, key, StringComparison.Ordinal));
+            if (info == null
+                || string.IsNullOrWhiteSpace(info.CdnKey)
+                || string.IsNullOrWhiteSpace(info.ContentSha256))
+            {
+                return null;
+            }
+            var downloaded = await _b2.DownloadBytesAsync(info.CdnKey, CancellationToken.None);
+            var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(downloaded));
+            if (!string.Equals(sha, info.ContentSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Hosted copy of {job.Id}/{key} does not match its recorded SHA-256 — refusing to reuse unverifiable bytes.");
+            }
+            return (downloaded, info.ContentType);
+        }
+
         internal static string ExtensionForHostedFile(string contentType, string localPath)
         {
             switch (contentType?.ToLowerInvariant())
@@ -3281,6 +3297,7 @@ namespace MultiImageClient
                 case "image/jpeg": return "jpg";
                 case "image/webp": return "webp";
                 case "image/gif": return "gif";
+                case "video/mp4": return "mp4";
             }
             var fromPath = Path.GetExtension(localPath)?.TrimStart('.');
             if (string.IsNullOrWhiteSpace(fromPath))
@@ -3438,10 +3455,20 @@ namespace MultiImageClient
                             : result.GeneratedMediaContentType;
                         var idx = urls.Count;
                         job.StoreImagePath(key, idx, result.GeneratedMediaPath, mediaType);
-                        // v1 scope decision: video/SVG media stay local-served
-                        // even with B2 hosting on; only raster results and the
-                        // grid upload.
-                        urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
+                        if (_b2 != null && mediaType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Owner decision 2026-08-11 (v2 scope-lift): videos
+                            // upload like raster results — same retry x3 then
+                            // visible hard-fail, never a local-URL substitute.
+                            var hostedUrl = await UploadResultToB2Async(
+                                job, key, idx, result.GeneratedMediaPath, mediaType);
+                            urls.Add(hostedUrl);
+                        }
+                        else
+                        {
+                            // SVG and other non-video media stay local (v1 scope).
+                            urls.Add($"/api/jobs/{job.Id}/images/{key}/{idx}");
+                        }
                         thumbs.Add($"/api/jobs/{job.Id}/images/{key}/{idx}?thumb=1");
                         merged.GeneratedMediaPath = result.GeneratedMediaPath;
                         merged.GeneratedMediaContentType = result.GeneratedMediaContentType;
@@ -3576,10 +3603,17 @@ namespace MultiImageClient
             // stop 404ing after a restart too). The gen-result stays a failure:
             // ok=false, zero cost, error text intact — the kept preview rides a
             // separate index-aligned partialImages field and is explicitly
-            // labeled by the frontend, never presented as a result. These stay
-            // local-served even with B2 hosting on (failure artifacts are not
-            // uploaded; same v1 scope as videos/SVG).
+            // labeled by the frontend, never presented as a result.
+            // Owner decision 2026-08-11: kept previews are B2-hosted too. A
+            // failed upload here keeps the LOCAL url (documented exception to
+            // the results policy): the artifact is the same bytes either way,
+            // it stays local-served forever (no CdnKey means it is never
+            // evicted), and failing an already-failed generation over its
+            // preview would discard the only thing the user has left of it.
+            // partialThumbs carries index-aligned local ?thumb=1 URLs so cards
+            // never pull full hosted bytes.
             List<string?>? partialUrls = null;
+            List<string?>? partialThumbs = null;
             if (!ok)
             {
                 merged.ErrorMessage = firstError ?? "Generation completed without returning usable image or video media.";
@@ -3587,25 +3621,69 @@ namespace MultiImageClient
                 {
                     if (job.TryPersistLastPartialImage(key, partialIdx))
                     {
+                        var localUrl = $"/api/jobs/{job.Id}/images/{key}/{partialIdx}";
+                        var keptUrl = localUrl;
+                        if (_b2 != null
+                            && job.TryGetImagePath(key, partialIdx, out var keptPath, out var keptType))
+                        {
+                            try
+                            {
+                                keptUrl = await UploadResultToB2Async(job, key, partialIdx, keptPath, keptType);
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Log($"[ui #{job.Id}] kept-preview upload failed for {key}/{partialIdx}: {ex.Message}; keeping local serving");
+                            }
+                        }
                         partialUrls ??= Enumerable.Repeat<string?>(null, want).ToList();
-                        partialUrls[partialIdx] = $"/api/jobs/{job.Id}/images/{key}/{partialIdx}";
+                        partialThumbs ??= Enumerable.Repeat<string?>(null, want).ToList();
+                        partialUrls[partialIdx] = keptUrl;
+                        partialThumbs[partialIdx] = localUrl + "?thumb=1";
                     }
                 }
             }
 
             // In-process progression snapshots (persisted per-partial as the
             // stream ran) ride the gen-result on success AND failure so the
-            // user can revisit how the image came together. Local URLs even
-            // with B2 hosting on — same v1 scope as the failure-kept preview.
+            // user can revisit how the image came together. Owner decision
+            // 2026-08-11: snapshots are B2-hosted like results; a failed
+            // snapshot upload keeps the local url (same documented exception
+            // as kept previews — the artifact stays local-served and is never
+            // evicted without a CdnKey, and a successful generation must not
+            // fail over a preview nicety). `thumb` is the local ?thumb=1 card
+            // preview, valid after eviction because eviction force-builds
+            // disk thumbs first.
             var snapshots = job.GetPartialSnapshots(key);
-            var progressImages = snapshots.Count == 0
-                ? null
-                : snapshots.Select(s => new
+            List<object>? progressImages = null;
+            if (snapshots.Count > 0)
+            {
+                progressImages = new List<object>();
+                foreach (var s in snapshots)
                 {
-                    partialIndex = s.PartialIndex,
-                    imageIndex = s.ImageIndex,
-                    url = $"/api/jobs/{job.Id}/images/{UiJob.PartialSnapshotGenKey(key, s.PartialIndex)}/{s.ImageIndex}",
-                }).ToList();
+                    var snapGen = UiJob.PartialSnapshotGenKey(key, s.PartialIndex);
+                    var localUrl = $"/api/jobs/{job.Id}/images/{snapGen}/{s.ImageIndex}";
+                    var url = localUrl;
+                    if (_b2 != null
+                        && job.TryGetImagePath(snapGen, s.ImageIndex, out var snapPath, out var snapType))
+                    {
+                        try
+                        {
+                            url = await UploadResultToB2Async(job, snapGen, s.ImageIndex, snapPath, snapType);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log($"[ui #{job.Id}] snapshot upload failed for {snapGen}/{s.ImageIndex}: {ex.Message}; keeping local serving");
+                        }
+                    }
+                    progressImages.Add(new
+                    {
+                        partialIndex = s.PartialIndex,
+                        imageIndex = s.ImageIndex,
+                        url,
+                        thumb = localUrl + "?thumb=1",
+                    });
+                }
+            }
 
             // Known payment/auth failures carry a "next step" hint + the URL
             // where it gets fixed; the card renders it under the error text.
@@ -3621,9 +3699,11 @@ namespace MultiImageClient
                 ms = elapsed,
                 images = urls,
                 // Failure only: last streamed preview partial(s) kept visible,
-                // index-aligned with the requested output indexes. Local URLs
-                // even when B2 hosting is on.
+                // index-aligned with the requested output indexes; hosted URLs
+                // when B2 hosting is on, plus index-aligned local ?thumb=1
+                // card previews.
                 partialImages = partialUrls,
+                partialThumbs,
                 // Success or failure: the durably persisted in-process
                 // streamed previews, in arrival order.
                 progressImages,
@@ -4165,7 +4245,12 @@ namespace MultiImageClient
                             moderation: spec.Moderation,
                             qualityPool: new[] { quality },
                             stats: _stats, name: "ui",
-                            partialSaveFolder: _settings.ImageDownloadBaseFolder,
+                            // No day-folder PartialsLive copies in UI mode
+                            // (owner decision 2026-08-11): the UI persists its
+                            // own durable progression snapshots per partial;
+                            // the CLI-era live-viewing copies were unreferenced
+                            // disk growth on the shared host.
+                            partialSaveFolder: null,
                             popUpPartials: false,
                             imageCount: 1,
                             partialImageCallback: !enablePartials ? null : (partialIndex, imageIndex, bytes) =>

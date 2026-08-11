@@ -24,16 +24,19 @@ namespace MultiImageClient
     /// Run with the UI server STOPPED — this tool and the server must not
     /// both write images.json/events.jsonl.
     ///
-    /// Never touched: input images, videos/SVG (v1 scope), streamed-partial
-    /// snapshots and kept previews (failure artifacts stay local), and hidden
-    /// prompts/images (one-way hidden content is never published to the
-    /// public bucket; its raws simply stay local).
+    /// Scope widened 2026-08-11 (owner decision): videos (MP4), streamed
+    /// progression snapshots, and failure-kept previews are hosted too, with
+    /// their event fields (gen-result images[]/progressImages[]/
+    /// partialImages[]) rewritten the same exact-URL way. Never touched:
+    /// input images, SVG (stays local), and hidden prompts/images (one-way
+    /// hidden content is never published to the public bucket; its raws
+    /// simply stay local).
     /// </summary>
     public static class B2BackfillWorkflow
     {
         private static readonly HashSet<string> HostableContentTypes = new(StringComparer.OrdinalIgnoreCase)
         {
-            "image/png", "image/jpeg", "image/webp", "image/gif",
+            "image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4",
         };
 
         public static async Task<int> RunAsync(Settings settings, bool dryRun)
@@ -81,10 +84,8 @@ namespace MultiImageClient
                 {
                     if (!TrySplitKey(info.Key, out var gen, out var index)
                         || gen.StartsWith("input", StringComparison.OrdinalIgnoreCase)
-                        || gen.Contains("~p", StringComparison.Ordinal)
                         || !HostableContentTypes.Contains(info.ContentType)
-                        || string.IsNullOrWhiteSpace(info.Path)
-                        || job.IsPartialsBackedPath(info.Path))
+                        || string.IsNullOrWhiteSpace(info.Path))
                     {
                         continue;
                     }
@@ -92,7 +93,9 @@ namespace MultiImageClient
                     {
                         continue; // already hosted
                     }
-                    if (visibility.IsImageHidden(job.Id, gen, index))
+                    // Progression snapshots ("gpt2~p1") share the hide
+                    // identity of the result image they preview.
+                    if (visibility.IsImageHidden(job.Id, UiJob.PartialSnapshotVisibilityGen(gen), index))
                     {
                         skippedHiddenImages++;
                         continue;
@@ -248,8 +251,7 @@ namespace MultiImageClient
             {
                 if (string.IsNullOrWhiteSpace(info.CdnKey)
                     || !TrySplitKey(info.Key, out var gen, out _)
-                    || gen.StartsWith("input", StringComparison.OrdinalIgnoreCase)
-                    || gen.Contains("~p", StringComparison.Ordinal))
+                    || gen.StartsWith("input", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -275,32 +277,92 @@ namespace MultiImageClient
                 var type = node?["type"]?.GetValue<string>();
                 var lineChanged = false;
 
-                if (type == "gen-result" && node!["images"] is JsonArray images && images.Count > 0)
+                if (type == "gen-result")
                 {
-                    var originals = new List<string?>();
-                    foreach (var element in images)
+                    if (node!["images"] is JsonArray images && images.Count > 0)
                     {
-                        originals.Add(element?.GetValue<string>());
-                    }
-                    for (var i = 0; i < images.Count; i++)
-                    {
-                        var url = originals[i];
-                        if (url != null && map.TryGetValue(url, out var b2Url))
+                        var originals = new List<string?>();
+                        foreach (var element in images)
                         {
-                            images[i] = b2Url;
-                            lineChanged = true;
+                            originals.Add(element?.GetValue<string>());
+                        }
+                        var imagesChanged = false;
+                        for (var i = 0; i < images.Count; i++)
+                        {
+                            var url = originals[i];
+                            if (url != null && map.TryGetValue(url, out var b2Url))
+                            {
+                                images[i] = b2Url;
+                                imagesChanged = true;
+                                lineChanged = true;
+                            }
+                        }
+                        if (imagesChanged
+                            && node["thumbs"] == null
+                            && originals.All(u => u != null && u.StartsWith("/api/", StringComparison.Ordinal)))
+                        {
+                            var thumbs = new JsonArray();
+                            foreach (var url in originals)
+                            {
+                                thumbs.Add(url + "?thumb=1");
+                            }
+                            node["thumbs"] = thumbs;
                         }
                     }
-                    if (lineChanged
-                        && node["thumbs"] == null
-                        && originals.All(u => u != null && u.StartsWith("/api/", StringComparison.Ordinal)))
+                    // Failure-kept previews: string/null array; rewritten
+                    // entries get an index-aligned local partialThumbs array
+                    // (the frontend's card preview) when one is absent.
+                    if (node["partialImages"] is JsonArray partials && partials.Count > 0)
                     {
-                        var thumbs = new JsonArray();
-                        foreach (var url in originals)
+                        var originals = new List<string?>();
+                        foreach (var element in partials)
                         {
-                            thumbs.Add(url + "?thumb=1");
+                            originals.Add(element?.GetValue<string>());
                         }
-                        node["thumbs"] = thumbs;
+                        var partialsChanged = false;
+                        for (var i = 0; i < partials.Count; i++)
+                        {
+                            var url = originals[i];
+                            if (url != null && map.TryGetValue(url, out var b2Url))
+                            {
+                                partials[i] = b2Url;
+                                partialsChanged = true;
+                                lineChanged = true;
+                            }
+                        }
+                        if (partialsChanged && node["partialThumbs"] == null)
+                        {
+                            var thumbs = new JsonArray();
+                            foreach (var url in originals)
+                            {
+                                thumbs.Add(url != null && url.StartsWith("/api/", StringComparison.Ordinal)
+                                    ? url + "?thumb=1"
+                                    : null);
+                            }
+                            node["partialThumbs"] = thumbs;
+                        }
+                    }
+                    // Progression snapshots: objects with a url; rewritten
+                    // entries get a local `thumb` when one is absent.
+                    if (node["progressImages"] is JsonArray progress)
+                    {
+                        foreach (var element in progress)
+                        {
+                            if (element is not JsonObject snapshot)
+                            {
+                                continue;
+                            }
+                            var url = snapshot["url"]?.GetValue<string>();
+                            if (url != null && map.TryGetValue(url, out var b2Url))
+                            {
+                                snapshot["url"] = b2Url;
+                                if (snapshot["thumb"] == null)
+                                {
+                                    snapshot["thumb"] = url + "?thumb=1";
+                                }
+                                lineChanged = true;
+                            }
+                        }
                     }
                 }
                 else if (type == "grid")
@@ -331,10 +393,11 @@ namespace MultiImageClient
             return job.TryReplacePersistedEvents(output);
         }
 
-        /// Re-reads the PERSISTED events and confirms no gen-result images[]
-        /// or grid url still carries a mapped local full-res URL. gen-partial
-        /// and kept-preview (partialImages) URLs deliberately stay local and
-        /// are not checked — their artifacts are never evicted.
+        /// Re-reads the PERSISTED events and confirms no gen-result images[],
+        /// partialImages[], progressImages[].url, or grid url still carries a
+        /// mapped local full-res URL. gen-partial URLs deliberately stay local
+        /// (replayed dead partials self-remove in the frontend) and are not
+        /// checked.
         private static bool VerifyNoLocalFullResReferences(
             UiJob job, Dictionary<string, string> map, out string leftover)
         {
@@ -344,15 +407,34 @@ namespace MultiImageClient
             {
                 var node = JsonNode.Parse(line);
                 var type = node?["type"]?.GetValue<string>();
-                if (type == "gen-result" && node!["images"] is JsonArray images)
+                if (type == "gen-result")
                 {
-                    foreach (var element in images)
+                    foreach (var arrayName in new[] { "images", "partialImages" })
                     {
-                        var url = element?.GetValue<string>();
-                        if (url != null && map.ContainsKey(url))
+                        if (node![arrayName] is not JsonArray array)
                         {
-                            leftover = url;
-                            return false;
+                            continue;
+                        }
+                        foreach (var element in array)
+                        {
+                            var url = element?.GetValue<string>();
+                            if (url != null && map.ContainsKey(url))
+                            {
+                                leftover = url;
+                                return false;
+                            }
+                        }
+                    }
+                    if (node!["progressImages"] is JsonArray progress)
+                    {
+                        foreach (var element in progress)
+                        {
+                            var url = (element as JsonObject)?["url"]?.GetValue<string>();
+                            if (url != null && map.ContainsKey(url))
+                            {
+                                leftover = url;
+                                return false;
+                            }
                         }
                     }
                 }

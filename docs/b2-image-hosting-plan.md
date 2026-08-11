@@ -377,6 +377,20 @@ server STOPPED (the tool and the server must not both write
 
 Remaining separate decision: video handling (stays local for now).
 
+**Scope widened 2026-08-11 (owner decisions):** (a) UI-mode gpt-image-2 no
+longer writes day-folder `PartialsLive` copies — the durable per-job
+progression snapshots made them redundant unreferenced growth; (b) videos
+(MP4) upload to B2 like raster results, live and in the backfill, with the
+same retry ×3 / visible hard-fail policy; (c) progression snapshots and
+failure-kept previews upload too, but a failed upload of these keeps the
+local URL (documented exception — the artifact remains local-served and is
+never evicted without a CdnKey, and a successful generation must not fail
+over a preview nicety); events carry local `thumb`/`partialThumbs` card
+previews alongside hosted URLs so cards never pull full hosted bytes;
+(d) `Make Grok video` from an evicted source refetches the exact recorded
+B2 object and verifies its SHA-256 against the recorded content hash.
+Inputs and SVG remain local (v1 scope).
+
 **Executed 2026-08-10/11, zero failures on both installs.** Dev
 (keep-raws mode): 1,790 images / 5.21 GiB uploaded, 334 event logs
 rewritten, nothing deleted. Production (eviction mode): 1,236 images /

@@ -1041,10 +1041,16 @@ namespace MultiImageClient
                 {
                     return Results.NotFound(new { error = "The selected source image is hidden." });
                 }
-                if (!sourceJob.TryGetImage(sourceGenerator, sourceIndex, out var sourceBytes, out var sourceContentType))
+                // Local raws of hosted images are evicted in production; the
+                // runner refetches the exact recorded B2 object (SHA-verified)
+                // when the local copy is gone.
+                var source = await runner.TryGetImageBytesIncludingHostedAsync(
+                    sourceJob, sourceGenerator, sourceIndex);
+                if (source == null)
                 {
                     return Results.NotFound(new { error = "The selected source image is no longer available." });
                 }
+                var (sourceBytes, sourceContentType) = source.Value;
                 if (!sourceContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
                 {
                     return Results.BadRequest(new { error = "The selected source result is not an image." });

@@ -49,6 +49,21 @@ namespace MultiImageClient
             return $"{_settings.B2DownloadBaseUrl}/{EscapeKeyForUrl(objectKey)}";
         }
 
+        /// Fetches one hosted object back by its exact recorded key (anonymous
+        /// public GET). Throws on any non-success status — a missing hosted
+        /// object is a hard error, never silently substituted.
+        public async Task<byte[]> DownloadBytesAsync(string objectKey, CancellationToken cancellationToken)
+        {
+            var url = DownloadUrlFor(objectKey);
+            using var response = await _http.GetAsync(url, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(
+                    $"B2 download of '{objectKey}' failed: HTTP {(int)response.StatusCode}");
+            }
+            return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        }
+
         /// ui/{jobId}/{gen}/{n}-{128-bit random hex}.{ext} — the random
         /// segment IS the access capability; never mint a key without it.
         public static string BuildObjectKey(string jobId, string generatorKey, int index, string extension)
