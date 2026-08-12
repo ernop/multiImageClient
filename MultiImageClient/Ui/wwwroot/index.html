@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260811-sketch-paint-tools">
+<link rel="stylesheet" href="style.css?v=20260811-sketch-continuous-tools">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260809-mcphee-3-9-0">
 </head>
 <body>
@@ -518,52 +518,156 @@
     <div id="sketch-body">
       <div id="sketch-left">
         <div id="sketch-tools">
-          <label>canvas
-            <select id="sketch-aspect">
-              <option value="square" selected>square 1:1</option>
-              <option value="landscape">landscape 3:2</option>
-              <option value="portrait">portrait 2:3</option>
-              <option value="wide">wide 16:9</option>
-              <option value="tall">tall 9:16</option>
-            </select>
-          </label>
-          <label>size <input id="sketch-brush" type="range" min="1" max="96" value="30"></label>
-          <label>fill tolerance <input id="sketch-fill-tolerance" type="range" min="0" max="96" value="24"></label>
-          <label>shape
-            <select id="sketch-shape-style">
-              <option value="outline" selected>outline</option>
-              <option value="solid">solid</option>
-            </select>
-          </label>
-          <span id="sketch-active-indicator" aria-live="polite">
-            <span id="sketch-active-color" aria-hidden="true"></span>
-            <span id="sketch-active-label">brush · 30 px</span>
-          </span>
-          <div id="sketch-tool-buttons" role="toolbar" aria-label="Sketch drawing tools">
-            <button type="button" data-sketch-tool="pencil">pencil</button>
-            <button type="button" data-sketch-tool="brush" class="active">brush</button>
-            <button id="sketch-eraser" type="button" data-sketch-tool="eraser">eraser</button>
-            <button type="button" data-sketch-tool="fill">fill</button>
-            <button type="button" data-sketch-tool="line">line</button>
-            <button type="button" data-sketch-tool="rectangle">rectangle</button>
-            <button type="button" data-sketch-tool="rounded-rectangle">rounded rectangle</button>
-            <button type="button" data-sketch-tool="ellipse">ellipse</button>
-            <button type="button" data-sketch-tool="triangle">triangle</button>
-            <button type="button" data-sketch-tool="diamond">diamond</button>
-            <button type="button" data-sketch-tool="pentagon">pentagon</button>
-            <button type="button" data-sketch-tool="hexagon">hexagon</button>
-            <button type="button" data-sketch-tool="octagon">octagon</button>
-            <button type="button" data-sketch-tool="star">star</button>
+          <div id="sketch-tool-global">
+            <label>canvas
+              <select id="sketch-aspect">
+                <option value="square" selected>square 1:1</option>
+                <option value="landscape">landscape 3:2</option>
+                <option value="portrait">portrait 2:3</option>
+                <option value="wide">wide 16:9</option>
+                <option value="tall">tall 9:16</option>
+              </select>
+            </label>
+            <label>size <input id="sketch-brush" type="range" min="1" max="96" value="30"></label>
+            <label id="sketch-fill-tolerance-control">fill tolerance
+              <input id="sketch-fill-tolerance" type="range" min="0" max="96" value="24">
+            </label>
+            <label id="sketch-blend-strength-control" hidden>strength
+              <input id="sketch-blend-strength" type="range" min="5" max="100" value="45">
+            </label>
+            <span id="sketch-active-indicator" aria-live="polite">
+              <span id="sketch-active-color" aria-hidden="true"></span>
+              <span id="sketch-active-label">brush · 30 px</span>
+            </span>
+            <div id="sketch-history-controls">
+              <button id="sketch-undo" type="button" title="Undo the last editor change">undo</button>
+              <button id="sketch-redo" type="button" title="Redo the last undone editor change">redo</button>
+              <button id="sketch-clear" type="button" title="Add an undoable clear action">clear</button>
+            </div>
           </div>
-          <div id="sketch-history-controls">
-            <button id="sketch-undo" type="button" title="Undo the last editor change">undo</button>
-            <button id="sketch-redo" type="button" title="Redo the last undone editor change">redo</button>
-            <button id="sketch-clear" type="button" title="Add an undoable clear action">clear</button>
+
+          <div id="sketch-tool-rack">
+            <section class="sketch-tool-group" aria-labelledby="sketch-group-selection">
+              <h3 id="sketch-group-selection">Selection</h3>
+              <div class="sketch-tool-row" role="toolbar" aria-label="Selection tools">
+                <button type="button" data-sketch-tool="select-rect" title="Rectangular selection"
+                  aria-label="Rectangular selection">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.2 1.6"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="select-free" title="Freehand selection"
+                  aria-label="Freehand selection">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 11c1-4 3-7 5-7s3 5 5 4-1 5-4 5-5-1-6-2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+              <div id="sketch-selection-ops" class="sketch-selection-ops">
+                <button id="sketch-selection-clear" type="button" disabled title="Erase pixels inside the selection">clear</button>
+                <button id="sketch-selection-move" type="button" disabled title="Move the selected pixels">move</button>
+                <button id="sketch-selection-duplicate" type="button" disabled title="Duplicate the selection, then place the copy">duplicate</button>
+                <button id="sketch-selection-stretch" type="button" disabled title="Stretch the selection by dragging a corner">stretch</button>
+                <button id="sketch-selection-rotate" type="button" disabled title="Rotate the selection around its center">rotate</button>
+                <button id="sketch-selection-deselect" type="button" disabled title="Drop the current selection">deselect</button>
+              </div>
+            </section>
+
+            <section class="sketch-tool-group" aria-labelledby="sketch-group-paint">
+              <h3 id="sketch-group-paint">Paint</h3>
+              <div class="sketch-tool-row" role="toolbar" aria-label="Paint tools">
+                <button type="button" data-sketch-tool="pencil" title="Pencil" aria-label="Pencil">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.5 1.8l2.7 2.7-8.4 8.4H3.1v-2.7l8.4-8.4zM3.1 13.9h9.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="brush" class="active" title="Brush" aria-label="Brush" aria-pressed="true">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13c2-1 3-3 4-5l4-4 2 2-4 4c-2 1-4 2-5 3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="11.5" cy="4.5" r="1.3" fill="currentColor"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="soft-brush" title="Soft brush" aria-label="Soft brush">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.2" fill="currentColor" opacity=".28"/><circle cx="8" cy="8" r="2.4" fill="currentColor"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="spray" title="Spray paint" aria-label="Spray paint">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="5" r=".9" fill="currentColor"/><circle cx="7" cy="3.5" r=".7" fill="currentColor"/><circle cx="9.5" cy="5.5" r="1" fill="currentColor"/><circle cx="6" cy="7.5" r=".8" fill="currentColor"/><circle cx="11" cy="8" r=".7" fill="currentColor"/><path d="M3 12h5l1.5-3H8z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+                </button>
+                <button id="sketch-eraser" type="button" data-sketch-tool="eraser" title="Eraser" aria-label="Eraser">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 9.5l5-5 4 4-5 5H3.5v-4zM2 14h12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="fill" title="Tolerance fill" aria-label="Tolerance fill">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2l5 5-6 6H3.5L2 11.5 8 2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M10.5 13.5c1.2 0 2 .8 2 1.5H8.5c0-.7.8-1.5 2-1.5z" fill="currentColor"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="line" title="Straight line" aria-label="Straight line">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 12.5l11-9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+            </section>
+
+            <section class="sketch-tool-group" aria-labelledby="sketch-group-shapes">
+              <h3 id="sketch-group-shapes">Shapes</h3>
+              <div class="sketch-tool-row" role="toolbar" aria-label="Shape tools">
+                <button type="button" data-sketch-tool="rectangle" title="Rectangle" aria-label="Rectangle">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="rounded-rectangle" title="Rounded rectangle" aria-label="Rounded rectangle">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="ellipse" title="Ellipse" aria-label="Ellipse">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><ellipse cx="8" cy="8" rx="5.5" ry="4.2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="triangle" title="Triangle" aria-label="Triangle">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l5.5 11H2.5L8 2.5z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="diamond" title="Diamond" aria-label="Diamond">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2l5.5 6L8 14 2.5 8z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="pentagon" title="Pentagon" aria-label="Pentagon">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l5 3.5-1.8 5.7H4.8L3 5.3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="hexagon" title="Hexagon" aria-label="Hexagon">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.7l5 2.9v5.8L8 14.3 3 10.4V4.6z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="octagon" title="Octagon" aria-label="Octagon">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 2.2h5.6L13.8 5.2v5.6l-2.999 3H5.2L2.2 10.8V5.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="star" title="Star" aria-label="Star">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l1.7 4.2 4.5.4-3.4 3 1 4.4L8 11.6 4.2 13.6l1-4.4-3.4-3 4.5-.4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+              <div id="sketch-shape-config" class="sketch-config-row">
+                <label>edge
+                  <select id="sketch-edge-style">
+                    <option value="hard" selected>hard</option>
+                    <option value="soft">soft</option>
+                    <option value="dashed">dashed</option>
+                  </select>
+                </label>
+                <label>fill
+                  <select id="sketch-fill-rule">
+                    <option value="outline" selected>outline</option>
+                    <option value="solid">solid</option>
+                    <option value="soft">soft fill</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            <section class="sketch-tool-group" aria-labelledby="sketch-group-blend">
+              <h3 id="sketch-group-blend">Blend &amp; soften</h3>
+              <div class="sketch-tool-row" role="toolbar" aria-label="Blend and soften tools">
+                <button type="button" data-sketch-tool="spread" title="Spread dense color outward" aria-label="Spread">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 2v2.2M8 11.8V14M2 8h2.2M11.8 8H14M3.8 3.8l1.6 1.6M10.6 10.6l1.6 1.6M12.2 3.8l-1.6 1.6M5.4 10.6l-1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="mix" title="Mix neighboring colors" aria-label="Mix">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 12c2-4 3-7 4-7s2 3 4 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M5.5 5.5c1.2-1.5 3.8-1.5 5 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="lighten" title="Lighten dense solid pixels" aria-label="Lighten">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.6v2M8 12.4v2M1.6 8h2M12.4 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="fuzz" title="Fuzz / soften edges under the brush" aria-label="Fuzz">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8c1.2-2.8 2.6-4.2 5-4.2S11.8 5.2 13 8c-1.2 2.8-2.6 4.2-5 4.2S4.2 10.8 3 8z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.2 8c.7-1.4 1.4-2 2.8-2s2.1.6 2.8 2c-.7 1.4-1.4 2-2.8 2s-2.1-.6-2.8-2z" fill="currentColor" opacity=".35"/></svg>
+                </button>
+              </div>
+            </section>
           </div>
         </div>
         <div id="sketch-canvas-wrap">
           <canvas id="sketch-canvas" width="1024" height="1024"
             aria-label="Composition sketch canvas — draw with the active tool"></canvas>
+          <canvas id="sketch-overlay" width="1024" height="1024" aria-hidden="true"></canvas>
           <div id="sketch-brush-cursor" aria-hidden="true"></div>
         </div>
       </div>
@@ -648,6 +752,6 @@
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260809-mcphee-3-9-0"></script>
 <script src="personal-config.js?v=20260810-schema-v2"></script>
-<script src="app.js?v=20260811-sketch-paint-tools"></script>
+<script src="app.js?v=20260811-sketch-continuous-tools"></script>
 </body>
 </html>

@@ -2139,13 +2139,18 @@ body.image-viewer-open { overflow: hidden; }
 #sketch-left { flex: 1 1 auto; min-width: 0; }
 #sketch-tools {
   display: flex;
-  flex-wrap: wrap;
-  gap: 7px 10px;
-  align-items: center;
+  flex-direction: column;
+  gap: 8px;
   margin-bottom: 8px;
   font-size: 12px;
   font-weight: 700;
   color: var(--accent-dark);
+}
+#sketch-tool-global {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 10px;
+  align-items: center;
 }
 #sketch-tools label { display: flex; align-items: center; gap: 5px; }
 #sketch-tools input[type="range"] { width: 105px; }
@@ -2165,12 +2170,60 @@ body.image-viewer-open { overflow: hidden; }
   background: var(--accent);
 }
 #sketch-tools button:disabled { opacity: 0.42; cursor: default; }
-#sketch-tool-buttons {
+#sketch-tool-rack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.sketch-tool-group {
   display: flex;
-  flex: 1 0 100%;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 6px 7px;
+  background: #f5f7fd;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.sketch-tool-group h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent-dark);
+}
+.sketch-tool-row {
+  display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
+.sketch-tool-row [data-sketch-tool] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+.sketch-tool-row [data-sketch-tool] svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+.sketch-selection-ops,
+.sketch-config-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+}
+.sketch-selection-ops button {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.sketch-config-row label { font-size: 11px; }
+.sketch-config-row select { font: inherit; font-size: 11px; }
 #sketch-history-controls { display: flex; gap: 4px; margin-left: auto; }
 #sketch-active-indicator {
   display: inline-flex;
@@ -2198,13 +2251,27 @@ body.image-viewer-open { overflow: hidden; }
   border: 2px solid var(--accent);
   border-radius: 4px;
 }
-#sketch-canvas {
+#sketch-canvas,
+#sketch-overlay {
   display: block;
   width: 100%;
   height: auto;
+  background: transparent;
+  touch-action: none;
+}
+#sketch-canvas {
   background: #fff;
   cursor: none;
-  touch-action: none;
+}
+#sketch-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+@media (max-width: 1100px) {
+  #sketch-tool-rack { grid-template-columns: 1fr; }
 }
 #sketch-brush-cursor {
   position: absolute;
