@@ -59,7 +59,11 @@ namespace MultiImageClient
             }
             _apiKey = apiKey;
             _googleSemaphore = new SemaphoreSlim(maxConcurrency);
-            _httpClient = new HttpClient();
+            // Default HttpClient.Timeout is 100s. Nano Banana Pro at 4K often
+            // needs longer than that under load; a short timeout aborts a still-
+            // running provider call and wastes the work. Ten minutes matches the
+            // B2 client's ceiling and still fails closed if the socket dies.
+            _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
             _name = string.IsNullOrEmpty(name) ? "" : name;
             _stats = stats;
             _apiType = apiType;
@@ -198,11 +202,16 @@ namespace MultiImageClient
 
                 var startedAtUtc = DateTime.UtcNow;
                 HttpResponseMessage response = null;
+                byte[] responseBytes = null;
                 string responseContent = null;
                 try
                 {
-                    response = await _httpClient.SendAsync(request);
-                    responseContent = await response.Content.ReadAsStringAsync();
+                    // Headers-read so the body can be buffered once as UTF-8 bytes.
+                    // Default HttpClient.Timeout is only 100s; Pro@4K often needs
+                    // longer (ctor sets 10 minutes). Still fail closed on stall.
+                    response = await _httpClient.SendAsync(
+                        request, HttpCompletionOption.ResponseHeadersRead);
+                    responseBytes = await response.Content.ReadAsByteArrayAsync();
                 }
                 catch (Exception ex)
                 {
@@ -213,7 +222,9 @@ namespace MultiImageClient
                         apiUrl,
                         startedAtUtc,
                         request: traceRequest,
-                        response: responseContent == null ? null : SanitizeGeminiJson(responseContent),
+                        response: responseBytes == null
+                            ? null
+                            : SanitizeGeminiJson(Encoding.UTF8.GetString(responseBytes)),
                         statusCode: response == null ? null : (int)response.StatusCode,
                         error: ex,
                         metadata: new
@@ -222,150 +233,169 @@ namespace MultiImageClient
                             apiType = _apiType.ToString(),
                             hasReference,
                         });
+                    response?.Dispose();
                     throw;
                 }
 
-                var providerError = response.IsSuccessStatusCode
-                    ? null
-                    : new HttpRequestException(
-                        $"Google Gemini API error: {response.StatusCode} - {responseContent}");
-                GenerationTrace.RecordProviderCall(
-                    "google-gemini",
-                    "http",
-                    "POST",
-                    apiUrl,
-                    startedAtUtc,
-                    request: traceRequest,
-                    response: SanitizeGeminiJson(responseContent),
-                    statusCode: (int)response.StatusCode,
-                    error: providerError,
-                    metadata: new
-                    {
-                        model = ModelFor(_apiType),
-                        apiType = _apiType.ToString(),
-                        hasReference,
-                    });
-
-                if (!response.IsSuccessStatusCode)
+                using (response)
                 {
-                    var errorMessage = $"Google Gemini API error: {response.StatusCode} - {responseContent}";
-                    return new TaskProcessResult
+                    try
                     {
-                        IsSuccess = false,
-                        ErrorMessage = errorMessage,
-                        PromptDetails = promptDetails,
-                        ImageGenerator = GetImageGeneratorType(),
-                        ImageGeneratorDescription = generator.GetGeneratorSpecPart()
-                    };
-                }
-
-                // Parse Gemini native image generation response
-                var responseData = JsonSerializer.Deserialize<GeminiGenerateContentResponse>(responseContent);
-
-                if (responseData?.candidates?.Length > 0)
-                {
-                    var base64Images = new List<CreatedBase64Image>();
-                    var textResponses = new List<string>();
-                    // Gemini image models typically return image/jpeg; trust the
-                    // declared mime type so downstream conversion-to-png triggers.
-                    string contentType = null;
-
-                    foreach (var candidate in responseData.candidates)
-                    {
-                        if (candidate?.content?.parts != null)
-                        {
-                            foreach (var part in candidate.content.parts)
-                            {
-                                // Check for image data in inline_data
-                                if (part.inlineData != null && !string.IsNullOrEmpty(part.inlineData.data))
-                                {
-                                    var bd = new CreatedBase64Image
-                                    {
-                                        bytesBase64 = part.inlineData.data,
-                                        newPrompt = promptDetails.Prompt
-                                    };
-                                    base64Images.Add(bd);
-                                    contentType ??= part.inlineData.mimeType;
-                                }
-                                // Log any text responses for debugging
-                                else if (!string.IsNullOrEmpty(part.text))
-                                {
-                                    textResponses.Add(part.text);
-                                }
-                            }
-                        }
+                        responseContent = Encoding.UTF8.GetString(responseBytes ?? Array.Empty<byte>());
                     }
-
-                    if (base64Images.Count > 0)
+                    catch (DecoderFallbackException)
                     {
-                        return new TaskProcessResult
-                        {
-                            IsSuccess = true,
-                            Base64ImageDatas = base64Images,
-                            ContentType = contentType ?? "image/png",
-                            ErrorMessage = "",
-                            PromptDetails = promptDetails,
-                            ImageGenerator = GetImageGeneratorType(),
-                            ImageGeneratorDescription = generator.GetGeneratorSpecPart()
-                        };
+                        responseContent = "";
                     }
+                    responseBytes = null;
 
-                    if (textResponses.Count > 0)
-                    {
-                        var returnedText = string.Join(" ", textResponses);
-                        if (returnedText.Length > 500)
+                    var providerError = response.IsSuccessStatusCode
+                        ? null
+                        : new HttpRequestException(
+                            $"Google Gemini API error: {response.StatusCode} - {responseContent}");
+                    GenerationTrace.RecordProviderCall(
+                        "google-gemini",
+                        "http",
+                        "POST",
+                        apiUrl,
+                        startedAtUtc,
+                        request: traceRequest,
+                        response: SanitizeGeminiJson(responseContent),
+                        statusCode: (int)response.StatusCode,
+                        error: providerError,
+                        metadata: new
                         {
-                            returnedText = returnedText[..500] + "...";
-                        }
-                        Logger.Log($"Gemini image model {ModelFor(_apiType)} returned text instead of an image: {returnedText}");
+                            model = ModelFor(_apiType),
+                            apiType = _apiType.ToString(),
+                            hasReference,
+                        });
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        var errorMessage = $"Google Gemini API error: {response.StatusCode} - {responseContent}";
                         return new TaskProcessResult
                         {
                             IsSuccess = false,
-                            ErrorMessage = $"Google {ModelFor(_apiType)} returned text instead of image output: {returnedText}",
+                            ErrorMessage = errorMessage,
                             PromptDetails = promptDetails,
                             ImageGenerator = GetImageGeneratorType(),
                             ImageGeneratorDescription = generator.GetGeneratorSpecPart()
                         };
                     }
-                }
 
-                // A blocked request comes back 200 with promptFeedback.blockReason
-                // set and no candidates — translate that into something readable
-                // instead of dumping the raw JSON.
-                var blockReason = responseData?.promptFeedback?.blockReason;
-                var finishReason = responseData?.candidates?
-                    .Select(c => c?.finishReason)
-                    .FirstOrDefault(r => !string.IsNullOrEmpty(r) && r != "STOP");
-                if (!string.IsNullOrEmpty(blockReason) || !string.IsNullOrEmpty(finishReason))
-                {
-                    var reason = !string.IsNullOrEmpty(blockReason)
-                        ? $"blockReason={blockReason}"
-                        : $"finishReason={finishReason}";
-                    var hint = blockReason == "OTHER"
-                        ? " \"OTHER\" usually means the input image tripped a filter (recognizable real people/celebrities are the most common trigger, also children or watermarked content); rewording the prompt or using a different input image usually clears it."
-                        : " The prompt and/or input image was refused by Gemini's safety filters; reword or swap the image and retry.";
-                    var blockedMessage = $"Google {ModelFor(_apiType)} refused this request before generating anything ({reason}).{hint}";
-                    Logger.Log(blockedMessage);
+                    // Parse Gemini native image generation response. Keep only a
+                    // short diagnostic prefix of the raw JSON for the no-image
+                    // failure path; drop the multi-MB string afterward.
+                    var responseData = JsonSerializer.Deserialize<GeminiGenerateContentResponse>(responseContent);
+                    var diagnosticPrefix = responseContent.Length > 700
+                        ? responseContent[..700] + "..."
+                        : responseContent;
+                    responseContent = null;
+
+                    if (responseData?.candidates?.Length > 0)
+                    {
+                        var base64Images = new List<CreatedBase64Image>();
+                        var textResponses = new List<string>();
+                        // Gemini image models typically return image/jpeg; trust the
+                        // declared mime type so downstream conversion-to-png triggers.
+                        string contentType = null;
+
+                        foreach (var candidate in responseData.candidates)
+                        {
+                            if (candidate?.content?.parts != null)
+                            {
+                                foreach (var part in candidate.content.parts)
+                                {
+                                    // Check for image data in inline_data
+                                    if (part.inlineData != null && !string.IsNullOrEmpty(part.inlineData.data))
+                                    {
+                                        var bd = new CreatedBase64Image
+                                        {
+                                            bytesBase64 = part.inlineData.data,
+                                            newPrompt = promptDetails.Prompt
+                                        };
+                                        base64Images.Add(bd);
+                                        contentType ??= part.inlineData.mimeType;
+                                    }
+                                    // Log any text responses for debugging
+                                    else if (!string.IsNullOrEmpty(part.text))
+                                    {
+                                        textResponses.Add(part.text);
+                                    }
+                                }
+                            }
+                        }
+
+                        if (base64Images.Count > 0)
+                        {
+                            return new TaskProcessResult
+                            {
+                                IsSuccess = true,
+                                Base64ImageDatas = base64Images,
+                                ContentType = contentType ?? "image/png",
+                                ErrorMessage = "",
+                                PromptDetails = promptDetails,
+                                ImageGenerator = GetImageGeneratorType(),
+                                ImageGeneratorDescription = generator.GetGeneratorSpecPart()
+                            };
+                        }
+
+                        if (textResponses.Count > 0)
+                        {
+                            var returnedText = string.Join(" ", textResponses);
+                            if (returnedText.Length > 500)
+                            {
+                                returnedText = returnedText[..500] + "...";
+                            }
+                            Logger.Log($"Gemini image model {ModelFor(_apiType)} returned text instead of an image: {returnedText}");
+                            return new TaskProcessResult
+                            {
+                                IsSuccess = false,
+                                ErrorMessage = $"Google {ModelFor(_apiType)} returned text instead of image output: {returnedText}",
+                                PromptDetails = promptDetails,
+                                ImageGenerator = GetImageGeneratorType(),
+                                ImageGeneratorDescription = generator.GetGeneratorSpecPart()
+                            };
+                        }
+                    }
+
+                    // A blocked request comes back 200 with promptFeedback.blockReason
+                    // set and no candidates — translate that into something readable
+                    // instead of dumping the raw JSON.
+                    var blockReason = responseData?.promptFeedback?.blockReason;
+                    var finishReason = responseData?.candidates?
+                        .Select(c => c?.finishReason)
+                        .FirstOrDefault(r => !string.IsNullOrEmpty(r) && r != "STOP");
+                    if (!string.IsNullOrEmpty(blockReason) || !string.IsNullOrEmpty(finishReason))
+                    {
+                        var reason = !string.IsNullOrEmpty(blockReason)
+                            ? $"blockReason={blockReason}"
+                            : $"finishReason={finishReason}";
+                        var hint = blockReason == "OTHER"
+                            ? " \"OTHER\" usually means the input image tripped a filter (recognizable real people/celebrities are the most common trigger, also children or watermarked content); rewording the prompt or using a different input image usually clears it."
+                            : " The prompt and/or input image was refused by Gemini's safety filters; reword or swap the image and retry.";
+                        var blockedMessage = $"Google {ModelFor(_apiType)} refused this request before generating anything ({reason}).{hint}";
+                        Logger.Log(blockedMessage);
+                        return new TaskProcessResult
+                        {
+                            IsSuccess = false,
+                            ErrorMessage = blockedMessage,
+                            PromptDetails = promptDetails,
+                            ImageGenerator = GetImageGeneratorType(),
+                            ImageGeneratorDescription = generator.GetGeneratorSpecPart()
+                        };
+                    }
+
+                    Logger.Log($"Gemini image model {ModelFor(_apiType)} returned no image data. Response: {diagnosticPrefix}");
                     return new TaskProcessResult
                     {
                         IsSuccess = false,
-                        ErrorMessage = blockedMessage,
+                        ErrorMessage = $"Google {ModelFor(_apiType)} returned no image data. Response: {diagnosticPrefix}",
                         PromptDetails = promptDetails,
                         ImageGenerator = GetImageGeneratorType(),
                         ImageGeneratorDescription = generator.GetGeneratorSpecPart()
                     };
                 }
-
-                var diagnostic = responseContent.Length > 700 ? responseContent[..700] + "..." : responseContent;
-                Logger.Log($"Gemini image model {ModelFor(_apiType)} returned no image data. Response: {diagnostic}");
-                return new TaskProcessResult
-                {
-                    IsSuccess = false,
-                    ErrorMessage = $"Google {ModelFor(_apiType)} returned no image data. Response: {diagnostic}",
-                    PromptDetails = promptDetails,
-                    ImageGenerator = GetImageGeneratorType(),
-                    ImageGeneratorDescription = generator.GetGeneratorSpecPart()
-                };
             }
             catch (Exception ex)
             {

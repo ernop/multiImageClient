@@ -1256,9 +1256,12 @@ namespace MultiImageClient
                 }
                 else
                 {
-                    // A process restart cannot resume a provider request. Keep
-                    // completed cells, close the replay stream, and let the UI
-                    // mark any unfinished cells as having no result.
+                    // A process restart cannot resume a provider request. Recover
+                    // any images already persisted for generators that never got
+                    // a gen-result (N>1 loops only emit at the end, so a kill
+                    // mid-loop otherwise left completed files invisible), then
+                    // close the replay stream.
+                    EmitInterruptedRecoveryResults(job, storage);
                     job.Emit(new { type = "job-done", interrupted = true });
                     job.MarkDone();
                 }
@@ -1268,6 +1271,144 @@ namespace MultiImageClient
             {
                 Logger.Log($"UI history: could not load {folder}: {ex.Message}");
                 return null;
+            }
+        }
+
+        /// For generators that started but never emitted gen-result before a
+        /// process kill: publish whatever durable images already sit in
+        /// images.json so completed work is not invisible. Local app URLs are
+        /// intentional — the image route serves path-backed or hosted bytes.
+        private static void EmitInterruptedRecoveryResults(UiJob job, UiJobStorage storage)
+        {
+            var prior = storage.ReadAllEvents();
+            var started = new HashSet<string>(StringComparer.Ordinal);
+            var completed = new HashSet<string>(StringComparer.Ordinal);
+            int? requestedN = null;
+            foreach (var line in prior)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    var root = doc.RootElement;
+                    if (!root.TryGetProperty("type", out var typeEl))
+                    {
+                        continue;
+                    }
+                    var type = typeEl.GetString();
+                    if (type == "accepted"
+                        && root.TryGetProperty("n", out var nEl)
+                        && nEl.TryGetInt32(out var n)
+                        && n > 0)
+                    {
+                        requestedN = n;
+                    }
+                    else if (type == "gen-start"
+                        && root.TryGetProperty("gen", out var startGen)
+                        && startGen.GetString() is { Length: > 0 } sg)
+                    {
+                        started.Add(sg);
+                    }
+                    else if (type == "gen-result"
+                        && root.TryGetProperty("gen", out var doneGen)
+                        && doneGen.GetString() is { Length: > 0 } dg)
+                    {
+                        completed.Add(dg);
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Fail closed on this line only; other events still apply.
+                }
+            }
+
+            var images = storage.ListImages();
+            foreach (var gen in started)
+            {
+                if (completed.Contains(gen))
+                {
+                    continue;
+                }
+
+                var urls = new List<string>();
+                var thumbs = new List<string>();
+                var mediaType = "image/png";
+                string? size = null;
+                for (var i = 0; ; i++)
+                {
+                    var key = $"{gen}/{i}";
+                    var info = images.FirstOrDefault(x =>
+                        string.Equals(x.Key, key, StringComparison.Ordinal));
+                    if (info == null)
+                    {
+                        break;
+                    }
+                    if (string.IsNullOrWhiteSpace(info.Path)
+                        && string.IsNullOrWhiteSpace(info.CdnKey))
+                    {
+                        break;
+                    }
+                    urls.Add($"/api/jobs/{job.Id}/images/{gen}/{i}");
+                    thumbs.Add($"/api/jobs/{job.Id}/images/{gen}/{i}?thumb=1");
+                    if (!string.IsNullOrWhiteSpace(info.ContentType))
+                    {
+                        mediaType = info.ContentType;
+                    }
+                    if (size == null
+                        && !string.IsNullOrWhiteSpace(info.Path)
+                        && File.Exists(info.Path))
+                    {
+                        try
+                        {
+                            var identified = Image.Identify(info.Path);
+                            if (identified.Width > 0 && identified.Height > 0)
+                            {
+                                size = $"{identified.Width}x{identified.Height}";
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log(
+                                $"[ui #{job.Id}] could not read recovered {key} dimensions: {ex.Message}");
+                        }
+                    }
+                }
+
+                var want = requestedN ?? Math.Max(urls.Count, 1);
+                var ok = urls.Count > 0;
+                var labelExtra = want > 1 && urls.Count > 0
+                    ? $"{urls.Count}/{want} imgs"
+                    : null;
+                var error = ok
+                    ? (urls.Count < want
+                        ? $"UI process restarted before this generator finished all {want} requested images; recovered {urls.Count} completed image(s)."
+                        : "")
+                    : "UI process restarted before this generator returned any image.";
+                job.Emit(new
+                {
+                    type = "gen-result",
+                    gen,
+                    ok,
+                    error,
+                    errorHint = (string?)null,
+                    errorHintUrl = (string?)null,
+                    ms = 0,
+                    images = urls,
+                    partialImages = (List<string?>?)null,
+                    partialThumbs = (List<string?>?)null,
+                    progressImages = (List<object>?)null,
+                    thumbs,
+                    mediaType,
+                    label = GeneratorPresentation.UiContactSheetLabel(gen, labelExtra),
+                    size,
+                    videoMode = (string?)null,
+                    videoDurationSeconds = (int?)null,
+                    videoResolution = (string?)null,
+                    videoAspectRatio = (string?)null,
+                    cost = 0m,
+                    interrupted = true,
+                });
+                Logger.Log(
+                    $"[ui #{job.Id}] recovered interrupted {gen}: {urls.Count}/{want} image(s) from disk");
             }
         }
 
@@ -3805,6 +3946,48 @@ namespace MultiImageClient
                             label = copy.RuntimeMeta.TryGetValue("label", out var l) && !string.IsNullOrEmpty(l)
                                 ? l
                                 : result.ImageGeneratorDescription;
+                        }
+                        // N>1 only emitted a single gen-result at the end, so a
+                        // process kill mid-loop hid already-saved images. Publish
+                        // a provisional result after each success so the card
+                        // updates live and interruption recovery sees a
+                        // gen-result for this generator.
+                        if (want > 1 && urls.Count > 0)
+                        {
+                            var progressCountLabel = string.IsNullOrEmpty(label)
+                                ? $"{urls.Count}/{want} imgs"
+                                : $"{label} · {urls.Count}/{want} imgs";
+                            var progressSize = firstImagePath != null
+                                ? ReadImageSize(firstImagePath)
+                                : firstImageBytes != null
+                                    ? ReadImageSize(firstImageBytes)
+                                    : null;
+                            job.Emit(new
+                            {
+                                type = "gen-result",
+                                gen = key,
+                                ok = true,
+                                error = "",
+                                errorHint = (string?)null,
+                                errorHintUrl = (string?)null,
+                                ms = createMs + downloadMs > 0
+                                    ? createMs + downloadMs
+                                    : wallClock.ElapsedMilliseconds,
+                                images = urls.ToList(),
+                                partialImages = (List<string?>?)null,
+                                partialThumbs = (List<string?>?)null,
+                                progressImages = (List<object>?)null,
+                                thumbs = _b2 != null ? thumbs.ToList() : null,
+                                mediaType,
+                                label = progressCountLabel,
+                                size = progressSize,
+                                videoMode = (string?)null,
+                                videoDurationSeconds = (int?)null,
+                                videoResolution = (string?)null,
+                                videoAspectRatio = (string?)null,
+                                cost = totalCost,
+                                provisional = true,
+                            });
                         }
                     }
                     else if (firstError == null)

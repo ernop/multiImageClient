@@ -8551,14 +8551,18 @@ function applyJobEvent(id, card, evt) {
     a.title = `saved: ${evt.path}`;
   } else if (evt.type === "job-done") {
     card.dataset.state = "done";
-    card.querySelector(".job-connection").textContent = "complete";
-    // Any cell still spinning got no gen-result (shouldn't happen, but
-    // never leave an infinite spinner).
+    card.querySelector(".job-connection").textContent = evt.interrupted
+      ? "interrupted"
+      : "complete";
+    // Any cell still spinning got no gen-result (process restart mid-run, or
+    // a generator that never emitted). Never leave an infinite spinner.
     for (const spin of card.querySelectorAll(".cell-status .spinner")) {
       const status = spin.parentElement;
       status.closest(".cell").dataset.state = "no-result";
       status.className = "cell-status err";
-      status.textContent = "no result";
+      status.textContent = evt.interrupted
+        ? "interrupted — process restarted before a result"
+        : "no result";
     }
     updateJobProgress(card);
   }
