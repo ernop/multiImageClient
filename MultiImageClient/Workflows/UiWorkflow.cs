@@ -263,6 +263,68 @@ namespace MultiImageClient
                 var currentProfile = profileSnapshot.Profiles.FirstOrDefault(profile =>
                     string.Equals(profile.Login, authUser, StringComparison.OrdinalIgnoreCase));
                 var generatorPreferences = community.GetGeneratorPreferences(authUser);
+                // Standard groups belong to the endpoint catalog rather than
+                // any user's persisted chooser preferences. Each endpoint
+                // below advertises its memberships; every environment and
+                // every user therefore receives the same immutable groups,
+                // including users who already have personal groups saved.
+                var standardGeneratorGroups = new[]
+                {
+                    new
+                    {
+                        id = "thinking-ones",
+                        name = "Thinking ones",
+                        generatorKeys = new[]
+                        {
+                            UiJobRunner.KeyGpt2,
+                            UiJobRunner.KeyGooglePro,
+                            UiJobRunner.KeyGrokWeb,
+                            UiJobRunner.KeyGrokApiPro,
+                        },
+                    },
+                    new
+                    {
+                        id = "can-do-famous-people",
+                        name = "can do famous people",
+                        generatorKeys = new[]
+                        {
+                            UiJobRunner.KeyGooglePro,
+                            UiJobRunner.KeyGoogle,
+                            UiJobRunner.KeyGrokWebChat,
+                            UiJobRunner.KeyGrokApi,
+                            UiJobRunner.KeyGrokApiPro,
+                            UiJobRunner.KeyGrokWeb,
+                            UiJobRunner.KeyGpt2,
+                        },
+                    },
+                    new
+                    {
+                        id = "text-ok",
+                        name = "text ok",
+                        generatorKeys = new[]
+                        {
+                            UiJobRunner.KeyGpt1,
+                            UiJobRunner.KeyGooglePro,
+                            UiJobRunner.KeyGoogle,
+                            UiJobRunner.KeyGpt2,
+                            UiJobRunner.KeyGrokWeb,
+                            UiJobRunner.KeyGrokApiPro,
+                            UiJobRunner.KeyGrokApi,
+                            UiJobRunner.KeyGrokWebChat,
+                            UiJobRunner.KeyBflFlux2Max,
+                            UiJobRunner.KeyRecraftV41Vector,
+                            UiJobRunner.KeyBflKontextMax,
+                            UiJobRunner.KeyGpt1Mini,
+                            UiJobRunner.KeyRecraftV4Pro,
+                            UiJobRunner.KeyRecraftV4,
+                            UiJobRunner.KeyRecraftV41Pro,
+                            UiJobRunner.KeyRecraftV41Utility,
+                            UiJobRunner.KeyRecraft,
+                            UiJobRunner.KeyIdeogramV3,
+                            UiJobRunner.KeyIdeogram,
+                        },
+                    },
+                };
                 // Display order: gpt-image-2, grok-*, ideogram, recraft, then the
                 // rest; unavailable targets (missing keys, gated local models)
                 // sink to the end via the stable OrderBy below.
@@ -331,6 +393,10 @@ namespace MultiImageClient
                     // producer label; internal keys never become display text.
                     label = GeneratorPresentation.UiDisplayName(g.key),
                     g.detail,
+                    standardGroupIds = standardGeneratorGroups
+                        .Where(group => group.generatorKeys.Contains(g.key))
+                        .Select(group => group.id)
+                        .ToArray(),
                     available = runner.IsAvailable(g.key),
                     availabilityProblem = runner.DescribeAvailabilityProblem(g.key),
                     // Analysis targets (describe + layout map) consume the
@@ -402,6 +468,11 @@ namespace MultiImageClient
                 return Results.Json(new
                 {
                     generators,
+                    standardGeneratorGroups = standardGeneratorGroups.Select(group => new
+                    {
+                        group.id,
+                        group.name,
+                    }),
                     shapes,
                     details,
                     videoGeneration = new

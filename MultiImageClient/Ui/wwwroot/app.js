@@ -59,6 +59,7 @@ hydrateMcpheeStorageMirrors();
 let inputImageItems = [];    // [{ file: Blob, url: objectURL }]
 let maxInputImages = 4;
 let generators = [];         // from /api/config
+let standardGeneratorGroups = []; // immutable endpoint-catalog groups
 let videoSource = null;       // { jobId, generator, index, url }
 let videoDialogSelectionVersion = 0;
 let videoGeneration = { available: false, availabilityProblem: "video configuration not loaded" };
@@ -427,6 +428,53 @@ function defaultGeneratorPreferences() {
   };
 }
 
+function normalizeStandardGeneratorGroups(rawGroups) {
+  if (!Array.isArray(rawGroups)) {
+    throw new Error("standard generator groups are missing");
+  }
+  const groupIds = new Set();
+  const groupNames = new Set();
+  const groups = rawGroups.map((group) => {
+    if (!group || typeof group !== "object" || Array.isArray(group) ||
+        typeof group.id !== "string" || !/^[a-z0-9-]{1,64}$/.test(group.id) ||
+        typeof group.name !== "string" || !group.name.trim() ||
+        group.name.trim().length > 30) {
+      throw new Error("a standard generator group is malformed");
+    }
+    const name = group.name.trim();
+    if (groupIds.has(group.id) || groupNames.has(name.toLocaleLowerCase())) {
+      throw new Error("standard generator group names and ids must be unique");
+    }
+    groupIds.add(group.id);
+    groupNames.add(name.toLocaleLowerCase());
+    return { id: group.id, name, generatorKeys: [] };
+  });
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  for (const generator of generators) {
+    if (!Array.isArray(generator.standardGroupIds)) {
+      throw new Error(`standard group memberships are missing for ${generator.key}`);
+    }
+    const endpointGroupIds = new Set();
+    for (const groupId of generator.standardGroupIds) {
+      if (typeof groupId !== "string" || !groupsById.has(groupId) ||
+          endpointGroupIds.has(groupId)) {
+        throw new Error(`standard group memberships are malformed for ${generator.key}`);
+      }
+      if (generator.kind === "describe") {
+        throw new Error(`analysis endpoint ${generator.key} belongs to a generator group`);
+      }
+      endpointGroupIds.add(groupId);
+      groupsById.get(groupId).generatorKeys.push(generator.key);
+    }
+  }
+  for (const group of groups) {
+    if (group.generatorKeys.length === 0) {
+      throw new Error(`standard generator group ${group.name} has no endpoints`);
+    }
+  }
+  return groups;
+}
+
 function normalizeGeneratorPreferences(raw) {
   const known = new Set(generators.map((g) => g.key));
   const imageKeys = new Set(generators.filter((g) => g.kind !== "describe").map((g) => g.key));
@@ -597,6 +645,7 @@ async function loadConfig() {
   }
   const cfg = await resp.json();
   generators = cfg.generators;
+  standardGeneratorGroups = normalizeStandardGeneratorGroups(cfg.standardGeneratorGroups);
   generatorEndpointConfiguration =
     cfg.generatorEndpointConfiguration || generatorEndpointConfiguration;
   videoGeneration = cfg.videoGeneration || videoGeneration;
@@ -2323,14 +2372,31 @@ function applyGeneratorPreset(preset) {
 function renderGeneratorPresetButtons() {
   const host = el("gen-personal-presets");
   host.replaceChildren();
-  for (const preset of generatorPreferences?.presets || []) {
+  const standardSignatures = new Set();
+  const appendButton = (preset, standard) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "generator-personal-preset";
     button.textContent = preset.name;
-    button.title = `Set the complete image-generator selection to “${preset.name}”`;
+    button.title = standard
+      ? `Set the complete image-generator selection to standard group “${preset.name}”`
+      : `Set the complete image-generator selection to personal group “${preset.name}”`;
     button.addEventListener("click", () => applyGeneratorPreset(preset));
     host.appendChild(button);
+  };
+  const signature = (preset) =>
+    `${preset.name.toLocaleLowerCase()}\n${[...preset.generatorKeys].sort().join("\n")}`;
+  for (const preset of standardGeneratorGroups) {
+    standardSignatures.add(signature(preset));
+    appendButton(preset, true);
+  }
+  for (const preset of generatorPreferences?.presets || []) {
+    // Production originally stored these three groups as one user's personal
+    // presets. Once the catalog supplies an identical standard group, suppress
+    // only that exact duplicate button; the personal record remains editable
+    // and portable until its owner deletes it.
+    if (standardSignatures.has(signature(preset))) continue;
+    appendButton(preset, false);
   }
 }
 
@@ -2466,7 +2532,7 @@ function renderGeneratorConfigPresets() {
   if (!preset) {
     const empty = document.createElement("p");
     empty.className = "generator-config-empty";
-    empty.textContent = "No personal groups yet. Create one to add a complete generator selection button.";
+    empty.textContent = "Standard groups are supplied by the server. No personal groups yet.";
     generatorConfigPresetList.appendChild(empty);
     return;
   }
