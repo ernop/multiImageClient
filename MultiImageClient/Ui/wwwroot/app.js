@@ -2980,15 +2980,17 @@ function setImagesFromBlobs(blobs, { restoredSketch = null, sketchNotice = "" } 
 
 // Paste works anywhere on the page: grabbing the clipboard image is the
 // core gesture, so don't make the user click the zone first. Additional
-// pastes append until the cap.
+// pastes append until the cap. While the sketch editor is open, the same
+// clipboard image goes onto that canvas instead of the composer.
 document.addEventListener("paste", (e) => {
-  for (const item of e.clipboardData.items) {
-    if (item.type.startsWith("image/")) {
-      appendImage(item.getAsFile());
-      e.preventDefault();
-      return;
-    }
+  const file = clipboardImageFile(e.clipboardData);
+  if (!file) return;
+  e.preventDefault();
+  if (sketchDialog.open) {
+    importImageIntoSketch(file);
+    return;
   }
+  appendImage(file);
 });
 
 pasteZone.addEventListener("click", (e) => {
@@ -3175,6 +3177,8 @@ const SketchToolNames = {
   mix: "mix",
   lighten: "lighten",
   fuzz: "fuzz",
+  eyedropper: "eyedropper",
+  recolor: "recolor",
 };
 const SketchShapeTools = new Set([
   "rectangle",
@@ -3194,6 +3198,21 @@ const SketchSelectionTools = new Set(["select-rect", "select-free"]);
 const SketchEdgeStyles = new Set(["hard", "soft", "dashed"]);
 const SketchFillRules = new Set(["outline", "solid", "soft"]);
 const SketchSelectionModes = new Set(["move", "duplicate", "stretch", "rotate"]);
+const SketchPasteFitModes = new Set(["cover", "contain", "stretch"]);
+const SketchDitherMethods = new Set(["nearest", "floyd", "bayer", "group"]);
+const SketchClickTools = new Set(["fill", "eyedropper", "recolor"]);
+const SketchBayer8 = [
+  [0, 32, 8, 40, 2, 34, 10, 42],
+  [48, 16, 56, 24, 50, 18, 58, 26],
+  [12, 44, 4, 36, 14, 46, 6, 38],
+  [60, 28, 52, 20, 62, 30, 54, 22],
+  [3, 35, 11, 43, 1, 33, 9, 41],
+  [51, 19, 59, 27, 49, 17, 57, 25],
+  [15, 47, 7, 39, 13, 45, 5, 37],
+  [63, 31, 55, 23, 61, 29, 53, 21],
+];
+const SketchAspectBySize = new Map(
+  Object.entries(SketchCanvasSizes).map(([name, size]) => [`${size[0]}x${size[1]}`, name]));
 
 const sketchDialog = el("sketch-dialog");
 const sketchCanvas = el("sketch-canvas");
@@ -3210,6 +3229,11 @@ const sketchBlendStrengthControl = el("sketch-blend-strength-control");
 const sketchEdgeStyleSelect = el("sketch-edge-style");
 const sketchFillRuleSelect = el("sketch-fill-rule");
 const sketchShapeConfig = el("sketch-shape-config");
+const sketchPasteFitSelect = el("sketch-paste-fit");
+const sketchDitherMethodSelect = el("sketch-dither-method");
+const sketchDitherWhiteInput = el("sketch-dither-white");
+const sketchDitherApplyButton = el("sketch-dither-apply");
+const sketchImportFileInput = el("sketch-import-file");
 const sketchCursor = el("sketch-brush-cursor");
 const sketchActionList = el("sketch-action-list");
 const sketchMeaningInputs = [];
@@ -3431,14 +3455,16 @@ function setSketchTool(tool) {
   const isShape = SketchShapeTools.has(tool);
   const isLine = tool === "line";
   const isBlend = SketchBlendTools.has(tool);
+  const usesTolerance = tool === "fill" || tool === "recolor";
   sketchShapeConfig.hidden = !(isShape || isLine);
   sketchEdgeStyleSelect.disabled = !(isShape || isLine);
   sketchFillRuleSelect.disabled = !isShape;
   el("sketch-fill-rule").closest("label").hidden = !isShape;
-  sketchFillToleranceControl.hidden = tool !== "fill";
-  sketchFillToleranceInput.disabled = tool !== "fill";
+  sketchFillToleranceControl.hidden = !usesTolerance;
+  sketchFillToleranceInput.disabled = !usesTolerance;
   sketchBlendStrengthControl.hidden = !isBlend;
   sketchBlendStrengthInput.disabled = !isBlend;
+  updateSketchDitherApplyLabel();
   updateSketchSelectionOpButtons();
   updateSketchToolPresentation();
 }
@@ -3467,6 +3493,10 @@ function updateSketchToolPresentation() {
   let extra = "";
   if (sketchActiveTool === "fill") {
     extra = ` · tolerance ${sketchFillToleranceInput.value}`;
+  } else if (sketchActiveTool === "recolor") {
+    extra = ` · tolerance ${sketchFillToleranceInput.value} · ${SketchPalette[sketchActiveColor].name}`;
+  } else if (sketchActiveTool === "eyedropper") {
+    extra = " · click a pixel";
   } else if (SketchBlendTools.has(sketchActiveTool)) {
     extra = ` · ${width} px · strength ${sketchBlendStrengthInput.value}`;
   } else if (SketchShapeTools.has(sketchActiveTool) || sketchActiveTool === "line") {
@@ -3493,6 +3523,7 @@ function updateSketchCursor(event) {
     || SketchShapeTools.has(sketchActiveTool)
     || sketchActiveTool === "line"
     || SketchSelectionTools.has(sketchActiveTool)
+    || SketchClickTools.has(sketchActiveTool)
     || !!sketchSelectionOp;
   const diameter = Math.max(5, Math.min(96, sketchCurrentWidth() * scale));
   sketchCursor.style.left = `${event.clientX - rect.left}px`;
@@ -3588,6 +3619,35 @@ function sketchActionColorName(action) {
 function sketchActionDescription(action) {
   if (action.kind === "base") return "restored sketch base";
   if (action.kind === "clear") return "clear canvas";
+  if (action.kind === "paste") {
+    return `paste image · ${action.fit || "cover"}`;
+  }
+  if (action.kind === "palette-filter") {
+    const names = {
+      nearest: "snap to palette",
+      floyd: "Floyd–Steinberg dither",
+      bayer: "ordered Bayer dither",
+      group: "group similar colors",
+    };
+    const extra = action.mode === "group" ? ` · tolerance ${action.tolerance}` : "";
+    return `${names[action.mode] || action.mode}${extra}`;
+  }
+  if (action.kind === "recolor") {
+    const toName = SketchPalette.find((entry) => entry.hex === action.color)?.name || action.color;
+    return `recolor · ${toName} · tolerance ${action.tolerance}`;
+  }
+  if (action.kind === "canvas-rotate") {
+    const turns = ((action.quarterTurns % 4) + 4) % 4;
+    if (turns === 1) return "rotate canvas 90° clockwise";
+    if (turns === 2) return "rotate canvas 180°";
+    if (turns === 3) return "rotate canvas 90° counter-clockwise";
+    return "rotate canvas";
+  }
+  if (action.kind === "canvas-flip") {
+    return action.axis === "v" ? "flip canvas vertical" : "flip canvas horizontal";
+  }
+  if (action.kind === "crop-outside") return "crop to selection";
+  if (action.kind === "crop-fill") return `crop to canvas · ${action.fit || "cover"}`;
   if (action.kind === "region-edit") {
     const parts = [];
     if (action.clearMask) parts.push("clear selection");
@@ -3634,8 +3694,12 @@ function renderSketchActionList() {
     const swatch = document.createElement("span");
     swatch.className = "sketch-action-swatch";
     swatch.style.background = action.kind === "base" || action.kind === "region-edit"
+      || action.kind === "paste" || action.kind === "palette-filter"
+      || action.kind === "canvas-rotate" || action.kind === "canvas-flip"
+      || action.kind === "crop-outside" || action.kind === "crop-fill"
       ? "linear-gradient(135deg, #e53935, #1e88e5, #43a047)"
       : action.kind === "clear" ? "#ffffff"
+      : action.kind === "recolor" ? (action.color || "#9aa3b5")
       : (SketchBlendTools.has(action.kind) ? "#9aa3b5" : action.color);
 
     const label = document.createElement("span");
@@ -4034,6 +4098,7 @@ function applySketchFloodFill(action) {
 }
 
 function renderSketchActions() {
+  resizeSketchCanvasToAspect(sketchAspect);
   sketchBlank();
   for (const action of sketchActions) {
     if (!action.visible) continue;
@@ -4043,6 +4108,20 @@ function renderSketchActions() {
       sketchBlank();
     } else if (action.kind === "fill") {
       applySketchFloodFill(action);
+    } else if (action.kind === "paste") {
+      applySketchPaste(action);
+    } else if (action.kind === "palette-filter") {
+      applySketchPaletteFilter(action);
+    } else if (action.kind === "recolor") {
+      applySketchRecolor(action);
+    } else if (action.kind === "canvas-rotate") {
+      applySketchCanvasRotate(action.quarterTurns);
+    } else if (action.kind === "canvas-flip") {
+      applySketchCanvasFlip(action.axis);
+    } else if (action.kind === "crop-outside") {
+      applySketchCropOutside(action);
+    } else if (action.kind === "crop-fill") {
+      applySketchCropFill(action);
     } else if (action.kind === "region-edit") {
       applySketchRegionEdit(action);
     } else if (action.kind === "line" || SketchShapeTools.has(action.kind)) {
@@ -4051,6 +4130,7 @@ function renderSketchActions() {
       drawSketchStroke(action);
     }
   }
+  syncSketchAspectSelectToCanvas();
   drawSketchSelectionOverlay();
 }
 
@@ -4182,6 +4262,542 @@ function extractSketchSelectionBitmap(selection) {
   return { x, y, imageData };
 }
 
+function clipboardImageFile(clipboardData) {
+  if (!clipboardData) return null;
+  if (clipboardData.files) {
+    for (const file of clipboardData.files) {
+      if (file.type.startsWith("image/")) return file;
+    }
+  }
+  if (clipboardData.items) {
+    for (const item of clipboardData.items) {
+      if (item.type.startsWith("image/")) return item.getAsFile();
+    }
+  }
+  return null;
+}
+
+function cloneSketchImageData(imageData) {
+  return new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height);
+}
+
+function sketchAspectNameFromSize(width, height) {
+  return SketchAspectBySize.get(`${width}x${height}`) || "";
+}
+
+function resizeSketchCanvasToAspect(aspect) {
+  const size = SketchCanvasSizes[aspect];
+  if (!size) throw new Error(`unknown sketch aspect ${aspect}`);
+  const [width, height] = size;
+  if (sketchCanvas.width !== width || sketchCanvas.height !== height) {
+    sketchCanvas.width = width;
+    sketchCanvas.height = height;
+  }
+  if (sketchOverlay.width !== width || sketchOverlay.height !== height) {
+    sketchOverlay.width = width;
+    sketchOverlay.height = height;
+  }
+}
+
+function syncSketchAspectSelectToCanvas() {
+  const name = sketchAspectNameFromSize(sketchCanvas.width, sketchCanvas.height);
+  if (name && sketchAspectSelect.value !== name) sketchAspectSelect.value = name;
+}
+
+function sketchCurrentPasteFit() {
+  const value = sketchPasteFitSelect.value;
+  return SketchPasteFitModes.has(value) ? value : "cover";
+}
+
+function sketchCurrentDitherMethod() {
+  const value = sketchDitherMethodSelect.value;
+  return SketchDitherMethods.has(value) ? value : "floyd";
+}
+
+function updateSketchDitherApplyLabel() {
+  const method = sketchCurrentDitherMethod();
+  const target = sketchSelection ? "selection" : "canvas";
+  const labels = {
+    nearest: `snap ${target} to palette`,
+    floyd: `dither ${target}`,
+    bayer: `dither ${target}`,
+    group: `group ${target} colors`,
+  };
+  sketchDitherApplyButton.textContent = labels[method] || `apply to ${target}`;
+  const usesTolerance = sketchActiveTool === "fill"
+    || sketchActiveTool === "recolor"
+    || method === "group";
+  sketchFillToleranceControl.hidden = !usesTolerance;
+  sketchFillToleranceInput.disabled = !usesTolerance;
+}
+
+function sketchFitRect(srcW, srcH, canvasW, canvasH, fit) {
+  if (fit === "stretch") {
+    return { dx: 0, dy: 0, dw: canvasW, dh: canvasH };
+  }
+  const scale = fit === "contain"
+    ? Math.min(canvasW / srcW, canvasH / srcH)
+    : Math.max(canvasW / srcW, canvasH / srcH);
+  const dw = Math.max(1, Math.round(srcW * scale));
+  const dh = Math.max(1, Math.round(srcH * scale));
+  return {
+    dx: Math.round((canvasW - dw) / 2),
+    dy: Math.round((canvasH - dh) / 2),
+    dw,
+    dh,
+  };
+}
+
+function rasterizeSketchBitmap(bitmap, dw, dh) {
+  const layer = document.createElement("canvas");
+  layer.width = dw;
+  layer.height = dh;
+  const ctx = layer.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bitmap, 0, 0, dw, dh);
+  return ctx.getImageData(0, 0, dw, dh);
+}
+
+function applySketchPaste(action) {
+  stampSketchImageData(action.dx, action.dy, action.imageData);
+}
+
+function sketchMaskContains(mask, x, y) {
+  if (!mask) return true;
+  if (mask.type === "rect") {
+    const b = mask.bounds;
+    return x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h;
+  }
+  return sketchPointInPolygon({ x: x + 0.5, y: y + 0.5 }, mask.points);
+}
+
+function sketchPaletteRgbList(includeWhite) {
+  const list = SketchPalette.map((color) => sketchHexRgb(color.hex));
+  if (includeWhite) list.push([255, 255, 255]);
+  return list;
+}
+
+function nearestSketchPaletteRgb(r, g, b, palette) {
+  let best = palette[0];
+  let bestDist = Infinity;
+  for (const color of palette) {
+    const dr = r - color[0];
+    const dg = g - color[1];
+    const db = b - color[2];
+    const dist = dr * dr + dg * dg + db * db;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = color;
+    }
+  }
+  return best;
+}
+
+function nearestSketchPaletteIndex(r, g, b) {
+  let best = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < SketchPalette.length; i++) {
+    const color = sketchHexRgb(SketchPalette[i].hex);
+    const dr = r - color[0];
+    const dg = g - color[1];
+    const db = b - color[2];
+    const dist = dr * dr + dg * dg + db * db;
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = i;
+    }
+  }
+  return best;
+}
+
+function applySketchPaletteFilter(action) {
+  const width = sketchCanvas.width;
+  const height = sketchCanvas.height;
+  const image = sketchCtx.getImageData(0, 0, width, height);
+  const data = image.data;
+  const palette = sketchPaletteRgbList(!!action.includeWhite);
+  const mask = action.mask || null;
+  const mode = action.mode;
+  const work = mode === "floyd" ? new Float32Array(data.length) : null;
+  if (work) {
+    for (let i = 0; i < data.length; i++) work[i] = data[i];
+  }
+  const groupStep = Math.max(1, action.tolerance || 24);
+  const clampByte = (value) => Math.max(0, Math.min(255, value));
+
+  const writePixel = (offset, rgb) => {
+    data[offset] = rgb[0];
+    data[offset + 1] = rgb[1];
+    data[offset + 2] = rgb[2];
+    data[offset + 3] = 255;
+  };
+
+  for (let y = 0; y < height; y++) {
+    const xStart = mode === "floyd" && (y % 2) ? width - 1 : 0;
+    const xEnd = mode === "floyd" && (y % 2) ? -1 : width;
+    const xStep = mode === "floyd" && (y % 2) ? -1 : 1;
+    for (let x = xStart; x !== xEnd; x += xStep) {
+      if (!sketchMaskContains(mask, x, y)) continue;
+      const offset = (y * width + x) * 4;
+      let r = work ? work[offset] : data[offset];
+      let g = work ? work[offset + 1] : data[offset + 1];
+      let b = work ? work[offset + 2] : data[offset + 2];
+      if (mode === "group") {
+        r = Math.round(r / groupStep) * groupStep;
+        g = Math.round(g / groupStep) * groupStep;
+        b = Math.round(b / groupStep) * groupStep;
+      } else if (mode === "bayer") {
+        const threshold = (SketchBayer8[y & 7][x & 7] / 64 - 0.5) * 48;
+        r += threshold;
+        g += threshold;
+        b += threshold;
+      }
+      const chosen = nearestSketchPaletteRgb(clampByte(r), clampByte(g), clampByte(b), palette);
+      writePixel(offset, chosen);
+      if (work) {
+        const errR = r - chosen[0];
+        const errG = g - chosen[1];
+        const errB = b - chosen[2];
+        const diffuse = (nx, ny, factor) => {
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) return;
+          if (!sketchMaskContains(mask, nx, ny)) return;
+          const n = (ny * width + nx) * 4;
+          work[n] += errR * factor;
+          work[n + 1] += errG * factor;
+          work[n + 2] += errB * factor;
+        };
+        if (xStep > 0) {
+          diffuse(x + 1, y, 7 / 16);
+          diffuse(x - 1, y + 1, 3 / 16);
+          diffuse(x, y + 1, 5 / 16);
+          diffuse(x + 1, y + 1, 1 / 16);
+        } else {
+          diffuse(x - 1, y, 7 / 16);
+          diffuse(x + 1, y + 1, 3 / 16);
+          diffuse(x, y + 1, 5 / 16);
+          diffuse(x - 1, y + 1, 1 / 16);
+        }
+      }
+    }
+  }
+  sketchCtx.putImageData(image, 0, 0);
+}
+
+function applySketchRecolor(action) {
+  const width = sketchCanvas.width;
+  const height = sketchCanvas.height;
+  const image = sketchCtx.getImageData(0, 0, width, height);
+  const data = image.data;
+  const fill = sketchHexRgb(action.color);
+  const from = action.fromRgb;
+  const tolerance = action.tolerance;
+  const mask = action.mask || null;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!sketchMaskContains(mask, x, y)) continue;
+      const offset = (y * width + x) * 4;
+      if (Math.abs(data[offset] - from[0]) > tolerance
+          || Math.abs(data[offset + 1] - from[1]) > tolerance
+          || Math.abs(data[offset + 2] - from[2]) > tolerance) {
+        continue;
+      }
+      data[offset] = fill[0];
+      data[offset + 1] = fill[1];
+      data[offset + 2] = fill[2];
+      data[offset + 3] = 255;
+    }
+  }
+  sketchCtx.putImageData(image, 0, 0);
+}
+
+function rotateSketchImageData90Cw(src) {
+  const w = src.width;
+  const h = src.height;
+  const dst = new ImageData(h, w);
+  const s = src.data;
+  const d = dst.data;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const si = (y * w + x) * 4;
+      const dx = h - 1 - y;
+      const dy = x;
+      const di = (dy * h + dx) * 4;
+      d[di] = s[si];
+      d[di + 1] = s[si + 1];
+      d[di + 2] = s[si + 2];
+      d[di + 3] = s[si + 3];
+    }
+  }
+  return dst;
+}
+
+function applySketchCanvasRotate(quarterTurns) {
+  const turns = ((quarterTurns % 4) + 4) % 4;
+  if (!turns) return;
+  let image = sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height);
+  for (let i = 0; i < turns; i++) image = rotateSketchImageData90Cw(image);
+  const aspect = sketchAspectNameFromSize(image.width, image.height);
+  if (!aspect) {
+    throw new Error(
+      `rotated sketch size ${image.width}×${image.height} is not a supported canvas shape`);
+  }
+  resizeSketchCanvasToAspect(aspect);
+  sketchCtx.putImageData(image, 0, 0);
+}
+
+function applySketchCanvasFlip(axis) {
+  const width = sketchCanvas.width;
+  const height = sketchCanvas.height;
+  const src = sketchCtx.getImageData(0, 0, width, height);
+  const dst = new ImageData(width, height);
+  const s = src.data;
+  const d = dst.data;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const nx = axis === "h" ? width - 1 - x : x;
+      const ny = axis === "v" ? height - 1 - y : y;
+      const si = (y * width + x) * 4;
+      const di = (ny * width + nx) * 4;
+      d[di] = s[si];
+      d[di + 1] = s[si + 1];
+      d[di + 2] = s[si + 2];
+      d[di + 3] = s[si + 3];
+    }
+  }
+  sketchCtx.putImageData(dst, 0, 0);
+}
+
+function applySketchCropOutside(action) {
+  const kept = extractSketchSelectionBitmap({
+    type: action.mask.type,
+    points: action.mask.points,
+    bounds: action.mask.bounds,
+  });
+  sketchBlank();
+  stampSketchImageData(kept.x, kept.y, kept.imageData);
+}
+
+function applySketchCropFill(action) {
+  const kept = extractSketchSelectionBitmap({
+    type: action.mask.type,
+    points: action.mask.points,
+    bounds: action.mask.bounds,
+  });
+  const fit = sketchFitRect(
+    kept.imageData.width,
+    kept.imageData.height,
+    sketchCanvas.width,
+    sketchCanvas.height,
+    action.fit || "cover");
+  const src = document.createElement("canvas");
+  src.width = kept.imageData.width;
+  src.height = kept.imageData.height;
+  src.getContext("2d").putImageData(kept.imageData, 0, 0);
+  sketchBlank();
+  sketchCtx.imageSmoothingEnabled = true;
+  sketchCtx.imageSmoothingQuality = "high";
+  sketchCtx.drawImage(src, fit.dx, fit.dy, fit.dw, fit.dh);
+}
+
+async function importImageIntoSketch(file) {
+  if (!file || !file.type.startsWith("image/")) {
+    setSketchActionStatus("Clipboard or file is not an image.", true);
+    return;
+  }
+  if (sketchActions.length >= SketchActionLimit) {
+    setSketchActionStatus(
+      `This sketch already has ${SketchActionLimit} actions. Remove or combine actions before pasting.`,
+      true);
+    return;
+  }
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch (err) {
+    setSketchActionStatus(`Could not decode that image: ${err.message || err}`, true);
+    return;
+  }
+  try {
+    if (bitmap.width < 1 || bitmap.height < 1) {
+      setSketchActionStatus("That image has no pixels.", true);
+      return;
+    }
+    const fitMode = sketchCurrentPasteFit();
+    const dest = sketchFitRect(
+      bitmap.width, bitmap.height, sketchCanvas.width, sketchCanvas.height, fitMode);
+    const imageData = rasterizeSketchBitmap(bitmap, dest.dw, dest.dh);
+    const ok = commitSketchAction({
+      kind: "paste",
+      fit: fitMode,
+      dx: dest.dx,
+      dy: dest.dy,
+      imageData,
+    });
+    if (!ok) return;
+    const selX = Math.max(0, dest.dx);
+    const selY = Math.max(0, dest.dy);
+    const selW = Math.min(sketchCanvas.width - selX, dest.dw + Math.min(0, dest.dx));
+    const selH = Math.min(sketchCanvas.height - selY, dest.dh + Math.min(0, dest.dy));
+    if (selW > 0 && selH > 0) {
+      setSketchSelection({
+        type: "rect",
+        points: [
+          { x: selX, y: selY },
+          { x: selX + selW, y: selY },
+          { x: selX + selW, y: selY + selH },
+          { x: selX, y: selY + selH },
+        ],
+        bounds: { x: selX, y: selY, w: selW, h: selH },
+      });
+    }
+    setSketchActionStatus(
+      `Pasted ${bitmap.width}×${bitmap.height} with ${fitMode}. `
+      + "Edit as usual; snap or dither onto legend colors before attaching.");
+  } finally {
+    bitmap.close();
+  }
+}
+
+async function pasteSketchFromClipboard() {
+  if (navigator.clipboard?.read) {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find((candidate) => candidate.startsWith("image/"));
+        if (!type) continue;
+        const blob = await item.getType(type);
+        await importImageIntoSketch(new File([blob], "clipboard.png", { type: blob.type || type }));
+        return;
+      }
+    } catch (err) {
+      setSketchActionStatus(
+        `Could not read the clipboard (${err.message || err}). Use Ctrl+V or load an image file.`,
+        true);
+      return;
+    }
+  }
+  setSketchActionStatus("No image on the clipboard. Copy an image, then press Ctrl+V.", true);
+}
+
+function commitSketchPaletteFilter() {
+  const mode = sketchCurrentDitherMethod();
+  const mask = sketchSelection ? selectionToMask(sketchSelection) : null;
+  commitSketchAction({
+    kind: "palette-filter",
+    mode,
+    includeWhite: sketchDitherWhiteInput.checked,
+    tolerance: Number(sketchFillToleranceInput.value),
+    mask,
+  });
+}
+
+function pickSketchEyedropper(point) {
+  const x = Math.max(0, Math.min(sketchCanvas.width - 1, Math.round(point.x)));
+  const y = Math.max(0, Math.min(sketchCanvas.height - 1, Math.round(point.y)));
+  const pixel = sketchCtx.getImageData(x, y, 1, 1).data;
+  const index = nearestSketchPaletteIndex(pixel[0], pixel[1], pixel[2]);
+  setSketchColor(index);
+  setSketchActionStatus(`Eyedropper: ${SketchPalette[index].name}`);
+}
+
+function commitSketchRecolorAt(point) {
+  const x = Math.max(0, Math.min(sketchCanvas.width - 1, Math.round(point.x)));
+  const y = Math.max(0, Math.min(sketchCanvas.height - 1, Math.round(point.y)));
+  const pixel = sketchCtx.getImageData(x, y, 1, 1).data;
+  commitSketchAction({
+    kind: "recolor",
+    fromRgb: [pixel[0], pixel[1], pixel[2]],
+    color: SketchPalette[sketchActiveColor].hex,
+    tolerance: Number(sketchFillToleranceInput.value),
+    mask: sketchSelection ? selectionToMask(sketchSelection) : null,
+  });
+}
+
+function commitSketchCanvasRotate(quarterTurns) {
+  const turns = ((quarterTurns % 4) + 4) % 4;
+  if (!turns) return;
+  clearSketchSelection();
+  commitSketchAction({ kind: "canvas-rotate", quarterTurns: turns });
+}
+
+function commitSketchCanvasFlip(axis) {
+  clearSketchSelection();
+  commitSketchAction({ kind: "canvas-flip", axis });
+}
+
+function commitSketchSelectionFlip(axis) {
+  if (!sketchSelection) {
+    setSketchActionStatus("Make a rectangular or free selection first.", true);
+    return;
+  }
+  const bitmap = extractSketchSelectionBitmap(sketchSelection);
+  const srcW = bitmap.imageData.width;
+  const srcH = bitmap.imageData.height;
+  const flipped = new ImageData(srcW, srcH);
+  const s = bitmap.imageData.data;
+  const d = flipped.data;
+  for (let y = 0; y < srcH; y++) {
+    for (let x = 0; x < srcW; x++) {
+      const nx = axis === "h" ? srcW - 1 - x : x;
+      const ny = axis === "v" ? srcH - 1 - y : y;
+      const si = (y * srcW + x) * 4;
+      const di = (ny * srcW + nx) * 4;
+      d[di] = s[si];
+      d[di + 1] = s[si + 1];
+      d[di + 2] = s[si + 2];
+      d[di + 3] = s[si + 3];
+    }
+  }
+  const ok = commitSketchAction({
+    kind: "region-edit",
+    clearMask: selectionToMask(sketchSelection),
+    stamp: { x: bitmap.x, y: bitmap.y, imageData: flipped },
+    stampLabel: axis === "v" ? "flip V" : "flip H",
+  });
+  if (!ok) return;
+  setSketchSelection({
+    type: "rect",
+    points: [
+      { x: bitmap.x, y: bitmap.y },
+      { x: bitmap.x + srcW, y: bitmap.y },
+      { x: bitmap.x + srcW, y: bitmap.y + srcH },
+      { x: bitmap.x, y: bitmap.y + srcH },
+    ],
+    bounds: { x: bitmap.x, y: bitmap.y, w: srcW, h: srcH },
+  });
+}
+
+function commitSketchCropOutside() {
+  if (!sketchSelection) {
+    setSketchActionStatus("Make a selection to crop.", true);
+    return;
+  }
+  const mask = selectionToMask(sketchSelection);
+  commitSketchAction({ kind: "crop-outside", mask });
+}
+
+function commitSketchCropFill() {
+  if (!sketchSelection) {
+    setSketchActionStatus("Make a selection to crop onto the canvas.", true);
+    return;
+  }
+  const mask = selectionToMask(sketchSelection);
+  const fit = sketchCurrentPasteFit();
+  const ok = commitSketchAction({ kind: "crop-fill", mask, fit });
+  if (!ok) return;
+  setSketchSelection({
+    type: "rect",
+    points: [
+      { x: 0, y: 0 },
+      { x: sketchCanvas.width, y: 0 },
+      { x: sketchCanvas.width, y: sketchCanvas.height },
+      { x: 0, y: sketchCanvas.height },
+    ],
+    bounds: { x: 0, y: 0, w: sketchCanvas.width, h: sketchCanvas.height },
+  });
+}
+
 function clearSketchSelection() {
   sketchSelection = null;
   sketchSelectionOp = null;
@@ -4206,6 +4822,10 @@ function updateSketchSelectionOpButtons() {
     "sketch-selection-duplicate",
     "sketch-selection-stretch",
     "sketch-selection-rotate",
+    "sketch-selection-flip-h",
+    "sketch-selection-flip-v",
+    "sketch-selection-crop",
+    "sketch-selection-crop-fill",
     "sketch-selection-deselect",
   ]) {
     el(id).disabled = !has;
@@ -4218,6 +4838,7 @@ function updateSketchSelectionOpButtons() {
   ]) {
     el(id).classList.toggle("active", has && sketchSelectionOp === op);
   }
+  updateSketchDitherApplyLabel();
 }
 
 function setSketchSelectionOp(op) {
@@ -4556,6 +5177,14 @@ sketchCanvas.addEventListener("pointerdown", (event) => {
     });
     return;
   }
+  if (sketchActiveTool === "eyedropper") {
+    pickSketchEyedropper(point);
+    return;
+  }
+  if (sketchActiveTool === "recolor") {
+    commitSketchRecolorAt(point);
+    return;
+  }
   sketchCanvas.setPointerCapture(event.pointerId);
   if (SketchShapeTools.has(sketchActiveTool) || sketchActiveTool === "line") {
     sketchGesture = {
@@ -4841,7 +5470,46 @@ el("sketch-selection-move").addEventListener("click", () => setSketchSelectionOp
 el("sketch-selection-duplicate").addEventListener("click", () => setSketchSelectionOp("duplicate"));
 el("sketch-selection-stretch").addEventListener("click", () => setSketchSelectionOp("stretch"));
 el("sketch-selection-rotate").addEventListener("click", () => setSketchSelectionOp("rotate"));
+el("sketch-selection-flip-h").addEventListener("click", () => commitSketchSelectionFlip("h"));
+el("sketch-selection-flip-v").addEventListener("click", () => commitSketchSelectionFlip("v"));
+el("sketch-selection-crop").addEventListener("click", commitSketchCropOutside);
+el("sketch-selection-crop-fill").addEventListener("click", commitSketchCropFill);
 el("sketch-selection-deselect").addEventListener("click", clearSketchSelection);
+el("sketch-paste").addEventListener("click", () => pasteSketchFromClipboard());
+el("sketch-import").addEventListener("click", () => sketchImportFileInput.click());
+sketchImportFileInput.addEventListener("change", () => {
+  const file = sketchImportFileInput.files?.[0];
+  sketchImportFileInput.value = "";
+  if (file) importImageIntoSketch(file);
+});
+el("sketch-rotate-cw").addEventListener("click", () => commitSketchCanvasRotate(1));
+el("sketch-rotate-ccw").addEventListener("click", () => commitSketchCanvasRotate(3));
+el("sketch-rotate-180").addEventListener("click", () => commitSketchCanvasRotate(2));
+el("sketch-flip-h").addEventListener("click", () => commitSketchCanvasFlip("h"));
+el("sketch-flip-v").addEventListener("click", () => commitSketchCanvasFlip("v"));
+el("sketch-dither-apply").addEventListener("click", commitSketchPaletteFilter);
+sketchDitherMethodSelect.addEventListener("change", updateSketchDitherApplyLabel);
+sketchPasteFitSelect.addEventListener("change", updateSketchDitherApplyLabel);
+el("sketch-canvas-wrap").addEventListener("dragover", (event) => {
+  if (![...event.dataTransfer.types].includes("Files")) return;
+  event.preventDefault();
+  el("sketch-canvas-wrap").classList.add("dragover");
+});
+el("sketch-canvas-wrap").addEventListener("dragleave", (event) => {
+  if (event.currentTarget.contains(event.relatedTarget)) return;
+  el("sketch-canvas-wrap").classList.remove("dragover");
+});
+sketchDialog.addEventListener("dragover", (event) => {
+  if (![...event.dataTransfer.types].includes("Files")) return;
+  event.preventDefault();
+});
+sketchDialog.addEventListener("drop", (event) => {
+  event.preventDefault();
+  el("sketch-canvas-wrap").classList.remove("dragover");
+  const files = [...event.dataTransfer.files].filter((file) => file.type.startsWith("image/"));
+  if (files[0]) importImageIntoSketch(files[0]);
+  else setSketchActionStatus("Drop an image file onto the canvas.", true);
+});
 sketchDialog.addEventListener("keydown", (event) => {
   if (event.key === "Delete" || event.key === "Backspace") {
     if (event.target instanceof Element
@@ -4875,9 +5543,10 @@ sketchDialog.addEventListener("keydown", (event) => {
 });
 sketchAspectSelect.addEventListener("change", () => {
   const next = sketchAspectSelect.value;
+  const live = sketchAspectNameFromSize(sketchCanvas.width, sketchCanvas.height) || sketchAspect;
   if (sketchScanColors().ink
       && !confirm("Changing the canvas shape clears the sketch. Continue?")) {
-    sketchAspectSelect.value = sketchAspect;
+    sketchAspectSelect.value = live;
     return;
   }
   sketchAspect = next;
@@ -4962,7 +5631,7 @@ async function attachSketch() {
     return;
   }
   if (used.size === 0) {
-    sketchStatus.textContent = "no palette colors found — draw with the palette, not only the eraser";
+    sketchStatus.textContent = "no palette colors found — snap, dither, or recolor onto the legend colors, or draw with the palette";
     sketchStatus.classList.add("error");
     return;
   }
@@ -4983,7 +5652,7 @@ async function attachSketch() {
   const file = new File([blob], "sketch.png", { type: "image/png" });
   const attachedState = {
     version: 1,
-    aspect: sketchAspect,
+    aspect: sketchAspectNameFromSize(sketchCanvas.width, sketchCanvas.height) || sketchAspect,
     meanings: sketchMeaningInputs.map((meaning) => meaning.value.trim()),
   };
   const legendParagraph = buildSketchLegendParagraph(used);

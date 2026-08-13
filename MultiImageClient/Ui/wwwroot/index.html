@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260811-sketch-continuous-tools">
+<link rel="stylesheet" href="style.css?v=20260813-sketch-paint-floor">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260809-mcphee-3-9-0">
 </head>
 <body>
@@ -511,6 +511,7 @@
     </div>
     <p class="compact-dialog-note">
       Build a spatial map of where things should go, then say what each color means.
+      Paste or load a reference image onto the canvas, then crop, rotate, dither, or paint over it.
       Attaching adds the sketch as an input image and writes one legend paragraph into your prompt:
       image models use its placement and coverage while choosing the final palette and rendering style
       from the rest of your prompt.
@@ -528,8 +529,18 @@
                 <option value="tall">tall 9:16</option>
               </select>
             </label>
+            <label>paste size
+              <select id="sketch-paste-fit" title="How a pasted or loaded image is scaled onto the canvas">
+                <option value="cover" selected>keep aspect, fill canvas</option>
+                <option value="contain">keep aspect, largest fit</option>
+                <option value="stretch">stretch to fill canvas</option>
+              </select>
+            </label>
+            <button id="sketch-paste" type="button" title="Paste the clipboard image onto the canvas (Ctrl+V)">paste image</button>
+            <button id="sketch-import" type="button" title="Load an image file onto the canvas">load image</button>
+            <input id="sketch-import-file" type="file" accept="image/*" hidden>
             <label>size <input id="sketch-brush" type="range" min="1" max="96" value="30"></label>
-            <label id="sketch-fill-tolerance-control">fill tolerance
+            <label id="sketch-fill-tolerance-control">tolerance
               <input id="sketch-fill-tolerance" type="range" min="0" max="96" value="24">
             </label>
             <label id="sketch-blend-strength-control" hidden>strength
@@ -565,6 +576,10 @@
                 <button id="sketch-selection-duplicate" type="button" disabled title="Duplicate the selection, then place the copy">duplicate</button>
                 <button id="sketch-selection-stretch" type="button" disabled title="Stretch the selection by dragging a corner">stretch</button>
                 <button id="sketch-selection-rotate" type="button" disabled title="Rotate the selection around its center">rotate</button>
+                <button id="sketch-selection-flip-h" type="button" disabled title="Flip the selection horizontally">flip H</button>
+                <button id="sketch-selection-flip-v" type="button" disabled title="Flip the selection vertically">flip V</button>
+                <button id="sketch-selection-crop" type="button" disabled title="Keep the selection; fill the rest of the canvas with white">crop</button>
+                <button id="sketch-selection-crop-fill" type="button" disabled title="Scale the selection to fill the whole canvas using the paste-size setting">crop to canvas</button>
                 <button id="sketch-selection-deselect" type="button" disabled title="Drop the current selection">deselect</button>
               </div>
             </section>
@@ -662,11 +677,59 @@
                 </button>
               </div>
             </section>
+
+            <section class="sketch-tool-group" aria-labelledby="sketch-group-canvas">
+              <h3 id="sketch-group-canvas">Canvas</h3>
+              <div class="sketch-tool-row" role="toolbar" aria-label="Canvas rotate and flip">
+                <button id="sketch-rotate-ccw" type="button" title="Rotate the whole canvas 90° counter-clockwise" aria-label="Rotate canvas 90 degrees counter-clockwise">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 7.2A4.2 4.2 0 1 1 8 12.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M4.5 4.2v3h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </button>
+                <button id="sketch-rotate-cw" type="button" title="Rotate the whole canvas 90° clockwise" aria-label="Rotate canvas 90 degrees clockwise">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.5 7.2A4.2 4.2 0 1 0 8 12.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M11.5 4.2v3h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </button>
+                <button id="sketch-rotate-180" type="button" title="Rotate the whole canvas 180°" aria-label="Rotate canvas 180 degrees">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.2 6.2A4.2 4.2 0 1 1 8 12.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M4.2 3.4v2.8h2.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M11.8 9.8A4.2 4.2 0 1 1 8 3.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M11.8 12.6V9.8h-2.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </button>
+                <button id="sketch-flip-h" type="button" title="Flip the whole canvas horizontally" aria-label="Flip canvas horizontally">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M3.2 5.5L6.2 8l-3 2.5M12.8 5.5L9.8 8l3 2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </button>
+                <button id="sketch-flip-v" type="button" title="Flip the whole canvas vertically" aria-label="Flip canvas vertically">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12M5.5 3.2L8 6.2l2.5-3M5.5 12.8L8 9.8l2.5 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </section>
+
+            <section class="sketch-tool-group" aria-labelledby="sketch-group-palette">
+              <h3 id="sketch-group-palette">Palette &amp; dither</h3>
+              <div class="sketch-tool-row" role="toolbar" aria-label="Recolor and eyedropper">
+                <button type="button" data-sketch-tool="eyedropper" title="Pick the nearest legend color from a pixel" aria-label="Eyedropper">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.2 2.4l3.4 3.4-1.2 1.2-3.4-3.4 1.2-1.2zM8.8 5.2L3.2 10.8 2.4 13.6l2.8-.8 5.6-5.6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" data-sketch-tool="recolor" title="Replace every similar color with the active legend color" aria-label="Recolor similar pixels">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="5.5" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="10.5" cy="8" r="3" fill="currentColor" opacity=".35" stroke="currentColor" stroke-width="1.3"/></svg>
+                </button>
+              </div>
+              <div class="sketch-config-row">
+                <label>map
+                  <select id="sketch-dither-method">
+                    <option value="nearest">snap to palette</option>
+                    <option value="floyd" selected>Floyd–Steinberg dither</option>
+                    <option value="bayer">ordered Bayer dither</option>
+                    <option value="group">group similar colors</option>
+                  </select>
+                </label>
+                <label title="Keep near-white pixels white instead of mapping them onto a legend color">
+                  <input id="sketch-dither-white" type="checkbox" checked>
+                  keep white
+                </label>
+                <button id="sketch-dither-apply" type="button" title="Map the current canvas or selection onto the 8 legend colors">apply to canvas</button>
+              </div>
+            </section>
           </div>
         </div>
         <div id="sketch-canvas-wrap">
           <canvas id="sketch-canvas" width="1024" height="1024"
-            aria-label="Composition sketch canvas — draw with the active tool"></canvas>
+            aria-label="Composition sketch canvas — draw, or paste a clipboard image"></canvas>
           <canvas id="sketch-overlay" width="1024" height="1024" aria-hidden="true"></canvas>
           <div id="sketch-brush-cursor" aria-hidden="true"></div>
         </div>
@@ -752,6 +815,6 @@
 <script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
 <script src="mcphee/mcphee.js?v=20260809-mcphee-3-9-0"></script>
 <script src="personal-config.js?v=20260810-schema-v2"></script>
-<script src="app.js?v=20260811-sketch-continuous-tools"></script>
+<script src="app.js?v=20260813-sketch-paint-floor"></script>
 </body>
 </html>

@@ -2172,7 +2172,7 @@ body.image-viewer-open { overflow: hidden; }
 #sketch-tools button:disabled { opacity: 0.42; cursor: default; }
 #sketch-tool-rack {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .sketch-tool-group {
@@ -2198,7 +2198,8 @@ body.image-viewer-open { overflow: hidden; }
   flex-wrap: wrap;
   gap: 4px;
 }
-.sketch-tool-row [data-sketch-tool] {
+.sketch-tool-row [data-sketch-tool],
+.sketch-tool-row > button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2206,7 +2207,8 @@ body.image-viewer-open { overflow: hidden; }
   height: 30px;
   padding: 0;
 }
-.sketch-tool-row [data-sketch-tool] svg {
+.sketch-tool-row [data-sketch-tool] svg,
+.sketch-tool-row > button svg {
   width: 16px;
   height: 16px;
   display: block;
@@ -2251,6 +2253,13 @@ body.image-viewer-open { overflow: hidden; }
   border: 2px solid var(--accent);
   border-radius: 4px;
 }
+#sketch-canvas-wrap.dragover {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+  background: #dde2f7;
+}
+#sketch-paste-fit { max-width: 16rem; }
+#sketch-dither-method { max-width: 16rem; }
 #sketch-canvas,
 #sketch-overlay {
   display: block;
@@ -2271,6 +2280,9 @@ body.image-viewer-open { overflow: hidden; }
   pointer-events: none;
 }
 @media (max-width: 1100px) {
+  #sketch-tool-rack { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
   #sketch-tool-rack { grid-template-columns: 1fr; }
 }
 #sketch-brush-cursor {
