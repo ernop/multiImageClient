@@ -722,7 +722,11 @@
                   <input id="sketch-dither-white" type="checkbox" checked>
                   keep white
                 </label>
-                <button id="sketch-dither-apply" type="button" title="Map the current canvas or selection onto the 8 legend colors">apply to canvas</button>
+                <button id="sketch-dither-apply" type="button" title="Map the current canvas or selection onto the current legend colors">apply to canvas</button>
+              </div>
+              <div class="sketch-config-row">
+                <button id="sketch-regen-template" type="button"
+                  title="Rebuild the legend from the colors that appear most in the current canvas, snap the canvas onto those colors, and leave a blank meaning for each. Those labels go into the composition guide sent to image models.">regen template from image colors</button>
               </div>
             </section>
           </div>
@@ -736,7 +740,9 @@
       </div>
       <div id="sketch-right">
         <p id="sketch-legend-help">Pick a color, draw, and write what that color's area is
-          (e.g. red = <em>the planet</em>). Only colors you actually drew with go into the legend.</p>
+          (e.g. red = <em>the planet</em>). After pasting a photo, <em>regen template from image colors</em>
+          replaces the stock red/blue/green legend with the image's own top colors so you can label each.
+          Only colors actually on the canvas go into the legend.</p>
         <div id="sketch-legend-fields"><!-- one row per palette color, injected --></div>
         <section id="sketch-action-panel" aria-label="Sketch action stack">
           <div id="sketch-action-head">
@@ -812,9 +818,9 @@
   </form>
 </dialog>
 
-<script src="mcphee/vendor/typo/typo.min.js?v=20260804-spelling-panel"></script>
-<script src="mcphee/mcphee.js?v=20260813-mcphee-3-10-0"></script>
-<script src="personal-config.js?v=20260810-schema-v2"></script>
-<script src="app.js?v=20260813-sketch-paint-floor"></script>
+<script src="mcphee/vendor/typo/typo.min.js"></script>
+<script src="mcphee/mcphee.js"></script>
+<script src="personal-config.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

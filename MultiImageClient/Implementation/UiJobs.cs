@@ -8,6 +8,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -2053,14 +2054,21 @@ namespace MultiImageClient
         public string VideoAspectRatio { get; init; } = "source";
     }
 
+    public sealed record UiSketchComposerPaletteColor(
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("hex")] string Hex);
+
     /// Exact identity and editable fields for a composition sketch attachment.
     /// The PNG itself remains an ordinary ordered job input; InputIndex proves
     /// which one it is when "set active" restores a completed job.
+    /// Version 1: eight meanings aligned to the built-in red/blue/green palette.
+    /// Version 2: explicit palette (1–8 named hex colors) plus one meaning per color.
     public sealed record UiSketchComposerState(
         int Version,
         int InputIndex,
         string Aspect,
-        IReadOnlyList<string> Meanings);
+        IReadOnlyList<string> Meanings,
+        IReadOnlyList<UiSketchComposerPaletteColor>? Palette = null);
 
     /// Maps the intent-level (shape, detail) pair onto each backend's actual
     /// knobs. Kept as a standalone static so future generators (and tests)
@@ -2518,9 +2526,11 @@ namespace MultiImageClient
         // gpt-image-2 /edits allows up to 16; four is enough for the A+B(+…)
         // gesture without turning the paste zone into a contact sheet.
         public const int MaxInputImages = 4;
-        public const int SketchComposerStateVersion = 1;
+        public const int SketchComposerStateVersion = 2;
+        public const int SketchComposerStateVersionMin = 1;
         public const int SketchComposerMeaningCount = 8;
         public const int SketchComposerMeaningMaxChars = 120;
+        public const int SketchComposerPaletteNameMaxChars = 40;
 
         private static readonly string[] SketchComposerAspects =
         {
@@ -2964,34 +2974,47 @@ namespace MultiImageClient
                     throw new JsonException("the root must be an object");
                 }
 
-                var expected = new HashSet<string>(
-                    new[] { "version", "inputIndex", "aspect", "meanings" },
-                    StringComparer.Ordinal);
                 var seen = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var property in root.EnumerateObject())
                 {
-                    if (!expected.Contains(property.Name))
-                    {
-                        throw new JsonException($"unknown field \"{property.Name}\"");
-                    }
                     if (!seen.Add(property.Name))
                     {
                         throw new JsonException($"duplicate field \"{property.Name}\"");
                     }
                 }
-                if (!expected.SetEquals(seen))
+                if (!seen.Contains("version"))
                 {
-                    var missing = expected.Where(name => !seen.Contains(name));
-                    throw new JsonException($"missing field(s): {string.Join(", ", missing)}");
+                    throw new JsonException("missing field(s): version");
                 }
 
                 var versionElement = root.GetProperty("version");
                 if (versionElement.ValueKind != JsonValueKind.Number
                     || !versionElement.TryGetInt32(out var version)
-                    || version != SketchComposerStateVersion)
+                    || version < SketchComposerStateVersionMin
+                    || version > SketchComposerStateVersion)
                 {
                     throw new JsonException(
-                        $"version must be exactly {SketchComposerStateVersion}");
+                        $"version must be {SketchComposerStateVersionMin} or {SketchComposerStateVersion}");
+                }
+
+                var expected = version == 1
+                    ? new HashSet<string>(
+                        new[] { "version", "inputIndex", "aspect", "meanings" },
+                        StringComparer.Ordinal)
+                    : new HashSet<string>(
+                        new[] { "version", "inputIndex", "aspect", "palette", "meanings" },
+                        StringComparer.Ordinal);
+                if (!expected.SetEquals(seen))
+                {
+                    foreach (var name in seen)
+                    {
+                        if (!expected.Contains(name))
+                        {
+                            throw new JsonException($"unknown field \"{name}\"");
+                        }
+                    }
+                    var missing = expected.Where(name => !seen.Contains(name));
+                    throw new JsonException($"missing field(s): {string.Join(", ", missing)}");
                 }
 
                 var inputIndexElement = root.GetProperty("inputIndex");
@@ -3016,34 +3039,19 @@ namespace MultiImageClient
                         $"aspect must be one of: {string.Join(", ", SketchComposerAspects)}");
                 }
 
-                var meaningsElement = root.GetProperty("meanings");
-                if (meaningsElement.ValueKind != JsonValueKind.Array
-                    || meaningsElement.GetArrayLength() != SketchComposerMeaningCount)
+                IReadOnlyList<UiSketchComposerPaletteColor>? palette = null;
+                var meaningCount = SketchComposerMeaningCount;
+                if (version == 2)
                 {
-                    throw new JsonException(
-                        $"meanings must contain exactly {SketchComposerMeaningCount} strings");
-                }
-                var meanings = new List<string>(SketchComposerMeaningCount);
-                var meaningIndex = 0;
-                foreach (var meaningElement in meaningsElement.EnumerateArray())
-                {
-                    if (meaningElement.ValueKind != JsonValueKind.String)
-                    {
-                        throw new JsonException($"meaning {meaningIndex} must be a string");
-                    }
-                    var meaning = meaningElement.GetString()!.Trim();
-                    if (meaning.Length > SketchComposerMeaningMaxChars
-                        || meaning.Any(char.IsControl))
-                    {
-                        throw new JsonException(
-                            $"meaning {meaningIndex} must be at most "
-                            + $"{SketchComposerMeaningMaxChars} characters with no control characters");
-                    }
-                    meanings.Add(meaning);
-                    meaningIndex++;
+                    palette = ParseSketchComposerPalette(root.GetProperty("palette"));
+                    meaningCount = palette.Count;
                 }
 
-                return new UiSketchComposerState(version, inputIndex, aspect, meanings);
+                var meanings = ParseSketchComposerMeanings(
+                    root.GetProperty("meanings"),
+                    meaningCount);
+
+                return new UiSketchComposerState(version, inputIndex, aspect, meanings, palette);
             }
             catch (JsonException ex)
             {
@@ -3051,6 +3059,115 @@ namespace MultiImageClient
                     $"sketchComposer did not follow the required identity contract ({ex.Message})",
                     ex);
             }
+        }
+
+        private static IReadOnlyList<UiSketchComposerPaletteColor> ParseSketchComposerPalette(
+            JsonElement paletteElement)
+        {
+            if (paletteElement.ValueKind != JsonValueKind.Array
+                || paletteElement.GetArrayLength() < 1
+                || paletteElement.GetArrayLength() > SketchComposerMeaningCount)
+            {
+                throw new JsonException(
+                    $"palette must contain 1 to {SketchComposerMeaningCount} colors");
+            }
+
+            var palette = new List<UiSketchComposerPaletteColor>(paletteElement.GetArrayLength());
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var hexes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var index = 0;
+            foreach (var colorElement in paletteElement.EnumerateArray())
+            {
+                if (colorElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new JsonException($"palette {index} must be an object");
+                }
+                var colorSeen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in colorElement.EnumerateObject())
+                {
+                    if (property.Name is not ("name" or "hex"))
+                    {
+                        throw new JsonException($"palette {index} has unknown field \"{property.Name}\"");
+                    }
+                    if (!colorSeen.Add(property.Name))
+                    {
+                        throw new JsonException($"palette {index} has duplicate field \"{property.Name}\"");
+                    }
+                }
+                if (colorSeen.Count != 2)
+                {
+                    throw new JsonException($"palette {index} must have name and hex");
+                }
+
+                var nameElement = colorElement.GetProperty("name");
+                var hexElement = colorElement.GetProperty("hex");
+                if (nameElement.ValueKind != JsonValueKind.String
+                    || hexElement.ValueKind != JsonValueKind.String)
+                {
+                    throw new JsonException($"palette {index} name and hex must be strings");
+                }
+                var name = nameElement.GetString()!.Trim();
+                var hex = hexElement.GetString()!.Trim().ToLowerInvariant();
+                if (name.Length == 0
+                    || name.Length > SketchComposerPaletteNameMaxChars
+                    || name.Any(char.IsControl))
+                {
+                    throw new JsonException(
+                        $"palette {index} name must be 1 to {SketchComposerPaletteNameMaxChars} "
+                        + "characters with no control characters");
+                }
+                if (hex.Length != 7
+                    || hex[0] != '#'
+                    || hex.Skip(1).Any(ch => "0123456789abcdef".IndexOf(ch) < 0))
+                {
+                    throw new JsonException($"palette {index} hex must be #rrggbb");
+                }
+                if (hex == "#ffffff")
+                {
+                    throw new JsonException($"palette {index} cannot be white; white is unmarked background");
+                }
+                if (!names.Add(name))
+                {
+                    throw new JsonException($"palette name \"{name}\" is duplicated");
+                }
+                if (!hexes.Add(hex))
+                {
+                    throw new JsonException($"palette hex {hex} is duplicated");
+                }
+                palette.Add(new UiSketchComposerPaletteColor(name, hex));
+                index++;
+            }
+            return palette;
+        }
+
+        private static List<string> ParseSketchComposerMeanings(JsonElement meaningsElement, int expectedCount)
+        {
+            if (meaningsElement.ValueKind != JsonValueKind.Array
+                || meaningsElement.GetArrayLength() != expectedCount)
+            {
+                throw new JsonException(
+                    $"meanings must contain exactly {expectedCount} strings");
+            }
+            var meanings = new List<string>(expectedCount);
+            var meaningIndex = 0;
+            foreach (var meaningElement in meaningsElement.EnumerateArray())
+            {
+                if (meaningElement.ValueKind != JsonValueKind.String)
+                {
+                    throw new JsonException($"meaning {meaningIndex} must be a string");
+                }
+                var meaning = meaningElement.GetString()!.Trim();
+                if (meaning.Length > SketchComposerMeaningMaxChars
+                    || meaning.Any(char.IsControl))
+                {
+                    throw new JsonException(
+                        $"meaning {meaningIndex} must be at most "
+                        + $"{SketchComposerMeaningMaxChars} characters with no control characters");
+                }
+                meanings.Add(meaning);
+                meaningIndex++;
+            }
+            return meanings;
         }
 
         public bool IsImageCapableForCurrentSettings(string key)

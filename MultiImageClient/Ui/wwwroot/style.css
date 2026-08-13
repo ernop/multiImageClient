@@ -2260,6 +2260,11 @@ body.image-viewer-open { overflow: hidden; }
 }
 #sketch-paste-fit { max-width: 16rem; }
 #sketch-dither-method { max-width: 16rem; }
+#sketch-regen-template {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 7px;
+}
 #sketch-canvas,
 #sketch-overlay {
   display: block;

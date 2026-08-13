@@ -90,6 +90,7 @@ const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
 // CreatorLogin under that current name while job.json retains its original
 // CreatedBy attribution.
 let authInfo = { enabled: false, user: "", profile: null };
+let clientInstanceId = "";
 let profileServerVersion = -1;
 let profileDisplays = new Map(); // opaque owner id -> current display name
 let profilePollInFlight = false;
@@ -644,6 +645,11 @@ async function loadConfig() {
     throw new Error(`/api/config returned HTTP ${resp.status} — is the MultiImageClient server running on :5960?`);
   }
   const cfg = await resp.json();
+  if (typeof cfg.clientInstanceId !== "string"
+      || !/^[a-f0-9]{32}$/.test(cfg.clientInstanceId)) {
+    throw new Error("/api/config returned no valid client instance identity");
+  }
+  clientInstanceId = cfg.clientInstanceId;
   generators = cfg.generators;
   standardGeneratorGroups = normalizeStandardGeneratorGroups(cfg.standardGeneratorGroups);
   generatorEndpointConfiguration =
@@ -3138,6 +3144,10 @@ const SketchPalette = [
   { name: "yellow", hex: "#fdd835" },
   { name: "brown", hex: "#6d4c41" },
 ];
+function cloneSketchPalette(palette) {
+  return palette.map((color) => ({ name: color.name, hex: color.hex.toLowerCase() }));
+}
+let sketchWorkingPalette = cloneSketchPalette(SketchPalette);
 // Internal canvas resolution per shape; the sketch attaches at exactly this
 // size, so match input image AR defaults follow the chosen shape.
 const SketchCanvasSizes = {
@@ -3282,7 +3292,7 @@ function resetSketchEditor(notice = "") {
   sketchOverlay.height = height;
   clearSketchSelection();
   resetSketchActions();
-  for (const meaning of sketchMeaningInputs) meaning.value = "";
+  setSketchWorkingPalette(SketchPalette, { meanings: SketchPalette.map(() => "") });
   setSketchColor(0);
   setSketchTool("brush");
   sketchAttachedFile = null;
@@ -3297,13 +3307,43 @@ function normalizeRecordedSketchState(value, inputCount) {
     throw new Error("recorded sketch identity is not an object");
   }
   const keys = Object.keys(value).sort();
-  const expectedKeys = ["aspect", "inputIndex", "meanings", "version"];
+  if (value.version === 1) {
+    const expectedKeys = ["aspect", "inputIndex", "meanings", "version"];
+    if (keys.length !== expectedKeys.length
+        || keys.some((key, index) => key !== expectedKeys[index])) {
+      throw new Error("recorded sketch identity has missing or unknown fields");
+    }
+    if (!Number.isInteger(value.inputIndex)
+        || value.inputIndex < 0
+        || value.inputIndex >= inputCount) {
+      throw new Error("recorded sketch attachment index is outside this job's inputs");
+    }
+    if (!Object.hasOwn(SketchCanvasSizes, value.aspect)) {
+      throw new Error(`recorded sketch has unknown aspect ${value.aspect}`);
+    }
+    if (!Array.isArray(value.meanings)
+        || value.meanings.length !== SketchPalette.length
+        || value.meanings.some((meaning) =>
+          typeof meaning !== "string"
+          || meaning.length > 120
+          || /[\u0000-\u001f\u007f]/.test(meaning))) {
+      throw new Error("recorded sketch meanings do not match the editor contract");
+    }
+    return {
+      version: 1,
+      inputIndex: value.inputIndex,
+      aspect: value.aspect,
+      palette: cloneSketchPalette(SketchPalette),
+      meanings: value.meanings.map((meaning) => meaning.trim()),
+    };
+  }
+  if (value.version !== 2) {
+    throw new Error(`unsupported recorded sketch identity version ${value.version}`);
+  }
+  const expectedKeys = ["aspect", "inputIndex", "meanings", "palette", "version"];
   if (keys.length !== expectedKeys.length
       || keys.some((key, index) => key !== expectedKeys[index])) {
     throw new Error("recorded sketch identity has missing or unknown fields");
-  }
-  if (value.version !== 1) {
-    throw new Error(`unsupported recorded sketch identity version ${value.version}`);
   }
   if (!Number.isInteger(value.inputIndex)
       || value.inputIndex < 0
@@ -3313,8 +3353,9 @@ function normalizeRecordedSketchState(value, inputCount) {
   if (!Object.hasOwn(SketchCanvasSizes, value.aspect)) {
     throw new Error(`recorded sketch has unknown aspect ${value.aspect}`);
   }
+  const palette = normalizeRecordedSketchPalette(value.palette);
   if (!Array.isArray(value.meanings)
-      || value.meanings.length !== SketchPalette.length
+      || value.meanings.length !== palette.length
       || value.meanings.some((meaning) =>
         typeof meaning !== "string"
         || meaning.length > 120
@@ -3322,11 +3363,47 @@ function normalizeRecordedSketchState(value, inputCount) {
     throw new Error("recorded sketch meanings do not match the editor contract");
   }
   return {
-    version: 1,
+    version: 2,
     inputIndex: value.inputIndex,
     aspect: value.aspect,
+    palette,
     meanings: value.meanings.map((meaning) => meaning.trim()),
   };
+}
+
+function normalizeRecordedSketchPalette(raw) {
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > SketchPalette.length) {
+    throw new Error("recorded sketch palette does not match the editor contract");
+  }
+  const names = new Set();
+  const hexes = new Set();
+  return raw.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`recorded sketch palette ${index} is not an object`);
+    }
+    const keys = Object.keys(entry).sort();
+    if (keys.length !== 2 || keys[0] !== "hex" || keys[1] !== "name") {
+      throw new Error(`recorded sketch palette ${index} has missing or unknown fields`);
+    }
+    if (typeof entry.name !== "string" || typeof entry.hex !== "string") {
+      throw new Error(`recorded sketch palette ${index} name and hex must be strings`);
+    }
+    const name = entry.name.trim();
+    const hex = entry.hex.trim().toLowerCase();
+    if (!name || name.length > 40 || /[\u0000-\u001f\u007f]/.test(name)) {
+      throw new Error(`recorded sketch palette ${index} name is invalid`);
+    }
+    if (!/^#[0-9a-f]{6}$/.test(hex) || hex === "#ffffff") {
+      throw new Error(`recorded sketch palette ${index} hex is invalid`);
+    }
+    const nameKey = name.toLocaleLowerCase();
+    if (names.has(nameKey) || hexes.has(hex)) {
+      throw new Error(`recorded sketch palette ${index} duplicates a color`);
+    }
+    names.add(nameKey);
+    hexes.add(hex);
+    return { name, hex };
+  });
 }
 
 async function prepareRestoredSketch(blob, state) {
@@ -3370,15 +3447,9 @@ function applyRestoredSketchEditor(nextItems, prepared) {
     clearSketchSelection();
     renderSketchActions();
     renderSketchActionList();
-    state.meanings.forEach((meaning, index) => {
-      sketchMeaningInputs[index].value = meaning;
-    });
+    setSketchWorkingPalette(state.palette, { meanings: state.meanings });
     sketchAttachedFile = item.file;
-    sketchAttachedState = {
-      version: 1,
-      aspect: state.aspect,
-      meanings: [...state.meanings],
-    };
+    sketchAttachedState = currentSketchAttachedState();
     sketchEditorNotice = "";
     setSketchColor(0);
     setSketchTool("brush");
@@ -3393,43 +3464,68 @@ function promptHasSketchLegend(value) {
     .some((paragraph) => paragraph.trimStart().startsWith(SketchLegendMarker));
 }
 
+function currentSketchAttachedState() {
+  return {
+    version: 2,
+    aspect: sketchAspectNameFromSize(sketchCanvas.width, sketchCanvas.height) || sketchAspect,
+    palette: cloneSketchPalette(sketchWorkingPalette),
+    meanings: sketchMeaningInputs.map((meaning) => meaning.value.trim()),
+  };
+}
+
 function attachedSketchSubmission() {
   if (!sketchIsAttached()) return null;
   const inputIndex = inputImageItems.findIndex((item) => item.file === sketchAttachedFile);
   if (inputIndex < 0) return null;
   return {
-    version: 1,
+    ...currentSketchAttachedState(),
     inputIndex,
-    aspect: sketchAttachedState.aspect,
-    meanings: [...sketchAttachedState.meanings],
   };
 }
 
-for (const [index, color] of SketchPalette.entries()) {
-  const row = document.createElement("div");
-  row.className = "sketch-color-row";
-  const swatch = document.createElement("button");
-  swatch.type = "button";
-  swatch.className = "sketch-swatch";
-  swatch.style.background = color.hex;
-  swatch.title = `Draw with ${color.name}`;
-  swatch.setAttribute("aria-label", `Draw with ${color.name}`);
-  swatch.addEventListener("click", () => setSketchColor(index));
-  const meaning = document.createElement("input");
-  meaning.type = "text";
-  meaning.maxLength = 120;
-  meaning.autocomplete = "off";
-  meaning.placeholder = `${color.name} = …`;
-  meaning.setAttribute("aria-label", `What the ${color.name} area means`);
-  meaning.addEventListener("focus", () => setSketchColor(index));
-  sketchMeaningInputs.push(meaning);
-  row.appendChild(swatch);
-  row.appendChild(meaning);
-  el("sketch-legend-fields").appendChild(row);
+function rebuildSketchLegendFields(meanings) {
+  const fields = el("sketch-legend-fields");
+  fields.replaceChildren();
+  sketchMeaningInputs.length = 0;
+  for (const [index, color] of sketchWorkingPalette.entries()) {
+    const row = document.createElement("div");
+    row.className = "sketch-color-row";
+    const swatch = document.createElement("button");
+    swatch.type = "button";
+    swatch.className = "sketch-swatch";
+    swatch.style.background = color.hex;
+    swatch.title = `Draw with ${color.name}`;
+    swatch.setAttribute("aria-label", `Draw with ${color.name}`);
+    swatch.addEventListener("click", () => setSketchColor(index));
+    const meaning = document.createElement("input");
+    meaning.type = "text";
+    meaning.maxLength = 120;
+    meaning.autocomplete = "off";
+    meaning.placeholder = `${color.name} = …`;
+    meaning.setAttribute("aria-label", `What the ${color.name} area means`);
+    meaning.value = meanings?.[index] ?? "";
+    meaning.addEventListener("focus", () => setSketchColor(index));
+    sketchMeaningInputs.push(meaning);
+    row.appendChild(swatch);
+    row.appendChild(meaning);
+    fields.appendChild(row);
+  }
+  if (sketchActiveColor >= sketchWorkingPalette.length) sketchActiveColor = 0;
+  setSketchColor(sketchActiveColor);
 }
 
+function setSketchWorkingPalette(palette, { meanings } = {}) {
+  if (!Array.isArray(palette) || palette.length < 1) {
+    throw new Error("sketch palette must contain at least one color");
+  }
+  sketchWorkingPalette = cloneSketchPalette(palette);
+  rebuildSketchLegendFields(meanings ?? sketchWorkingPalette.map(() => ""));
+}
+
+rebuildSketchLegendFields(SketchPalette.map(() => ""));
+
 function setSketchColor(index) {
-  if (!Number.isInteger(index) || index < 0 || index >= SketchPalette.length) return;
+  if (!Number.isInteger(index) || index < 0 || index >= sketchWorkingPalette.length) return;
   sketchActiveColor = index;
   if (sketchActiveTool === "eraser") setSketchTool("brush");
   document.querySelectorAll("#sketch-legend-fields .sketch-swatch").forEach((swatch, i) => {
@@ -3474,7 +3570,7 @@ function sketchCurrentWidth() {
 }
 
 function sketchCurrentColor() {
-  return sketchActiveTool === "eraser" ? "#ffffff" : SketchPalette[sketchActiveColor].hex;
+  return sketchActiveTool === "eraser" ? "#ffffff" : sketchWorkingPalette[sketchActiveColor].hex;
 }
 
 function sketchCurrentEdgeStyle() {
@@ -3494,7 +3590,7 @@ function updateSketchToolPresentation() {
   if (sketchActiveTool === "fill") {
     extra = ` · tolerance ${sketchFillToleranceInput.value}`;
   } else if (sketchActiveTool === "recolor") {
-    extra = ` · tolerance ${sketchFillToleranceInput.value} · ${SketchPalette[sketchActiveColor].name}`;
+    extra = ` · tolerance ${sketchFillToleranceInput.value} · ${sketchWorkingPalette[sketchActiveColor].name}`;
   } else if (sketchActiveTool === "eyedropper") {
     extra = " · click a pixel";
   } else if (SketchBlendTools.has(sketchActiveTool)) {
@@ -3544,9 +3640,28 @@ function resetSketchActions() {
 }
 
 function rememberSketchState() {
-  sketchHistoryPast.push(sketchActions.slice());
+  sketchHistoryPast.push(snapshotSketchEditor());
   if (sketchHistoryPast.length > SketchHistoryDepth) sketchHistoryPast.shift();
   sketchHistoryFuture = [];
+}
+
+function snapshotSketchEditor() {
+  return {
+    actions: sketchActions.slice(),
+    palette: cloneSketchPalette(sketchWorkingPalette),
+    meanings: sketchMeaningInputs.map((input) => input.value),
+    activeColor: sketchActiveColor,
+  };
+}
+
+function restoreSketchEditorSnapshot(snapshot) {
+  sketchActions = snapshot.actions;
+  setSketchWorkingPalette(snapshot.palette, { meanings: snapshot.meanings });
+  sketchActiveColor = Math.max(0, Math.min(snapshot.activeColor, sketchWorkingPalette.length - 1));
+  setSketchColor(sketchActiveColor);
+  renderSketchActions();
+  renderSketchActionList();
+  setSketchActionStatus();
 }
 
 function setSketchActionStatus(message = "", isError = false) {
@@ -3593,27 +3708,24 @@ function mutateSketchActions(nextActions) {
 function undoSketchActionChange() {
   const previous = sketchHistoryPast.pop();
   if (!previous) return;
-  sketchHistoryFuture.push(sketchActions.slice());
-  sketchActions = previous;
-  renderSketchActions();
-  renderSketchActionList();
-  setSketchActionStatus();
+  sketchHistoryFuture.push(snapshotSketchEditor());
+  restoreSketchEditorSnapshot(previous);
 }
 
 function redoSketchActionChange() {
   const next = sketchHistoryFuture.pop();
   if (!next) return;
-  sketchHistoryPast.push(sketchActions.slice());
-  sketchActions = next;
-  renderSketchActions();
-  renderSketchActionList();
-  setSketchActionStatus();
+  sketchHistoryPast.push(snapshotSketchEditor());
+  restoreSketchEditorSnapshot(next);
 }
 
 function sketchActionColorName(action) {
   if (action.kind === "base") return "";
   if (action.color === "#ffffff") return "erase";
-  return SketchPalette.find((entry) => entry.hex === action.color)?.name || action.color || "";
+  return sketchWorkingPalette.find((entry) => entry.hex === action.color)?.name
+    || SketchPalette.find((entry) => entry.hex === action.color)?.name
+    || action.color
+    || "";
 }
 
 function sketchActionDescription(action) {
@@ -3632,8 +3744,12 @@ function sketchActionDescription(action) {
     const extra = action.mode === "group" ? ` · tolerance ${action.tolerance}` : "";
     return `${names[action.mode] || action.mode}${extra}`;
   }
+  if (action.kind === "template-map") {
+    return `template color map · ${action.palette?.length || 0} colors`;
+  }
   if (action.kind === "recolor") {
-    const toName = SketchPalette.find((entry) => entry.hex === action.color)?.name || action.color;
+    const toName = sketchWorkingPalette.find((entry) => entry.hex === action.color)?.name
+      || action.color;
     return `recolor · ${toName} · tolerance ${action.tolerance}`;
   }
   if (action.kind === "canvas-rotate") {
@@ -3695,6 +3811,7 @@ function renderSketchActionList() {
     swatch.className = "sketch-action-swatch";
     swatch.style.background = action.kind === "base" || action.kind === "region-edit"
       || action.kind === "paste" || action.kind === "palette-filter"
+      || action.kind === "template-map"
       || action.kind === "canvas-rotate" || action.kind === "canvas-flip"
       || action.kind === "crop-outside" || action.kind === "crop-fill"
       ? "linear-gradient(135deg, #e53935, #1e88e5, #43a047)"
@@ -4112,6 +4229,16 @@ function renderSketchActions() {
       applySketchPaste(action);
     } else if (action.kind === "palette-filter") {
       applySketchPaletteFilter(action);
+    } else if (action.kind === "template-map") {
+      if (!Array.isArray(action.palette) || action.palette.length < 1) {
+        throw new Error("template color map action is missing its palette");
+      }
+      applySketchPaletteFilter({
+        mode: "nearest",
+        includeWhite: action.includeWhite !== false,
+        palette: action.palette,
+        mask: action.mask || null,
+      });
     } else if (action.kind === "recolor") {
       applySketchRecolor(action);
     } else if (action.kind === "canvas-rotate") {
@@ -4372,8 +4499,8 @@ function sketchMaskContains(mask, x, y) {
   return sketchPointInPolygon({ x: x + 0.5, y: y + 0.5 }, mask.points);
 }
 
-function sketchPaletteRgbList(includeWhite) {
-  const list = SketchPalette.map((color) => sketchHexRgb(color.hex));
+function sketchPaletteRgbList(includeWhite, paletteColors = sketchWorkingPalette) {
+  const list = paletteColors.map((color) => sketchHexRgb(typeof color === "string" ? color : color.hex));
   if (includeWhite) list.push([255, 255, 255]);
   return list;
 }
@@ -4397,8 +4524,8 @@ function nearestSketchPaletteRgb(r, g, b, palette) {
 function nearestSketchPaletteIndex(r, g, b) {
   let best = 0;
   let bestDist = Infinity;
-  for (let i = 0; i < SketchPalette.length; i++) {
-    const color = sketchHexRgb(SketchPalette[i].hex);
+  for (let i = 0; i < sketchWorkingPalette.length; i++) {
+    const color = sketchHexRgb(sketchWorkingPalette[i].hex);
     const dr = r - color[0];
     const dg = g - color[1];
     const db = b - color[2];
@@ -4416,7 +4543,10 @@ function applySketchPaletteFilter(action) {
   const height = sketchCanvas.height;
   const image = sketchCtx.getImageData(0, 0, width, height);
   const data = image.data;
-  const palette = sketchPaletteRgbList(!!action.includeWhite);
+  const sourcePalette = Array.isArray(action.palette) && action.palette.length > 0
+    ? action.palette
+    : sketchWorkingPalette;
+  const palette = sketchPaletteRgbList(!!action.includeWhite, sourcePalette);
   const mask = action.mask || null;
   const mode = action.mode;
   const work = mode === "floyd" ? new Float32Array(data.length) : null;
@@ -4653,7 +4783,7 @@ async function importImageIntoSketch(file) {
     }
     setSketchActionStatus(
       `Pasted ${bitmap.width}×${bitmap.height} with ${fitMode}. `
-      + "Edit as usual; snap or dither onto legend colors before attaching.");
+      + "Edit as usual; snap, dither, or regen template from image colors before attaching.");
   } finally {
     bitmap.close();
   }
@@ -4688,8 +4818,191 @@ function commitSketchPaletteFilter() {
     mode,
     includeWhite: sketchDitherWhiteInput.checked,
     tolerance: Number(sketchFillToleranceInput.value),
+    palette: sketchWorkingPalette.map((color) => color.hex),
     mask,
   });
+}
+
+function sketchRgbToHex(r, g, b) {
+  return `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function sketchIsNearWhite(r, g, b) {
+  return r >= 245 && g >= 245 && b >= 245;
+}
+
+function sketchRgbToHsl(r, g, b) {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const lightness = (max + min) / 2;
+  let hue = 0;
+  let saturation = 0;
+  if (max !== min) {
+    const delta = max - min;
+    saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+    if (max === rn) hue = (gn - bn) / delta + (gn < bn ? 6 : 0);
+    else if (max === gn) hue = (bn - rn) / delta + 2;
+    else hue = (rn - gn) / delta + 4;
+    hue /= 6;
+  }
+  return { h: hue * 360, s: saturation * 100, l: lightness * 100 };
+}
+
+function sketchHueFamilyName(hue) {
+  if (hue < 15) return "red";
+  if (hue < 45) return "orange";
+  if (hue < 70) return "yellow";
+  if (hue < 160) return "green";
+  if (hue < 200) return "cyan";
+  if (hue < 255) return "blue";
+  if (hue < 290) return "purple";
+  if (hue < 340) return "magenta";
+  return "red";
+}
+
+function sketchColorDisplayName(r, g, b) {
+  const { h, s, l } = sketchRgbToHsl(r, g, b);
+  if (s < 12) {
+    if (l < 18) return "black";
+    if (l < 40) return "dark gray";
+    if (l < 70) return "gray";
+    return "light gray";
+  }
+  const hue = sketchHueFamilyName(h);
+  if (hue === "blue" && s < 45 && l >= 28 && l <= 65) return "steel blue";
+  if (hue === "green" && l < 40) return "dark green";
+  const light = l < 28 ? "dark " : l > 72 ? "light " : "";
+  const muted = s < 35 && !light ? "muted " : "";
+  return `${light}${muted}${hue}`.replace(/\s+/g, " ").trim();
+}
+
+function uniqueSketchColorNames(colors) {
+  const used = new Set();
+  return colors.map((color) => {
+    const base = sketchColorDisplayName(color.r, color.g, color.b);
+    let name = base;
+    let n = 2;
+    while (used.has(name.toLocaleLowerCase())) {
+      name = `${base} ${n}`;
+      n += 1;
+    }
+    used.add(name.toLocaleLowerCase());
+    return name;
+  });
+}
+
+function extractDominantSketchColors() {
+  const width = sketchCanvas.width;
+  const height = sketchCanvas.height;
+  const data = sketchCtx.getImageData(0, 0, width, height).data;
+  const buckets = new Map();
+  let ink = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    if (sketchIsNearWhite(r, g, b)) continue;
+    ink += 1;
+    const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { sumR: 0, sumG: 0, sumB: 0, count: 0 };
+      buckets.set(key, bucket);
+    }
+    bucket.sumR += r;
+    bucket.sumG += g;
+    bucket.sumB += b;
+    bucket.count += 1;
+  }
+  if (ink === 0) return { ink: false, colors: [] };
+
+  const ranked = [...buckets.values()]
+    .map((bucket) => {
+      const r = Math.round(bucket.sumR / bucket.count);
+      const g = Math.round(bucket.sumG / bucket.count);
+      const b = Math.round(bucket.sumB / bucket.count);
+      return {
+        r,
+        g,
+        b,
+        count: bucket.count,
+        packed: (r << 16) | (g << 8) | b,
+      };
+    })
+    .sort((a, b) => b.count - a.count || a.packed - b.packed);
+
+  const minCount = Math.max(1, Math.round(ink * 0.008));
+  const minDistSq = 40 * 40;
+  const picked = [];
+  const seenHex = new Set();
+  for (const candidate of ranked) {
+    if (picked.length >= SketchPalette.length) break;
+    if (picked.length > 0 && candidate.count < minCount) continue;
+    if (sketchIsNearWhite(candidate.r, candidate.g, candidate.b)) continue;
+    const hex = sketchRgbToHex(candidate.r, candidate.g, candidate.b);
+    if (hex === "#ffffff" || seenHex.has(hex)) continue;
+    const tooClose = picked.some((existing) => {
+      const dr = candidate.r - existing.r;
+      const dg = candidate.g - existing.g;
+      const db = candidate.b - existing.b;
+      return dr * dr + dg * dg + db * db <= minDistSq;
+    });
+    if (tooClose) continue;
+    seenHex.add(hex);
+    picked.push(candidate);
+  }
+  if (picked.length === 0) {
+    const fallback = ranked.find((candidate) => {
+      const hex = sketchRgbToHex(candidate.r, candidate.g, candidate.b);
+      return hex !== "#ffffff" && !sketchIsNearWhite(candidate.r, candidate.g, candidate.b);
+    });
+    if (fallback) picked.push(fallback);
+  }
+  if (picked.length === 0) return { ink: true, colors: [] };
+  const names = uniqueSketchColorNames(picked);
+  return {
+    ink: true,
+    colors: picked.map((color, index) => ({
+      name: names[index],
+      hex: sketchRgbToHex(color.r, color.g, color.b),
+    })),
+  };
+}
+
+function commitSketchRegenTemplateMap() {
+  if (sketchActions.length >= SketchActionLimit) {
+    setSketchActionStatus(
+      `This sketch already has ${SketchActionLimit} actions. Remove or combine actions before drawing more.`,
+      true);
+    return;
+  }
+  const extracted = extractDominantSketchColors();
+  if (!extracted.ink) {
+    setSketchActionStatus("The canvas is blank — paste or draw first.", true);
+    return;
+  }
+  if (extracted.colors.length < 1) {
+    setSketchActionStatus("No distinct non-white colors to map.", true);
+    return;
+  }
+  rememberSketchState();
+  setSketchWorkingPalette(extracted.colors, { meanings: extracted.colors.map(() => "") });
+  sketchActions = [...sketchActions, {
+    kind: "template-map",
+    palette: cloneSketchPalette(extracted.colors),
+    includeWhite: true,
+    id: ++sketchActionSequence,
+    visible: true,
+  }];
+  renderSketchActions();
+  renderSketchActionList();
+  setSketchActionStatus(
+    `Template from ${extracted.colors.length} image color`
+    + `${extracted.colors.length === 1 ? "" : "s"}. `
+    + "Write what each color means; those labels go into the composition legend.");
 }
 
 function pickSketchEyedropper(point) {
@@ -4698,7 +5011,7 @@ function pickSketchEyedropper(point) {
   const pixel = sketchCtx.getImageData(x, y, 1, 1).data;
   const index = nearestSketchPaletteIndex(pixel[0], pixel[1], pixel[2]);
   setSketchColor(index);
-  setSketchActionStatus(`Eyedropper: ${SketchPalette[index].name}`);
+  setSketchActionStatus(`Eyedropper: ${sketchWorkingPalette[index].name}`);
 }
 
 function commitSketchRecolorAt(point) {
@@ -4708,7 +5021,7 @@ function commitSketchRecolorAt(point) {
   commitSketchAction({
     kind: "recolor",
     fromRgb: [pixel[0], pixel[1], pixel[2]],
-    color: SketchPalette[sketchActiveColor].hex,
+    color: sketchWorkingPalette[sketchActiveColor].hex,
     tolerance: Number(sketchFillToleranceInput.value),
     mask: sketchSelection ? selectionToMask(sketchSelection) : null,
   });
@@ -5488,6 +5801,7 @@ el("sketch-rotate-180").addEventListener("click", () => commitSketchCanvasRotate
 el("sketch-flip-h").addEventListener("click", () => commitSketchCanvasFlip("h"));
 el("sketch-flip-v").addEventListener("click", () => commitSketchCanvasFlip("v"));
 el("sketch-dither-apply").addEventListener("click", commitSketchPaletteFilter);
+el("sketch-regen-template").addEventListener("click", commitSketchRegenTemplateMap);
 sketchDitherMethodSelect.addEventListener("change", updateSketchDitherApplyLabel);
 sketchPasteFitSelect.addEventListener("change", updateSketchDitherApplyLabel);
 el("sketch-canvas-wrap").addEventListener("dragover", (event) => {
@@ -5557,6 +5871,8 @@ sketchAspectSelect.addEventListener("change", () => {
   sketchOverlay.height = height;
   clearSketchSelection();
   resetSketchActions();
+  setSketchWorkingPalette(SketchPalette, { meanings: SketchPalette.map(() => "") });
+  setSketchColor(0);
 });
 
 // Which palette colors the sketch actually contains, by exact pixel match,
@@ -5564,7 +5880,7 @@ sketchAspectSelect.addEventListener("change", () => {
 // destructive shape change — a full-canvas scan is a few milliseconds.
 function sketchScanColors() {
   const data = sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height).data;
-  const paletteByRgb = new Map(SketchPalette.map((color, index) => [
+  const paletteByRgb = new Map(sketchWorkingPalette.map((color, index) => [
     (parseInt(color.hex.slice(1, 3), 16) << 16)
       | (parseInt(color.hex.slice(3, 5), 16) << 8)
       | parseInt(color.hex.slice(5, 7), 16),
@@ -5578,7 +5894,7 @@ function sketchScanColors() {
     const index = paletteByRgb.get(rgb);
     if (index !== undefined) {
       used.add(index);
-      if (used.size === SketchPalette.length) break;
+      if (used.size === sketchWorkingPalette.length) break;
     }
   }
   return { used, ink };
@@ -5588,7 +5904,7 @@ function buildSketchLegendParagraph(usedIndexes) {
   const meanings = [...usedIndexes]
     .sort((a, b) => a - b)
     .map((index) => ({
-      name: SketchPalette[index].name,
+      name: sketchWorkingPalette[index].name,
       text: sketchMeaningInputs[index].value.trim(),
     }))
     .filter((entry) => entry.text);
@@ -5631,13 +5947,13 @@ async function attachSketch() {
     return;
   }
   if (used.size === 0) {
-    sketchStatus.textContent = "no palette colors found — snap, dither, or recolor onto the legend colors, or draw with the palette";
+    sketchStatus.textContent = "no palette colors found — snap, dither, regen template, or recolor onto the legend colors, or draw with the palette";
     sketchStatus.classList.add("error");
     return;
   }
   const unlabeled = [...used]
     .filter((index) => !sketchMeaningInputs[index].value.trim())
-    .map((index) => SketchPalette[index].name);
+    .map((index) => sketchWorkingPalette[index].name);
   if (unlabeled.length > 0
       && !confirm(`No meaning written for: ${unlabeled.join(", ")}. `
         + "Attach anyway? (unexplained colors are left out of the legend)")) {
@@ -5650,11 +5966,7 @@ async function attachSketch() {
     return;
   }
   const file = new File([blob], "sketch.png", { type: "image/png" });
-  const attachedState = {
-    version: 1,
-    aspect: sketchAspectNameFromSize(sketchCanvas.width, sketchCanvas.height) || sketchAspect,
-    meanings: sketchMeaningInputs.map((meaning) => meaning.value.trim()),
-  };
+  const attachedState = currentSketchAttachedState();
   const legendParagraph = buildSketchLegendParagraph(used);
   // A revised sketch replaces the previously attached one, located by exact
   // object identity — never by position or by guessing among attachments.
@@ -7947,6 +8259,16 @@ function imageViewerInputUrl(jobId) {
   return apiUrl(`api/jobs/${encodeURIComponent(jobId)}/images/input/0`);
 }
 
+function findImageViewerInputThumb(jobId) {
+  for (const card of document.querySelectorAll("#jobs .job, #archive .job")) {
+    const cardJobId = card.dataset.jobId || card.id.substring("job-".length);
+    if (cardJobId !== jobId) continue;
+    const thumb = card.querySelector(".job-input-thumb");
+    if (thumb?.complete && thumb.naturalWidth > 0) return thumb;
+  }
+  return null;
+}
+
 function loadImageViewerEntry(url, priority) {
   const existing = imageViewerCache.get(url);
   if (existing) {
@@ -8051,6 +8373,12 @@ function prepareImageViewerWindow(prompts, current) {
     want(imageViewerInputUrl(current.item.jobId));
   }
   const immediateUrls = new Set(schedule.map((candidate) => candidate.url));
+  if (!imageViewerCompareInput && current.prompt.hasInput) {
+    // Warm the exact current input after the visible output is ready. Keeping
+    // it in this bounded window prevents `c` off/on from revoking and then
+    // repeatedly downloading the same full-resolution source.
+    want(imageViewerInputUrl(current.item.jobId));
+  }
 
   if (imageViewerNavDirection === 0) {
     // No observed preference yet: never assume Right. Put both immediate image
@@ -8218,9 +8546,9 @@ function setImageViewerIdentity(item) {
   renderImageViewer();
 }
 
-// Left pane of the `c` comparison: only swap onto a decoded preload blob.
-// Never point at a raw network URL (that would paint an unloading/partial
-// frame). Until the blob lands, keep the previous input pixels up.
+// Left pane of the `c` comparison: prefer the decoded full-resolution preload.
+// Its exact card thumbnail can identify the same input immediately while a
+// first-time background warm finishes; never retain another job's input.
 function applyImageViewerCompare(current) {
   // Describe items already show the input image as the stage; comparing it
   // with itself is meaningless, so the mode stays armed but paints nothing.
@@ -8240,6 +8568,16 @@ function applyImageViewerCompare(current) {
     if (imageViewerInputImage.getAttribute("src") !== cached.blobUrl) {
       imageViewerInputImage.src = cached.blobUrl;
     }
+    return;
+  }
+  const thumb = findImageViewerInputThumb(current.item.jobId);
+  if (thumb) {
+    const thumbUrl = thumb.currentSrc || thumb.src;
+    if (imageViewerInputImage.getAttribute("src") !== thumbUrl) {
+      imageViewerInputImage.src = thumbUrl;
+    }
+  } else {
+    imageViewerInputImage.removeAttribute("src");
   }
 }
 
@@ -9816,12 +10154,14 @@ async function pollJobEvents() {
       ? `&visibilityVersion=${encodeURIComponent(visibilityServerVersion)}`
       : "";
     const resp = await fetch(apiUrl(
-      `api/events/poll?cursor=${jobsPollCursor}${visibilityQuery}`));
+      `api/events/poll?cursor=${jobsPollCursor}`
+      + `&clientInstance=${encodeURIComponent(clientInstanceId)}`
+      + visibilityQuery));
     if (resp.status === 401) { location.reload(); return; }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const body = await resp.json();
-    // A cursor lower than ours means the server restarted and resynced us
-    // from 0; the replayed history is applied idempotently.
+    // Out-of-range cursors can resync within this exact process. A process
+    // change rejects the instance token above and forces a full page reload.
     jobsPollCursor = body.cursor;
     applyVisibilitySnapshot(body.visibility);
     for (const envelope of body.envelopes) {

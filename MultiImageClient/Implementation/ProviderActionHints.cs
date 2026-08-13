@@ -36,6 +36,13 @@ namespace MultiImageClient
                 return null;
             }
             var error = errorMessage.ToLowerInvariant();
+            if (IsGrokWebKey(generatorKey)
+                && error.Contains("request rejected by anti-bot rules", StringComparison.Ordinal))
+            {
+                return new Hint(
+                    "grok.com rejected automated consumer-web access — use grok-api or grok-api pro through the official api.x.ai image-edit endpoint, or use grok.com interactively",
+                    "https://docs.x.ai/developers/model-capabilities/images/editing");
+            }
             var billing = ContainsAny(error, BillingMarkers);
             var auth = !billing && ContainsAny(error, AuthMarkers);
             if (!billing && !auth)
@@ -114,6 +121,11 @@ namespace MultiImageClient
                     $"{provider} rejected the API key — if it was regenerated, put the new key in settings.json ({settingsField}) and restart the server",
                     keysUrl);
         }
+
+        private static bool IsGrokWebKey(string generatorKey)
+            => generatorKey is UiJobRunner.KeyGrokWeb
+                or UiJobRunner.KeyGrokWebChat
+                or UiJobRunner.KeyGrokWebVideo;
 
         private static bool ContainsAny(string haystack, string[] needles)
         {

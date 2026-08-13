@@ -30,8 +30,9 @@ namespace MultiImageClient
     ///   GET  /api/config                      generator availability + defaults
     ///   POST /api/jobs                        multipart: prompt, generators, options, images? (up to 4) -> {id}
     ///   POST /api/video-jobs                  grok-web image result -> video job
-    ///   GET  /api/events/poll?cursor=N        cursor-based poll over every job's envelope log
+    ///   GET  /api/events/poll?cursor=N&clientInstance=...  cursor-based poll over every job's envelope log
     ///                                          (cursor=0 replays the full history, so refresh-safe;
+    ///                                          stale/missing process identity returns 401 to force reload;
     ///                                          polling instead of SSE because the browser's
     ///                                          ~6-connection HTTP/1.1 pool is shared across ALL
     ///                                          tabs and must stay free for image loads)
@@ -151,6 +152,12 @@ namespace MultiImageClient
             builder.WebHost.UseUrls(url);
 
             var app = builder.Build();
+            // Browser-window state is disposable. Every process instance gets
+            // a new token; stale and pre-token clients receive 401 from the
+            // always-running job poll, whose established response is a full
+            // page reload. Durable jobs, prompts, media, and history stay on
+            // disk and hydrate again after that reload.
+            var clientInstanceId = Guid.NewGuid().ToString("N");
 
             // ---- access gate (shared deployments only) ----
             // Runs before static files and every endpoint. Unauthenticated
@@ -532,6 +539,7 @@ namespace MultiImageClient
                     },
                     defaults = new { shape = "auto", detail = "high", quality = "high", moderation = "low", n = 1 },
                     maxInputImages = UiJobRunner.MaxInputImages,
+                    clientInstanceId,
                     // Exact code identity of the running server (embedded at
                     // build time), so any window can trace what this instance
                     // does or does not contain yet.
@@ -1052,11 +1060,22 @@ namespace MultiImageClient
                         // therefore cannot safely identify a legacy attachment.
                         sketchComposer = sketchComposer == null
                             ? null
-                            : new
+                            : sketchComposer.Version == 1
+                            ? (object)new
                             {
                                 version = sketchComposer.Version,
                                 inputIndex = sketchComposer.InputIndex,
                                 aspect = sketchComposer.Aspect,
+                                meanings = sketchComposer.Meanings,
+                            }
+                            : (object)new
+                            {
+                                version = sketchComposer.Version,
+                                inputIndex = sketchComposer.InputIndex,
+                                aspect = sketchComposer.Aspect,
+                                palette = sketchComposer.Palette!
+                                    .Select(color => new { name = color.Name, hex = color.Hex })
+                                    .ToArray(),
                                 meanings = sketchComposer.Meanings,
                             },
                         // Keep the legacy gpt2 event fields while pre-feature
@@ -1426,11 +1445,22 @@ namespace MultiImageClient
             // twice). Each poll answers immediately and releases its socket.
             // Envelopes are {jobId, kind:"job-known"|"event", job?|event?};
             // a job-known announcement precedes each job's events, so cursor=0
-            // replays the full history and hydrates a fresh window. An
-            // out-of-range cursor (server restart) resyncs from 0, which is
-            // idempotent client-side.
-            app.MapGet("/api/events/poll", (int? cursor, string? visibilityVersion, HttpContext ctx) =>
+            // replays the full history and hydrates a fresh window. Out-of-range
+            // cursors within one process resync from 0; a process change uses
+            // the instance check below to require a complete page reload.
+            app.MapGet("/api/events/poll", (
+                int? cursor,
+                string? visibilityVersion,
+                string? clientInstance,
+                HttpContext ctx) =>
             {
+                if (!string.Equals(clientInstance, clientInstanceId, StringComparison.Ordinal))
+                {
+                    ctx.Response.Headers.CacheControl = "no-store";
+                    return Results.Json(
+                        new { error = "client reload required" },
+                        statusCode: StatusCodes.Status401Unauthorized);
+                }
                 var (envelopes, nextCursor) = jobs.ReadEnvelopes(cursor ?? 0);
                 var authUser = ctx.Items["micUser"] as string ?? "";
                 var visibleEnvelopes = BuildVisibleEnvelopes(
