@@ -212,6 +212,26 @@
 
 .mcphee-panel-main > * { flex-shrink: 0; }
 
+/* Spelling-fix rows: a fixed first column so the first suggestion of
+   every misspelled/culture/capitalization row shares one vertical line. */
+.mcphee-panel-main:has(.mcphee-panel-fixes) {
+  display: grid;
+  grid-template-columns: 7em minmax(0, 1fr);
+  overflow: hidden;
+}
+.mcphee-panel-main:has(.mcphee-panel-fixes) > .mcphee-panel-word {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mcphee-panel-fixes {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
 /* Hovering a row scrolls the textarea to the issue's location. */
 .mcphee-panel-item:hover { background: #f3f7fc; }
 

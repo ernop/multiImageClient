@@ -90,6 +90,9 @@ ctl.hoverStart([120]);    // solidly highlight marks at offsets (no animation,
 ctl.setRules({ profile: "casual" });  // switch rule profile live
 ctl.setEnabled(false);    // toggle off (restores native browser spellcheck)
 ctl.detach();
+// attach() also: the word containing the caret is not marked misspelled;
+// tapping Control (no other key) applies guessCorrection to the nearest
+// misspelling behind the caret (Ctrl+Z undoes it).
 
 // Live issues panel: suggestion buttons (replace-all, undo-preserving),
 // add-to-dictionary, ignore (persistent per-word mute with a 3s undo chip
@@ -132,6 +135,11 @@ sw.listNotRareWords();
 const fix = sw.applyFixes(textarea);
 console.log(fix.wordChanges, fix.spaceRuns, fix.applied);
 
+// Control-tap fixer: nearest misspelling at or behind the caret, one
+// occurrence, undo-preserving. attach() already binds this to a Control
+// tap; hosts can also call it directly:
+sw.applyNearestBackwardFix(textarea);
+
 // ...or compute without touching the DOM:
 const fix2 = sw.localFix(textarea.value);
 
@@ -145,6 +153,7 @@ const guard = sw.guardForm(form, {
 // Analysis without UI, e.g. for a lint pass:
 sw.analyze("teh  Quick brown fox"); // [{kind:"word",value:"teh",...}, {kind:"doublespace",...}]
 sw.analyze("no cap", { profile: "strict" }); // adds capitalization/punctuation issues
+sw.analyze("teh cat", { caret: 3 }); // display path: teh is in-progress, omitted
 
 // Personal dictionary:
 sw.addCustomWord("anaphora");
@@ -174,7 +183,10 @@ treats it as not being there:
 - **misspelled** (pink) — a word matching `[A-Za-z]+(?:['’][A-Za-z]+)*`,
   entirely lowercase, ≥2 letters, not in the Hunspell dictionary, whose
   Capitalized form is also not in the dictionary. Exempt: personal
-  dictionary, `extraWords`, ignore list.
+  dictionary, `extraWords`, ignore list. Display-only: when `opts.caret`
+  is passed (overlay and panel do this), the word containing the caret is
+  omitted so the author is not nagged while typing it. Form guards and
+  `localFix` do not pass caret, so they still see the word.
 - **unknown** (blue) — a word the dictionary doesn't know that is shaped
   like a name/acronym/identifier (contains any uppercase), OR a lowercase
   word whose Capitalized form IS in the dictionary (a casually-lowercased
@@ -279,10 +291,20 @@ that layering follows cSpell's model (word lists union; settings override).
   legitimate. Everything else is a violation shown as one joined rectangle;
   fixes collapse a sentence separator that grew to 3+ spaces back to two,
   and any other run to one.
-- All programmatic edits (`applyFixes`, panel buttons) go through
-  `execCommand("insertText")` with a `setRangeText` fallback, so the
-  textarea's native undo stack survives. Direct `.value` assignment wipes
-  it.
+- All programmatic edits (`applyFixes`, panel buttons, Control-tap
+  `applyNearestBackwardFix`) go through `execCommand("insertText")` with a
+  `setRangeText` fallback, so the textarea's native undo stack survives.
+  Direct `.value` assignment wipes it. A Control tap with no other key
+  (wired in `attach()`) replaces the nearest misspelling at or behind the
+  caret: if that misspelling is a unique distance-1 slip with the previous
+  word across one space (`i fi` → `if I`), the pair is rewritten; otherwise
+  `guessCorrection` (`pickCorrection` when confident, else the top Hunspell
+  suggestion). One occurrence; Ctrl+Z reverts it; the next tap walks further
+  back. Other Control chords cancel the tap.
+- The panel's first suggestion (or cased-fix) button on spelling rows
+  shares a vertical line (a fixed first column in the row's main slot).
+  A region rewrite, when there is one, is offered first and applies to the
+  local pair rather than replace-all of the fragment.
 - en_US.dic is ~700 KB and en-30k.txt ~250 KB; `McPhee.create` fetches and
   parses them once per page. Load lazily if startup matters. A failed
   frequency-list fetch degrades gracefully (echo falls back to the stopword

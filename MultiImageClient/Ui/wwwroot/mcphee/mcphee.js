@@ -24,10 +24,11 @@
 //     customDictStorageKey: "myapp_mcphee",     // localStorage, user-grown
 //     profile: "standard",                         // default rule profile
 //   });
-//   const ctl = sw.attach(document.querySelector("textarea"));
-//   const panel = sw.attachPanel({ textarea, container, controller: ctl });
-//   const guard = sw.guardForm(form, { blockOn: ["misspelled"], watch: true });
-//   sw.applyFixes(textarea);   // undo-preserving one-click fix
+  //   const ctl = sw.attach(document.querySelector("textarea"));
+  //   const panel = sw.attachPanel({ textarea, container, controller: ctl });
+  //   const guard = sw.guardForm(form, { blockOn: ["misspelled"], watch: true });
+  //   sw.applyFixes(textarea);   // undo-preserving one-click fix
+  //   sw.applyNearestBackwardFix(textarea);  // Control-tap: nearest behind caret
 //
 // Rule profiles (see McPhee.profiles):
 //   standard  misspelled + unknown + doublespace + echo + obscureRepeat
@@ -82,7 +83,7 @@
 var McPhee = (function () {
   "use strict";
 
-  var VERSION = "3.9.1";
+  var VERSION = "3.10.0";
 
   var WORD_RE = /[A-Za-z]+(?:['\u2019][A-Za-z]+)*/g;
   var TOKEN_RE = /([A-Za-z]+(?:['\u2019][A-Za-z]+)*)|( {2,})/g;
@@ -253,6 +254,36 @@ var McPhee = (function () {
 
   function escapeRegExp(s) {
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  // The word the caret is inside or at the edge of — the token still being
+  // typed. A caret in the space after a word is not in that word.
+  function wordAtCaret(text, caret) {
+    if (typeof caret !== "number" || caret < 0) return null;
+    WORD_RE.lastIndex = 0;
+    var m;
+    while ((m = WORD_RE.exec(text)) !== null) {
+      var start = m.index, end = start + m[0].length;
+      if (caret >= start && caret <= end) {
+        return { start: start, end: end, value: m[0] };
+      }
+      if (start > caret) break;
+    }
+    return null;
+  }
+
+  // Display-only: drop spelling nags on the in-progress word. analyze()
+  // still finds that word (form guards and the Control-tap fixer use the
+  // unfiltered result); overlay and panel pass opts.caret so the author
+  // is not told the word they are currently typing is misspelled.
+  function hideTypingWord(issues, text, caret) {
+    var span = wordAtCaret(text, caret);
+    if (!span) return issues;
+    return issues.filter(function (issue) {
+      if (issue.start < span.start || issue.end > span.end) return true;
+      return issue.kind !== "word" && issue.kind !== "culture"
+        && issue.kind !== "capitalization";
+    });
   }
 
   // Classifies a run of 2+ spaces. Returns null when the run is legitimate:
@@ -659,6 +690,7 @@ var McPhee = (function () {
         }
       }
     }
+    if (rules.misspelled) this.attachRegionFixes(text, words, issues);
     var phraseCovered = rules.echo
       ? this.addPhraseRepetitionIssues(text, words, excludedList, issues)
       : new Set();
@@ -671,6 +703,9 @@ var McPhee = (function () {
         && !excluded(trimmed.length - 1)) {
         issues.push({ kind: "punctuation", value: trimmed.slice(-1), start: trimmed.length - 1, end: trimmed.length, classification: "punctuation" });
       }
+    }
+    if (opts && typeof opts.caret === "number") {
+      issues = hideTypingWord(issues, text, opts.caret);
     }
     return issues;
   };
@@ -1014,11 +1049,138 @@ var McPhee = (function () {
     return top > second ? candidates[0] : null;
   };
 
+  // True when `word` is a real token for region-rewrites: in the dictionary
+  // as written, or its lowercase form is. Single letters count (classify
+  // already returns "ok" for length 1), so "i" can participate.
+  Checker.prototype.tokenOk = function (word) {
+    if (!word) return false;
+    if (this.classify(word) === "ok") return true;
+    var lower = word.toLowerCase();
+    return lower !== word && this.classify(lower) === "ok";
+  };
+
+  // Standalone "i" in a region rewrite is the pronoun — emit "I".
+  function polishPronounI(phrase) {
+    return phrase.replace(/(^|\s)i(?=\s|$)/g, function (_, p) { return p + "I"; });
+  }
+
+  // Unique distance-1 rewrite of (previous word + single space + misspelling):
+  // join into one dictionary word, or every way to place a single space in
+  // the concatenation that yields two dictionary words. "i fi" → "if I"
+  // (space/letter transposition, then the pronoun capital). Null when there
+  // is not exactly one such candidate — then the single-word guess stands.
+  Checker.prototype.pickRegionFix = function (prev, miss) {
+    var original = prev + " " + miss;
+    var concat = prev + miss;
+    var originalLower = original.toLowerCase();
+    var found = [];
+    var seen = new Set();
+    var self = this;
+    function consider(candidate) {
+      var key = candidate.toLowerCase();
+      if (key === originalLower || seen.has(key)) return;
+      if (editDistance(originalLower, key) > 1) return;
+      seen.add(key);
+      found.push(candidate);
+    }
+    if (self.tokenOk(concat)) consider(concat);
+    for (var i = 1; i < concat.length; i++) {
+      var a = concat.slice(0, i), b = concat.slice(i);
+      if (self.tokenOk(a) && self.tokenOk(b)) consider(a + " " + b);
+    }
+    if (found.length !== 1) return null;
+    return polishPronounI(found[0]);
+  };
+
+  // A misspelling one single space after a previous token may be a local
+  // slip ("fi" after "i"), not a lone-word typo. Attach regionFix on those
+  // issues so Control-tap, localFix, and the panel rewrite the pair.
+  Checker.prototype.attachRegionFixes = function (text, words, issues) {
+    var byStart = new Map();
+    for (var i = 0; i < issues.length; i++) {
+      if (issues[i].kind === "word" && issues[i].classification === "misspelled") {
+        byStart.set(issues[i].start, issues[i]);
+      }
+    }
+    for (i = 1; i < words.length; i++) {
+      var cur = words[i], prev = words[i - 1];
+      if (cur.cls !== "misspelled") continue;
+      if (cur.start !== prev.end + 1 || text.charAt(prev.end) !== " ") continue;
+      var to = this.pickRegionFix(prev.value, cur.value);
+      if (!to) continue;
+      var issue = byStart.get(cur.start);
+      if (issue) issue.regionFix = { start: prev.start, end: cur.end, to: to };
+    }
+  };
+
+  // Naive best guess for the Control-tap fixer: prefer pickCorrection's
+  // confident choice, otherwise the top Hunspell suggestion. A wrong guess
+  // is meant to be undone with Ctrl+Z; the gesture is deliberately willing
+  // to try.
+  Checker.prototype.guessCorrection = function (word) {
+    var confident = this.pickCorrection(word);
+    if (confident) return confident;
+    var suggestions = this.suggest(word, 1) || [];
+    return suggestions.length ? suggestions[0] : null;
+  };
+
+  // Nearest misspelled word at or before `caret` (searching backward only).
+  Checker.prototype.nearestMisspellingBehind = function (text, caret, opts) {
+    var issues = this.analyze(text, opts);
+    var best = null;
+    for (var i = 0; i < issues.length; i++) {
+      var issue = issues[i];
+      if (issue.kind !== "word" || issue.classification !== "misspelled") continue;
+      if (issue.start > caret) continue;
+      if (!best || issue.start > best.start) best = issue;
+    }
+    return best;
+  };
+
+  // Replace the nearest misspelling behind the caret. A misspelling that
+  // is a local slip with the previous word (i fi → if I) rewrites that
+  // pair; otherwise guessCorrection rewrites the word alone. Undo-preserving
+  // so Ctrl+Z reverts just that change. Words with no usable guess are
+  // skipped and the search continues backward.
+  Checker.prototype.applyNearestBackwardFix = function (textarea, opts) {
+    var analyzeOpts = { rules: this.resolveRules(opts) };
+    var caret = textarea.selectionStart;
+    var text = textarea.value;
+    var issue = this.nearestMisspellingBehind(text, caret, analyzeOpts);
+    while (issue) {
+      var span = issue.regionFix
+        ? issue.regionFix
+        : (function () {
+            var guess = this.guessCorrection(issue.value);
+            return guess && guess !== issue.value
+              ? { start: issue.start, end: issue.end, to: guess }
+              : null;
+          }).call(this);
+      if (span) {
+        replaceRange(textarea, span.start, span.end, span.to);
+        var newCaret;
+        if (caret <= span.start) newCaret = caret;
+        else if (caret >= span.end) newCaret = caret + (span.to.length - (span.end - span.start));
+        else newCaret = span.start + span.to.length;
+        textarea.setSelectionRange(newCaret, newCaret);
+        return {
+          applied: true,
+          from: text.slice(span.start, span.end),
+          to: span.to,
+          offset: span.start,
+        };
+      }
+      if (issue.start <= 0) break;
+      issue = this.nearestMisspellingBehind(text, issue.start - 1, analyzeOpts);
+    }
+    return { applied: false };
+  };
+
   // One-click local fix: collapse every illegitimate extra-space run
   // (sentence separators back to two spaces, everything else to one;
-  // legitimate sentence double-spaces and indentation untouched), replace
-  // each pink (misspelled) word with a confidently-chosen correction (see
-  // pickCorrection), and — when the sentenceCapitalization rule is on —
+  // legitimate sentence double-spaces and indentation untouched), rewrite
+  // local-region slips (i fi → if I) then remaining pink words with
+  // pickCorrection, and — when the sentenceCapitalization rule is on —
   // capitalize lowercase dictionary words that start a sentence. Ambiguous
   // words, words with no usable suggestion, and blue (unknown) words are left
   // alone; missing terminal punctuation is never auto-fixed (. vs ? vs ! is a
@@ -1028,12 +1190,20 @@ var McPhee = (function () {
     var rules = this.resolveRules(opts);
     var wordChanges = [];
     var self = this;
-    var starts = rules.sentenceCapitalization ? sentenceStartOffsets(text) : null;
-    // Exclusion zones are never fixed. The word pass tests against ranges
-    // computed on the original text; corrections can shift later offsets,
-    // so the space pass recomputes ranges on its own (post-fix) text.
-    var excludedWords = rangeCursor(this.excludedRanges(text, opts));
-    var fixedWords = text.replace(WORD_RE, function (word, offset) {
+    var working = text;
+    if (rules.misspelled) {
+      var regionFixes = this.analyze(text, { rules: rules })
+        .filter(function (i) { return i.regionFix; })
+        .map(function (i) { return i.regionFix; })
+        .sort(function (a, b) { return b.start - a.start; });
+      regionFixes.forEach(function (r) {
+        wordChanges.push({ from: text.slice(r.start, r.end), to: r.to, offset: r.start });
+        working = working.slice(0, r.start) + r.to + working.slice(r.end);
+      });
+    }
+    var starts = rules.sentenceCapitalization ? sentenceStartOffsets(working) : null;
+    var excludedWords = rangeCursor(this.excludedRanges(working, opts));
+    var fixedWords = working.replace(WORD_RE, function (word, offset) {
       if (excludedWords(offset) || excludedWords(offset + word.length - 1)) return word;
       var cls = self.classify(word);
       if (cls === "misspelled" && rules.misspelled) {
@@ -1162,7 +1332,13 @@ var McPhee = (function () {
     textarea.spellcheck = false;
 
     var lastRendered = null;
+    var lastCaretWord = null;
     var enabled = true;
+
+    function caretWordKey() {
+      var span = wordAtCaret(textarea.value, textarea.selectionStart);
+      return span ? span.start + ":" + span.end : "";
+    }
 
     // The backdrop must mirror the textarea's CLIENT box (plus borders), not
     // its offset box: a vertical scrollbar shrinks the client width and would
@@ -1246,16 +1422,18 @@ var McPhee = (function () {
       backdrop.style.visibility = enabled && !integrityFailed ? "visible" : "hidden";
     }
 
-    // refresh() re-renders only when the text changed; refresh(true) is a
-    // full regeneration — styles re-mirrored, geometry re-synced, marks
-    // rebuilt from scratch — the recovery path for any drift.
+    // refresh() re-renders when the text changed or the in-progress word
+    // (the token containing the caret) changed; refresh(true) is a full
+    // regeneration — styles re-mirrored, geometry re-synced, marks rebuilt
+    // from scratch — the recovery path for any drift.
     function refresh(force) {
       if (!enabled) return;
       if (force === true || integrityFailed) {
         mirrorStyles();
         lastRendered = null;
       }
-      if (textarea.value !== lastRendered) {
+      var wordKey = caretWordKey();
+      if (textarea.value !== lastRendered || wordKey !== lastCaretWord) {
         // A render that does not COMPLETE is an integrity violation like any
         // other: the marks on screen no longer describe the buffer. The only
         // path to a visible overlay is a finished render plus a passed
@@ -1268,6 +1446,7 @@ var McPhee = (function () {
         var ok = false;
         var renderError = null;
         try {
+          renderOpts.caret = textarea.selectionStart;
           backdrop.innerHTML = self.renderHtml(textarea.value, renderOpts);
           syncGeometry();
           if (!verifyIntegrity()) {
@@ -1281,6 +1460,7 @@ var McPhee = (function () {
           renderError = err;
         }
         lastRendered = textarea.value;
+        lastCaretWord = wordKey;
         if (!ok && !integrityFailed) {
           console.warn("McPhee: overlay integrity check failed; hiding highlights rather than showing them misaligned.", renderError || {
             contentParity: backdrop.textContent === textarea.value + "\n",
@@ -1307,6 +1487,39 @@ var McPhee = (function () {
     // Programmatic .value writes fire no event; a light poll keeps the
     // overlay honest without every caller having to remember refresh().
     var pollTimer = setInterval(refresh, 700);
+
+    // Caret moves that do not change the text (clicking into a word, arrow
+    // keys) still have to hide/show the in-progress-word mark.
+    function onSelectionChange() {
+      if (document.activeElement !== textarea) return;
+      if (caretWordKey() !== lastCaretWord) refresh();
+    }
+    document.addEventListener("selectionchange", onSelectionChange);
+
+    // Control tap (no other key): naive-correct the nearest misspelling
+    // behind the caret. Other Control chords (Ctrl+Z, Ctrl+C, …) clear the
+    // tap so they keep their native meaning; Ctrl+Z undoes the replacement
+    // because it went through the undo-preserving pipeline.
+    var ctrlTapClean = false;
+    function onAnyKeyDown(e) {
+      if (e.key === "Control") {
+        if (!e.repeat && document.activeElement === textarea) ctrlTapClean = true;
+        return;
+      }
+      ctrlTapClean = false;
+    }
+    function onCtrlKeyUp(e) {
+      if (e.key !== "Control") return;
+      var wasClean = ctrlTapClean;
+      ctrlTapClean = false;
+      if (!wasClean || !enabled) return;
+      if (document.activeElement !== textarea) return;
+      if (textarea.readOnly || textarea.disabled) return;
+      self.applyNearestBackwardFix(textarea, { rules: renderOpts.rules });
+    }
+    window.addEventListener("keydown", onAnyKeyDown, true);
+    window.addEventListener("keyup", onCtrlKeyUp, true);
+
     refresh();
 
     // Scrolls the textarea so the character at `offset` sits roughly a third
@@ -1400,6 +1613,9 @@ var McPhee = (function () {
         resizeObserver.disconnect();
         textarea.removeEventListener("input", onEvent);
         textarea.removeEventListener("scroll", onEvent);
+        document.removeEventListener("selectionchange", onSelectionChange);
+        window.removeEventListener("keydown", onAnyKeyDown, true);
+        window.removeEventListener("keyup", onCtrlKeyUp, true);
         textarea.classList.remove("mcphee-textarea");
         textarea.spellcheck = true;
         host.parentNode.insertBefore(textarea, host);
@@ -1602,30 +1818,69 @@ var McPhee = (function () {
       });
     }
 
-    function wordRow(value, classification, count) {
+    function applyRegionFixes(word) {
+      var issues = self.analyze(textarea.value, analyzeOpts);
+      var fixes = issues
+        .filter(function (i) {
+          return i.kind === "word" && i.value === word && i.regionFix;
+        })
+        .map(function (i) { return i.regionFix; })
+        .sort(function (a, b) { return b.start - a.start; });
+      if (!fixes.length) return;
+      var value = textarea.value;
+      var caret = textarea.selectionStart;
+      var newCaret = caret;
+      var newText = value;
+      fixes.forEach(function (f) {
+        newText = newText.slice(0, f.start) + f.to + newText.slice(f.end);
+        var delta = f.to.length - (f.end - f.start);
+        if (f.end <= caret) newCaret += delta;
+        else if (f.start < caret) newCaret = f.start + f.to.length;
+      });
+      if (newText !== value) {
+        replaceRange(textarea, 0, value.length, newText);
+        textarea.setSelectionRange(newCaret, newCaret);
+      }
+      afterAction();
+    }
+
+    function wordRow(value, classification, count, regionTo) {
       var label = document.createElement("span");
       label.className = "mcphee-panel-word mcphee-panel-word-" + classification;
       label.textContent = count > 1 ? value + " \u00d7" + count : value;
       var main = [label];
+      var fixBtns = [];
       if (classification === "misspelled") {
         var seen = new Set();
+        if (regionTo) {
+          seen.add(regionTo.toLowerCase());
+          fixBtns.push(button(regionTo, "mcphee-panel-suggestion", function () {
+            applyRegionFixes(value);
+          }));
+        }
         var preferred = self.pickCorrection(value);
         var suggestions = (preferred ? [preferred] : []).concat(self.suggest(value, 3) || []);
         suggestions.forEach(function (s) {
           var key = s.toLowerCase();
           if (seen.has(key) || seen.size >= 3) return;
           seen.add(key);
-          main.push(button(s, "mcphee-panel-suggestion", function () {
+          fixBtns.push(button(s, "mcphee-panel-suggestion", function () {
             replaceAllOccurrences(value, s);
           }));
         });
       }
       // No suggestions for an all-caps word: offer its normal-cased form.
-      if (main.length === 1 && value.length > 1 && value === value.toUpperCase()) {
+      if (!fixBtns.length && value.length > 1 && value === value.toUpperCase()) {
         var normal = value.charAt(0) + value.slice(1).toLowerCase();
-        main.push(button(normal, "mcphee-panel-suggestion", function () {
+        fixBtns.push(button(normal, "mcphee-panel-suggestion", function () {
           replaceAllOccurrences(value, normal);
         }));
+      }
+      if (fixBtns.length) {
+        var fixes = document.createElement("span");
+        fixes.className = "mcphee-panel-fixes";
+        fixBtns.forEach(function (b) { fixes.appendChild(b); });
+        main.push(fixes);
       }
       var dict = button("+ dict", "mcphee-panel-adddict", function () {
         self.addCustomWord(value);
@@ -1644,6 +1899,9 @@ var McPhee = (function () {
       var fix = button(expected, "mcphee-panel-suggestion", function () {
         replaceAllOccurrences(value, expected);
       });
+      var fixes = document.createElement("span");
+      fixes.className = "mcphee-panel-fixes";
+      fixes.appendChild(fix);
       var dict = button("+ dict", "mcphee-panel-adddict", function () {
         self.addCustomWord(value);
         afterAction();
@@ -1651,7 +1909,7 @@ var McPhee = (function () {
       var sel = selectButton(function (i) {
         return i.kind === "culture" && i.value === value;
       });
-      return panelRow([label, fix], ignoreButton(value), dict, sel);
+      return panelRow([label, fixes], ignoreButton(value), dict, sel);
     }
 
     // Formality chooser: three always-visible buttons; the selected one is
@@ -1792,7 +2050,9 @@ var McPhee = (function () {
     }
 
     function render() {
-      var issues = self.analyze(textarea.value, analyzeOpts);
+      var issues = self.analyze(textarea.value, Object.assign({}, analyzeOpts, {
+        caret: textarea.selectionStart,
+      }));
       // Rebuilding wipes the panel's DOM, which clamps the scroll position
       // of whatever element scrolls it (the panel container, the dock side
       // column, or the drawer) to 0. Preserve it so acting on a row leaves
@@ -1855,8 +2115,12 @@ var McPhee = (function () {
           if (group) {
             group.count++;
             group.spans.push([issue.start, issue.end]);
+            if (!group.regionTo && issue.regionFix) group.regionTo = issue.regionFix.to;
           } else {
-            wordGroups.set(key, { count: 1, start: issue.start, spans: [[issue.start, issue.end]] });
+            wordGroups.set(key, {
+              count: 1, start: issue.start, spans: [[issue.start, issue.end]],
+              regionTo: issue.regionFix ? issue.regionFix.to : null,
+            });
           }
         } else if (issue.kind === "culture") {
           var cg = cultureGroups.get(issue.value);
@@ -1905,7 +2169,7 @@ var McPhee = (function () {
           rank: SECTION_RANK[parts[1]],
           start: group.start,
           spans: group.spans,
-          el: wordRow(parts[0], parts[1], group.count),
+          el: wordRow(parts[0], parts[1], group.count, group.regionTo),
         });
       });
 
@@ -1966,6 +2230,9 @@ var McPhee = (function () {
             }
             afterAction();
           });
+          var capFixes = document.createElement("span");
+          capFixes.className = "mcphee-panel-fixes";
+          capFixes.appendChild(capBtn);
           var capSel = selectButton(function (i) {
             return i.kind === "capitalization" && i.value === issue.value;
           });
@@ -1973,7 +2240,7 @@ var McPhee = (function () {
             rank: SECTION_RANK.capitalization,
             start: issue.start,
             spans: [[issue.start, issue.end]],
-            el: panelRow([label, capBtn], ignoreButton(issue.value), null, capSel),
+            el: panelRow([label, capFixes], ignoreButton(issue.value), null, capSel),
           });
         } else if (issue.kind === "punctuation") {
           var ptext = document.createElement("span");
@@ -2032,6 +2299,7 @@ var McPhee = (function () {
         container.appendChild(r.el);
       });
       rowMeta = rows;
+      lastPanelCaretWord = panelCaretWordKey();
 
       var dictLine = document.createElement("div");
       dictLine.className = "mcphee-panel-dictcount";
@@ -2088,6 +2356,12 @@ var McPhee = (function () {
       }
     }
 
+    var lastPanelCaretWord = "";
+    function panelCaretWordKey() {
+      var span = wordAtCaret(textarea.value, textarea.selectionStart);
+      return span ? span.start + ":" + span.end : "";
+    }
+
     var debounceTimer = null;
     function onInput() {
       clearTimeout(debounceTimer);
@@ -2101,7 +2375,15 @@ var McPhee = (function () {
     var caretTimer = null;
     function onCaretMove() {
       clearTimeout(caretTimer);
-      caretTimer = setTimeout(updateCaretRow, 150);
+      caretTimer = setTimeout(function () {
+        var key = panelCaretWordKey();
+        if (key !== lastPanelCaretWord) render();
+        else updateCaretRow();
+      }, 150);
+    }
+    function onPanelSelectionChange() {
+      if (document.activeElement !== textarea) return;
+      onCaretMove();
     }
     textarea.addEventListener("input", onInput);
     textarea.addEventListener("scroll", onViewportChange);
@@ -2110,6 +2392,7 @@ var McPhee = (function () {
     window.addEventListener("scroll", onViewportChange, true);
     textarea.addEventListener("keyup", onCaretMove);
     textarea.addEventListener("click", onCaretMove);
+    document.addEventListener("selectionchange", onPanelSelectionChange);
     applyRuleState();
     render();
 
@@ -2122,6 +2405,7 @@ var McPhee = (function () {
         clearTimeout(viewportTimer);
         clearTimeout(caretTimer);
         window.removeEventListener("scroll", onViewportChange, true);
+        document.removeEventListener("selectionchange", onPanelSelectionChange);
         textarea.removeEventListener("scroll", onViewportChange);
         textarea.removeEventListener("keyup", onCaretMove);
         textarea.removeEventListener("click", onCaretMove);
