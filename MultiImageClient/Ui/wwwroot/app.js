@@ -3157,6 +3157,9 @@ const SketchCanvasSizes = {
   wide: [1280, 720],
   tall: [720, 1280],
 };
+const SketchScaleMinEdge = 1;
+const SketchScaleMaxEdge = 4096;
+const SketchScaleMaxPixels = 4096 * 4096;
 // The legend paragraph starts with this exact marker so re-attaching a
 // revised sketch replaces the previous paragraph instead of stacking copies.
 const SketchLegendMarker = "Composition sketch legend:";
@@ -3285,11 +3288,7 @@ function resetSketchEditor(notice = "") {
   if (sketchDialog.open) sketchDialog.close();
   sketchAspect = "square";
   sketchAspectSelect.value = sketchAspect;
-  const [width, height] = SketchCanvasSizes[sketchAspect];
-  sketchCanvas.width = width;
-  sketchCanvas.height = height;
-  sketchOverlay.width = width;
-  sketchOverlay.height = height;
+  resizeSketchCanvasToSize(...SketchCanvasSizes[sketchAspect]);
   clearSketchSelection();
   resetSketchActions();
   setSketchWorkingPalette(SketchPalette, { meanings: SketchPalette.map(() => "") });
@@ -3408,12 +3407,9 @@ function normalizeRecordedSketchPalette(raw) {
 
 async function prepareRestoredSketch(blob, state) {
   const bitmap = await createImageBitmap(blob);
-  const [expectedWidth, expectedHeight] = SketchCanvasSizes[state.aspect];
-  if (bitmap.width !== expectedWidth || bitmap.height !== expectedHeight) {
+  if (bitmap.width < SketchScaleMinEdge || bitmap.height < SketchScaleMinEdge) {
     bitmap.close();
-    throw new Error(
-      `recorded sketch dimensions ${bitmap.width}×${bitmap.height} do not match `
-      + `${state.aspect} (${expectedWidth}×${expectedHeight})`);
+    throw new Error("recorded sketch has no pixels");
   }
   return { bitmap, state };
 }
@@ -3427,14 +3423,10 @@ function applyRestoredSketchEditor(nextItems, prepared) {
     }
     sketchAspect = state.aspect;
     sketchAspectSelect.value = sketchAspect;
-    const [width, height] = SketchCanvasSizes[sketchAspect];
-    sketchCanvas.width = width;
-    sketchCanvas.height = height;
-    sketchOverlay.width = width;
-    sketchOverlay.height = height;
-    sketchCtx.clearRect(0, 0, width, height);
+    resizeSketchCanvasToSize(bitmap.width, bitmap.height);
+    sketchCtx.clearRect(0, 0, bitmap.width, bitmap.height);
     sketchCtx.drawImage(bitmap, 0, 0);
-    const restoredPixels = sketchCtx.getImageData(0, 0, width, height);
+    const restoredPixels = sketchCtx.getImageData(0, 0, bitmap.width, bitmap.height);
     sketchActions = [{
       id: ++sketchActionSequence,
       kind: "base",
@@ -3762,6 +3754,9 @@ function sketchActionDescription(action) {
   if (action.kind === "canvas-flip") {
     return action.axis === "v" ? "flip canvas vertical" : "flip canvas horizontal";
   }
+  if (action.kind === "canvas-scale") {
+    return `scale canvas · ${action.width} × ${action.height}`;
+  }
   if (action.kind === "crop-outside") return "crop to selection";
   if (action.kind === "crop-fill") return `crop to canvas · ${action.fit || "cover"}`;
   if (action.kind === "region-edit") {
@@ -3813,6 +3808,7 @@ function renderSketchActionList() {
       || action.kind === "paste" || action.kind === "palette-filter"
       || action.kind === "template-map"
       || action.kind === "canvas-rotate" || action.kind === "canvas-flip"
+      || action.kind === "canvas-scale"
       || action.kind === "crop-outside" || action.kind === "crop-fill"
       ? "linear-gradient(135deg, #e53935, #1e88e5, #43a047)"
       : action.kind === "clear" ? "#ffffff"
@@ -4215,7 +4211,12 @@ function applySketchFloodFill(action) {
 }
 
 function renderSketchActions() {
-  resizeSketchCanvasToAspect(sketchAspect);
+  const base = sketchActions.find((action) => action.visible && action.kind === "base");
+  if (base?.imageData) {
+    resizeSketchCanvasToSize(base.imageData.width, base.imageData.height);
+  } else {
+    resizeSketchCanvasToAspect(sketchAspect);
+  }
   sketchBlank();
   for (const action of sketchActions) {
     if (!action.visible) continue;
@@ -4245,6 +4246,8 @@ function renderSketchActions() {
       applySketchCanvasRotate(action.quarterTurns);
     } else if (action.kind === "canvas-flip") {
       applySketchCanvasFlip(action.axis);
+    } else if (action.kind === "canvas-scale") {
+      applySketchCanvasScale(action.width, action.height);
     } else if (action.kind === "crop-outside") {
       applySketchCropOutside(action);
     } else if (action.kind === "crop-fill") {
@@ -4258,6 +4261,7 @@ function renderSketchActions() {
     }
   }
   syncSketchAspectSelectToCanvas();
+  updateSketchResolutionReadout();
   drawSketchSelectionOverlay();
 }
 
@@ -4415,7 +4419,14 @@ function sketchAspectNameFromSize(width, height) {
 function resizeSketchCanvasToAspect(aspect) {
   const size = SketchCanvasSizes[aspect];
   if (!size) throw new Error(`unknown sketch aspect ${aspect}`);
-  const [width, height] = size;
+  resizeSketchCanvasToSize(size[0], size[1]);
+}
+
+function resizeSketchCanvasToSize(width, height) {
+  if (!Number.isInteger(width) || !Number.isInteger(height)
+      || width < SketchScaleMinEdge || height < SketchScaleMinEdge) {
+    throw new Error(`invalid sketch size ${width}×${height}`);
+  }
   if (sketchCanvas.width !== width || sketchCanvas.height !== height) {
     sketchCanvas.width = width;
     sketchCanvas.height = height;
@@ -4424,6 +4435,58 @@ function resizeSketchCanvasToAspect(aspect) {
     sketchOverlay.width = width;
     sketchOverlay.height = height;
   }
+  updateSketchResolutionReadout();
+}
+
+function updateSketchResolutionReadout() {
+  const readout = el("sketch-resolution");
+  if (!readout) return;
+  readout.textContent = `${sketchCanvas.width} × ${sketchCanvas.height}`;
+}
+
+function sketchScaleTargetSize(width, height, factor) {
+  if (factor === 0.5) {
+    return {
+      width: Math.max(SketchScaleMinEdge, Math.floor(width / 2)),
+      height: Math.max(SketchScaleMinEdge, Math.floor(height / 2)),
+    };
+  }
+  const exactW = width * 2;
+  const exactH = height * 2;
+  if (exactW <= SketchScaleMaxEdge
+      && exactH <= SketchScaleMaxEdge
+      && exactW * exactH <= SketchScaleMaxPixels) {
+    return { width: exactW, height: exactH };
+  }
+  const scale = Math.min(
+    2,
+    SketchScaleMaxEdge / width,
+    SketchScaleMaxEdge / height,
+    Math.sqrt(SketchScaleMaxPixels / (width * height)));
+  const nextW = Math.max(width, Math.min(SketchScaleMaxEdge, Math.round(width * scale)));
+  const nextH = Math.max(height, Math.min(SketchScaleMaxEdge, Math.round(height * scale)));
+  return { width: nextW, height: nextH };
+}
+
+function scaleSketchImageDataNearest(src, destW, destH) {
+  const dst = new ImageData(destW, destH);
+  const s = src.data;
+  const d = dst.data;
+  const srcW = src.width;
+  const srcH = src.height;
+  for (let y = 0; y < destH; y++) {
+    const sy = Math.min(srcH - 1, Math.floor((y * srcH) / destH));
+    for (let x = 0; x < destW; x++) {
+      const sx = Math.min(srcW - 1, Math.floor((x * srcW) / destW));
+      const si = (sy * srcW + sx) * 4;
+      const di = (y * destW + x) * 4;
+      d[di] = s[si];
+      d[di + 1] = s[si + 1];
+      d[di + 2] = s[si + 2];
+      d[di + 3] = s[si + 3];
+    }
+  }
+  return dst;
 }
 
 function syncSketchAspectSelectToCanvas() {
@@ -4668,12 +4731,23 @@ function applySketchCanvasRotate(quarterTurns) {
   let image = sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height);
   for (let i = 0; i < turns; i++) image = rotateSketchImageData90Cw(image);
   const aspect = sketchAspectNameFromSize(image.width, image.height);
-  if (!aspect) {
-    throw new Error(
-      `rotated sketch size ${image.width}×${image.height} is not a supported canvas shape`);
-  }
-  resizeSketchCanvasToAspect(aspect);
+  if (aspect) sketchAspect = aspect;
+  resizeSketchCanvasToSize(image.width, image.height);
   sketchCtx.putImageData(image, 0, 0);
+}
+
+function applySketchCanvasScale(width, height) {
+  if (!Number.isInteger(width) || !Number.isInteger(height)
+      || width < SketchScaleMinEdge || height < SketchScaleMinEdge
+      || width > SketchScaleMaxEdge || height > SketchScaleMaxEdge
+      || width * height > SketchScaleMaxPixels) {
+    throw new Error(`canvas-scale action has invalid size ${width}×${height}`);
+  }
+  if (sketchCanvas.width === width && sketchCanvas.height === height) return;
+  const src = sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height);
+  const scaled = scaleSketchImageDataNearest(src, width, height);
+  resizeSketchCanvasToSize(width, height);
+  sketchCtx.putImageData(scaled, 0, 0);
 }
 
 function applySketchCanvasFlip(axis) {
@@ -5037,6 +5111,26 @@ function commitSketchCanvasRotate(quarterTurns) {
 function commitSketchCanvasFlip(axis) {
   clearSketchSelection();
   commitSketchAction({ kind: "canvas-flip", axis });
+}
+
+function commitSketchCanvasScale(factor) {
+  const next = sketchScaleTargetSize(sketchCanvas.width, sketchCanvas.height, factor);
+  if (next.width === sketchCanvas.width && next.height === sketchCanvas.height) {
+    setSketchActionStatus(
+      factor === 0.5
+        ? `Already ${sketchCanvas.width} × ${sketchCanvas.height} — cannot halve further.`
+        : `Already ${sketchCanvas.width} × ${sketchCanvas.height} — cannot double further.`,
+      true);
+    return;
+  }
+  clearSketchSelection();
+  const ok = commitSketchAction({
+    kind: "canvas-scale",
+    width: next.width,
+    height: next.height,
+  });
+  if (!ok) return;
+  setSketchActionStatus(`${next.width} × ${next.height}`);
 }
 
 function commitSketchSelectionFlip(axis) {
@@ -5800,6 +5894,8 @@ el("sketch-rotate-ccw").addEventListener("click", () => commitSketchCanvasRotate
 el("sketch-rotate-180").addEventListener("click", () => commitSketchCanvasRotate(2));
 el("sketch-flip-h").addEventListener("click", () => commitSketchCanvasFlip("h"));
 el("sketch-flip-v").addEventListener("click", () => commitSketchCanvasFlip("v"));
+el("sketch-scale-half").addEventListener("click", () => commitSketchCanvasScale(0.5));
+el("sketch-scale-double").addEventListener("click", () => commitSketchCanvasScale(2));
 el("sketch-dither-apply").addEventListener("click", commitSketchPaletteFilter);
 el("sketch-regen-template").addEventListener("click", commitSketchRegenTemplateMap);
 sketchDitherMethodSelect.addEventListener("change", updateSketchDitherApplyLabel);
@@ -5864,11 +5960,7 @@ sketchAspectSelect.addEventListener("change", () => {
     return;
   }
   sketchAspect = next;
-  const [width, height] = SketchCanvasSizes[next] || SketchCanvasSizes.square;
-  sketchCanvas.width = width;
-  sketchCanvas.height = height;
-  sketchOverlay.width = width;
-  sketchOverlay.height = height;
+  resizeSketchCanvasToAspect(next);
   clearSketchSelection();
   resetSketchActions();
   setSketchWorkingPalette(SketchPalette, { meanings: SketchPalette.map(() => "") });

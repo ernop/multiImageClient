@@ -186,10 +186,14 @@ the working legend from the top non-white colors on the canvas (1–8,
 readable unique names, white stays unmarked background), blanks every
 meaning field, and nearest-snaps the canvas onto those exact hexes. Undo
 restores the previous palette, meanings, and actions together. Canvas
-90°/180° rotate and flip keep the result on a published `SketchCanvasSizes`
-shape (landscape↔portrait, wide↔tall). Selection crop keeps canvas size
-(outside goes white) or scales the selection onto the canvas with the same
-paste-size setting.
+90°/180° rotate and flip keep a published `SketchCanvasSizes` shape when
+the canvas is still at a published size (landscape↔portrait, wide↔tall);
+after a raw scale they rotate in place at the current pixel size. **Halve**
+and **double** are raw nearest-neighbor resizes of the working canvas
+(repeatable; live WxH readout in the Canvas group; attach sends whatever
+size is showing). Double stops at a 4096-edge / 16 MP cap. Selection crop
+keeps canvas size (outside goes white) or scales the selection onto the
+canvas with the same paste-size setting.
 
 The editor also has pencil, brush, soft brush, spray, eraser, bounded
 tolerance fill, line, rectangle, rounded rectangle, ellipse, triangle,
@@ -204,8 +208,10 @@ restored from a persisted job remains identity-safe and appears as one
 flattened `restored sketch base` action, because persisted jobs
 intentionally retain the exact PNG/aspect/palette/meanings contract rather
 than guessing a pre-flattening action graph. Version 1 restores the built-in
-8-color palette; version 2 restores the recorded palette. Attach records the
-live canvas aspect after any rotate so restore dimensions stay exact.
+8-color palette; version 2 restores the recorded palette. Restore sizes the
+editor to the attached PNG's exact pixel dimensions. Attach records the live
+canvas aspect (published size, or the current shape picker after a raw scale)
+so the picker restores; pixel size comes from the PNG.
 
 ## Testing Guidelines
 No dedicated test project exists yet. Manually validate new workflows by running representative prompts and inspecting generated assets and metadata. When adding automated coverage, create an xUnit project referenced by the solution and ensure `dotnet test` succeeds. Capture regression prompts in `prompts.txt` with notes after bug fixes.

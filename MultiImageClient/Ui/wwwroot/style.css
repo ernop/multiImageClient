@@ -2260,10 +2260,18 @@ body.image-viewer-open { overflow: hidden; }
 }
 #sketch-paste-fit { max-width: 16rem; }
 #sketch-dither-method { max-width: 16rem; }
-#sketch-regen-template {
+#sketch-regen-template,
+#sketch-scale-half,
+#sketch-scale-double {
   font: inherit;
   font-size: 11px;
   padding: 3px 7px;
+}
+#sketch-resolution {
+  font: 800 13px/1.2 ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  min-width: 7.5rem;
 }
 #sketch-canvas,
 #sketch-overlay {
