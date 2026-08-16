@@ -1059,7 +1059,12 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 }
 .inspiration-label { display: block; font-size: 13px; font-weight: 750; }
 .inspiration-preview { display: block; margin-top: 2px; color: var(--accent-dark); font-size: 11px; line-height: 1.35; }
-.inspiration-actions { display: flex; align-items: flex-start; gap: 3px; }
+.inspiration-actions {
+  display: flex;
+  align-items: flex-start;
+  align-self: start;
+  gap: 3px;
+}
 .inspiration-action {
   width: 25px;
   height: 25px;

@@ -6295,7 +6295,11 @@ function inspirationItemElement(item, index) {
   label.textContent = item.label;
   const preview = document.createElement("span");
   preview.className = "inspiration-preview";
-  preview.textContent = `${categoryLabel(item.category)} · ${item.text}`;
+  const redundantPrefix = ({ style: "art direction: ", world: "setting: ", composition: "composition: " })[item.category] || "";
+  const previewText = redundantPrefix && item.text.toLocaleLowerCase().startsWith(redundantPrefix)
+    ? item.text.slice(redundantPrefix.length)
+    : item.text;
+  preview.textContent = `${categoryLabel(item.category)} · ${previewText}`;
   use.append(label, preview);
 
   const actions = document.createElement("div");
@@ -6303,7 +6307,7 @@ function inspirationItemElement(item, index) {
   const favorite = document.createElement("button");
   favorite.type = "button";
   favorite.className = `inspiration-action${isFavorite(item) ? " is-favorite" : ""}`;
-  favorite.textContent = isFavorite(item) ? "favorited" : "favorite";
+  favorite.textContent = isFavorite(item) ? "★" : "☆";
   favorite.title = isFavorite(item) ? "Remove from favorites" : "Add to favorites";
   favorite.setAttribute("aria-label", favorite.title);
   favorite.addEventListener("click", () => toggleInspirationFavorite(item.id));
