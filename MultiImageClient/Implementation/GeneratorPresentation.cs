@@ -18,7 +18,7 @@ namespace MultiImageClient
             UiJobRunner.KeyRecraft => "Recraft V4.1",
             UiJobRunner.KeyRecraftV41Utility => "Recraft V4.1 Utility",
             UiJobRunner.KeyRecraftV41Pro => "Recraft V4.1 Pro",
-            UiJobRunner.KeyRecraftV41Vector => "Recraft V4.1 Vector",
+            UiJobRunner.KeyRecraftV41Vector => "Recraft V4.1 Vector Woke",
             UiJobRunner.KeyRecraftV3 => "Recraft V3",
             UiJobRunner.KeyRecraftV4 => "Recraft V4",
             UiJobRunner.KeyRecraftV4Pro => "Recraft V4 Pro",
