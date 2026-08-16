@@ -3211,7 +3211,12 @@ const SketchSelectionTools = new Set(["select-rect", "select-free"]);
 const SketchEdgeStyles = new Set(["hard", "soft", "dashed"]);
 const SketchFillRules = new Set(["outline", "solid", "soft"]);
 const SketchSelectionModes = new Set(["move", "duplicate", "stretch", "rotate"]);
-const SketchPasteFitModes = new Set(["cover", "contain", "stretch"]);
+// "canvas" resizes the canvas itself to the pasted image's aspect ratio; the
+// other three place the image onto the current canvas unchanged.
+const SketchPasteFitModes = new Set(["canvas", "cover", "contain", "stretch"]);
+// A "match image" paste upscales small sources so the canvas long edge is at
+// least this many pixels; drawing tools stay usable at published-size scale.
+const SketchMatchImageMinLongEdge = 1024;
 const SketchDitherMethods = new Set(["nearest", "floyd", "bayer", "group"]);
 const SketchClickTools = new Set(["fill", "eyedropper", "recolor"]);
 const SketchBayer8 = [
@@ -3287,8 +3292,8 @@ function sketchIsAttached() {
 function resetSketchEditor(notice = "") {
   if (sketchDialog.open) sketchDialog.close();
   sketchAspect = "square";
-  sketchAspectSelect.value = sketchAspect;
   resizeSketchCanvasToSize(...SketchCanvasSizes[sketchAspect]);
+  syncSketchAspectSelectToCanvas();
   clearSketchSelection();
   resetSketchActions();
   setSketchWorkingPalette(SketchPalette, { meanings: SketchPalette.map(() => "") });
@@ -3459,7 +3464,8 @@ function promptHasSketchLegend(value) {
 function currentSketchAttachedState() {
   return {
     version: 2,
-    aspect: sketchAspectNameFromSize(sketchCanvas.width, sketchCanvas.height) || sketchAspect,
+    aspect: sketchAspectNameFromSize(sketchCanvas.width, sketchCanvas.height)
+      || sketchNearestPublishedAspect(sketchCanvas.width, sketchCanvas.height),
     palette: cloneSketchPalette(sketchWorkingPalette),
     meanings: sketchMeaningInputs.map((meaning) => meaning.value.trim()),
   };
@@ -3724,7 +3730,9 @@ function sketchActionDescription(action) {
   if (action.kind === "base") return "restored sketch base";
   if (action.kind === "clear") return "clear canvas";
   if (action.kind === "paste") {
-    return `paste image · ${action.fit || "cover"}`;
+    return action.fit === "canvas"
+      ? `paste image · match image (${action.imageData.width} × ${action.imageData.height})`
+      : `paste image · ${action.fit || "cover"}`;
   }
   if (action.kind === "palette-filter") {
     const names = {
@@ -3758,7 +3766,11 @@ function sketchActionDescription(action) {
     return `scale canvas · ${action.width} × ${action.height}`;
   }
   if (action.kind === "crop-outside") return "crop to selection";
-  if (action.kind === "crop-fill") return `crop to canvas · ${action.fit || "cover"}`;
+  if (action.kind === "crop-fill") {
+    return action.fit === "canvas"
+      ? "crop to canvas · match selection size"
+      : `crop to canvas · ${action.fit || "cover"}`;
+  }
   if (action.kind === "region-edit") {
     const parts = [];
     if (action.clearMask) parts.push("clear selection");
@@ -4489,14 +4501,95 @@ function scaleSketchImageDataNearest(src, destW, destH) {
   return dst;
 }
 
+function sketchAspectRatioClose(a, b) {
+  return Math.abs(Math.log(a / b)) < 0.01;
+}
+
+// Published shape whose ratio is nearest the given size, by log-ratio
+// distance. Used for the attach record when the canvas size is unpublished.
+function sketchNearestPublishedAspect(width, height) {
+  const ratio = width / height;
+  let bestName = "square";
+  let bestDelta = Infinity;
+  for (const [name, [w, h]] of Object.entries(SketchCanvasSizes)) {
+    const delta = Math.abs(Math.log(ratio / (w / h)));
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      bestName = name;
+    }
+  }
+  return bestName;
+}
+
+function sketchGcd(a, b) {
+  while (b) [a, b] = [b, a % b];
+  return a;
+}
+
+function sketchAspectCustomLabel(width, height) {
+  const divisor = sketchGcd(width, height);
+  const rw = width / divisor;
+  const rh = height / divisor;
+  if (rw <= 99 && rh <= 99) return `custom ${rw}:${rh}`;
+  return `custom ${(width / height).toFixed(2)}:1`;
+}
+
+// Keeps the shape picker truthful without ever mutating sketchAspect (which
+// anchors deterministic action replay). Exact published sizes select their
+// name; a matching published RATIO (raw halve/double, restored sketches)
+// keeps that name; anything else shows a disabled custom-ratio readout.
 function syncSketchAspectSelectToCanvas() {
-  const name = sketchAspectNameFromSize(sketchCanvas.width, sketchCanvas.height);
-  if (name && sketchAspectSelect.value !== name) sketchAspectSelect.value = name;
+  const width = sketchCanvas.width;
+  const height = sketchCanvas.height;
+  const customOption = sketchAspectSelect.querySelector('option[value="custom"]');
+  const exact = sketchAspectNameFromSize(width, height);
+  let name = exact;
+  if (!name) {
+    const ratio = width / height;
+    for (const [candidate, [w, h]] of Object.entries(SketchCanvasSizes)) {
+      if (sketchAspectRatioClose(ratio, w / h)) {
+        name = candidate;
+        break;
+      }
+    }
+  }
+  if (name) {
+    customOption?.remove();
+    if (sketchAspectSelect.value !== name) sketchAspectSelect.value = name;
+    return;
+  }
+  const label = sketchAspectCustomLabel(width, height);
+  if (customOption) {
+    customOption.textContent = label;
+  } else {
+    const option = document.createElement("option");
+    option.value = "custom";
+    option.disabled = true;
+    option.textContent = label;
+    sketchAspectSelect.appendChild(option);
+  }
+  sketchAspectSelect.value = "custom";
 }
 
 function sketchCurrentPasteFit() {
   const value = sketchPasteFitSelect.value;
-  return SketchPasteFitModes.has(value) ? value : "cover";
+  return SketchPasteFitModes.has(value) ? value : "canvas";
+}
+
+// Canvas size for a "match image" paste: the source's exact aspect ratio at
+// its own resolution, upscaled so the long edge reaches
+// SketchMatchImageMinLongEdge, and clamped inside the raw-scale caps.
+function sketchCanvasSizeForImage(width, height) {
+  let scale = Math.max(1, SketchMatchImageMinLongEdge / Math.max(width, height));
+  scale = Math.min(
+    scale,
+    SketchScaleMaxEdge / width,
+    SketchScaleMaxEdge / height,
+    Math.sqrt(SketchScaleMaxPixels / (width * height)));
+  return {
+    width: Math.min(SketchScaleMaxEdge, Math.max(SketchScaleMinEdge, Math.round(width * scale))),
+    height: Math.min(SketchScaleMaxEdge, Math.max(SketchScaleMinEdge, Math.round(height * scale))),
+  };
 }
 
 function sketchCurrentDitherMethod() {
@@ -4550,6 +4643,18 @@ function rasterizeSketchBitmap(bitmap, dw, dh) {
 }
 
 function applySketchPaste(action) {
+  if (action.fit === "canvas") {
+    const width = action.imageData.width;
+    const height = action.imageData.height;
+    if (sketchCanvas.width !== width || sketchCanvas.height !== height) {
+      // Deterministic replay: prior content scales exactly like canvas-scale,
+      // then the pasted image stamps over the whole retargeted canvas.
+      const src = sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height);
+      const scaled = scaleSketchImageDataNearest(src, width, height);
+      resizeSketchCanvasToSize(width, height);
+      sketchCtx.putImageData(scaled, 0, 0);
+    }
+  }
   stampSketchImageData(action.dx, action.dy, action.imageData);
 }
 
@@ -4788,6 +4893,13 @@ function applySketchCropFill(action) {
     points: action.mask.points,
     bounds: action.mask.bounds,
   });
+  if (action.fit === "canvas") {
+    // Crop the canvas itself to the selection's own size and aspect ratio.
+    resizeSketchCanvasToSize(kept.imageData.width, kept.imageData.height);
+    sketchBlank();
+    stampSketchImageData(0, 0, kept.imageData);
+    return;
+  }
   const fit = sketchFitRect(
     kept.imageData.width,
     kept.imageData.height,
@@ -4828,8 +4940,13 @@ async function importImageIntoSketch(file) {
       return;
     }
     const fitMode = sketchCurrentPasteFit();
-    const dest = sketchFitRect(
-      bitmap.width, bitmap.height, sketchCanvas.width, sketchCanvas.height, fitMode);
+    const dest = fitMode === "canvas"
+      ? (() => {
+        const target = sketchCanvasSizeForImage(bitmap.width, bitmap.height);
+        return { dx: 0, dy: 0, dw: target.width, dh: target.height };
+      })()
+      : sketchFitRect(
+        bitmap.width, bitmap.height, sketchCanvas.width, sketchCanvas.height, fitMode);
     const imageData = rasterizeSketchBitmap(bitmap, dest.dw, dest.dh);
     const ok = commitSketchAction({
       kind: "paste",
@@ -4855,9 +4972,11 @@ async function importImageIntoSketch(file) {
         bounds: { x: selX, y: selY, w: selW, h: selH },
       });
     }
-    setSketchActionStatus(
-      `Pasted ${bitmap.width}×${bitmap.height} with ${fitMode}. `
-      + "Edit as usual; snap, dither, or regen template from image colors before attaching.");
+    setSketchActionStatus(fitMode === "canvas"
+      ? `Pasted ${bitmap.width}×${bitmap.height}; canvas is now ${sketchCanvas.width} × ${sketchCanvas.height} to match the image. `
+        + "Edit as usual; snap, dither, or regen template from image colors before attaching."
+      : `Pasted ${bitmap.width}×${bitmap.height} with ${fitMode}. `
+        + "Edit as usual; snap, dither, or regen template from image colors before attaching.");
   } finally {
     bitmap.close();
   }
@@ -5953,10 +6072,13 @@ sketchDialog.addEventListener("keydown", (event) => {
 });
 sketchAspectSelect.addEventListener("change", () => {
   const next = sketchAspectSelect.value;
-  const live = sketchAspectNameFromSize(sketchCanvas.width, sketchCanvas.height) || sketchAspect;
+  if (!Object.hasOwn(SketchCanvasSizes, next)) {
+    syncSketchAspectSelectToCanvas();
+    return;
+  }
   if (sketchScanColors().ink
       && !confirm("Changing the canvas shape clears the sketch. Continue?")) {
-    sketchAspectSelect.value = live;
+    syncSketchAspectSelectToCanvas();
     return;
   }
   sketchAspect = next;
@@ -5965,6 +6087,7 @@ sketchAspectSelect.addEventListener("change", () => {
   resetSketchActions();
   setSketchWorkingPalette(SketchPalette, { meanings: SketchPalette.map(() => "") });
   setSketchColor(0);
+  syncSketchAspectSelectToCanvas();
 });
 
 // Which palette colors the sketch actually contains, by exact pixel match,

@@ -9,6 +9,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 ## Also Read
 
 - [.cursorrules](.cursorrules) — communication style, XML docs policy, namespace rules, constants philosophy
+- [.cursor/rules/writing-register-ste100.mdc](.cursor/rules/writing-register-ste100.mdc) — **mandatory writing register for all agent output**: no praise; Simplified Technical English ASD-STE100; max 20 words per sentence; one fact per sentence; active voice; instructions start with a verb; no undefined jargon; DataColada/Gelman rigor over textbook consensus; 3Blue1Brown/Deutsch standard for math and natural science; Scott Alexander epistemics in succinct prose
 - [.cursor/rules/production-deploy-target.mdc](.cursor/rules/production-deploy-target.mdc) — **mandatory release identity**: this repo deploys only the private MultiImageClient production site; `tpbeta` is its shared physical host, never the product target
 - [.cursor/rules/shared-site-resident-memory.mdc](.cursor/rules/shared-site-resident-memory.mdc) — **the private production `--ui` site is a resident daemon**: disk is source of truth, RAM/caches are bounded, and full image bytes never remain resident for process lifetime. Say **"shared-site resident"** or **"production UI memory"** to force this + clear the listed debt.
 - [docs/shared-host-memory-budget.md](docs/shared-host-memory-budget.md) — the private MultiImageClient site's RAM budget on physical host `tpbeta` and its reasoning framework (no-swap 4 GiB box, layered retention→intake→Chromium→self-heal fixes with commit references), plus per-tenant RAM surveys. Current since 2026-08-05: MemoryHigh=2048M/MemoryMax=2560M/GC 50% after tpdiscord and tpbeta.uwsgi were retired and the app became the box's primary tenant.
@@ -175,8 +176,14 @@ are not a substitute for those basics.
 
 While the dialog is open, Ctrl+V / paste / drop / load places the
 clipboard or file image onto the sketch canvas (not the composer). Paste
-size is a declared pre-stamp choice: keep-aspect fill (cover), keep-aspect
-largest fit (contain), or stretch to fill. The stamp is an undoable
+size is a declared pre-stamp choice: **match image — resize canvas** (the
+default since 2026-08-16: the canvas retargets to the pasted image's own
+aspect ratio at its source resolution, upscaled so the long edge is at
+least 1024 px and clamped to the 4096-edge / 16 MP caps), keep-aspect
+fill (cover), keep-aspect largest fit (contain), or stretch to fill. The
+canvas still defaults to square; the shape picker remains the manual
+control and shows a disabled `custom w:h` readout while the canvas
+aspect matches no published shape. The stamp is an undoable
 action and can then be edited with the ordinary tools. Attaching still
 requires exact legend-palette pixels, so a pasted photo is mapped with
 snap-to-palette, Floyd–Steinberg, ordered Bayer, or group-similar-colors
@@ -193,7 +200,8 @@ and **double** are raw nearest-neighbor resizes of the working canvas
 (repeatable; live WxH readout in the Canvas group; attach sends whatever
 size is showing). Double stops at a 4096-edge / 16 MP cap. Selection crop
 keeps canvas size (outside goes white) or scales the selection onto the
-canvas with the same paste-size setting.
+canvas with the same paste-size setting; in match-image mode the canvas
+takes the selection's own size and aspect ratio.
 
 The editor also has pencil, brush, soft brush, spray, eraser, bounded
 tolerance fill, line, rectangle, rounded rectangle, ellipse, triangle,
@@ -210,8 +218,9 @@ intentionally retain the exact PNG/aspect/palette/meanings contract rather
 than guessing a pre-flattening action graph. Version 1 restores the built-in
 8-color palette; version 2 restores the recorded palette. Restore sizes the
 editor to the attached PNG's exact pixel dimensions. Attach records the live
-canvas aspect (published size, or the current shape picker after a raw scale)
-so the picker restores; pixel size comes from the PNG.
+canvas aspect (published size, or the nearest published shape by ratio after
+a raw scale or match-image paste) so the picker restores; pixel size comes
+from the PNG.
 
 ## Testing Guidelines
 No dedicated test project exists yet. Manually validate new workflows by running representative prompts and inspecting generated assets and metadata. When adding automated coverage, create an xUnit project referenced by the solution and ensure `dotnet test` succeeds. Capture regression prompts in `prompts.txt` with notes after bug fixes.

@@ -1,0 +1,34 @@
+---
+description: Writing register — Simplified Technical English and epistemic standards for all agent output
+alwaysApply: true
+---
+
+# Writing register and epistemic standards
+
+Apply these rules to every response addressed to the user, in every agent
+instance, local or cloud.
+
+## Prose rules
+
+- No praise. Go straight to intellectual content.
+- Write in Simplified Technical English ASD-STE100.
+- Use short sentences.
+- Write a maximum of 20 words per sentence.
+- State one fact per sentence.
+- Use active voice.
+- Start instructions with a verb.
+- Do not use jargon. Insert an explanatory definition where a technical term
+  appears for the first time.
+
+## Audience and epistemic calibration
+
+- The user holds a Stanford PhD in Experimental Psychology and Behavioral
+  Economics. The user maintains deep methodological skepticism toward all
+  social science.
+- Apply DataColada and Gelman rigor, not textbook consensus. (DataColada is a
+  blog that audits research integrity; Andrew Gelman is a statistician known
+  for criticizing weak statistical practice.)
+- For math and natural science, 3Blue1Brown and David Deutsch hold the
+  standard for lucid, penetrating explanation.
+- Match Scott Alexander's compendious dispassionate epistemics, condensed
+  into succinct prose.

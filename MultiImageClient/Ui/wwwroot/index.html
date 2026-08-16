@@ -521,7 +521,7 @@
         <div id="sketch-tools">
           <div id="sketch-tool-global">
             <label>canvas
-              <select id="sketch-aspect">
+              <select id="sketch-aspect" title="Canvas shape. Defaults to square. Pasting with “match image — resize canvas” retargets the canvas to the pasted image's own aspect ratio.">
                 <option value="square" selected>square 1:1</option>
                 <option value="landscape">landscape 3:2</option>
                 <option value="portrait">portrait 2:3</option>
@@ -530,8 +530,9 @@
               </select>
             </label>
             <label>paste size
-              <select id="sketch-paste-fit" title="How a pasted or loaded image is scaled onto the canvas">
-                <option value="cover" selected>keep aspect, fill canvas</option>
+              <select id="sketch-paste-fit" title="How a pasted or loaded image is placed: resize the canvas to the image's own aspect ratio, or scale the image onto the current canvas">
+                <option value="canvas" selected>match image — resize canvas</option>
+                <option value="cover">keep aspect, fill canvas</option>
                 <option value="contain">keep aspect, largest fit</option>
                 <option value="stretch">stretch to fill canvas</option>
               </select>
@@ -579,7 +580,7 @@
                 <button id="sketch-selection-flip-h" type="button" disabled title="Flip the selection horizontally">flip H</button>
                 <button id="sketch-selection-flip-v" type="button" disabled title="Flip the selection vertically">flip V</button>
                 <button id="sketch-selection-crop" type="button" disabled title="Keep the selection; fill the rest of the canvas with white">crop</button>
-                <button id="sketch-selection-crop-fill" type="button" disabled title="Scale the selection to fill the whole canvas using the paste-size setting">crop to canvas</button>
+                <button id="sketch-selection-crop-fill" type="button" disabled title="Scale the selection to fill the whole canvas using the paste-size setting. With “match image — resize canvas” the canvas takes the selection's own size.">crop to canvas</button>
                 <button id="sketch-selection-deselect" type="button" disabled title="Drop the current selection">deselect</button>
               </div>
             </section>
