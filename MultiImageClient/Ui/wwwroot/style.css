@@ -1765,13 +1765,19 @@ body.image-viewer-open { overflow: hidden; }
 }
 #image-viewer-input-image[hidden] { display: none; }
 /* Input-comparison mode (toggled with `c`, only for jobs that carried an
-   input image): the stage splits into equal halves — input on the left,
-   generated output on the right — each image centered in its half. */
+   input image): the stage splits into equal halves — input first, generated
+   output second — each image centered in its half. The split runs side by
+   side or stacked (input on top): app.js computes both orientations and
+   applies .stacked when that draws the images larger for their shape. */
 #image-viewer-stage.compare {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: 4px;
+}
+#image-viewer-stage.compare.stacked {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
 }
 .image-viewer-pane-label {
   position: absolute;
@@ -1786,6 +1792,11 @@ body.image-viewer-open { overflow: hidden; }
 .image-viewer-pane-label[hidden] { display: none; }
 #image-viewer-input-label { left: 8px; }
 #image-viewer-output-label { left: calc(50% + 10px); }
+/* Stacked orientation: the output pane starts at the vertical midpoint. */
+#image-viewer-stage.compare.stacked #image-viewer-output-label {
+  left: 8px;
+  top: calc(50% + 10px);
+}
 /* Temporary, trivially dismissable shortcut overlay — allowed over the stage. */
 #image-viewer-help {
   position: absolute;

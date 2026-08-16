@@ -8765,6 +8765,52 @@ function setImageViewerIdentity(item) {
   renderImageViewer();
 }
 
+// Both compare panes draw at one shared image height; the wider of the two
+// aspect ratios dictates the pane size both images need to reach it.
+function imageViewerComparePaneAr() {
+  const inputAr = imageViewerInputImage.naturalWidth > 0
+    ? imageViewerInputImage.naturalWidth / imageViewerInputImage.naturalHeight
+    : imageViewerContentAr;
+  return Math.max(inputAr || 1, imageViewerContentAr || 1);
+}
+
+// Compare orientation is not a fixed style: side-by-side and stacked are both
+// computed for the given box and whichever draws the images larger wins.
+// Tall pairs land side by side, wide pairs stack, and mid cases resolve by
+// the actual geometry (including the monitor's shape) instead of a threshold.
+// Returns the per-image drawn height of the winning orientation.
+function imageViewerCompareOrientation(maxWidth, maxHeight) {
+  const gap = 4; // matches #image-viewer-stage.compare gap
+  const paneAr = imageViewerComparePaneAr();
+  const rowHeight = Math.min(maxHeight, (maxWidth - gap) / 2 / paneAr);
+  const stackedHeight = Math.min((maxHeight - gap) / 2, maxWidth / paneAr);
+  if (stackedHeight > rowHeight) {
+    return {
+      stacked: true,
+      imageHeight: stackedHeight,
+      width: stackedHeight * paneAr,
+      height: stackedHeight * 2 + gap,
+    };
+  }
+  return {
+    stacked: false,
+    imageHeight: rowHeight,
+    width: rowHeight * paneAr * 2 + gap,
+    height: rowHeight,
+  };
+}
+
+// Shrink-wrapped windows get their orientation from fitImageViewerWindow's
+// candidate math. A manually resized (or not-yet-fitted) window keeps its box,
+// so decide from the stage's current size instead.
+function applyCompareOrientationFromStageBox() {
+  if (!imageViewerStage.classList.contains("compare") || !imageViewerContentAr) return;
+  const box = imageViewerStage.getBoundingClientRect();
+  if (!(box.width > 0) || !(box.height > 0)) return;
+  imageViewerStage.classList.toggle(
+    "stacked", imageViewerCompareOrientation(box.width, box.height).stacked);
+}
+
 // Left pane of the `c` comparison: prefer the decoded full-resolution preload.
 // Its exact card thumbnail can identify the same input immediately while a
 // first-time background warm finishes; never retain another job's input.
@@ -8778,9 +8824,13 @@ function applyImageViewerCompare(current) {
   imageViewerInputLabel.hidden = !active;
   imageViewerOutputLabel.hidden = !active;
   if (!active) {
+    imageViewerStage.classList.remove("stacked");
     imageViewerInputImage.removeAttribute("src");
     return;
   }
+  // fitImageViewerWindow owns the orientation while it controls the window
+  // size; a user-pinned window never refits, so orient from its box here.
+  if (imageViewerWindow.dataset.userSized) applyCompareOrientationFromStageBox();
   const inputUrl = imageViewerInputUrl(current.item.jobId);
   const cached = imageViewerCache.get(inputUrl);
   if (cached?.ready) {
@@ -9339,7 +9389,7 @@ const ImageViewerCommands = [
     match: (event) =>
       !event.ctrlKey && !event.metaKey && !event.altKey &&
       (event.key === "c" || event.key === "C"),
-    help: "Keep input/output comparison armed while traversing; jobs without an input remain single-image.",
+    help: "Keep input/output comparison armed while traversing; jobs without an input remain single-image. The two panes sit side by side or stack vertically, whichever draws the images larger for their shape.",
     run: () => toggleImageViewerCompare(),
   },
   {
@@ -9450,18 +9500,13 @@ function fitImageViewerWindow() {
   const availHeight = Math.max(320, window.innerHeight - margin * 2);
   const stageSizeWithin = (maxWidth, maxHeight) => {
     if (imageViewerStage.classList.contains("compare")) {
-      const inputAr = imageViewerInputImage.naturalWidth > 0
-        ? imageViewerInputImage.naturalWidth / imageViewerInputImage.naturalHeight
-        : imageViewerContentAr;
-      // Equal-width panes: the wider aspect dictates the pane width needed
-      // for both images to reach the shared stage height.
-      const paneAr = Math.max(inputAr, imageViewerContentAr);
-      const paneMaxWidth = (maxWidth - gap) / 2;
-      const height = Math.min(maxHeight, paneMaxWidth / paneAr);
-      return { width: height * paneAr * 2 + gap, height };
+      // Both orientations are computed and the larger drawn image wins —
+      // see imageViewerCompareOrientation. imageHeight is the comparison
+      // metric because in stacked mode it is half the stage, not equal to it.
+      return imageViewerCompareOrientation(maxWidth, maxHeight);
     }
     const height = Math.min(maxHeight, maxWidth / imageViewerContentAr);
-    return { width: height * imageViewerContentAr, height };
+    return { width: height * imageViewerContentAr, height, imageHeight: height, stacked: false };
   };
   const placeWindow = (width, height) => {
     imageViewerWindow.style.width = `${width}px`;
@@ -9474,27 +9519,29 @@ function fitImageViewerWindow() {
   // prompt wraps differently as the window narrows), so measure it in bottom
   // mode over two passes. This leaves the bottom layout applied.
   imageViewerWindow.classList.remove("side-status");
-  let bottomStageHeight = 0;
+  let bottomStage = null;
   for (let pass = 0; pass < 2; pass++) {
     const statusHeight = imageViewerStatus.offsetHeight;
-    const stage = stageSizeWithin(availWidth, Math.max(120, availHeight - statusHeight));
-    bottomStageHeight = stage.height;
+    bottomStage = stageSizeWithin(availWidth, Math.max(120, availHeight - statusHeight));
     placeWindow(
-      Math.max(440, Math.min(availWidth, Math.round(stage.width))),
-      Math.max(320, Math.min(availHeight, Math.round(stage.height + statusHeight))));
+      Math.max(440, Math.min(availWidth, Math.round(bottomStage.width))),
+      Math.max(320, Math.min(availHeight, Math.round(bottomStage.height + statusHeight))));
   }
 
-  // Side-column candidate: fixed-width info column, full-height stage. The
-  // displayed image height equals the stage height in both layouts (the stage
-  // hugs the content's aspect ratio), so comparing stage heights compares
-  // image scale directly. Ties keep the bottom bar.
+  // Side-column candidate: fixed-width info column, full-height stage.
+  // imageHeight is the drawn per-image height in every layout (equal to the
+  // stage height except in stacked compare, where it is half), so comparing
+  // it compares image scale directly. Ties keep the bottom bar.
   const sideStage = stageSizeWithin(availWidth - ImageViewerSideStatusWidth, availHeight);
-  if (sideStage.height > bottomStageHeight + 1) {
+  let chosen = bottomStage;
+  if (sideStage.imageHeight > bottomStage.imageHeight + 1) {
+    chosen = sideStage;
     imageViewerWindow.classList.add("side-status");
     placeWindow(
       Math.max(440, Math.min(availWidth, Math.round(sideStage.width + ImageViewerSideStatusWidth))),
       Math.max(320, Math.min(availHeight, Math.round(sideStage.height))));
   }
+  imageViewerStage.classList.toggle("stacked", !!chosen.stacked);
 }
 
 function clampImageViewerWindow() {
@@ -9809,12 +9856,20 @@ imageViewerResize.addEventListener("pointercancel", () => {
 });
 window.addEventListener("resize", () => {
   if (imageViewer.hidden) return;
-  if (imageViewerWindow.dataset.userSized || !imageViewerContentAr) clampImageViewerWindow();
-  else fitImageViewerWindow();
+  if (imageViewerWindow.dataset.userSized || !imageViewerContentAr) {
+    clampImageViewerWindow();
+    applyCompareOrientationFromStageBox();
+  } else {
+    fitImageViewerWindow();
+  }
 });
 // The compare pane's input image loads independently of the output; its
-// aspect ratio can widen the shrink-wrapped window once known.
-imageViewerInputImage.addEventListener("load", fitImageViewerWindow);
+// aspect ratio can widen the shrink-wrapped window once known — and can
+// change which compare orientation draws larger.
+imageViewerInputImage.addEventListener("load", () => {
+  if (imageViewerWindow.dataset.userSized) applyCompareOrientationFromStageBox();
+  else fitImageViewerWindow();
+});
 
 // One describe result block: the returned description text at full card
 // width, the model's separated "comments" (meta remarks the JSON reply
