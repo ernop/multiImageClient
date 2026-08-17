@@ -175,8 +175,11 @@ Do not ship or regress below that floor. Extra tools may be added; they
 are not a substitute for those basics.
 
 While the dialog is open, Ctrl+V / paste / drop / load places the
-clipboard or file image onto the sketch canvas (not the composer). Paste
-size is a declared pre-stamp choice: **match image — resize canvas** (the
+clipboard or file image onto the sketch canvas (not the composer).
+**copy image** / Ctrl+C writes the current canvas pixels back to the
+clipboard as `image/png` (the portable clipboard image type; BMP is not
+a reliable ClipboardItem write). Paste size is a declared pre-stamp
+choice: **match image — resize canvas** (the
 default since 2026-08-16: the canvas retargets to the pasted image's own
 aspect ratio at its source resolution, upscaled so the long edge is at
 least 1024 px and clamped to the 4096-edge / 16 MP caps), keep-aspect

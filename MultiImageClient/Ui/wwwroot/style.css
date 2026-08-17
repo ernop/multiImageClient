@@ -2354,6 +2354,7 @@ body.image-viewer-open { overflow: hidden; }
   border-radius: 50%;
   outline: 2px solid var(--ink);
   transform: translate(-50%, -50%);
+  will-change: transform;
   z-index: 2;
 }
 #sketch-brush-cursor.visible { display: block; }

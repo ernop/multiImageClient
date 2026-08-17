@@ -514,6 +514,7 @@
     <p class="compact-dialog-note">
       Build a spatial map of where things should go, then say what each color means.
       Paste or load a reference image onto the canvas, then crop, rotate, dither, or paint over it.
+      Copy image puts the current canvas pixels back on the clipboard as a PNG.
       Attaching adds the sketch as an input image and writes one legend paragraph into your prompt:
       image models use its placement and coverage while choosing the final palette and rendering style
       from the rest of your prompt.
@@ -540,6 +541,7 @@
               </select>
             </label>
             <button id="sketch-paste" type="button" title="Paste the clipboard image onto the canvas (Ctrl+V)">paste image</button>
+            <button id="sketch-copy" type="button" title="Copy the current canvas pixels to the clipboard as a PNG (Ctrl+C)">copy image</button>
             <button id="sketch-import" type="button" title="Load an image file onto the canvas">load image</button>
             <input id="sketch-import-file" type="file" accept="image/*" hidden>
             <label>size <input id="sketch-brush" type="range" min="1" max="96" value="30"></label>
