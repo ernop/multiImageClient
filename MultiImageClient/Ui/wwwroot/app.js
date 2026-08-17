@@ -128,6 +128,11 @@ let visibilityServerVersion = "";
 let hiddenPromptJobIds = new Set();
 let hiddenImageKeys = new Set();
 let visibilityMutation = null;
+let vibecodersAvailable = false;
+let vibecodersServerVersion = "";
+let vibecodersSentKeys = new Set();
+let vibecodersMutation = null;
+let vibecodersMutationError = null;
 const ownedJobIds = new Set();
 let jobActivityHydrated = false;
 let activityCursor = null;
@@ -257,6 +262,7 @@ const imageViewerPosition = el("image-viewer-position");
 const imageViewerFavorite = el("image-viewer-favorite");
 const imageViewerVideo = el("image-viewer-video");
 const imageViewerHide = el("image-viewer-hide");
+const imageViewerVibecoders = el("image-viewer-vibecoders");
 const imageViewerStatus = el("image-viewer-status");
 const favoritesGallery = el("favorites-gallery");
 const favoritesGrid = el("favorites-grid");
@@ -655,6 +661,7 @@ async function loadConfig() {
   generatorEndpointConfiguration =
     cfg.generatorEndpointConfiguration || generatorEndpointConfiguration;
   videoGeneration = cfg.videoGeneration || videoGeneration;
+  vibecodersAvailable = !!(cfg.vibecoders && cfg.vibecoders.available);
   claudeAdvice = cfg.claudeAdvice || claudeAdvice;
   applyClaudeAdviceAvailability();
   describeConfig = cfg.describe || describeConfig;
@@ -7218,6 +7225,7 @@ function refreshFavoritePresentation() {
     const current = locateImageViewerState(getImageViewerPrompts());
     renderImageViewerFavorite(current ? current.item : null);
     renderImageViewerHide(current ? current.item : null);
+    renderImageViewerVibecoders(current ? current.item : null);
   }
   if (favoriteBrowseUser !== null) {
     if (imageViewer.hidden) renderFavoritesGallery();
@@ -7359,6 +7367,126 @@ function renderImageViewerHide(item) {
   imageViewerHide.textContent = visibilityMutation ? "hiding…" : "hide image";
 }
 
+function vibecodersIdentity(jobId, generator, imageIndex) {
+  return `${jobId}|${generator}|${imageIndex}`;
+}
+
+function renderImageViewerVibecoders(item) {
+  const allowed = vibecodersAvailable && !!item && item.kind !== "text";
+  imageViewerVibecoders.hidden = !allowed;
+  if (!allowed) {
+    imageViewerVibecoders.disabled = true;
+    imageViewerVibecoders.textContent = "send to vibecoders";
+    imageViewerVibecoders.title = "Send this image to #vibecoders";
+    return;
+  }
+  const key = vibecodersIdentity(item.jobId, item.generator, item.imageIndex);
+  if (vibecodersMutation === key) {
+    imageViewerVibecoders.disabled = true;
+    imageViewerVibecoders.textContent = "sending…";
+    imageViewerVibecoders.title = "Sending to #vibecoders";
+    return;
+  }
+  if (vibecodersSentKeys.has(key)) {
+    imageViewerVibecoders.disabled = true;
+    imageViewerVibecoders.textContent = "sent to vibecoders";
+    imageViewerVibecoders.title = "This image was already sent to #vibecoders";
+    return;
+  }
+  if (vibecodersMutationError && vibecodersMutationError.key === key) {
+    imageViewerVibecoders.disabled = false;
+    imageViewerVibecoders.textContent = "send failed";
+    imageViewerVibecoders.title = vibecodersMutationError.message;
+    return;
+  }
+  imageViewerVibecoders.disabled = vibecodersMutation !== null;
+  imageViewerVibecoders.textContent = "send to vibecoders";
+  imageViewerVibecoders.title = "Send this image to #vibecoders";
+}
+
+async function loadVibecodersSent() {
+  if (!vibecodersAvailable) return;
+  const query = vibecodersServerVersion
+    ? `?version=${encodeURIComponent(vibecodersServerVersion)}`
+    : "";
+  const response = await fetch(apiUrl(`api/discord/vibecoders${query}`));
+  if (response.status === 401) { location.reload(); return; }
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const body = await response.json();
+  if (body.unchanged) return;
+  vibecodersServerVersion = String(body.version || "");
+  vibecodersSentKeys = new Set(
+    (body.items || []).map((item) =>
+      vibecodersIdentity(item.jobId, item.generator, item.imageIndex)));
+  refreshVibecodersButtons();
+}
+
+function refreshVibecodersButtons() {
+  if (!imageViewer.hidden) {
+    const current = locateImageViewerState(getImageViewerPrompts());
+    renderImageViewerVibecoders(current ? current.item : null);
+  }
+  for (const button of document.querySelectorAll("[data-vibecoders-send]")) {
+    paintVibecodersButton(button);
+  }
+}
+
+function paintVibecodersButton(button) {
+  const key = vibecodersIdentity(
+    button.dataset.jobId, button.dataset.generator, button.dataset.imageIndex);
+  if (vibecodersMutation === key) {
+    button.disabled = true;
+    button.textContent = "sending…";
+    return;
+  }
+  if (vibecodersSentKeys.has(key)) {
+    button.disabled = true;
+    button.textContent = "sent to vibecoders";
+    return;
+  }
+  button.disabled = vibecodersMutation !== null;
+  button.textContent = "send to vibecoders";
+}
+
+async function sendToVibecoders(jobId, generator, imageIndex) {
+  const key = vibecodersIdentity(jobId, generator, imageIndex);
+  if (!vibecodersAvailable || vibecodersMutation || vibecodersSentKeys.has(key)) return;
+  vibecodersMutation = key;
+  vibecodersMutationError = null;
+  refreshVibecodersButtons();
+  const form = new FormData();
+  form.append("jobId", jobId);
+  form.append("generator", generator);
+  form.append("imageIndex", String(imageIndex));
+  try {
+    const response = await fetch(apiUrl("api/discord/vibecoders"), { method: "POST", body: form });
+    if (response.status === 401) { location.reload(); return; }
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    if (!body.item
+        || body.item.jobId !== jobId
+        || body.item.generator !== generator
+        || body.item.imageIndex !== imageIndex) {
+      throw new Error("send response identity did not match the requested result");
+    }
+    vibecodersSentKeys.add(key);
+    if (body.version) vibecodersServerVersion = String(body.version);
+    vibecodersMutation = null;
+    refreshVibecodersButtons();
+  } catch (error) {
+    vibecodersMutation = null;
+    vibecodersMutationError = { key, message: String(error) };
+    refreshVibecodersButtons();
+  }
+}
+
+async function sendCurrentViewerToVibecoders() {
+  const current = locateImageViewerState(getImageViewerPrompts());
+  if (!current || current.item.kind === "text") return;
+  await sendToVibecoders(
+    current.item.jobId, current.item.generator, current.item.imageIndex);
+}
+
 async function hideCurrentViewerImage() {
   const current = locateImageViewerState(getImageViewerPrompts());
   if (!current || current.item.kind === "text") return;
@@ -7451,6 +7579,7 @@ imageViewerVideo.addEventListener("click", () => {
     current.prompt.prompt);
 });
 imageViewerHide.addEventListener("click", () => hideCurrentViewerImage());
+imageViewerVibecoders.addEventListener("click", () => sendCurrentViewerToVibecoders());
 
 async function togglePromptFavorite(jobId) {
   const identity = promptFavoriteIdentity(jobId);
@@ -8991,6 +9120,7 @@ function paintImageViewerChrome(target) {
   renderImageViewerFavorite(target.item);
   renderImageViewerVideo(target.item);
   renderImageViewerHide(target.item);
+  renderImageViewerVibecoders(target.item);
   renderImageViewerPosition(target.item);
   // Describe items: the stage IS the submitted image; the panel above the
   // prompt carries the returned description (plus the model's separated
@@ -9051,6 +9181,7 @@ function clearImageViewerPresentation() {
   renderImageViewerFavorite(null);
   renderImageViewerVideo(null);
   renderImageViewerHide(null);
+  renderImageViewerVibecoders(null);
   imageViewerContentAr = null;
   applyImageViewerCompare(null);
 }
@@ -9069,6 +9200,7 @@ async function renderImageViewer() {
     renderImageViewerFavorite(null);
     renderImageViewerVideo(null);
     renderImageViewerHide(null);
+    renderImageViewerVibecoders(null);
     imageViewerGenerator.textContent = "selected image is no longer available";
     imageViewerDimensions.textContent = "";
     renderImageViewerPosition(null);
@@ -10693,6 +10825,22 @@ function applyJobEvent(id, card, evt) {
             });
             result.appendChild(redo);
           }
+          if (vibecodersAvailable) {
+            const send = document.createElement("button");
+            send.type = "button";
+            send.className = "send-vibecoders";
+            send.dataset.vibecodersSend = "true";
+            send.dataset.jobId = id;
+            send.dataset.generator = evt.gen;
+            send.dataset.imageIndex = String(imageIndex);
+            send.setAttribute("aria-label", "Send to vibecoders");
+            send.title = "Send this video to #vibecoders";
+            paintVibecodersButton(send);
+            send.addEventListener("click", () => {
+              sendToVibecoders(id, evt.gen, imageIndex);
+            });
+            result.appendChild(send);
+          }
           images.appendChild(result);
           continue;
         }
@@ -10901,6 +11049,7 @@ function relativeDayName(dayIso) {
 function buildArchiveDayRow(d) {
   const wrap = document.createElement("div");
   wrap.className = "archive-day";
+  wrap.dataset.day = d.day;
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "archive-day-toggle";
@@ -11025,6 +11174,46 @@ async function pollRamStatus() {
   }
 }
 
+async function ensureArchiveDayLoaded(day) {
+  await loadArchiveDays();
+  const wrap = archiveDaysEl.querySelector(`.archive-day[data-day="${CSS.escape(day)}"]`);
+  if (!wrap) throw new Error("that job's archive day is not listed");
+  const container = wrap.querySelector(".archive-day-jobs");
+  const btn = wrap.querySelector(".archive-day-toggle");
+  if (!container.dataset.loaded) {
+    await loadArchiveDay(day, container);
+    container.dataset.loaded = "true";
+  }
+  container.hidden = false;
+  btn.classList.add("open");
+}
+
+async function openSharedJobFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const jobId = params.get("job");
+  if (!jobId) return;
+  const generator = params.get("gen") || "";
+  const imageIndex = params.has("n") ? Number(params.get("n")) : -1;
+
+  let card = document.getElementById(`job-${jobId}`);
+  if (!card) {
+    const resp = await fetch(apiUrl(`api/jobs/${encodeURIComponent(jobId)}/location`));
+    if (resp.status === 401) { location.reload(); return; }
+    if (!resp.ok) throw new Error("that job is not available");
+    const loc = await resp.json();
+    if (!loc.live) {
+      await ensureArchiveDayLoaded(loc.day);
+    }
+    card = document.getElementById(`job-${jobId}`);
+  }
+  if (!card) throw new Error("that job card did not render");
+  card.scrollIntoView({ block: "center" });
+  if (!generator || !Number.isInteger(imageIndex) || imageIndex < 0) return;
+  const link = card.querySelector(
+    `a[data-viewer-image="true"][data-generator="${CSS.escape(generator)}"][data-image-index="${imageIndex}"]`);
+  if (link) openImageViewer(link);
+}
+
 // ---------- boot ----------
 
 // Every window is a view over durable server-side job history. The first
@@ -11035,12 +11224,17 @@ async function pollRamStatus() {
 loadConfig()
   .then(async () => {
     await pollProfiles(true);
-    pollJobEvents();
+    await pollJobEvents();
     pollActivity();
     loadKnownUsers();
     loadFavorites();
-    loadArchiveDays();
+    await loadArchiveDays();
+    loadVibecodersSent().catch(() => {});
     pollRamStatus();
+    openSharedJobFromUrl().catch((error) => {
+      sendError.textContent = `shared job link failed: ${error}`;
+    });
+    setInterval(() => { loadVibecodersSent().catch(() => {}); }, 5000);
     setInterval(pollFavorites, 5000);
     setInterval(pollProfiles, 5000);
     setInterval(pollRamStatus, 15000);

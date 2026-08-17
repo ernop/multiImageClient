@@ -1883,6 +1883,39 @@ namespace MultiImageClient
             lock (_envelopeLock) return _liveFeedJobIds.Contains(jobId);
         }
 
+        public bool TryGetJobLocation(string id, out string day, out bool live)
+        {
+            day = "";
+            live = false;
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                return false;
+            }
+            if (IsInLiveFeed(id))
+            {
+                var job = Get(id);
+                if (job == null)
+                {
+                    return false;
+                }
+                day = UiJobStorage.EnsureUtc(job.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd");
+                live = true;
+                return true;
+            }
+
+            UiHistoryIndexEntry? entry;
+            lock (_indexLock)
+            {
+                entry = _index.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.Ordinal));
+            }
+            if (entry == null)
+            {
+                return false;
+            }
+            day = entry.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd");
+            return true;
+        }
+
         /// Archived days (jobs not in the live feed), newest day first.
         public List<(string Day, List<string> JobIds)> ListArchivedDays()
         {

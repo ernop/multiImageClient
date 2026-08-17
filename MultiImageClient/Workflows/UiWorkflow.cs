@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -54,6 +55,9 @@ namespace MultiImageClient
     ///   POST /api/requests                     submit a request to the developer
     ///   GET  /api/requests?after=N             developer-only request inbox
     ///   POST /api/visibility                   creator-only permanent prompt/image stream hiding
+    ///   GET  /api/jobs/{id}/location           live vs archive-day home for a share link
+    ///   GET  /api/discord/vibecoders           identities already sent to #vibecoders
+    ///   POST /api/discord/vibecoders           send one image/video once; message is the site link
     ///   POST /api/auth/login|logout            shared-site access gate (only when UiAuthFilePath is set)
     public class UiWorkflow
     {
@@ -107,11 +111,13 @@ namespace MultiImageClient
             UiFavoriteStore favorites;
             UiVisibilityStore visibility;
             UiCommunityStore community;
+            UiDiscordVibecodersStore vibecoders;
             try
             {
                 favorites = new UiFavoriteStore(settings);
                 visibility = new UiVisibilityStore(settings);
                 community = new UiCommunityStore(settings);
+                vibecoders = new UiDiscordVibecodersStore(settings);
                 if (auth != null)
                 {
                     community.ReserveLoginNames(auth.ListAccountNames());
@@ -568,6 +574,10 @@ namespace MultiImageClient
                         isDeveloper = IsDeveloperLogin(ctx.Items["micUser"] as string ?? ""),
                         maxRequestChars = UiCommunityStore.MaxRequestChars,
                         returnAfterHours = UiCommunityStore.ReturnAfter.TotalHours,
+                    },
+                    vibecoders = new
+                    {
+                        available = DiscordVibecoders.IsConfigured(settings),
                     },
                 });
             });
@@ -1840,6 +1850,197 @@ namespace MultiImageClient
                 }
             });
 
+            app.MapGet("/api/jobs/{id}/location", (string id, HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                if (visibility.IsPromptHidden(id) || !jobs.TryGetJobLocation(id, out var day, out var live))
+                {
+                    return Results.NotFound(new { error = "The selected job is no longer available." });
+                }
+                return Results.Json(new { day, live });
+            });
+
+            app.MapGet("/api/discord/vibecoders", (string? version, HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                if (!DiscordVibecoders.IsConfigured(settings))
+                {
+                    return Results.Json(new { available = false, version = "", items = Array.Empty<object>() });
+                }
+                var snapshot = vibecoders.Snapshot();
+                if (string.Equals(version, snapshot.Version, StringComparison.Ordinal))
+                {
+                    return Results.Json(new { available = true, version = snapshot.Version, unchanged = true });
+                }
+                return Results.Json(new
+                {
+                    available = true,
+                    version = snapshot.Version,
+                    items = snapshot.Records.Select(record => new
+                    {
+                        record.Kind,
+                        jobId = record.JobId,
+                        generator = record.Generator,
+                        imageIndex = record.ImageIndex,
+                    }),
+                });
+            });
+
+            app.MapPost("/api/discord/vibecoders", async (HttpRequest request) =>
+            {
+                if (!DiscordVibecoders.IsConfigured(settings))
+                {
+                    return Results.Json(
+                        new { error = "Sending to vibecoders is not configured on this instance." },
+                        statusCode: 404);
+                }
+
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (auth != null && authUser.Length == 0)
+                {
+                    return Results.Json(
+                        new { error = "Log in to send to vibecoders." },
+                        statusCode: 403);
+                }
+
+                var form = await request.ReadFormAsync();
+                var jobId = form["jobId"].ToString().Trim();
+                var generator = form["generator"].ToString().Trim();
+                if (jobId.Length == 0
+                    || generator.Length == 0
+                    || !int.TryParse(form["imageIndex"].ToString(), out var imageIndex)
+                    || imageIndex < 0)
+                {
+                    return Results.BadRequest(
+                        new { error = "jobId, generator, and a non-negative imageIndex are required." });
+                }
+
+                var job = jobs.Get(jobId);
+                if (job == null || visibility.IsPromptHidden(jobId))
+                {
+                    return Results.NotFound(new { error = "The selected job is no longer available." });
+                }
+                if (visibility.IsImageHidden(jobId, generator, imageIndex))
+                {
+                    return Results.NotFound(new { error = "The selected image is hidden." });
+                }
+                if (!TryResolveSendMedia(job, generator, imageIndex, out var media, out var mediaError))
+                {
+                    return Results.NotFound(new { error = mediaError });
+                }
+
+                if (!DiscordVibecoders.TryNormalizePublicBaseUrl(settings.UiPublicBaseUrl, out var publicBase))
+                {
+                    return Results.Json(
+                        new { error = "The share link is not configured on this instance." },
+                        statusCode: 500);
+                }
+
+                var sender = authUser.Length > 0 ? authUser : "local";
+                var claim = new UiDiscordVibecodersSend
+                {
+                    Kind = media.Kind,
+                    JobId = jobId,
+                    Generator = generator,
+                    ImageIndex = imageIndex,
+                    SentByLogin = sender,
+                    SentAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                };
+                if (!vibecoders.TryClaim(claim))
+                {
+                    return Results.Json(
+                        new { error = $"This {media.Kind} was already sent to vibecoders." },
+                        statusCode: 409);
+                }
+
+                Stream? upload = null;
+                try
+                {
+                    var shareUrl = DiscordVibecoders.BuildShareUrl(
+                        publicBase, jobId, generator, imageIndex);
+                    string contentType = media.ContentType;
+                    string fileName = generator + "-" + imageIndex
+                        + DiscordVibecoders.FileExtension(media.ContentType);
+                    string? embedImageUrl = null;
+                    var attach = false;
+
+                    if (job.TryGetImagePath(generator, imageIndex, out var path, out contentType)
+                        && File.Exists(path))
+                    {
+                        var length = new FileInfo(path).Length;
+                        if (length > 0 && length <= DiscordVibecoders.MaxAttachmentBytes)
+                        {
+                            upload = File.OpenRead(path);
+                            attach = true;
+                            fileName = generator + "-" + imageIndex
+                                + DiscordVibecoders.FileExtension(contentType);
+                        }
+                    }
+                    else
+                    {
+                        var hosted = await runner.TryGetImageBytesIncludingHostedAsync(
+                            job, generator, imageIndex);
+                        if (hosted != null
+                            && hosted.Value.Bytes.Length > 0
+                            && hosted.Value.Bytes.Length <= DiscordVibecoders.MaxAttachmentBytes)
+                        {
+                            upload = new MemoryStream(hosted.Value.Bytes, writable: false);
+                            contentType = hosted.Value.ContentType;
+                            attach = true;
+                            fileName = generator + "-" + imageIndex
+                                + DiscordVibecoders.FileExtension(contentType);
+                        }
+                    }
+
+                    if (!attach
+                        && media.Kind == "image"
+                        && media.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        embedImageUrl = media.Url;
+                    }
+
+                    var client = new DiscordVibecodersClient(settings);
+                    await client.SendAsync(
+                        shareUrl,
+                        sender,
+                        attach ? upload! : Stream.Null,
+                        contentType,
+                        fileName,
+                        embedImageUrl,
+                        request.HttpContext.RequestAborted);
+                    Logger.Log(
+                        $"UI vibecoders: {sender} sent {media.Kind}/{jobId}/{generator}/{imageIndex}.");
+                    var snapshot = vibecoders.Snapshot();
+                    return Results.Json(new
+                    {
+                        available = true,
+                        version = snapshot.Version,
+                        item = new
+                        {
+                            media.Kind,
+                            jobId,
+                            generator,
+                            imageIndex,
+                        },
+                    });
+                }
+                catch (Exception ex) when (ex is IOException or HttpRequestException or InvalidOperationException or TaskCanceledException)
+                {
+                    vibecoders.ReleaseClaim(jobId, generator, imageIndex, sender);
+                    Logger.Log($"UI vibecoders: send failed for {jobId}/{generator}/{imageIndex}: {ex.Message}");
+                    return Results.Json(
+                        new { error = "Discord did not accept this send." },
+                        statusCode: 502);
+                }
+                finally
+                {
+                    if (upload != null)
+                    {
+                        await upload.DisposeAsync();
+                    }
+                }
+            });
+
             // Shared persistent image + prompt favorites. POST takes the
             // desired boolean state instead of "toggle", so a retried request
             // is idempotent. New records are accepted only after correlating
@@ -2816,6 +3017,83 @@ namespace MultiImageClient
             public required string ThumbUrl { get; init; }
             public string Size { get; init; } = "";
             public int GeneratorImageCount { get; init; }
+        }
+
+        private sealed class SendMediaDescriptor
+        {
+            public required string Kind { get; init; }
+            public required string Url { get; init; }
+            public required string ContentType { get; init; }
+        }
+
+        private static bool TryResolveSendMedia(
+            UiJob job,
+            string generator,
+            int imageIndex,
+            out SendMediaDescriptor media,
+            out string error)
+        {
+            SendMediaDescriptor? found = null;
+            var (events, _) = job.ReadFrom(0);
+            foreach (var eventJson in events)
+            {
+                using var document = JsonDocument.Parse(eventJson);
+                var root = document.RootElement;
+                if (!root.TryGetProperty("type", out var type)
+                    || !string.Equals(type.GetString(), "gen-result", StringComparison.Ordinal)
+                    || !root.TryGetProperty("gen", out var gen)
+                    || !string.Equals(gen.GetString(), generator, StringComparison.Ordinal)
+                    || !root.TryGetProperty("ok", out var ok)
+                    || ok.ValueKind != JsonValueKind.True)
+                {
+                    continue;
+                }
+
+                if (root.TryGetProperty("resultKind", out var resultKind)
+                    && string.Equals(resultKind.GetString(), "text", StringComparison.Ordinal))
+                {
+                    error = "Describe results cannot be sent to vibecoders.";
+                    media = null!;
+                    return false;
+                }
+
+                if (!root.TryGetProperty("images", out var images)
+                    || images.ValueKind != JsonValueKind.Array
+                    || imageIndex >= images.GetArrayLength())
+                {
+                    continue;
+                }
+
+                var url = images[imageIndex].GetString() ?? "";
+                if (url.Length == 0)
+                {
+                    error = "The selected result has no recorded URL.";
+                    media = null!;
+                    return false;
+                }
+
+                var isVideo = root.TryGetProperty("mediaType", out var mediaType)
+                    && (mediaType.GetString() ?? "").StartsWith("video/", StringComparison.OrdinalIgnoreCase);
+                found = new SendMediaDescriptor
+                {
+                    Kind = isVideo ? "video" : "image",
+                    Url = url,
+                    ContentType = isVideo
+                        ? (mediaType.GetString() ?? "video/mp4")
+                        : "application/octet-stream",
+                };
+            }
+
+            if (found == null)
+            {
+                error = "Only a successful image or video result can be sent.";
+                media = null!;
+                return false;
+            }
+
+            media = found;
+            error = "";
+            return true;
         }
 
         private static bool TryResolveFavoriteImage(

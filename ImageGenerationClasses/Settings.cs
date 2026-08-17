@@ -132,6 +132,16 @@ namespace MultiImageClient
         /// ImageDownloadBaseFolder/ui-community.sqlite3.
         public string UiCommunityDbPath { get; set; } = "";
 
+        // Incoming Discord webhook for the #vibecoders send button. Blank
+        // (the default) hides the button. When set, UiPublicBaseUrl is also
+        // required so the Discord message can carry a site link to the job.
+        public string DiscordVibecodersWebhookUrl { get; set; } = "";
+
+        // Public origin plus path prefix of this UI instance, used only to
+        // build Discord share links. Blank unless the webhook above is set.
+        // Example: https://host.example/instance-path  (no trailing slash).
+        public string UiPublicBaseUrl { get; set; } = "";
+
         /// Maximum number of memory-heavy UI job finalizations (contact-sheet
         /// rendering and cleanup) allowed at once. Endpoint requests from
         /// different jobs are scheduled independently by target and do not
@@ -416,6 +426,37 @@ namespace MultiImageClient
             {
                 throw new InvalidOperationException(
                     "settings.json: B2KeepLocalRawImages=false requires EnableB2ImageHosting=true — evicting local raw images without an upload destination would discard data.");
+            }
+
+            var webhook = DiscordVibecodersWebhookUrl?.Trim() ?? "";
+            var publicBase = UiPublicBaseUrl?.Trim() ?? "";
+            if (webhook.Length == 0 && publicBase.Length == 0)
+            {
+                return;
+            }
+            if (webhook.Length == 0 || publicBase.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    "settings.json: DiscordVibecodersWebhookUrl and UiPublicBaseUrl must be set together. Leave both blank to disable Send to vibecoders.");
+            }
+            if (!Uri.TryCreate(webhook, UriKind.Absolute, out var webhookUri)
+                || webhookUri.Scheme != Uri.UriSchemeHttps
+                || (!string.Equals(webhookUri.Host, "discord.com", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(webhookUri.Host, "discordapp.com", StringComparison.OrdinalIgnoreCase))
+                || !webhookUri.AbsolutePath.StartsWith("/api/webhooks/", StringComparison.OrdinalIgnoreCase)
+                || webhookUri.AbsolutePath.Length < "/api/webhooks/x/y".Length)
+            {
+                throw new InvalidOperationException(
+                    "settings.json: DiscordVibecodersWebhookUrl must be an https Discord incoming-webhook URL.");
+            }
+            if (!Uri.TryCreate(publicBase, UriKind.Absolute, out var publicUri)
+                || publicUri.Scheme != Uri.UriSchemeHttps
+                || !string.IsNullOrEmpty(publicUri.Query)
+                || !string.IsNullOrEmpty(publicUri.Fragment)
+                || publicUri.AbsolutePath.Length < 2)
+            {
+                throw new InvalidOperationException(
+                    "settings.json: UiPublicBaseUrl must be an https URL with a path and no query or fragment.");
             }
         }
     }
