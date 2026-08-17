@@ -8882,6 +8882,12 @@ function showImageViewerEntry(current, entry) {
     : `${current.item.generator} image ${current.item.imageIndex + 1} of ${current.item.generatorCount}`;
   imageViewerDimensions.textContent = `${entry.image.naturalWidth}×${entry.image.naturalHeight}`;
   imageViewerContentAr = entry.image.naturalWidth / entry.image.naturalHeight;
+  // Apply this exact item's compare state BEFORE fitting: fitImageViewerWindow
+  // reads the stage's `compare` class, so fitting first would size the window
+  // for the PREVIOUS paint's mode. That made geometry depend on history —
+  // toggling `c` on the same image left a compare-shaped window around a
+  // single image, while nav-away-and-back fit fresh and looked different.
+  applyImageViewerCompare(current);
   fitImageViewerWindow();
 }
 
@@ -9222,8 +9228,7 @@ async function renderImageViewer() {
         latest.item.generator !== current.item.generator ||
         latest.item.imageIndex !== current.item.imageIndex) return false;
     paintImageViewerChrome(latest);
-    showImageViewerEntry(latest, entry);
-    applyImageViewerCompare(latest);
+    showImageViewerEntry(latest, entry); // applies compare state, then fits
     markImageViewed(latest.item);
     if (imageViewerCompareInput && latest.prompt.hasInput) {
       const inputEntry = imageViewerCache.get(imageViewerInputUrl(latest.item.jobId));
