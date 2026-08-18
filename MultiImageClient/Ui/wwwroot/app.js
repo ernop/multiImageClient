@@ -3174,6 +3174,8 @@ const SketchHistoryDepth = 50;
 const SketchActionLimit = 200;
 const SketchFillActionLimit = 32;
 const SketchStrokePointLimit = 4096;
+const SketchReplayCheckpointGap = 8;
+const SketchReplayMaxBytes = 24 * 1024 * 1024;
 const SketchToolNames = {
   "select-rect": "rect select",
   "select-free": "free select",
@@ -3285,6 +3287,7 @@ let sketchGestureRaf = 0;
 let sketchCanvasRect = null;
 let sketchScratchCanvas = null;
 let sketchScratchCtx = null;
+let sketchReplayCheckpoints = [];
 
 function sketchBlank() {
   sketchCtx.fillStyle = "#ffffff";
@@ -3453,6 +3456,7 @@ function applyRestoredSketchEditor(nextItems, prepared) {
     sketchHistoryPast = [];
     sketchHistoryFuture = [];
     sketchGesture = null;
+    clearSketchReplayCheckpoints();
     clearSketchSelection();
     renderSketchActions();
     renderSketchActionList();
@@ -3660,6 +3664,7 @@ function resetSketchActions() {
   sketchHistoryPast = [];
   sketchHistoryFuture = [];
   sketchGesture = null;
+  clearSketchReplayCheckpoints();
   sketchBlank();
   renderSketchActionList();
 }
@@ -3728,6 +3733,7 @@ function commitSketchAction(action, baseImage = null, keepPreview = false) {
   syncSketchAspectSelectToCanvas();
   updateSketchResolutionReadout();
   drawSketchSelectionOverlay();
+  recordSketchReplayAfterRender();
   renderSketchActionList();
   setSketchActionStatus();
   return true;
@@ -3832,84 +3838,131 @@ function sketchActionDescription(action) {
   return `${SketchToolNames[action.kind] || action.kind} · ${color} · ${width}`;
 }
 
-function renderSketchActionList() {
-  sketchActionList.replaceChildren(...sketchActions.map((action, index) => {
-    const item = document.createElement("li");
-    item.className = "sketch-action";
-    item.classList.toggle("hidden-action", !action.visible);
-    item.dataset.actionId = String(action.id);
+function sketchActionIndexById(id) {
+  return sketchActions.findIndex((action) => action.id === id);
+}
 
-    const visible = document.createElement("input");
-    visible.type = "checkbox";
-    visible.checked = action.visible;
-    visible.className = "sketch-action-visibility";
-    visible.title = action.visible ? "Hide this action" : "Show this action";
-    visible.setAttribute("aria-label", visible.title);
-    visible.addEventListener("change", () => {
-      const next = sketchActions.map((candidate) => candidate.id === action.id
-        ? { ...candidate, visible: visible.checked }
-        : candidate);
-      mutateSketchActions(next);
-    });
+function moveSketchActionLayer(id, direction) {
+  const index = sketchActionIndexById(id);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= sketchActions.length) return;
+  const next = sketchActions.slice();
+  [next[index], next[target]] = [next[target], next[index]];
+  mutateSketchActions(next);
+}
 
-    const swatch = document.createElement("span");
-    swatch.className = "sketch-action-swatch";
-    swatch.style.background = action.kind === "base" || action.kind === "region-edit"
+function setSketchActionVisibility(id, visible) {
+  const index = sketchActionIndexById(id);
+  if (index < 0 || sketchActions[index].visible === visible) return;
+  const next = sketchActions.slice();
+  next[index] = { ...next[index], visible };
+  mutateSketchActions(next);
+}
+
+function removeSketchActionById(id) {
+  if (sketchActionIndexById(id) < 0) return;
+  mutateSketchActions(sketchActions.filter((action) => action.id !== id));
+}
+
+function sketchActionSwatchBackground(action) {
+  if (action.kind === "base" || action.kind === "region-edit"
       || action.kind === "paste" || action.kind === "palette-filter"
       || action.kind === "template-map"
       || action.kind === "canvas-rotate" || action.kind === "canvas-flip"
       || action.kind === "canvas-scale"
-      || action.kind === "crop-outside" || action.kind === "crop-fill"
-      ? "linear-gradient(135deg, #e53935, #1e88e5, #43a047)"
-      : action.kind === "clear" ? "#ffffff"
-      : action.kind === "recolor" ? (action.color || "#9aa3b5")
-      : (SketchBlendTools.has(action.kind) ? "#9aa3b5" : action.color);
+      || action.kind === "crop-outside" || action.kind === "crop-fill") {
+    return "linear-gradient(135deg, #e53935, #1e88e5, #43a047)";
+  }
+  if (action.kind === "clear") return "#ffffff";
+  if (action.kind === "recolor") return action.color || "#9aa3b5";
+  if (SketchBlendTools.has(action.kind)) return "#9aa3b5";
+  return action.color;
+}
 
-    const label = document.createElement("span");
-    label.className = "sketch-action-label";
-    label.textContent = `${index + 1}. ${sketchActionDescription(action)}`;
-    label.title = label.textContent;
+function buildSketchActionItem(action) {
+  const item = document.createElement("li");
+  item.className = "sketch-action";
+  item.dataset.actionId = String(action.id);
 
-    const back = document.createElement("button");
-    back.type = "button";
-    back.textContent = "↑";
-    back.title = "Move one layer toward the back";
-    back.setAttribute("aria-label", back.title);
-    back.disabled = index === 0;
-    back.addEventListener("click", () => {
-      const next = sketchActions.slice();
-      [next[index - 1], next[index]] = [next[index], next[index - 1]];
-      mutateSketchActions(next);
-    });
+  const visible = document.createElement("input");
+  visible.type = "checkbox";
+  visible.className = "sketch-action-visibility";
+  visible.addEventListener("change", () => {
+    setSketchActionVisibility(action.id, visible.checked);
+  });
 
-    const front = document.createElement("button");
-    front.type = "button";
-    front.textContent = "↓";
-    front.title = "Move one layer toward the front";
-    front.setAttribute("aria-label", front.title);
-    front.disabled = index === sketchActions.length - 1;
-    front.addEventListener("click", () => {
-      const next = sketchActions.slice();
-      [next[index], next[index + 1]] = [next[index + 1], next[index]];
-      mutateSketchActions(next);
-    });
+  const swatch = document.createElement("span");
+  swatch.className = "sketch-action-swatch";
 
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.textContent = "×";
-    remove.className = "sketch-action-remove";
-    remove.title = "Remove this action";
-    remove.setAttribute("aria-label", remove.title);
-    remove.addEventListener("click", () => {
-      mutateSketchActions(sketchActions.filter((candidate) => candidate.id !== action.id));
-    });
+  const label = document.createElement("span");
+  label.className = "sketch-action-label";
 
-    item.append(visible, swatch, label, back, front, remove);
-    return item;
-  }));
+  const back = document.createElement("button");
+  back.type = "button";
+  back.textContent = "↑";
+  back.title = "Move one layer toward the back";
+  back.setAttribute("aria-label", back.title);
+  back.dataset.sketchLayer = "back";
+  back.addEventListener("click", () => moveSketchActionLayer(action.id, -1));
+
+  const front = document.createElement("button");
+  front.type = "button";
+  front.textContent = "↓";
+  front.title = "Move one layer toward the front";
+  front.setAttribute("aria-label", front.title);
+  front.dataset.sketchLayer = "front";
+  front.addEventListener("click", () => moveSketchActionLayer(action.id, 1));
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "×";
+  remove.className = "sketch-action-remove";
+  remove.title = "Remove this action";
+  remove.setAttribute("aria-label", remove.title);
+  remove.addEventListener("click", () => removeSketchActionById(action.id));
+
+  item.append(visible, swatch, label, back, front, remove);
+  return item;
+}
+
+function syncSketchActionListChrome() {
+  const last = sketchActions.length - 1;
+  for (let index = 0; index < sketchActions.length; index++) {
+    const action = sketchActions[index];
+    const item = sketchActionList.children[index];
+    if (!item || Number(item.dataset.actionId) !== action.id) continue;
+    item.classList.toggle("hidden-action", !action.visible);
+    const checkbox = item.querySelector(".sketch-action-visibility");
+    checkbox.checked = action.visible;
+    checkbox.title = action.visible ? "Hide this action" : "Show this action";
+    checkbox.setAttribute("aria-label", checkbox.title);
+    const swatch = item.querySelector(".sketch-action-swatch");
+    swatch.style.background = sketchActionSwatchBackground(action);
+    const label = item.querySelector(".sketch-action-label");
+    const text = `${index + 1}. ${sketchActionDescription(action)}`;
+    if (label.textContent !== text) {
+      label.textContent = text;
+      label.title = text;
+    }
+    item.querySelector("[data-sketch-layer='back']").disabled = index === 0;
+    item.querySelector("[data-sketch-layer='front']").disabled = index === last;
+  }
   el("sketch-action-count").textContent = `${sketchActions.length}/${SketchActionLimit}`;
   el("sketch-undo").disabled = sketchHistoryPast.length === 0;
   el("sketch-redo").disabled = sketchHistoryFuture.length === 0;
+}
+
+function renderSketchActionList() {
+  const byId = new Map();
+  for (const item of sketchActionList.children) {
+    byId.set(Number(item.dataset.actionId), item);
+  }
+  const next = document.createDocumentFragment();
+  for (const action of sketchActions) {
+    next.append(byId.get(action.id) || buildSketchActionItem(action));
+  }
+  sketchActionList.replaceChildren(next);
+  syncSketchActionListChrome();
 }
 
 function drawSketchStroke(action, context = sketchCtx) {
@@ -4296,6 +4349,91 @@ function applySketchFloodFill(action) {
   sketchCtx.putImageData(image, 0, 0);
 }
 
+function visibleSketchActionIds(actions = sketchActions) {
+  const ids = [];
+  for (const action of actions) {
+    if (action.visible) ids.push(action.id);
+  }
+  return ids;
+}
+
+function sketchActionIdsEqual(left, right) {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+function sketchActionIdsArePrefix(prefix, ids) {
+  if (prefix.length > ids.length) return false;
+  for (let i = 0; i < prefix.length; i++) {
+    if (prefix[i] !== ids[i]) return false;
+  }
+  return true;
+}
+
+function clearSketchReplayCheckpoints() {
+  sketchReplayCheckpoints = [];
+}
+
+function sketchReplayMaxCheckpoints() {
+  const bytes = Math.max(1, sketchCanvas.width * sketchCanvas.height * 4);
+  return Math.max(1, Math.min(6, Math.floor(SketchReplayMaxBytes / bytes)));
+}
+
+function pruneSketchReplayCheckpoints() {
+  const budget = sketchReplayMaxCheckpoints();
+  if (sketchReplayCheckpoints.length <= budget) return;
+  const lastIndex = sketchReplayCheckpoints.length - 1;
+  const keep = new Set([lastIndex]);
+  if (lastIndex > 0) keep.add(lastIndex - 1);
+  if (lastIndex > 1) keep.add(lastIndex - 2);
+  for (let i = 0; i < sketchReplayCheckpoints.length; i++) {
+    const count = sketchReplayCheckpoints[i].ids.length;
+    if (count === 0 || count % SketchReplayCheckpointGap === 0) keep.add(i);
+  }
+  const kept = [];
+  for (const index of [...keep].sort((a, b) => a - b)) {
+    kept.push(sketchReplayCheckpoints[index]);
+  }
+  if (kept.length > budget) {
+    const tip = kept.slice(-Math.min(3, budget));
+    const marks = kept.filter((checkpoint) => !tip.includes(checkpoint));
+    const markSlots = budget - tip.length;
+    sketchReplayCheckpoints = markSlots > 0
+      ? [...marks.slice(-markSlots), ...tip]
+      : tip;
+    return;
+  }
+  sketchReplayCheckpoints = kept;
+}
+
+function findSketchReplayCheckpoint(ids) {
+  let best = null;
+  for (const checkpoint of sketchReplayCheckpoints) {
+    if (!sketchActionIdsArePrefix(checkpoint.ids, ids)) continue;
+    if (!best || checkpoint.ids.length > best.ids.length) best = checkpoint;
+  }
+  return best;
+}
+
+function recordSketchReplayAfterRender() {
+  const ids = visibleSketchActionIds();
+  const last = sketchReplayCheckpoints[sketchReplayCheckpoints.length - 1];
+  if (last
+      && sketchActionIdsEqual(last.ids, ids)
+      && last.image.width === sketchCanvas.width
+      && last.image.height === sketchCanvas.height) {
+    return;
+  }
+  sketchReplayCheckpoints.push({
+    ids: ids.slice(),
+    image: sketchCtx.getImageData(0, 0, sketchCanvas.width, sketchCanvas.height),
+  });
+  pruneSketchReplayCheckpoints();
+}
+
 function applySketchAction(action) {
   if (action.kind === "base") {
     resizeSketchCanvasToSize(action.imageData.width, action.imageData.height);
@@ -4340,20 +4478,37 @@ function applySketchAction(action) {
 }
 
 function renderSketchActions() {
-  const base = sketchActions.find((action) => action.visible && action.kind === "base");
-  if (base?.imageData) {
-    resizeSketchCanvasToSize(base.imageData.width, base.imageData.height);
-  } else {
-    resizeSketchCanvasToAspect(sketchAspect);
-  }
-  sketchBlank();
+  const visible = [];
   for (const action of sketchActions) {
-    if (!action.visible) continue;
-    applySketchAction(action);
+    if (action.visible) visible.push(action);
+  }
+  const ids = visible.map((action) => action.id);
+  const checkpoint = findSketchReplayCheckpoint(ids);
+  if (checkpoint && checkpoint.ids.length === ids.length) {
+    resizeSketchCanvasToSize(checkpoint.image.width, checkpoint.image.height);
+    sketchCtx.putImageData(checkpoint.image, 0, 0);
+  } else if (checkpoint && checkpoint.ids.length > 0) {
+    resizeSketchCanvasToSize(checkpoint.image.width, checkpoint.image.height);
+    sketchCtx.putImageData(checkpoint.image, 0, 0);
+    for (let i = checkpoint.ids.length; i < visible.length; i++) {
+      applySketchAction(visible[i]);
+    }
+  } else {
+    const base = visible.find((action) => action.kind === "base");
+    if (base?.imageData) {
+      resizeSketchCanvasToSize(base.imageData.width, base.imageData.height);
+    } else {
+      resizeSketchCanvasToAspect(sketchAspect);
+    }
+    sketchBlank();
+    for (const action of visible) {
+      applySketchAction(action);
+    }
   }
   syncSketchAspectSelectToCanvas();
   updateSketchResolutionReadout();
   drawSketchSelectionOverlay();
+  recordSketchReplayAfterRender();
 }
 
 function applySketchRegionEdit(action) {
@@ -5320,14 +5475,16 @@ function commitSketchRegenTemplateMap() {
   }
   rememberSketchState();
   setSketchWorkingPalette(extracted.colors, { meanings: extracted.colors.map(() => "") });
-  sketchActions = [...sketchActions, {
+  const recorded = {
     kind: "template-map",
     palette: cloneSketchPalette(extracted.colors),
     includeWhite: true,
     id: ++sketchActionSequence,
     visible: true,
-  }];
-  renderSketchActions();
+  };
+  sketchActions = [...sketchActions, recorded];
+  applySketchAction(recorded);
+  recordSketchReplayAfterRender();
   renderSketchActionList();
   setSketchActionStatus(
     `Template from ${extracted.colors.length} image color`
