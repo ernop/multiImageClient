@@ -91,8 +91,8 @@ ctl.setRules({ profile: "casual" });  // switch rule profile live
 ctl.setEnabled(false);    // toggle off (restores native browser spellcheck)
 ctl.detach();
 // attach() also: the word containing the caret is not marked misspelled;
-// tapping Control (no other key) applies guessCorrection to the nearest
-// misspelling behind the caret (Ctrl+Z undoes it).
+// tapping left or right Control (no other key) applies guessCorrection
+// to the nearest misspelling behind the caret (Ctrl+Z undoes it).
 
 // Live issues panel: suggestion buttons (replace-all, undo-preserving),
 // add-to-dictionary, ignore (persistent per-word mute with a 3s undo chip

@@ -1497,23 +1497,34 @@ var McPhee = (function () {
     document.addEventListener("selectionchange", onSelectionChange);
 
     // Control tap (no other key): naive-correct the nearest misspelling
-    // behind the caret. Other Control chords (Ctrl+Z, Ctrl+C, …) clear the
-    // tap so they keep their native meaning; Ctrl+Z undoes the replacement
-    // because it went through the undo-preserving pipeline.
+    // behind the caret. Left and right Control both count. Other Control
+    // chords (Ctrl+Z, Ctrl+C, …) clear the tap so they keep their native
+    // meaning; Ctrl+Z undoes the replacement because it went through the
+    // undo-preserving pipeline. IME engines (IBus on Linux) inject
+    // Process/Unidentified keydowns while Control is held; those are not
+    // a chord and must not cancel the tap.
     var ctrlTapClean = false;
+    function isControlKey(e) {
+      return e.key === "Control" || e.code === "ControlLeft" || e.code === "ControlRight";
+    }
+    function fieldFocused() {
+      var a = document.activeElement;
+      return a === textarea || !!(textarea.contains && textarea.contains(a));
+    }
     function onAnyKeyDown(e) {
-      if (e.key === "Control") {
-        if (!e.repeat && document.activeElement === textarea) ctrlTapClean = true;
+      if (isControlKey(e)) {
+        if (!e.repeat && fieldFocused()) ctrlTapClean = true;
         return;
       }
+      if (e.isComposing || e.key === "Process" || e.key === "Unidentified") return;
       ctrlTapClean = false;
     }
     function onCtrlKeyUp(e) {
-      if (e.key !== "Control") return;
+      if (!isControlKey(e)) return;
       var wasClean = ctrlTapClean;
       ctrlTapClean = false;
       if (!wasClean || !enabled) return;
-      if (document.activeElement !== textarea) return;
+      if (!fieldFocused()) return;
       if (textarea.readOnly || textarea.disabled) return;
       self.applyNearestBackwardFix(textarea, { rules: renderOpts.rules });
     }
