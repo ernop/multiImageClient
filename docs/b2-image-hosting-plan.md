@@ -297,6 +297,16 @@ is Stage 3 and waits on the owner's B2 signup).
   built lazily from the original. Inputs are never evicted; nothing is
   deleted on any failure path; the `images.json` record (path, hash, CdnKey)
   stays for provenance.
+- **Creator deletion (2026-08-26):** creator and developer hide controls are
+  destructive. They persist a visibility tombstone, then delete each exact
+  recorded B2 file version through `b2_delete_file_version` using its
+  `CdnKey` + `CdnFileId`. They also delete local raws, progression snapshots,
+  card thumbs, favorites, and any contact sheet containing a deleted image.
+  Persisted media events are replaced or redacted, and their pre-B2 backup is
+  removed so it cannot retain deleted capability URLs.
+  An interrupted purge stays hidden and retries during server startup.
+  Incomplete or conflicting identity fails closed. Browser caches and files
+  copied before deletion cannot be revoked.
 - CLI/showcase/batch runs are untouched: the hook lives in the UI job runner
   only.
 

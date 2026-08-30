@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 
 namespace MultiImageClient
@@ -12,6 +13,12 @@ namespace MultiImageClient
     public static class ProviderActionHints
     {
         public sealed record Hint(string Text, string Url);
+        private sealed record ProviderAccount(
+            string Name,
+            string SettingsField,
+            string BillingUrl,
+            string KeysUrl,
+            string BillingAction);
 
         // Matched case-insensitively against the raw error message. Billing is
         // checked before auth: a "payment required" body can also mention the
@@ -19,8 +26,10 @@ namespace MultiImageClient
         private static readonly string[] BillingMarkers =
         {
             "paymentrequired", "payment required", "insufficient balance",
-            "insufficient credit", "not enough credit", "out of credit", "billing", "quota",
-            "recharge", "exceeded your current", "402",
+            "insufficient credit", "not enough credit", "out of credit",
+            "credit balance", "billing_error", "billing error", "billing",
+            "recharge", "exceeded your current quota", "usage limit",
+            "spend limit", "402",
         };
 
         private static readonly string[] AuthMarkers =
@@ -50,77 +59,116 @@ namespace MultiImageClient
                 return null;
             }
 
-            // Cookie-session providers have no billing page — expired or
-            // revoked cookies are the fix for any 401/403-shaped failure.
+            // Consumer-session billing is separate from API billing. Grok has
+            // consumer usage credits; Meta exposes no Muse Image payment page.
             switch (generatorKey)
             {
                 case UiJobRunner.KeyGrokWeb:
                 case UiJobRunner.KeyGrokWebChat:
                 case UiJobRunner.KeyGrokWebVideo:
-                    return new Hint(
-                        "grok.com session cookies look expired/invalid — log in at grok.com and re-export cookies to the GrokWebCookiePath file, then restart",
-                        "https://grok.com");
+                    return billing
+                        ? new Hint(
+                            "grok.com consumer usage credits are exhausted — buy Extra Usage Credits or enable automatic top-up, then resend",
+                            "https://grok.com/?_s=usage")
+                        : new Hint(
+                            "grok.com session cookies look expired/invalid — log in at grok.com and re-export cookies to the GrokWebCookiePath file, then restart",
+                            "https://grok.com");
                 case UiJobRunner.KeyMetaWeb:
-                    return new Hint(
-                        "meta.ai session looks expired/invalid — re-export cookies (MetaWebCookiePath) or re-run --meta-web --meta-web-headed to log in again",
-                        "https://www.meta.ai");
+                    return auth
+                        ? new Hint(
+                            "meta.ai session looks expired/invalid — re-export cookies (MetaWebCookiePath) or re-run --meta-web --meta-web-headed to log in again",
+                            "https://www.meta.ai")
+                        : null;
             }
 
-            var (provider, settingsField, billingUrl, keysUrl) = generatorKey switch
-            {
-                UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini =>
-                    ("OpenAI", "OpenAIApiKey",
-                     "https://platform.openai.com/settings/organization/billing/overview",
-                     "https://platform.openai.com/api-keys"),
-                UiJobRunner.KeyIdeogram or UiJobRunner.KeyIdeogramV3
-                    or UiJobRunner.KeyIdeogramV2 =>
-                    ("Ideogram", "IdeogramApiKey",
-                     "https://ideogram.ai/manage-api",
-                     "https://ideogram.ai/manage-api"),
-                UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Utility
-                    or UiJobRunner.KeyRecraftV41Pro or UiJobRunner.KeyRecraftV41Vector
-                    or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4
-                    or UiJobRunner.KeyRecraftV4Pro =>
-                    ("Recraft", "RecraftApiKey",
-                     "https://www.recraft.ai/profile/api",
-                     "https://www.recraft.ai/profile/api"),
-                UiJobRunner.KeyBfl =>
-                    ("Black Forest Labs", "BFLApiKey",
-                     "https://dashboard.bfl.ai",
-                     "https://dashboard.bfl.ai"),
-                UiJobRunner.KeyKrea or UiJobRunner.KeyKreaTurbo or UiJobRunner.KeyKreaLarge =>
-                    ("Krea", "KreaApiKey",
-                     "https://www.krea.ai/app/api",
-                     "https://www.krea.ai/app/api/tokens"),
-                UiJobRunner.KeyGoogle or UiJobRunner.KeyGooglePro =>
-                    ("Google AI Studio", "GoogleGeminiApiKey",
-                     "https://aistudio.google.com/apikey",
-                     "https://aistudio.google.com/apikey"),
-                UiJobRunner.KeyGrokApi or UiJobRunner.KeyGrokApiPro =>
-                    ("xAI", "XAIGrokApiKey",
-                     "https://console.x.ai",
-                     "https://console.x.ai"),
-                _ => (null, null, null, null),
-            };
-            if (provider == null)
+            var account = AccountFor(generatorKey);
+            if (account == null)
             {
                 return null;
-            }
-            if (billing && string.Equals(provider, "Recraft", StringComparison.Ordinal))
-            {
-                return new Hint(
-                    "Recraft API units are exhausted — buy more API units, then resend (no restart needed)",
-                    billingUrl);
             }
 
             return billing
                 ? new Hint(
-                    $"{provider} balance/quota is exhausted — top up or enable auto-recharge, then just resend (no restart needed)",
-                    billingUrl)
+                    $"{account.Name} API billing or quota blocked this request — {account.BillingAction}, then resend; no restart is needed",
+                    account.BillingUrl)
                 : new Hint(
-                    $"{provider} rejected the API key — if it was regenerated, put the new key in settings.json ({settingsField}) and restart the server",
-                    keysUrl);
+                    $"{account.Name} rejected the API key — if it was regenerated, put the new key in settings.json ({account.SettingsField}) and restart the server",
+                    account.KeysUrl);
         }
+
+        private static ProviderAccount? AccountFor(string generatorKey) => generatorKey switch
+        {
+            UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini
+                or UiJobRunner.KeyDescribeOpenAi =>
+                new(
+                    "OpenAI",
+                    nameof(Settings.OpenAIApiKey),
+                    "https://platform.openai.com/settings/organization/billing/overview",
+                    "https://platform.openai.com/api-keys",
+                    "add API credits or enable auto-recharge"),
+            UiJobRunner.KeyIdeogram or UiJobRunner.KeyIdeogramV3
+                or UiJobRunner.KeyIdeogramV2 or UiJobRunner.KeyDescribeIdeogram =>
+                new(
+                    "Ideogram",
+                    nameof(Settings.IdeogramApiKey),
+                    "https://ideogram.ai/manage-api",
+                    "https://ideogram.ai/manage-api",
+                    "add prepaid API credits or enable auto-recharge"),
+            UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Utility
+                or UiJobRunner.KeyRecraftV41Pro or UiJobRunner.KeyRecraftV41Vector
+                or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4
+                or UiJobRunner.KeyRecraftV4Pro =>
+                new(
+                    "Recraft",
+                    nameof(Settings.RecraftApiKey),
+                    "https://app.recraft.ai/profile/api",
+                    "https://app.recraft.ai/profile/api",
+                    "buy more API units"),
+            UiJobRunner.KeyBfl or UiJobRunner.KeyBflFlux2Pro
+                or UiJobRunner.KeyBflFlux2Max or UiJobRunner.KeyBflFlux2Flex
+                or UiJobRunner.KeyBflFlux2Klein4b or UiJobRunner.KeyBflFlux2Klein9bPreview
+                or UiJobRunner.KeyBflFlux2Klein9b or UiJobRunner.KeyBflKontextPro
+                or UiJobRunner.KeyBflKontextMax or UiJobRunner.KeyBflFlux11Ultra
+                or UiJobRunner.KeyBflFlux11 or UiJobRunner.KeyBflFluxPro
+                or UiJobRunner.KeyBflFluxDev =>
+                new(
+                    "Black Forest Labs",
+                    nameof(Settings.BFLApiKey),
+                    "https://dashboard.bfl.ai",
+                    "https://dashboard.bfl.ai",
+                    "open API → Credits and add credits"),
+            UiJobRunner.KeyKrea or UiJobRunner.KeyKreaTurbo or UiJobRunner.KeyKreaLarge =>
+                new(
+                    "Krea",
+                    nameof(Settings.KreaApiKey),
+                    "https://www.krea.ai/app/api/",
+                    "https://www.krea.ai/app/api/tokens",
+                    "add workspace API balance"),
+            UiJobRunner.KeyGoogle or UiJobRunner.KeyGooglePro
+                or UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyLayoutMap =>
+                new(
+                    "Google AI Studio",
+                    nameof(Settings.GoogleGeminiApiKey),
+                    "https://aistudio.google.com/billing",
+                    "https://aistudio.google.com/apikey",
+                    "buy credits or restore billing for the key's project"),
+            UiJobRunner.KeyGrokApi or UiJobRunner.KeyGrokApiPro
+                or UiJobRunner.KeyDescribeGrok =>
+                new(
+                    "xAI",
+                    nameof(Settings.XAIGrokApiKey),
+                    "https://console.x.ai/team/default/billing",
+                    "https://console.x.ai/team/default/api-keys",
+                    "buy prepaid API credits or raise the invoiced billing limit"),
+            UiJobRunner.KeyDescribeClaude =>
+                new(
+                    "Anthropic",
+                    nameof(Settings.AnthropicApiKey),
+                    "https://platform.claude.com/settings/billing",
+                    "https://platform.claude.com/settings/keys",
+                    "buy API credits, fix payment details, or raise the API spend limit"),
+            _ => null,
+        };
 
         private static bool IsGrokWebKey(string generatorKey)
             => generatorKey is UiJobRunner.KeyGrokWeb

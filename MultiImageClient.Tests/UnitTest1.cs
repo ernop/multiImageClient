@@ -383,6 +383,10 @@ public class UiVisibilityStoreTests
                 HiddenByLogin = "creator",
                 HiddenAtUnixMs = 2,
             });
+            Assert.Equal(2, store.ListPendingPurges().Count);
+            var imageRecord = store.Snapshot().Records.Single(
+                record => record.Kind == "image");
+            store.MarkPurged(imageRecord, 3);
 
             var reloaded = new UiVisibilityStore(settings);
 
@@ -392,6 +396,173 @@ public class UiVisibilityStoreTests
             Assert.False(reloaded.IsImageHidden("job-b", "gpt2", 1));
             Assert.True(reloaded.HasHiddenImages("job-b"));
             Assert.Equal(2, reloaded.Snapshot().Records.Count);
+            Assert.Single(reloaded.ListPendingPurges());
+            Assert.Equal(
+                3,
+                reloaded.Snapshot().Records.Single(
+                    record => record.Kind == "image").PurgedAtUnixMs);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ImageDeletionRemovesExactArtifactsAndRedactsPersistedEvents()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "multi-image-client-deletion-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var settings = new Settings { ImageDownloadBaseFolder = root };
+            var registry = new UiJobRegistry(settings);
+            var job = new UiJob
+            {
+                Id = "delete-test",
+                Prompt = "test",
+                CreatorLogin = "creator",
+            };
+            registry.Add(job);
+
+            var files = new Dictionary<string, string>
+            {
+                ["gpt2/0"] = Path.Combine(root, "result-0.bin"),
+                ["gpt2~p0/0"] = Path.Combine(root, "partial-0.bin"),
+                ["gpt2/1"] = Path.Combine(root, "result-1.bin"),
+                ["grid/0"] = Path.Combine(root, "grid.bin"),
+            };
+            foreach (var pair in files)
+            {
+                File.WriteAllBytes(pair.Value, [1, 2, 3]);
+                var slash = pair.Key.LastIndexOf('/');
+                job.StoreImagePath(
+                    pair.Key.Substring(0, slash),
+                    int.Parse(pair.Key.AsSpan(slash + 1)),
+                    pair.Value,
+                    "application/octet-stream");
+            }
+            job.Emit(new
+            {
+                type = "gen-result",
+                gen = "gpt2",
+                ok = true,
+                images = new[] { "/deleted-zero", "/kept-one" },
+                thumbs = new[] { "/deleted-thumb", "/kept-thumb" },
+                partialImages = new string?[] { "/deleted-partial", null },
+                partialThumbs = new string?[] { "/deleted-partial-thumb", null },
+                progressImages = new[]
+                {
+                    new
+                    {
+                        partialIndex = 0,
+                        imageIndex = 0,
+                        url = "/deleted-progress",
+                    },
+                },
+            });
+            job.Emit(new { type = "grid", url = "/deleted-grid" });
+            job.MarkDone();
+            var (originalEvents, _) = job.ReadFrom(0);
+            Assert.True(job.TryReplacePersistedEvents(originalEvents));
+            var preB2Backup = Path.Combine(
+                root,
+                "UiHistory",
+                job.Id,
+                "events.jsonl.pre-b2");
+            Assert.True(File.Exists(preB2Backup));
+
+            var artifacts = job.ListImageDeletionArtifacts("gpt2", 0);
+            Assert.Equal(
+                ["gpt2/0", "gpt2~p0/0", "grid/0"],
+                artifacts.Select(info => info.Key).OrderBy(key => key).ToArray());
+
+            await using var runner = new UiJobRunner(
+                settings,
+                new MultiClientRunStats(),
+                new RunOptions());
+            Assert.Equal(
+                3,
+                await runner.DeleteHiddenArtifactsAsync(
+                    job,
+                    "image",
+                    "gpt2",
+                    0,
+                    CancellationToken.None));
+
+            Assert.False(File.Exists(files["gpt2/0"]));
+            Assert.False(File.Exists(files["gpt2~p0/0"]));
+            Assert.False(File.Exists(files["grid/0"]));
+            Assert.True(File.Exists(files["gpt2/1"]));
+            Assert.Equal(4, job.ListPersistedImages().Count);
+            Assert.False(File.Exists(preB2Backup));
+            var (redactedEvents, _) = job.ReadFrom(0);
+            var redactedJson = string.Join("\n", redactedEvents);
+            Assert.DoesNotContain("/deleted-zero", redactedJson);
+            Assert.DoesNotContain("/deleted-progress", redactedJson);
+            Assert.DoesNotContain("/deleted-grid", redactedJson);
+            Assert.Contains("/kept-one", redactedJson);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void ImageDeletionRemovesEveryUsersFavoriteForExactImage()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "multi-image-client-favorite-deletion-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var settings = new Settings { ImageDownloadBaseFolder = root };
+            var store = new UiFavoriteStore(settings);
+            foreach (var user in new[] { "one", "two" })
+            {
+                store.Set(new UiFavoriteRecord
+                {
+                    User = user,
+                    JobId = "job",
+                    Generator = "gpt2",
+                    ImageIndex = 0,
+                    GeneratorImageCount = 2,
+                    Prompt = "test",
+                    CreatedBy = "creator",
+                    JobCreatedAtUnixMs = 1,
+                    ImageUrl = "/image/0",
+                    ThumbUrl = "/thumb/0",
+                    FavoritedAtUnixMs = 2,
+                }, favorite: true);
+            }
+            store.Set(new UiFavoriteRecord
+            {
+                User = "one",
+                JobId = "job",
+                Generator = "gpt2",
+                ImageIndex = 1,
+                GeneratorImageCount = 2,
+                Prompt = "test",
+                CreatedBy = "creator",
+                JobCreatedAtUnixMs = 1,
+                ImageUrl = "/image/1",
+                ThumbUrl = "/thumb/1",
+                FavoritedAtUnixMs = 2,
+            }, favorite: true);
+
+            Assert.Equal(
+                2,
+                store.RemoveHiddenResource("image", "job", "gpt2", 0));
+            var remaining = Assert.Single(store.Snapshot().Records);
+            Assert.Equal(1, remaining.ImageIndex);
         }
         finally
         {

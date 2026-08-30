@@ -8,6 +8,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -369,11 +370,60 @@ namespace MultiImageClient
                 ?? (IReadOnlyList<UiPersistedImageInfo>)Array.Empty<UiPersistedImageInfo>();
         }
 
+        public IReadOnlyList<UiPersistedImageInfo> ListImageDeletionArtifacts(
+            string generator,
+            int imageIndex)
+        {
+            if (string.IsNullOrWhiteSpace(generator) || imageIndex < 0)
+            {
+                throw new ArgumentException(
+                    "An image deletion requires an exact generator and non-negative index.");
+            }
+            return ListPersistedImages()
+                .Where(info =>
+                {
+                    var slash = info.Key.LastIndexOf('/');
+                    if (slash <= 0
+                        || !int.TryParse(info.Key.AsSpan(slash + 1), out var index))
+                    {
+                        return false;
+                    }
+                    var artifactGenerator = info.Key.Substring(0, slash);
+                    return artifactGenerator == "grid"
+                        || (index == imageIndex
+                            && string.Equals(
+                                PartialSnapshotVisibilityGen(artifactGenerator),
+                                generator,
+                                StringComparison.Ordinal));
+                })
+                .ToList();
+        }
+
+        public void DeleteLocalArtifacts(IReadOnlyCollection<string> keys)
+        {
+            if (_storage == null)
+            {
+                throw new InvalidOperationException(
+                    $"UI job {Id} has no durable storage for artifact deletion.");
+            }
+            _storage.DeleteLocalArtifacts(keys);
+            foreach (var key in keys)
+            {
+                _images.TryRemove(key, out _);
+                UiCardPreviewCache.Remove($"{Id}/{key}");
+            }
+        }
+
         /// Atomically replaces this job's persisted event log (B2 backfill URL
         /// migration). A one-time pre-rewrite backup is retained on disk.
         public bool TryReplacePersistedEvents(IReadOnlyList<string> lines)
         {
             return _storage?.TryReplaceEvents(lines) == true;
+        }
+
+        public bool TryReplacePersistedEventsForDeletion(IReadOnlyList<string> lines)
+        {
+            return _storage?.TryReplaceEventsForDeletion(lines) == true;
         }
 
         public bool TryGetImage(string genKey, int n, out byte[] bytes, out string contentType)
@@ -703,6 +753,19 @@ namespace MultiImageClient
             }
         }
 
+        public static void Remove(string key)
+        {
+            lock (Gate)
+            {
+                if (!Map.Remove(key, out var entry))
+                {
+                    return;
+                }
+                Order.Remove(entry.Node);
+                _totalBytes -= entry.Bytes.Length;
+            }
+        }
+
         public static (int Entries, long Bytes) Snapshot()
         {
             lock (Gate) return (Map.Count, _totalBytes);
@@ -837,11 +900,66 @@ namespace MultiImageClient
             }
         }
 
+        /// Permanently removes local raw files and card previews for exact
+        /// persisted keys. images.json keeps the original paths, hashes, and
+        /// B2 identities as deletion audit data and for idempotent retries.
+        public void DeleteLocalArtifacts(IReadOnlyCollection<string> keys)
+        {
+            if (keys == null || keys.Count == 0)
+            {
+                return;
+            }
+            lock (_writeLock)
+            {
+                var uniqueKeys = keys.ToHashSet(StringComparer.Ordinal);
+                var unknown = uniqueKeys.Where(key => !_images.ContainsKey(key)).ToList();
+                if (unknown.Count > 0)
+                {
+                    throw new InvalidDataException(
+                        $"Deletion referenced unknown persisted image key(s): {string.Join(", ", unknown)}");
+                }
+
+                var paths = uniqueKeys
+                    .Select(key => _images[key].Path)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Select(Path.GetFullPath)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                foreach (var key in uniqueKeys)
+                {
+                    paths.Add(Path.Combine(
+                        _thumbsFolder,
+                        ThumbFileName(key, "image/jpeg")));
+                    paths.Add(Path.Combine(
+                        _thumbsFolder,
+                        ThumbFileName(key, "image/png")));
+                }
+                foreach (var path in paths.Distinct(StringComparer.Ordinal))
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+            }
+        }
+
         /// Atomically replaces events.jsonl after validating every line parses
         /// as JSON (fail closed — a malformed rewrite must never replace a
         /// working event log). The original file is copied once to
         /// events.jsonl.pre-b2 before the first rewrite and kept.
         public bool TryReplaceEvents(IReadOnlyList<string> lines)
+            => TryReplaceEvents(lines, keepPreB2Backup: true);
+
+        /// Deletion rewrites must not preserve old capability URLs in the
+        /// migration backup. images.json retains exact B2 identity separately
+        /// for idempotent purge retries.
+        public bool TryReplaceEventsForDeletion(IReadOnlyList<string> lines)
+            => TryReplaceEvents(lines, keepPreB2Backup: false);
+
+        private bool TryReplaceEvents(
+            IReadOnlyList<string> lines,
+            bool keepPreB2Backup)
         {
             lock (_writeLock)
             {
@@ -852,13 +970,19 @@ namespace MultiImageClient
                         using var _ = JsonDocument.Parse(line);
                     }
                     var backup = _eventsPath + ".pre-b2";
-                    if (File.Exists(_eventsPath) && !File.Exists(backup))
+                    if (keepPreB2Backup
+                        && File.Exists(_eventsPath)
+                        && !File.Exists(backup))
                     {
                         File.Copy(_eventsPath, backup);
                     }
                     var temp = _eventsPath + ".tmp";
                     File.WriteAllLines(temp, lines);
                     File.Move(temp, _eventsPath, true);
+                    if (!keepPreB2Backup && File.Exists(backup))
+                    {
+                        File.Delete(backup);
+                    }
                     return true;
                 }
                 catch (Exception ex)
@@ -3291,6 +3415,8 @@ namespace MultiImageClient
         // files upload to the public B2 bucket and gen-result/grid events
         // carry B2 capability URLs. See docs/b2-image-hosting-plan.md.
         private readonly B2StorageClient? _b2;
+        private readonly object _artifactMutationLock = new();
+        private readonly ConcurrentDictionary<string, byte> _deletingArtifactJobs = new();
 
         public UiJobRunner(Settings settings, MultiClientRunStats stats, RunOptions options)
         {
@@ -3724,6 +3850,415 @@ namespace MultiImageClient
             }
         }
 
+        public async Task<int> DeleteHiddenArtifactsAsync(
+            UiJob job,
+            string kind,
+            string generator,
+            int imageIndex,
+            CancellationToken cancellationToken)
+        {
+            if (!job.IsDone)
+            {
+                throw new InvalidOperationException(
+                    "Images cannot be deleted while their job is still running.");
+            }
+            if (kind != "prompt" && kind != "image")
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(kind),
+                    "Deletion kind must be prompt or image.");
+            }
+
+            var allArtifacts = job.ListPersistedImages().ToList();
+            var artifacts = kind == "prompt"
+                ? allArtifacts
+                : job.ListImageDeletionArtifacts(generator, imageIndex).ToList();
+            var persistedKeys = artifacts
+                .Select(info => info.Key)
+                .ToHashSet(StringComparer.Ordinal);
+            var missingKeys = ExpectedDeletionArtifactKeys(
+                    job,
+                    kind,
+                    generator,
+                    imageIndex)
+                .Where(key => !persistedKeys.Contains(key))
+                .OrderBy(key => key, StringComparer.Ordinal)
+                .ToList();
+            if (missingKeys.Count > 0)
+            {
+                throw new InvalidDataException(
+                    $"Deletion cannot correlate persisted artifact key(s) for job {job.Id}: "
+                    + string.Join(", ", missingKeys));
+            }
+            if (kind == "image"
+                && !artifacts.Any(info => string.Equals(
+                    info.Key,
+                    $"{generator}/{imageIndex}",
+                    StringComparison.Ordinal)))
+            {
+                throw new InvalidDataException(
+                    $"The exact persisted artifact {job.Id}/{generator}/{imageIndex} is missing.");
+            }
+            if (kind == "image")
+            {
+                var selectedKeys = artifacts
+                    .Select(info => info.Key)
+                    .ToHashSet(StringComparer.Ordinal);
+                var selectedPaths = artifacts
+                    .Where(info => !string.IsNullOrWhiteSpace(info.Path))
+                    .Select(info => Path.GetFullPath(info.Path))
+                    .ToHashSet(StringComparer.Ordinal);
+                var selectedCdnKeys = artifacts
+                    .Where(info => !string.IsNullOrWhiteSpace(info.CdnKey))
+                    .Select(info => info.CdnKey)
+                    .ToHashSet(StringComparer.Ordinal);
+                var sharedIdentity = allArtifacts.FirstOrDefault(info =>
+                    !selectedKeys.Contains(info.Key)
+                    && ((!string.IsNullOrWhiteSpace(info.Path)
+                            && selectedPaths.Contains(Path.GetFullPath(info.Path)))
+                        || (!string.IsNullOrWhiteSpace(info.CdnKey)
+                            && selectedCdnKeys.Contains(info.CdnKey))));
+                if (sharedIdentity != null)
+                {
+                    throw new InvalidDataException(
+                        $"Deletion artifact identity overlaps sibling {job.Id}/{sharedIdentity.Key}.");
+                }
+            }
+
+            foreach (var artifact in artifacts)
+            {
+                var hasCdnKey = !string.IsNullOrWhiteSpace(artifact.CdnKey);
+                var hasCdnFileId = !string.IsNullOrWhiteSpace(artifact.CdnFileId);
+                if (hasCdnKey != hasCdnFileId)
+                {
+                    throw new InvalidDataException(
+                        $"Persisted artifact {job.Id}/{artifact.Key} has incomplete B2 deletion identity.");
+                }
+                if (hasCdnKey && _b2 == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Persisted artifact {job.Id}/{artifact.Key} is hosted in B2, "
+                        + "but B2 deletion is not configured on this server.");
+                }
+            }
+
+            Task<(string Path, string ContentType)?>[] thumbTasks;
+            lock (_artifactMutationLock)
+            {
+                if (!_deletingArtifactJobs.TryAdd(job.Id, 0))
+                {
+                    throw new InvalidOperationException(
+                        $"Another artifact deletion is already running for job {job.Id}.");
+                }
+                thumbTasks = _thumbRegens
+                    .Where(pair =>
+                        pair.Key.StartsWith(job.Id + "/", StringComparison.Ordinal)
+                        && pair.Value.IsValueCreated)
+                    .Select(pair => pair.Value.Value)
+                    .ToArray();
+            }
+            try
+            {
+                // A card-thumb rebuild may have passed the visibility check
+                // immediately before the deletion tombstone was persisted.
+                // Let that exact work finish before deleting local derivatives.
+                if (thumbTasks.Length > 0)
+                {
+                    try
+                    {
+                        await Task.WhenAll(thumbTasks);
+                    }
+                    catch
+                    {
+                        // A failed rebuild created no durable artifact. The
+                        // deletion below still verifies and removes all paths.
+                    }
+                }
+
+                var hosted = artifacts
+                    .Where(info => !string.IsNullOrWhiteSpace(info.CdnKey))
+                    .GroupBy(info => info.CdnKey, StringComparer.Ordinal)
+                    .Select(group =>
+                    {
+                        var fileIds = group
+                            .Select(info => info.CdnFileId)
+                            .Distinct(StringComparer.Ordinal)
+                            .ToList();
+                        if (fileIds.Count != 1)
+                        {
+                            throw new InvalidDataException(
+                                $"B2 object '{group.Key}' has conflicting persisted file IDs.");
+                        }
+                        return (ObjectKey: group.Key, FileId: fileIds[0]);
+                    })
+                    .ToList();
+                foreach (var artifact in hosted)
+                {
+                    const int attempts = 3;
+                    for (var attempt = 1; ; attempt++)
+                    {
+                        try
+                        {
+                            await _b2!.DeleteFileAsync(
+                                artifact.ObjectKey,
+                                artifact.FileId,
+                                cancellationToken);
+                            break;
+                        }
+                        catch (Exception ex) when (
+                            attempt < attempts
+                            && ex is HttpRequestException or TaskCanceledException)
+                        {
+                            Logger.Log(
+                                $"[ui #{job.Id}] B2 delete attempt {attempt}/{attempts} "
+                                + $"for '{artifact.ObjectKey}' failed: {ex.Message}; retrying");
+                            await Task.Delay(TimeSpan.FromSeconds(2 * attempt), cancellationToken);
+                        }
+                    }
+                }
+
+                var keys = artifacts.Select(info => info.Key).ToList();
+                job.DeleteLocalArtifacts(keys);
+                RedactDeletedMediaEvents(
+                    job,
+                    kind,
+                    generator,
+                    imageIndex);
+                return keys.Count;
+            }
+            finally
+            {
+                _deletingArtifactJobs.TryRemove(job.Id, out _);
+            }
+        }
+
+        private static void RedactDeletedMediaEvents(
+            UiJob job,
+            string kind,
+            string generator,
+            int imageIndex)
+        {
+            if (kind == "prompt")
+            {
+                var tombstone = JsonSerializer.Serialize(new
+                {
+                    type = "job-deleted",
+                    at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                });
+                if (!job.TryReplacePersistedEventsForDeletion(new[] { tombstone }))
+                {
+                    throw new IOException(
+                        $"Could not replace deleted job {job.Id}'s persisted media events.");
+                }
+                return;
+            }
+
+            var (events, _) = job.ReadFrom(0);
+            var output = new List<string>(events.Count);
+            foreach (var eventJson in events)
+            {
+                var evt = JsonNode.Parse(eventJson)?.AsObject()
+                    ?? throw new InvalidDataException(
+                        $"UI event for {job.Id} parsed to null during deletion.");
+                var type = evt["type"]?.GetValue<string>() ?? "";
+                if (type == "grid")
+                {
+                    continue;
+                }
+                if (type == "gen-partial"
+                    && string.Equals(
+                        evt["gen"]?.GetValue<string>(),
+                        generator,
+                        StringComparison.Ordinal)
+                    && (evt["imageIndex"]?.GetValue<int>() ?? -1) == imageIndex)
+                {
+                    continue;
+                }
+                if (type != "gen-result"
+                    || !string.Equals(
+                        evt["gen"]?.GetValue<string>(),
+                        generator,
+                        StringComparison.Ordinal))
+                {
+                    output.Add(eventJson);
+                    continue;
+                }
+
+                NullArrayIndex(evt, "images", imageIndex);
+                NullArrayIndex(evt, "thumbs", imageIndex);
+                NullArrayIndex(evt, "partialImages", imageIndex);
+                NullArrayIndex(evt, "partialThumbs", imageIndex);
+                if (evt["progressImages"] is JsonArray progressImages)
+                {
+                    for (var index = progressImages.Count - 1; index >= 0; index--)
+                    {
+                        var progressImageIndex =
+                            progressImages[index]?["imageIndex"]?.GetValue<int>() ?? -1;
+                        if (progressImageIndex == imageIndex)
+                        {
+                            progressImages.RemoveAt(index);
+                        }
+                    }
+                }
+                output.Add(evt.ToJsonString());
+            }
+            if (!job.TryReplacePersistedEventsForDeletion(output))
+            {
+                throw new IOException(
+                    $"Could not redact deleted image {job.Id}/{generator}/{imageIndex} "
+                    + "from persisted media events.");
+            }
+        }
+
+        private static void NullArrayIndex(
+            JsonObject evt,
+            string propertyName,
+            int index)
+        {
+            if (evt[propertyName] is JsonArray values && index < values.Count)
+            {
+                values[index] = null;
+            }
+        }
+
+        private static HashSet<string> ExpectedDeletionArtifactKeys(
+            UiJob job,
+            string kind,
+            string generator,
+            int imageIndex)
+        {
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            if (kind == "prompt")
+            {
+                for (var index = 0; index < job.InputImageCount; index++)
+                {
+                    keys.Add($"input/{index}");
+                }
+            }
+
+            var (events, _) = job.ReadFrom(0);
+            foreach (var eventJson in events)
+            {
+                using var document = JsonDocument.Parse(eventJson);
+                var root = document.RootElement;
+                if (!root.TryGetProperty("type", out var typeElement))
+                {
+                    continue;
+                }
+                var type = typeElement.GetString();
+                if (type == "grid"
+                    && root.TryGetProperty("url", out var gridUrl)
+                    && !string.IsNullOrWhiteSpace(gridUrl.GetString()))
+                {
+                    keys.Add("grid/0");
+                    continue;
+                }
+                if (type != "gen-result"
+                    || !root.TryGetProperty("gen", out var generatorElement)
+                    || string.IsNullOrWhiteSpace(generatorElement.GetString()))
+                {
+                    continue;
+                }
+
+                var eventGenerator = generatorElement.GetString()!;
+                AddIndexedArtifactKeys(root, "images", eventGenerator, keys);
+                AddIndexedArtifactKeys(root, "partialImages", eventGenerator, keys);
+                if (root.TryGetProperty("progressImages", out var progressImages)
+                    && progressImages.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var progressImage in progressImages.EnumerateArray())
+                    {
+                        if (!progressImage.TryGetProperty("url", out var url)
+                            || url.ValueKind == JsonValueKind.Null)
+                        {
+                            continue;
+                        }
+                        if (url.ValueKind != JsonValueKind.String)
+                        {
+                            throw new InvalidDataException(
+                                "Progress-image deletion identity contains a non-string URL.");
+                        }
+                        if (string.IsNullOrWhiteSpace(url.GetString()))
+                        {
+                            continue;
+                        }
+                        if (!progressImage.TryGetProperty(
+                                "partialIndex",
+                                out var partialIndexElement)
+                            || !partialIndexElement.TryGetInt32(out var partialIndex)
+                            || partialIndex < 0
+                            || !progressImage.TryGetProperty(
+                                "imageIndex",
+                                out var progressImageIndexElement)
+                            || !progressImageIndexElement.TryGetInt32(
+                                out var progressImageIndex)
+                            || progressImageIndex < 0)
+                        {
+                            throw new InvalidDataException(
+                                "Progress-image deletion identity is incomplete.");
+                        }
+                        keys.Add(
+                            $"{UiJob.PartialSnapshotGenKey(eventGenerator, partialIndex)}"
+                            + $"/{progressImageIndex}");
+                    }
+                }
+            }
+
+            if (kind == "prompt")
+            {
+                return keys;
+            }
+            return keys
+                .Where(key =>
+                {
+                    var slash = key.LastIndexOf('/');
+                    if (slash <= 0
+                        || !int.TryParse(key.AsSpan(slash + 1), out var index))
+                    {
+                        return false;
+                    }
+                    var artifactGenerator = key.Substring(0, slash);
+                    return artifactGenerator == "grid"
+                        || (index == imageIndex
+                            && string.Equals(
+                                UiJob.PartialSnapshotVisibilityGen(
+                                    artifactGenerator),
+                                generator,
+                                StringComparison.Ordinal));
+                })
+                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        private static void AddIndexedArtifactKeys(
+            JsonElement root,
+            string propertyName,
+            string generator,
+            HashSet<string> keys)
+        {
+            if (!root.TryGetProperty(propertyName, out var images)
+                || images.ValueKind != JsonValueKind.Array)
+            {
+                return;
+            }
+            var index = 0;
+            foreach (var image in images.EnumerateArray())
+            {
+                if (image.ValueKind == JsonValueKind.String)
+                {
+                    if (!string.IsNullOrWhiteSpace(image.GetString()))
+                    {
+                        keys.Add($"{generator}/{index}");
+                    }
+                }
+                else if (image.ValueKind != JsonValueKind.Null)
+                {
+                    throw new InvalidDataException(
+                        $"{propertyName} deletion identity contains a non-string URL.");
+                }
+                index++;
+            }
+        }
+
         /// Resolves result-image bytes for internal reuse (currently the
         /// video-source upload). Local disk first; when the local raw was
         /// evicted after its verified B2 upload, the exact recorded object is
@@ -3776,9 +4311,18 @@ namespace MultiImageClient
                 return null;
             }
             var flightKey = $"{job.Id}/{gen}/{n}";
-            var lazy = _thumbRegens.GetOrAdd(
-                flightKey,
-                _ => new Lazy<Task<(string, string)?>>(() => RebuildCardPreviewFromHostedAsync(job, gen, n)));
+            Lazy<Task<(string Path, string ContentType)?>> lazy;
+            lock (_artifactMutationLock)
+            {
+                if (_deletingArtifactJobs.ContainsKey(job.Id))
+                {
+                    return null;
+                }
+                lazy = _thumbRegens.GetOrAdd(
+                    flightKey,
+                    _ => new Lazy<Task<(string, string)?>>(
+                        () => RebuildCardPreviewFromHostedAsync(job, gen, n)));
+            }
             try
             {
                 return await lazy.Value;
@@ -3814,7 +4358,7 @@ namespace MultiImageClient
                 var temp = Path.Combine(Path.GetTempPath(), $"mic-thumb-regen-{Guid.NewGuid():N}");
                 try
                 {
-                    await _b2.DownloadToFileAsync(info.CdnKey, temp, CancellationToken.None);
+                    await _b2!.DownloadToFileAsync(info.CdnKey, temp, CancellationToken.None);
                     string sha;
                     using (var stream = File.OpenRead(temp))
                     {
@@ -4507,7 +5051,10 @@ namespace MultiImageClient
                 sentPrompt,
                 cost = ok ? perCallCost * texts.Count : 0m,
             });
-            Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({texts.Count} description(s))" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms");
+            Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({texts.Count} description(s))" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms"
+                + (actionHint != null
+                    ? $"\n[ui #{job.Id}]      next step: {actionHint.Text} -> {actionHint.Url}"
+                    : ""));
             return result;
         }
 
@@ -4680,7 +5227,10 @@ namespace MultiImageClient
                 sentPrompt,
                 cost = ok ? perCallCost * urls.Count : 0m,
             });
-            Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({urls.Count} map(s))" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms");
+            Logger.Log($"[ui #{job.Id}]   <- {(ok ? $"OK ({urls.Count} map(s))" : $"FAIL ({result.ErrorMessage})")} from {key} in {elapsed} ms"
+                + (actionHint != null
+                    ? $"\n[ui #{job.Id}]      next step: {actionHint.Text} -> {actionHint.Url}"
+                    : ""));
             return result;
         }
 

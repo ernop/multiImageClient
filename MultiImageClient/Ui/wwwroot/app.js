@@ -2843,6 +2843,9 @@ function setAllGenerators(mode) {
 el("gens-enable-all").addEventListener("click", () => setAllGenerators("enable"));
 el("gens-disable-all").addEventListener("click", () => setAllGenerators("disable"));
 el("gens-toggle-all").addEventListener("click", () => setAllGenerators("toggle"));
+el("gens-default").addEventListener("click", () => applyGeneratorPreset({
+  generatorKeys: generatorPreferences.defaultSelectedKeys,
+}));
 // Attachment-aware bulk actions, visible only while an image is attached.
 function setGeneratorsByImageCapability(wantCapable, checked) {
   for (const cb of gensRow.querySelectorAll("input:not(:disabled)")) {
@@ -7272,7 +7275,7 @@ async function loadKnownUsers() {
   } catch { /* the filter bar fills in from live events regardless */ }
 }
 
-// ---------- creator-only persistent stream hiding ----------
+// ---------- creator-only destructive stream hiding ----------
 
 function hiddenImageIdentity(jobId, generator, imageIndex) {
   return `${jobId}|${generator}|${Number(imageIndex)}`;
@@ -7284,6 +7287,11 @@ function isPromptHidden(jobId) {
 
 function isImageHidden(jobId, generator, imageIndex) {
   return hiddenImageKeys.has(hiddenImageIdentity(jobId, generator, imageIndex));
+}
+
+function hasHiddenImageForGenerator(jobId, generator) {
+  const prefix = `${jobId}|${generator}|`;
+  return [...hiddenImageKeys].some((identity) => identity.startsWith(prefix));
 }
 
 function applyVisibilitySnapshot(raw) {
@@ -7305,6 +7313,21 @@ function applyVisibilitySnapshot(raw) {
   visibilityServerVersion = String(raw.version);
   hiddenPromptJobIds = prompts;
   hiddenImageKeys = images;
+  for (const [identity, favorite] of favoriteItems) {
+    if (isPromptHidden(favorite.jobId)
+        || isImageHidden(
+          favorite.jobId,
+          favorite.generator,
+          favorite.imageIndex)) {
+      favoriteItems.delete(identity);
+    }
+  }
+  for (const [identity, favorite] of promptFavoriteItems) {
+    if (isPromptHidden(favorite.jobId)) {
+      promptFavoriteItems.delete(identity);
+    }
+  }
+  rebuildFavoriteUsers();
 
   for (const card of document.querySelectorAll(
     "#jobs .job, #archive .job, #favorites-grid .favorite-gallery-card")) {
@@ -7321,6 +7344,7 @@ function applyVisibilitySnapshot(raw) {
       continue;
     }
     let hasHiddenImage = false;
+    let removeFavoriteCard = false;
     for (const link of [...card.querySelectorAll('a[data-viewer-image="true"]')]) {
       if (link.dataset.resultKind === "text") continue;
       if (!isImageHidden(
@@ -7332,6 +7356,22 @@ function applyVisibilitySnapshot(raw) {
       const cached = imageViewerCache.get(link.href);
       if (cached) discardImageViewerCacheEntry(link.href, cached);
       (link.closest(".media-result") || link).remove();
+      hasHiddenImage = true;
+      if (card.classList.contains("favorite-gallery-card")) {
+        removeFavoriteCard = true;
+        break;
+      }
+    }
+    if (removeFavoriteCard) {
+      card.remove();
+      continue;
+    }
+    for (const cell of card.querySelectorAll(".cell[data-gen]")) {
+      if (!hasHiddenImageForGenerator(jobId, cell.dataset.gen)) continue;
+      for (const stale of cell.querySelectorAll(
+        ".progress-previews, .partial-kept")) {
+        stale.remove();
+      }
       hasHiddenImage = true;
     }
     if (hasHiddenImage) card.querySelector(".grid-link")?.remove();
@@ -7371,6 +7411,7 @@ async function persistHiddenResource(kind, jobId, generator = "", imageIndex = -
     const response = await fetch(apiUrl("api/visibility"), { method: "POST", body: form });
     if (response.status === 401) { location.reload(); return false; }
     const body = await response.json();
+    if (body.visibility) applyVisibilitySnapshot(body.visibility);
     if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
     applyVisibilitySnapshot(body);
     return true;
@@ -7383,19 +7424,19 @@ function createHidePromptButton(jobId) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "hide-prompt";
-  button.textContent = "hide prompt";
-  button.title = "Permanently hide this entire prompt and all of its results from everyone";
+  button.textContent = "hide prompt + delete images";
+  button.title = "Hide this prompt and permanently delete all of its local and Backblaze B2 images";
   button.addEventListener("click", async () => {
     if (!confirm(
-      "Hide this entire prompt and all its results from everyone?\n\n" +
-      "This cannot be undone in the UI.")) return;
+      "Hide this entire prompt and permanently delete all its stored images?\n\n" +
+      "This deletes local and Backblaze B2 copies. It cannot revoke files that someone already copied or cached.")) return;
     button.disabled = true;
-    button.textContent = "hiding…";
+    button.textContent = "deleting…";
     try {
       await persistHiddenResource("prompt", jobId);
     } catch (error) {
       button.disabled = false;
-      button.textContent = "hide failed";
+      button.textContent = "delete failed";
       button.title = String(error);
     }
   });
@@ -7622,7 +7663,10 @@ function renderFavoritesGallery() {
     ...[...promptFavoriteItems.values()].map((item) => ({ ...item, kind: "prompt" })),
   ]
     .filter((item) =>
-      favoriteBrowseUser === "*" || item.users.includes(favoriteBrowseUser))
+      (favoriteBrowseUser === "*" || item.users.includes(favoriteBrowseUser))
+      && !isPromptHidden(item.jobId)
+      && (item.kind !== "image"
+        || !isImageHidden(item.jobId, item.generator, item.imageIndex)))
     .sort((a, b) => b.jobCreatedAtUnixMs - a.jobCreatedAtUnixMs);
   const title = favoriteBrowseUser === "*"
     ? "everyone's favorites"
@@ -7843,7 +7887,7 @@ function renderImageViewerHide(item) {
   const allowed = !!item && item.kind !== "text" && card?.dataset.canHide === "true";
   imageViewerHide.hidden = !allowed;
   imageViewerHide.disabled = !allowed || visibilityMutation !== null;
-  imageViewerHide.textContent = visibilityMutation ? "hiding…" : "hide image";
+  imageViewerHide.textContent = visibilityMutation ? "deleting…" : "hide + delete image";
 }
 
 function vibecodersIdentity(jobId, generator, imageIndex) {
@@ -7970,7 +8014,10 @@ async function hideCurrentViewerImage() {
   const current = locateImageViewerState(getImageViewerPrompts());
   if (!current || current.item.kind === "text") return;
   if (findViewerAnchor(current.item)?.closest(".job")?.dataset.canHide !== "true") return;
-  if (!confirm("Hide only this image from everyone?\n\nThis cannot be undone in the UI.")) return;
+  if (!confirm(
+    "Hide this image and permanently delete its stored files?\n\n" +
+    "This deletes the local original, previews, its contact sheet, and any Backblaze B2 copies. " +
+    "It cannot revoke files that someone already copied or cached.")) return;
   renderImageViewerHide(current.item);
   try {
     await persistHiddenResource(
@@ -7980,7 +8027,7 @@ async function hideCurrentViewerImage() {
       current.item.imageIndex);
   } catch (error) {
     imageViewerHide.disabled = false;
-    imageViewerHide.textContent = "hide failed";
+    imageViewerHide.textContent = "delete failed";
     imageViewerHide.title = String(error);
   }
 }
@@ -8355,7 +8402,12 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
     const response = await fetch(apiUrl("api/prompt/advice"), { method: "POST", body: form });
     if (response.status === 401) { location.reload(); return; }
     const body = await response.json();
-    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+    if (!response.ok) {
+      const failure = new Error(body.error || `HTTP ${response.status}`);
+      failure.providerHint = body.errorHint || "";
+      failure.providerHintUrl = body.errorHintUrl || "";
+      throw failure;
+    }
     promptAdvicePrevious = claudeAdviceOriginalPrompt;
     promptBox.value = body.replacement;
     promptAdviceUndoBtn.hidden = false;
@@ -8365,7 +8417,18 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
     updatePromptLimitNotice();
     promptBox.focus();
   } catch (error) {
-    claudeAdviceStatus.textContent = String(error);
+    claudeAdviceStatus.textContent = error instanceof Error ? error.message : String(error);
+    if (error && error.providerHint) {
+      claudeAdviceStatus.appendChild(document.createTextNode(` ${error.providerHint} `));
+      if (error.providerHintUrl) {
+        const a = document.createElement("a");
+        a.href = error.providerHintUrl;
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.textContent = new URL(error.providerHintUrl).hostname.replace(/^www\./, "");
+        claudeAdviceStatus.appendChild(a);
+      }
+    }
     claudeAdviceStatus.className = "error";
     claudeAdviceHistoryLoaded = false;
   } finally {

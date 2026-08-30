@@ -19,6 +19,9 @@ namespace MultiImageClient
         public int ImageIndex { get; init; } = -1;
         public required string HiddenByLogin { get; init; }
         public long HiddenAtUnixMs { get; init; }
+        /// Zero only on records created before hiding also deleted the
+        /// underlying local and hosted artifacts.
+        public long PurgedAtUnixMs { get; init; }
     }
 
     /// Persistent one-way stream visibility records. Disk is the source of
@@ -102,6 +105,49 @@ namespace MultiImageClient
             }
         }
 
+        public List<UiHiddenResource> ListPendingPurges()
+        {
+            lock (_lock)
+            {
+                return _records.Values
+                    .Where(record => record.PurgedAtUnixMs == 0)
+                    .OrderBy(record => record.HiddenAtUnixMs)
+                    .ToList();
+            }
+        }
+
+        public void MarkPurged(UiHiddenResource record, long purgedAtUnixMs)
+        {
+            var key = RecordKey(record);
+            lock (_lock)
+            {
+                if (!_records.TryGetValue(key, out var current))
+                {
+                    throw new InvalidDataException(
+                        $"Cannot mark an unknown hidden resource as purged: {Describe(record)}");
+                }
+                if (current.PurgedAtUnixMs > 0)
+                {
+                    return;
+                }
+                var updated = new UiHiddenResource
+                {
+                    Version = current.Version,
+                    Kind = current.Kind,
+                    JobId = current.JobId,
+                    Generator = current.Generator,
+                    ImageIndex = current.ImageIndex,
+                    HiddenByLogin = current.HiddenByLogin,
+                    HiddenAtUnixMs = current.HiddenAtUnixMs,
+                    PurgedAtUnixMs = purgedAtUnixMs,
+                };
+                Validate(updated);
+                WriteAtomically(RecordPath(updated), updated);
+                _records[key] = updated;
+                _revision++;
+            }
+        }
+
         private void Load()
         {
             foreach (var path in Directory.EnumerateFiles(_folder, "*.json"))
@@ -152,7 +198,10 @@ namespace MultiImageClient
             }
             if (string.IsNullOrWhiteSpace(record.JobId)
                 || string.IsNullOrWhiteSpace(record.HiddenByLogin)
-                || record.HiddenAtUnixMs <= 0)
+                || record.HiddenAtUnixMs <= 0
+                || record.PurgedAtUnixMs < 0
+                || (record.PurgedAtUnixMs > 0
+                    && record.PurgedAtUnixMs < record.HiddenAtUnixMs))
             {
                 throw new InvalidDataException(
                     "Visibility record is missing required identity or audit data.");

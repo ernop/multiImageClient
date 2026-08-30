@@ -133,6 +133,51 @@ namespace MultiImageClient
             }
         }
 
+        public int RemoveHiddenResource(
+            string kind,
+            string jobId,
+            string generator = "",
+            int imageIndex = -1)
+        {
+            if (kind != "prompt" && kind != "image")
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(kind),
+                    "Hidden favorite resource kind must be prompt or image.");
+            }
+
+            lock (_lock)
+            {
+                var matches = _records
+                    .Where(pair =>
+                        string.Equals(pair.Value.JobId, jobId, StringComparison.Ordinal)
+                        && (kind == "prompt"
+                            || (string.Equals(pair.Value.Kind, "image", StringComparison.Ordinal)
+                                && string.Equals(
+                                    pair.Value.Generator,
+                                    generator,
+                                    StringComparison.Ordinal)
+                                && pair.Value.ImageIndex == imageIndex)))
+                    .ToList();
+                var removed = 0;
+                foreach (var pair in matches)
+                {
+                    var path = RecordPath(pair.Value);
+                    if (!File.Exists(path))
+                    {
+                        throw new IOException(
+                            $"Favorite index contains {DescribeIdentity(pair.Value)}, "
+                            + $"but its source file is missing: {path}");
+                    }
+                    File.Delete(path);
+                    _records.Remove(pair.Key);
+                    _revision++;
+                    removed++;
+                }
+                return removed;
+            }
+        }
+
         private void Load()
         {
             foreach (var path in Directory.EnumerateFiles(_folder, "*.json"))

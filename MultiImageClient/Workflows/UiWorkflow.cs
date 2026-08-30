@@ -54,7 +54,7 @@ namespace MultiImageClient
     ///   GET  /api/activity/poll?after=N        bounded shared activity poll
     ///   POST /api/requests                     submit a request to the developer
     ///   GET  /api/requests?after=N             developer-only request inbox
-    ///   POST /api/visibility                   creator-only permanent prompt/image stream hiding
+    ///   POST /api/visibility                   creator-only prompt/image hiding plus artifact deletion
     ///   GET  /api/jobs/{id}/location           live vs archive-day home for a share link
     ///   GET  /api/discord/vibecoders           identities already sent to #vibecoders
     ///   POST /api/discord/vibecoders           send one image/video once; message is the site link
@@ -136,6 +136,11 @@ namespace MultiImageClient
             }
             var activeJobs = new ConcurrentDictionary<string, Task>();
             await using var runner = new UiJobRunner(settings, stats, options);
+            await PurgePendingHiddenArtifactsAsync(
+                jobs,
+                favorites,
+                visibility,
+                runner);
 
             // User-directed prompt editing through Claude. The exact system
             // prompt, instruction, source prompt, wire prompt, response, and
@@ -1394,9 +1399,21 @@ namespace MultiImageClient
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 if (failure.Length > 0)
                 {
-                    Logger.Log($"UI Claude advice {exchange.Id} failed for '{actorDisplay}': {failure}");
+                    var actionHint = ProviderActionHints.For(
+                        UiJobRunner.KeyDescribeClaude,
+                        failure);
+                    Logger.Log($"UI Claude advice {exchange.Id} failed for '{actorDisplay}': {failure}"
+                        + (actionHint != null
+                            ? $"\nUI Claude advice next step: {actionHint.Text} -> {actionHint.Url}"
+                            : ""));
                     return Results.Json(
-                        new { error = failure, exchangeId = exchange.Id },
+                        new
+                        {
+                            error = failure,
+                            exchangeId = exchange.Id,
+                            errorHint = actionHint?.Text,
+                            errorHintUrl = actionHint?.Url,
+                        },
                         statusCode: 502);
                 }
                 Logger.Log($"UI Claude advice {exchange.Id} completed for '{actorDisplay}'.");
@@ -1559,6 +1576,11 @@ namespace MultiImageClient
                         // its verified B2 upload: rebuild from the exact
                         // recorded hosted object (SHA-verified, single-flight,
                         // capped concurrency).
+                        if (visibility.IsPromptHidden(id)
+                            || visibility.IsImageHidden(id, visibilityGen, n))
+                        {
+                            return Results.NotFound();
+                        }
                         var rebuilt = await runner.TryRebuildCardPreviewFromHostedAsync(job, gen, n);
                         if (rebuilt == null)
                         {
@@ -1757,17 +1779,19 @@ namespace MultiImageClient
                 return Results.Json(new { users });
             });
 
-            // One-way stream hiding. Authorization comes only from the
+            // One-way destructive hiding. Authorization comes only from the
             // authenticated account: the job's creator login, or the fixed
             // ernieMultiZone override. Browser-supplied display names never
-            // grant this permission.
+            // grant this permission. Persist the visibility tombstone before
+            // deleting exact local/B2 artifacts. Interrupted purges remain
+            // hidden and retry during the next server startup.
             app.MapPost("/api/visibility", async (HttpRequest request) =>
             {
                 var authUser = request.HttpContext.Items["micUser"] as string ?? "";
                 if (authUser.Length == 0)
                 {
                     return Results.Json(
-                        new { error = "Log in to hide a prompt or image." },
+                        new { error = "Log in to hide and delete a prompt or image." },
                         statusCode: 403);
                 }
 
@@ -1791,8 +1815,14 @@ namespace MultiImageClient
                 if (!CanManageVisibility(job, authUser))
                 {
                     return Results.Json(
-                        new { error = "Only the authenticated creator can hide this item." },
+                        new { error = "Only the authenticated creator can hide and delete this item." },
                         statusCode: 403);
+                }
+                if (!job.IsDone)
+                {
+                    return Results.Json(
+                        new { error = "Wait for this job to finish before deleting its images." },
+                        statusCode: 409);
                 }
 
                 var generator = "";
@@ -1822,30 +1852,67 @@ namespace MultiImageClient
                     }
                 }
 
+                var hiddenAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var pendingRecord = new UiHiddenResource
+                {
+                    Kind = kind,
+                    JobId = jobId,
+                    Generator = generator,
+                    ImageIndex = imageIndex,
+                    HiddenByLogin = authUser,
+                    HiddenAtUnixMs = hiddenAt,
+                };
+                var tombstonePersisted = false;
                 try
                 {
-                    visibility.Hide(new UiHiddenResource
-                    {
-                        Kind = kind,
-                        JobId = jobId,
-                        Generator = generator,
-                        ImageIndex = imageIndex,
-                        HiddenByLogin = authUser,
-                        HiddenAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    });
+                    visibility.Hide(pendingRecord);
+                    tombstonePersisted = true;
+                    var deletedArtifacts = await runner.DeleteHiddenArtifactsAsync(
+                        job,
+                        kind,
+                        generator,
+                        imageIndex,
+                        request.HttpContext.RequestAborted);
+                    var removedFavorites = favorites.RemoveHiddenResource(
+                        kind,
+                        jobId,
+                        generator,
+                        imageIndex);
+                    visibility.MarkPurged(
+                        pendingRecord,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     Logger.Log(
-                        $"UI visibility: {authUser} hid {kind}/{jobId}"
-                        + (kind == "image" ? $"/{generator}/{imageIndex}" : "") + ".");
+                        $"UI visibility: {authUser} hid and deleted {kind}/{jobId}"
+                        + (kind == "image" ? $"/{generator}/{imageIndex}" : "")
+                        + $" ({deletedArtifacts} artifact(s), {removedFavorites} favorite(s)).");
                     var snapshot = visibility.Snapshot();
                     return Results.Json(BuildVisibilityResponse(
                         snapshot.Version,
                         snapshot.Records));
                 }
-                catch (Exception ex) when (ex is IOException or InvalidDataException)
+                catch (Exception ex) when (
+                    ex is IOException
+                    or InvalidDataException
+                    or InvalidOperationException
+                    or HttpRequestException
+                    or TaskCanceledException)
                 {
-                    Logger.Log($"UI visibility: could not persist hide operation: {ex.Message}");
+                    Logger.Log(
+                        $"UI visibility: hide/delete failed for {kind}/{jobId}"
+                        + (kind == "image" ? $"/{generator}/{imageIndex}" : "")
+                        + $": {ex.Message}");
+                    var snapshot = visibility.Snapshot();
                     return Results.Json(
-                        new { error = "The hide operation could not be persisted." },
+                        new
+                        {
+                            error = tombstonePersisted
+                                ? "The item is hidden, but permanent file deletion is incomplete. "
+                                    + "The server will retry it during startup."
+                                : "The hide and delete operation could not be persisted.",
+                            visibility = tombstonePersisted
+                                ? BuildVisibilityResponse(snapshot.Version, snapshot.Records)
+                                : null,
+                        },
                         statusCode: 500);
                 }
             });
@@ -2460,6 +2527,64 @@ namespace MultiImageClient
             }
         }
 
+        private static async Task PurgePendingHiddenArtifactsAsync(
+            UiJobRegistry jobs,
+            UiFavoriteStore favorites,
+            UiVisibilityStore visibility,
+            UiJobRunner runner)
+        {
+            foreach (var record in visibility.ListPendingPurges())
+            {
+                var job = jobs.Get(record.JobId);
+                if (job == null)
+                {
+                    Logger.Log(
+                        $"UI visibility: pending purge has no exact job: "
+                        + $"{record.Kind}/{record.JobId}/{record.Generator}/{record.ImageIndex}.");
+                    continue;
+                }
+                try
+                {
+                    var deletedArtifacts = await runner.DeleteHiddenArtifactsAsync(
+                        job,
+                        record.Kind,
+                        record.Generator,
+                        record.ImageIndex,
+                        CancellationToken.None);
+                    var removedFavorites = favorites.RemoveHiddenResource(
+                        record.Kind,
+                        record.JobId,
+                        record.Generator,
+                        record.ImageIndex);
+                    visibility.MarkPurged(
+                        record,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    Logger.Log(
+                        $"UI visibility: completed pending purge for "
+                        + $"{record.Kind}/{record.JobId}"
+                        + (record.Kind == "image"
+                            ? $"/{record.Generator}/{record.ImageIndex}"
+                            : "")
+                        + $" ({deletedArtifacts} artifact(s), {removedFavorites} favorite(s)).");
+                }
+                catch (Exception ex) when (
+                    ex is IOException
+                    or InvalidDataException
+                    or InvalidOperationException
+                    or HttpRequestException
+                    or TaskCanceledException)
+                {
+                    Logger.Log(
+                        $"UI visibility: pending purge remains incomplete for "
+                        + $"{record.Kind}/{record.JobId}"
+                        + (record.Kind == "image"
+                            ? $"/{record.Generator}/{record.ImageIndex}"
+                            : "")
+                        + $": {ex.Message}");
+                }
+            }
+        }
+
         private static void DeleteRejectedJobInputs(IEnumerable<string> paths)
         {
             foreach (var path in paths)
@@ -2625,6 +2750,8 @@ namespace MultiImageClient
                 return eventJson;
             }
             var thumbs = evt["thumbs"] as JsonArray;
+            var partialImages = evt["partialImages"] as JsonArray;
+            var partialThumbs = evt["partialThumbs"] as JsonArray;
             var changed = false;
             for (var index = 0; index < images.Count; index++)
             {
@@ -2637,7 +2764,27 @@ namespace MultiImageClient
                 {
                     thumbs[index] = null;
                 }
+                if (partialImages != null && index < partialImages.Count)
+                {
+                    partialImages[index] = null;
+                }
+                if (partialThumbs != null && index < partialThumbs.Count)
+                {
+                    partialThumbs[index] = null;
+                }
                 changed = true;
+            }
+            if (evt["progressImages"] is JsonArray progressImages)
+            {
+                for (var index = progressImages.Count - 1; index >= 0; index--)
+                {
+                    var imageIndex = progressImages[index]?["imageIndex"]?.GetValue<int>() ?? -1;
+                    if (visibility.IsImageHidden(jobId, gen, imageIndex))
+                    {
+                        progressImages.RemoveAt(index);
+                        changed = true;
+                    }
+                }
             }
             return changed ? evt.ToJsonString() : eventJson;
         }

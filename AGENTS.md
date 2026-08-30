@@ -112,9 +112,9 @@ See `RunOptions.cs` for the source of truth; this is the current surface:
 
 - **Contact-sheet producer names (2026-08-11):** every generated-image contact sheet leads each cell with the same complete catalog/model name used by the UI, then the provider (and exact provider model slug where it adds identity), followed by non-duplicate per-call detail. Stable endpoint keys such as `googlepro`, enum names, and UI-only tags are internal identity and never replace the producer name. `GeneratorPresentation` is the canonical registry for UI labels and sheet producer labels; `TaskProcessResult.GeneratorKey` keeps correlation separate from presentation.
 
-### Creator-only stream hiding
+### Creator-only image deletion and stream hiding
 
-Jobs persist `CreatorLogin`, the authenticated account that submitted them, separately from browser-supplied `CreatedBy` attribution. That login and the fixed `ernieMultiZone` override get one-way hide controls. Hiding a prompt removes the whole job from live/archive feeds, favorites, input-library listings, logs, and app image routes. Hiding one image uses exact `(jobId, generator, imageIndex)` identity, redacts only that image, blocks app-route/video reuse, and suppresses its contact sheet while leaving the prompt and sibling results visible. Records live under `ImageDownloadBaseFolder/UiVisibility`; there is no UI unhide. Jobs predating `CreatorLogin` cannot infer ownership from spoofable attribution, so only the override can hide those. This is stream visibility, not byte deletion: already-copied URLs/browser cache entries and underlying local/B2 files are not revoked.
+Jobs persist `CreatorLogin`, the authenticated account that submitted them, separately from browser-supplied `CreatedBy` attribution. That login and the fixed `ernieMultiZone` override get one-way destructive hide controls. Hiding a prompt removes the whole job from live/archive feeds, favorites, input-library listings, logs, and app image routes, then deletes every recorded local and Backblaze B2 media artifact for that job. Hiding one image uses exact `(jobId, generator, imageIndex)` identity, deletes that result, its progression previews, card thumbs, and the contact sheet containing it, while leaving sibling results visible. Backblaze deletion uses each persisted object key plus file ID through `b2_delete_file_version`; missing or incomplete identity fails closed. Persisted events are replaced or redacted without retaining their old B2 migration backup, while `images.json` keeps exact deletion identity for idempotent retries. The visibility tombstone is written before byte deletion, so interrupted deletion remains hidden and retries during server startup. Records live under `ImageDownloadBaseFolder/UiVisibility`; there is no UI unhide. Jobs predating `CreatorLogin` cannot infer ownership from spoofable attribution, so only the override can delete those. Already-copied files and browser caches cannot be revoked.
 
 ## Coding Style & Naming Conventions
 Use 4-space indentation and .NET naming: PascalCase for public types/methods, camelCase for locals, Async suffix for asynchronous methods. Favor explicit types for shared models; use `var` only when the type is obvious. Route new configuration through `ImageGenerationClasses/Settings.cs` instead of ad-hoc JSON parsing. Python utilities under `djangoManager/` should follow PEP 8 snake_case, with comments reserved for non-obvious prompt logic.
@@ -126,6 +126,14 @@ Use 4-space indentation and .NET naming: PascalCase for public types/methods, ca
 - Catching an exception must not convert failure into apparent success or continue with substitute data.
 - The only exception is a specific fallback explicitly required by the user as product behavior. It must be documented at the call site, independently validated, and incapable of selecting unrelated user/provider data.
 - Predeclared defaults selected before an operation begins are ordinary configuration, not recovery. After an operation begins, its failed output must never be replaced with different output.
+
+## Provider Failure Recovery Links
+- Every remote UI target must have researched official billing/top-up and API-key management URLs in `ProviderActionHints`.
+- Add those URLs in the same change that adds a remote target. Never guess a provider URL.
+- Billing and authentication failures must carry the specific recovery text and URL through the persisted `gen-result` event, job card, and server log.
+- Keep consumer-web session recovery separate from API credit recovery. Local generators have no API billing link.
+- Do not describe validation, moderation, transport, or provider outages as billing failures.
+- `ProviderActionHintsTests.EveryApiBackedUiTargetHasAResearchedBillingRecoveryLink` must cover the complete remote UI catalog and fail when a target lacks a mapping.
 
 ## Visual & Typography Policy (combined-image output, labels, UI text)
 - **Never render text in gray.** No `MutedGray`, no `Color.FromRgb(x,x,x)` where R==G==B in the mid range, no "subtle" gray labels. If a secondary label needs to look secondary, reduce its font size and/or reuse the existing semantic color (e.g. `SuccessGreen`, `ErrorRed`, `Black`, `Gold`) — the contrast comes from size, not desaturation.

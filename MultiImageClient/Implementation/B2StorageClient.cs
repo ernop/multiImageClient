@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -185,14 +186,59 @@ namespace MultiImageClient
             var payload = JsonSerializer.Serialize(new { fileName = objectKey, fileId });
             request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
             using var response = await _http.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
                 InvalidateAuth();
             }
             if (!response.IsSuccessStatusCode)
             {
-                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                // Deletion is retried after transport failures and process
+                // interruption. B2's exact file-version identity makes its
+                // file_not_present response an idempotent success: that same
+                // recorded key/fileId pair is already absent.
+                if (IsExactFileAlreadyAbsent(body))
+                {
+                    return;
+                }
                 throw new HttpRequestException($"b2_delete_file_version for '{objectKey}' failed: HTTP {(int)response.StatusCode} {Truncate(body)}");
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                var returnedName = document.RootElement.GetProperty("fileName").GetString();
+                var returnedId = document.RootElement.GetProperty("fileId").GetString();
+                if (!string.Equals(returnedName, objectKey, StringComparison.Ordinal)
+                    || !string.Equals(returnedId, fileId, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"B2 delete identity mismatch: requested '{objectKey}'/'{fileId}', "
+                        + $"but B2 confirmed '{returnedName}'/'{returnedId}'.");
+                }
+            }
+            catch (Exception ex) when (ex is JsonException or KeyNotFoundException)
+            {
+                throw new InvalidDataException(
+                    $"B2 delete confirmation for '{objectKey}' was malformed.",
+                    ex);
+            }
+        }
+
+        private static bool IsExactFileAlreadyAbsent(string body)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                return document.RootElement.TryGetProperty("code", out var code)
+                    && string.Equals(
+                        code.GetString(),
+                        "file_not_present",
+                        StringComparison.Ordinal);
+            }
+            catch (JsonException)
+            {
+                return false;
             }
         }
 
