@@ -4449,10 +4449,8 @@ namespace MultiImageClient
             var enablePartials = want == 1;
 
             var urls = new List<string>();
-            // Local card-thumb URLs, index-aligned with `urls`. Only emitted
-            // when B2 hosting is on: appending ?thumb=1 to a B2 URL would be
-            // ignored and pull full-resolution originals into every card —
-            // the exact regression the card-image rule exists to prevent.
+            // Local card-thumb URLs, index-aligned with `urls`. Always
+            // emitted so the client never appends `?thumb=1` to a B2 URL.
             var thumbs = new List<string>();
             var merged = new TaskProcessResult
             {
@@ -4671,7 +4669,7 @@ namespace MultiImageClient
                                 partialImages = (List<string?>?)null,
                                 partialThumbs = (List<string?>?)null,
                                 progressImages = (List<object>?)null,
-                                thumbs = _b2 != null ? thumbs.ToList() : null,
+                                thumbs = thumbs.ToList(),
                                 mediaType,
                                 label = progressCountLabel,
                                 size = progressSize,
@@ -4854,10 +4852,10 @@ namespace MultiImageClient
                 // Success or failure: the durably persisted in-process
                 // streamed previews, in arrival order.
                 progressImages,
-                // Present only when B2 hosting is on: local ?thumb=1 card
-                // previews, index-aligned with `images` (whose entries are
-                // then absolute B2 URLs that have no thumb variant).
-                thumbs = _b2 != null ? thumbs : null,
+                // Local ?thumb=1 card previews, index-aligned with `images`.
+                // Always present so the client never appends `?thumb=1` to a
+                // B2 original.
+                thumbs,
                 mediaType,
                 label = label ?? key,
                 size = actualSize,
@@ -5218,7 +5216,7 @@ namespace MultiImageClient
                 errorHintUrl = actionHint?.Url,
                 ms = elapsed,
                 images = urls,
-                thumbs = _b2 != null && ok ? thumbs : null,
+                thumbs = ok ? thumbs : null,
                 mediaType = ok ? "image/png" : "",
                 label,
                 size = ok ? rendered[0].Size : null,

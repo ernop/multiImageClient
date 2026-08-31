@@ -1779,6 +1779,47 @@ body.image-viewer-open { overflow: hidden; }
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
 }
+#image-viewer-stage.compare > #image-viewer-input-image {
+  grid-column: 1;
+  grid-row: 1;
+}
+#image-viewer-stage.compare > #image-viewer-image,
+#image-viewer-stage.compare > #image-viewer-awaiting-pixels {
+  grid-column: 2;
+  grid-row: 1;
+}
+#image-viewer-stage.compare.stacked > #image-viewer-input-image {
+  grid-column: 1;
+  grid-row: 1;
+}
+#image-viewer-stage.compare.stacked > #image-viewer-image,
+#image-viewer-stage.compare.stacked > #image-viewer-awaiting-pixels {
+  grid-column: 1;
+  grid-row: 2;
+}
+/* Wordless wait: the previous image's pixels are gone, and this item has
+   none yet. Pulse is the only signal. No caption on the fill. */
+#image-viewer-awaiting-pixels {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: #cfcfcf;
+  animation: image-viewer-awaiting-pixels 0.9s ease-in-out infinite alternate;
+}
+#image-viewer-stage.compare > #image-viewer-awaiting-pixels {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+#image-viewer-awaiting-pixels[hidden] { display: none; }
+@keyframes image-viewer-awaiting-pixels {
+  from { background: #b4b4b4; }
+  to { background: #ececec; }
+}
 .image-viewer-pane-label {
   position: absolute;
   top: 8px;
@@ -1792,6 +1833,39 @@ body.image-viewer-open { overflow: hidden; }
 .image-viewer-pane-label[hidden] { display: none; }
 #image-viewer-input-label { left: 8px; }
 #image-viewer-output-label { left: calc(50% + 10px); }
+/* Preview-not-final: the stage shows the card thumb (≤640px) while the
+   original is still fetching. The badge is the value; size/weight carry
+   hierarchy, not gray. */
+#image-viewer-preview-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 7px 10px 6px;
+  color: #fff;
+  background: var(--accent-dark);
+  border: 1px solid #fff;
+  border-radius: 3px;
+  pointer-events: none;
+}
+#image-viewer-preview-badge[hidden] { display: none; }
+#image-viewer-preview-badge strong {
+  color: #fff;
+  font: 800 16px/1.1 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+#image-viewer-preview-badge span {
+  color: #fff;
+  font: 600 12px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+#image-viewer-dimensions.preview-not-final {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--accent-dark);
+}
 /* Stacked orientation: the output pane starts at the vertical midpoint. */
 #image-viewer-stage.compare.stacked #image-viewer-output-label {
   left: 8px;
@@ -2147,6 +2221,70 @@ body.image-viewer-open { overflow: hidden; }
   height: 18px;
   cursor: nwse-resize;
   touch-action: none;
+}
+/* Sequential preload runway: viewport lower-right, over the dimmed overlay.
+   Clicks pass through so close-outside and the window resize grip still work.
+   Neighbor ticks stay abstract; the numbered current tick is the value. */
+#image-viewer-preload {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 7px 8px 6px;
+  pointer-events: none;
+  background: rgba(20, 22, 31, 0.78);
+  border: 1px solid #fff;
+  border-radius: 4px;
+}
+#image-viewer-preload[hidden] { display: none; }
+.image-viewer-preload-tick {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 7px;
+  height: 7px;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: transparent;
+}
+.image-viewer-preload-tick.queued::after {
+  content: "";
+  width: 2px;
+  height: 2px;
+  background: #fff;
+}
+.image-viewer-preload-tick.loading,
+.image-viewer-preload-tick.ready {
+  background: #fff;
+}
+.image-viewer-preload-tick.loading {
+  animation: image-viewer-preload-pulse 0.9s ease-in-out infinite;
+}
+.image-viewer-preload-tick.pending {
+  box-shadow: 0 0 0 2px #fff;
+}
+.image-viewer-preload-tick.current {
+  width: auto;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #fff;
+  font: 800 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.image-viewer-preload-tick.current.queued::after { display: none; }
+.image-viewer-preload-tick.current.loading,
+.image-viewer-preload-tick.current.ready {
+  color: #14161f;
+}
+@keyframes image-viewer-preload-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 #fff; }
+  50% { transform: scale(1.28); box-shadow: 0 0 0 2px #fff; }
 }
 
 /* ---------- compact composer configuration dialogs ---------- */

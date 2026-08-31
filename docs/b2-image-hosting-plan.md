@@ -16,7 +16,15 @@ was checked against the deployed system and mostly did not survive:
   (`deploy/nginx-multiimageclient.conf`, applied 2026-08-05).
 - The viewer's slow first image was a frontend scheduling defect (cold-open
   runway preloads competing with the visible image), fixed in `app.js` the
-  same day — not a serving-infrastructure problem.
+  same day — not a serving-infrastructure problem. Updated 2026-08-31: that
+  serialize-current-first gate applies only to same-origin `/api/` originals.
+  B2 result URLs are a different origin. Three parallel 6 MB anonymous B2
+  GETs finished in the same wall time as one (~7 s at ~7 Mbps). Starting six
+  *different* 6 MB neighbor originals at once still shares that pipe and
+  slows the visible image. As of 2026-08-31 the viewer keeps the selected
+  original exclusive until its bytes arrive, then starts neighbors, on every
+  origin. The stage shows that item's card thumb immediately so the walk
+  does not wait.
 - RAM/CPU serving cost was already solved by the shared-site resident work.
 
 What remains, per the owner:
@@ -326,11 +334,15 @@ is Stage 3 and waits on the owner's B2 signup).
   raster URL — B2 URL or visible failure (decision 1). Local full-res
   serving remains only for pre-hosting history.
 - Frontend: `apiUrl()` passes absolute `http(s)://` URLs through untouched
-  (it used to prepend the proxy-prefix page base unconditionally). Card
-  code uses `evt.thumbs[i]` when present, falling back to `url + "?thumb=1"`
-  for pre-hosting local URLs. Viewer/anchors/video-source keep the main URL.
+  (it used to prepend the proxy-prefix page base unconditionally). Cards
+  use `imageCardThumbUrl` only: recorded `thumbs[]`, or `?thumb=1` on a
+  same-origin original, never `?thumb=1` on B2. New events always include
+  `thumbs[]`. Viewer/anchors/video-source keep the original URL.
 - The viewer preloads originals with `fetch()`, so cross-origin B2 downloads
   require the bucket CORS rule from the checklist (share with every origin).
+  Neighbor originals wait until the selected original's bytes have arrived.
+  The stage shows the local card thumb immediately and labels it as not
+  full resolution.
 - Input images and the input library stay local-served in v1 (the compare
   viewer builds `api/jobs/{id}/images/input/0` client-side).
 - Events persisted before this feature carry local URLs and keep working

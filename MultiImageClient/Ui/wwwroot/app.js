@@ -15,6 +15,35 @@ const apiUrl = (path) => {
   return appBase + value.replace(/^\//, "");
 };
 
+function imageUrlIsForeignOrigin(url) {
+  try {
+    return new URL(url, location.href).origin !== location.origin;
+  } catch {
+    return true;
+  }
+}
+
+// Card pixels are only the local ≤640px thumb. A foreign original (B2) has
+// no thumb query. Missing recorded thumb + foreign URL yields no src —
+// never the original. Same-origin originals use `?thumb=1` on that URL.
+function imageCardThumbUrl(originalUrl, recordedThumb) {
+  if (recordedThumb) return apiUrl(recordedThumb);
+  if (!originalUrl) return "";
+  const resolved = apiUrl(originalUrl);
+  if (imageUrlIsForeignOrigin(resolved)) return "";
+  return resolved.includes("?") ? `${resolved}&thumb=1` : `${resolved}?thumb=1`;
+}
+
+function setImageElementCardThumb(img, originalUrl, recordedThumb) {
+  const thumb = imageCardThumbUrl(originalUrl, recordedThumb);
+  if (!thumb) {
+    img.removeAttribute("src");
+    return false;
+  }
+  img.src = thumb;
+  return true;
+}
+
 const PersonalConfigurationSchema = MultiImagePersonalConfiguration;
 let storedPersonalConfiguration = null;
 let storedPersonalConfigurationError = null;
@@ -146,7 +175,13 @@ let activityAudioContext = null;
 const activityEventKeys = new Set();
 const ActivityEventKeyCap = 2000;
 let imageViewerState = null;  // stable { jobId, generator, imageIndex } identity
+// The item whose media+chrome currently occupy the stage, including a
+// labeled card-thumb preview of the selected item. The preload HUD's
+// numbered current tick follows this painted item.
+let imageViewerPaintedItem = null;
 let imageViewerRenderVersion = 0;
+let imageViewerPreloadHudScheduled = false;
+let imageViewerNeighborStartPending = null;
 let imageViewerActivationVersion = 0;
 let imageViewerActivationController = null;
 let imageViewerHelpOpen = false;
@@ -183,9 +218,14 @@ const imageViewerCache = new Map();
 // Every render recenters this bounded working set around the current item.
 const ImageViewerPreloadAhead = 10;
 const ImageViewerPreloadBehind = 10;
-const ImageViewerPreloadNextPrompts = 3;
-const ImageViewerPreloadPreviousPrompts = 2;
+// Ctrl+Left/Right lands on items[0] of another prompt. Keep that landing
+// warm for the same ±10 window as one-image steps, as its own job, not as
+// leftovers after the sequential ±10 queue.
+const ImageViewerPreloadNextPrompts = 10;
+const ImageViewerPreloadPreviousPrompts = 10;
 const ImageViewerPreloadConcurrency = 6;
+const ImageViewerHoverPriority = 1000;
+const ImageViewerCacheReadyCap = 24;
 const ImageViewerPageJumpSize = 5;
 const ImageViewerWheelThreshold = 80;
 // Short-lived navigation intent. Direction is shared across one-image and
@@ -244,6 +284,8 @@ const logsConnection = el("logs-connection");
 const imageViewer = el("image-viewer");
 const imageViewerWindow = el("image-viewer-window");
 const imageViewerImage = el("image-viewer-image");
+const imageViewerAwaitingPixels = el("image-viewer-awaiting-pixels");
+const imageViewerPreviewBadge = el("image-viewer-preview-badge");
 const imageViewerStage = el("image-viewer-stage");
 const imageViewerInputImage = el("image-viewer-input-image");
 const imageViewerInputLabel = el("image-viewer-input-label");
@@ -264,6 +306,7 @@ const imageViewerVideo = el("image-viewer-video");
 const imageViewerHide = el("image-viewer-hide");
 const imageViewerVibecoders = el("image-viewer-vibecoders");
 const imageViewerStatus = el("image-viewer-status");
+const imageViewerPreload = el("image-viewer-preload");
 const favoritesGallery = el("favorites-gallery");
 const favoritesGrid = el("favorites-grid");
 const activityToggle = el("activity-toggle");
@@ -3100,7 +3143,7 @@ async function openInputLibrary() {
     const when = item.createdAtUnixMs ? new Date(item.createdAtUnixMs).toLocaleString() : "";
     button.title = `${item.width}×${item.height} · first used ${when}\n${item.prompt}`;
     const img = document.createElement("img");
-    img.src = apiUrl(`${item.url}?thumb=1`);
+    img.src = imageCardThumbUrl(item.url, null);
     img.loading = "lazy";
     img.alt = "Previously uploaded input image";
     button.appendChild(img);
@@ -8975,6 +9018,7 @@ function getImageViewerPrompts() {
       imageIndex: Number(link.dataset.imageIndex),
       generatorCount: Number(link.dataset.generatorCount),
       url: link.href,
+      thumbUrl: link.querySelector("img")?.getAttribute("src") || "",
       // Describe results ride the same walk: kind "text" items point their
       // url at the described INPUT image and carry the description text plus
       // the model's separated meta comments.
@@ -9136,6 +9180,7 @@ function discardImageViewerCacheEntry(url, entry) {
   if (entry.controller) entry.controller.abort();
   if (entry.blobUrl) {
     URL.revokeObjectURL(entry.blobUrl);
+    scheduleImageViewerPreloadHud();
     return;
   }
   entry.promise
@@ -9143,20 +9188,70 @@ function discardImageViewerCacheEntry(url, entry) {
       if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
     })
     .catch(() => {});
+  scheduleImageViewerPreloadHud();
+}
+
+function abortImageViewerInFlight() {
+  for (const [url, entry] of [...imageViewerCache]) {
+    if (entry.fetched || entry.ready) continue;
+    discardImageViewerCacheEntry(url, entry);
+  }
+}
+
+function trimImageViewerReadyCache() {
+  const keepers = [...imageViewerCache.entries()]
+    .filter(([, entry]) => entry.fetched || entry.ready);
+  const excess = keepers.length - ImageViewerCacheReadyCap;
+  if (excess <= 0) return;
+  for (let i = 0; i < excess; i++) {
+    discardImageViewerCacheEntry(keepers[i][0], keepers[i][1]);
+  }
 }
 
 function imageViewerInputUrl(jobId) {
   return apiUrl(`api/jobs/${encodeURIComponent(jobId)}/images/input/0`);
 }
 
-function findImageViewerInputThumb(jobId) {
+function findImageViewerInputThumbEl(jobId) {
   for (const card of document.querySelectorAll("#jobs .job, #archive .job")) {
     const cardJobId = card.dataset.jobId || card.id.substring("job-".length);
     if (cardJobId !== jobId) continue;
     const thumb = card.querySelector(".job-input-thumb");
-    if (thumb?.complete && thumb.naturalWidth > 0) return thumb;
+    if (thumb) return thumb;
   }
   return null;
+}
+
+function findViewerPreviewThumb(item) {
+  const anchor = findViewerAnchor(item);
+  return anchor ? anchor.querySelector("img") : null;
+}
+
+function viewerPreviewThumbUrl(thumb) {
+  if (!thumb) return "";
+  return thumb.currentSrc || thumb.src || "";
+}
+
+function setImageViewerPreviewNotFinal(active) {
+  imageViewerPreviewBadge.hidden = !active;
+  imageViewerStage.classList.toggle("preview-not-final", active);
+  imageViewerDimensions.classList.toggle("preview-not-final", active);
+}
+
+function setImageViewerAwaitingPixels(active) {
+  imageViewerAwaitingPixels.hidden = !active;
+  imageViewerStage.classList.toggle("awaiting-pixels", active);
+  imageViewerStage.setAttribute("aria-busy", active ? "true" : "false");
+}
+
+let imageViewerPreviewLoadToken = 0;
+
+function startImageViewerNeighborsIfCurrentFetched(url) {
+  const pending = imageViewerNeighborStartPending;
+  if (!pending || pending.url !== url) return;
+  if (pending.version !== imageViewerRenderVersion || imageViewer.hidden) return;
+  imageViewerNeighborStartPending = null;
+  pending.start();
 }
 
 function loadImageViewerEntry(url, priority) {
@@ -9181,11 +9276,15 @@ function loadImageViewerEntry(url, priority) {
   entry.promise = (async () => {
     await takeImageViewerPreloadSlot(entry.priority, entry);
     entry.acquired = true;
+    scheduleImageViewerPreloadHud();
     try {
       if (controller.signal.aborted) {
         throw new DOMException("Image preload aborted", "AbortError");
       }
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(url, {
+        signal: controller.signal,
+        cache: "force-cache",
+      });
       if (!response.ok) throw new Error(`image preload returned HTTP ${response.status}`);
       const blob = await response.blob();
       if (!blob.type.startsWith("image/")) {
@@ -9193,16 +9292,21 @@ function loadImageViewerEntry(url, priority) {
       }
 
       // Free the network slot before decode so neighbors can fetch while
-      // this frame's pixels land in the decoder.
+      // this frame's pixels land in the decoder. Neighbor fetches wait
+      // until this current original's bytes have arrived.
       entry.fetched = true;
       entry.acquired = false;
       releaseImageViewerPreloadSlot();
+      scheduleImageViewerPreloadHud();
+      startImageViewerNeighborsIfCurrentFetched(url);
 
       entry.blobUrl = URL.createObjectURL(blob);
       entry.image = new Image();
       entry.image.src = entry.blobUrl;
       await entry.image.decode();
       entry.ready = true;
+      scheduleImageViewerPreloadHud();
+      if (imageViewer.hidden) trimImageViewerReadyCache();
       return entry;
     } finally {
       if (entry.acquired) {
@@ -9213,9 +9317,15 @@ function loadImageViewerEntry(url, priority) {
   })().catch((error) => {
     if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
     if (imageViewerCache.get(url) === entry) imageViewerCache.delete(url);
+    // A failed selected original must still release the neighbor runway;
+    // the pending gate's own version/hidden/url checks make this a no-op
+    // for aborted neighbors and superseded renders.
+    startImageViewerNeighborsIfCurrentFetched(url);
+    scheduleImageViewerPreloadHud();
     throw error;
   });
   imageViewerCache.set(url, entry);
+  scheduleImageViewerPreloadHud();
   return entry;
 }
 
@@ -9270,24 +9380,29 @@ function prepareImageViewerWindow(prompts, current) {
     want(imageViewerInputUrl(current.item.jobId));
   }
 
+  // Two bounded jobs share this plan. Job 1: one-image steps (±10). Job 2:
+  // Ctrl+Left/Right prompt landings (items[0] of each prompt, ±10 prompts).
+  // Prompt-first URLs are enqueued before far sequential images so they are
+  // not starved behind ten one-step neighbors.
+  consider(currentIndex - 1);
+  consider(currentIndex + 1);
+  considerPromptFirst(current.promptIndex);
+
   if (imageViewerNavDirection === 0) {
-    // No observed preference yet: never assume Right. Put both immediate image
-    // neighbors and both prompt-jump landings at the front of the plan.
-    consider(currentIndex - 1);
-    consider(currentIndex + 1);
+    // No observed preference yet: never assume Right.
     considerPromptFirst(current.promptIndex - 1);
     considerPromptFirst(current.promptIndex + 1);
-    for (let distance = 2;
-         distance <= Math.max(ImageViewerPreloadAhead, ImageViewerPreloadBehind);
-         distance++) {
-      consider(currentIndex - distance);
-      consider(currentIndex + distance);
-    }
     for (let distance = 2;
          distance <= Math.max(ImageViewerPreloadNextPrompts, ImageViewerPreloadPreviousPrompts);
          distance++) {
       considerPromptFirst(current.promptIndex - distance);
       considerPromptFirst(current.promptIndex + distance);
+    }
+    for (let distance = 2;
+         distance <= Math.max(ImageViewerPreloadAhead, ImageViewerPreloadBehind);
+         distance++) {
+      consider(currentIndex - distance);
+      consider(currentIndex + distance);
     }
   } else {
     const direction = imageViewerNavDirection;
@@ -9320,11 +9435,11 @@ function prepareImageViewerWindow(prompts, current) {
     for (let distance = 2; distance <= ImageViewerPreloadNextPrompts; distance++) {
       considerPromptFirst(current.promptIndex + direction * distance);
     }
-    for (let distance = 2; distance <= ImageViewerPreloadAhead; distance++) {
-      consider(currentIndex + direction * distance);
-    }
     for (let distance = 2; distance <= ImageViewerPreloadPreviousPrompts; distance++) {
       considerPromptFirst(current.promptIndex + opposite * distance);
+    }
+    for (let distance = 2; distance <= ImageViewerPreloadAhead; distance++) {
+      consider(currentIndex + direction * distance);
     }
     for (let distance = 2; distance <= ImageViewerPreloadBehind; distance++) {
       consider(currentIndex + opposite * distance);
@@ -9356,8 +9471,14 @@ function prepareImageViewerWindow(prompts, current) {
   // not consume network slots; choose the first six entries still needing
   // bytes, then abort only enough lower-ranked active speculation to admit
   // those candidates. The exact selected image therefore preempts stale work.
+  // While the selected original is still on the wire, abort neighbor fetches
+  // so they do not share the pipe. Parallel copies of six 6 MB files make
+  // the visible original slower. The 2026-08-31 "three parallel GETs" probe
+  // hit the SAME URL; that is not how the viewer loads neighbors.
+  const currentFetched = !!imageViewerCache.get(current.item.url)?.fetched;
   const desiredActiveUrls = new Set();
   for (const candidate of uniqueSchedule) {
+    if (!currentFetched && !immediateUrls.has(candidate.url)) continue;
     const entry = imageViewerCache.get(candidate.url);
     if (entry?.fetched) continue;
     desiredActiveUrls.add(candidate.url);
@@ -9365,17 +9486,30 @@ function prepareImageViewerWindow(prompts, current) {
   }
   const activeEntries = [...imageViewerCache.entries()]
     .filter(([, entry]) => entry.acquired);
-  const desiredNotActive = [...desiredActiveUrls]
-    .filter((url) => !imageViewerCache.get(url)?.acquired).length;
-  const freeSlots = Math.max(0, ImageViewerPreloadConcurrency - activeEntries.length);
-  let preemptionsNeeded = Math.max(0, desiredNotActive - freeSlots);
   const staleActive = activeEntries
     .filter(([url]) => !desiredActiveUrls.has(url))
     .sort((a, b) => b[1].priority - a[1].priority);
-  for (const [url, entry] of staleActive) {
-    if (preemptionsNeeded <= 0) break;
-    discardImageViewerCacheEntry(url, entry);
-    preemptionsNeeded--;
+  if (!currentFetched) {
+    // The selected original is still on the wire. Abort every other
+    // unfetched original — active AND queued. Aborting only active ones
+    // frees slots that releaseImageViewerPreloadSlot would hand straight
+    // to queued neighbor waiters from the previous plan, putting them on
+    // the pipe beside the selected original anyway.
+    for (const [url, entry] of [...imageViewerCache]) {
+      if (immediateUrls.has(url)) continue;
+      if (entry.fetched || entry.ready) continue;
+      discardImageViewerCacheEntry(url, entry);
+    }
+  } else {
+    const desiredNotActive = [...desiredActiveUrls]
+      .filter((url) => !imageViewerCache.get(url)?.acquired).length;
+    const freeSlots = Math.max(0, ImageViewerPreloadConcurrency - activeEntries.length);
+    let preemptionsNeeded = Math.max(0, desiredNotActive - freeSlots);
+    for (const [url, entry] of staleActive) {
+      if (preemptionsNeeded <= 0) break;
+      discardImageViewerCacheEntry(url, entry);
+      preemptionsNeeded--;
+    }
   }
 
   const immediateSchedule = uniqueSchedule
@@ -9392,32 +9526,32 @@ function prepareImageViewerWindow(prompts, current) {
     return currentEntry;
   };
 
-  // The visible image (and its compare input) fetches ALONE. On a cold open,
-  // starting the runway at the same time splits the ~6-socket HTTP/1.1 pool
-  // and the server uplink across up to ImageViewerPreloadConcurrency multi-MB
-  // originals, multiplying the wait for the one image the user is staring at
-  // (observed 2026-08-05 as "first image very slow, rest instant"). Neighbors
-  // start only once the current frame has fetched+decoded — during warm
-  // navigation the current entry is already decoded, so the runway still
-  // schedules immediately and scrubbing stays hitch-free.
+  // The selected original keeps the pipe until its bytes arrive (`fetched`).
+  // Decode does not use the network. Neighbors start after that, on every
+  // origin. Starting six full-res B2 files at once shares ~7 Mbps across
+  // them and makes the visible original slower.
   const currentEntry = startSchedule(immediateSchedule);
+  if (!currentEntry) {
+    throw new Error("viewer preload missing the selected image");
+  }
   const startNeighbors = () => startSchedule(speculativeSchedule);
-  if (currentEntry.ready) {
+  imageViewerNeighborStartPending = null;
+  if (currentEntry.ready || currentEntry.fetched) {
     startNeighbors();
   } else {
-    const version = imageViewerRenderVersion;
-    const later = () => {
-      // A newer render's own prepare owns the window now; a closed viewer
-      // wants no fetches at all.
-      if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
-      startNeighbors();
+    imageViewerNeighborStartPending = {
+      version: imageViewerRenderVersion,
+      url: current.item.url,
+      start: startNeighbors,
     };
-    currentEntry.promise.then(later, later);
   }
   return currentEntry;
 }
 
 function showImageViewerEntry(current, entry) {
+  imageViewerPreviewLoadToken++;
+  setImageViewerAwaitingPixels(false);
+  setImageViewerPreviewNotFinal(false);
   imageViewerImage.src = entry.blobUrl;
   imageViewerImage.alt = current.item.kind === "text"
     ? `input image ${current.item.imageIndex + 1} of ${current.item.generatorCount} described by ${current.item.generator}`
@@ -9516,9 +9650,9 @@ function applyImageViewerCompare(current) {
     }
     return;
   }
-  const thumb = findImageViewerInputThumb(current.item.jobId);
-  if (thumb) {
-    const thumbUrl = thumb.currentSrc || thumb.src;
+  const thumb = findImageViewerInputThumbEl(current.item.jobId);
+  const thumbUrl = viewerPreviewThumbUrl(thumb);
+  if (thumbUrl) {
     if (imageViewerInputImage.getAttribute("src") !== thumbUrl) {
       imageViewerInputImage.src = thumbUrl;
     }
@@ -9605,11 +9739,29 @@ async function setViewedImageActive(includePrompt) {
   selectedButton.textContent = "setting…";
 
   try {
-    const response = await fetch(apiUrl(item.url), { signal: controller.signal });
-    if (!response.ok) throw new Error(`image fetch returned HTTP ${response.status}`);
-    const blob = await response.blob();
-    if (!blob.type.startsWith("image/")) {
-      throw new Error(`image fetch returned ${blob.type || "an unknown content type"}`);
+    // Set-active reuses the one original loader: the viewed original is
+    // usually already in flight (or decoded) there, and a second parallel
+    // fetch() of the same URL is exactly what the pipeline contract forbids.
+    const originalUrl = apiUrl(item.url);
+    let blob;
+    try {
+      const entry = loadImageViewerEntry(originalUrl, 0);
+      await entry.promise;
+      const blobResponse = await fetch(entry.blobUrl, { signal: controller.signal });
+      blob = await blobResponse.blob();
+    } catch (error) {
+      if (controller.signal.aborted || error?.name !== "AbortError") throw error;
+      // Navigation discarded the shared cache entry, so no GET of this URL
+      // remains in flight; this direct fetch is the single download.
+      const response = await fetch(originalUrl, {
+        signal: controller.signal,
+        cache: "force-cache",
+      });
+      if (!response.ok) throw new Error(`image fetch returned HTTP ${response.status}`);
+      blob = await response.blob();
+      if (!blob.type.startsWith("image/")) {
+        throw new Error(`image fetch returned ${blob.type || "an unknown content type"}`);
+      }
     }
     if (operationVersion !== imageViewerActivationVersion) return;
 
@@ -9662,6 +9814,12 @@ imageViewerSetImagePrompt.addEventListener("click", () => setViewedImageActive(t
 // Callers pair this with same-item stage pixels only — never with another
 // item's media.
 function paintImageViewerChrome(target) {
+  imageViewerPaintedItem = {
+    jobId: target.item.jobId,
+    generator: target.item.generator,
+    imageIndex: target.item.imageIndex,
+  };
+  scheduleImageViewerPreloadHud();
   imageViewerPrompt.textContent = target.prompt.prompt;
   renderImageViewerGuidance(target);
   renderImageViewerActiveActions(target.item);
@@ -9692,34 +9850,61 @@ function paintImageViewerChrome(target) {
     : genLabel(target.item.generator);
 }
 
-// Cold-open loading state: the pending target's OWN card thumbnail at stage
-// size, with its own chrome — it explicitly identifies the image being
-// fetched, so nothing stale is implied. The dimensions slot reports that the
-// full-resolution bytes are still on their way; only the "seen" mark waits
-// for the real frame. In compare mode the split paints immediately too, with
-// the same job's input card thumbnail on the left pane, so both panes show
-// the pending target from the first frame. The thumbnail is only used when
-// the clicked card already has it decoded (it always does — the user
-// clicked it).
-function paintImageViewerColdOpenPreview(current) {
-  const anchor = findViewerAnchor(current.item);
-  const thumb = anchor ? anchor.querySelector("img") : null;
-  if (!thumb || !thumb.complete || !(thumb.naturalWidth > 0)) return;
-  imageViewerImage.src = thumb.currentSrc || thumb.src;
-  imageViewerImage.alt = `loading full resolution of ${current.item.generator} image ${current.item.imageIndex + 1}`;
+// The selected item's card thumb (≤640px) plus its chrome. Changing
+// `#image-viewer-image`.src keeps the previous file's pixels until the next
+// file decodes, so a Left/Right to an unloaded neighbor would still show
+// the old image. Blank the src first. If this item has no decoded thumb
+// yet, a wordless pulsing fill occupies the stage until its own pixels
+// exist. The fill has no caption: chrome (place, generator, prompt) already
+// identifies the new selection.
+function paintImageViewerPreview(current) {
+  const thumb = findViewerPreviewThumb(current.item);
+  const thumbUrl = current.item.thumbUrl || viewerPreviewThumbUrl(thumb);
+  const thumbReady = !!(thumb && thumb.complete && thumb.naturalWidth > 0);
+  const token = ++imageViewerPreviewLoadToken;
   paintImageViewerChrome(current);
-  imageViewerDimensions.textContent = "loading full resolution…";
-  // The thumb keeps the original's aspect ratio, so the window shrink-wraps
-  // to its final geometry immediately instead of jumping after the swap.
-  imageViewerContentAr = thumb.naturalWidth / thumb.naturalHeight;
+  imageViewerImage.removeAttribute("src");
+  imageViewerImage.alt =
+    `preview, not full resolution: ${current.item.generator} image ${current.item.imageIndex + 1}`;
+
+  if (thumbReady) {
+    setImageViewerAwaitingPixels(false);
+    setImageViewerPreviewNotFinal(true);
+    imageViewerImage.src = thumb.currentSrc || thumb.src;
+    imageViewerContentAr = thumb.naturalWidth / thumb.naturalHeight;
+    imageViewerDimensions.textContent = "preview — loading full resolution…";
+  } else {
+    setImageViewerPreviewNotFinal(false);
+    setImageViewerAwaitingPixels(true);
+    imageViewerDimensions.textContent = "";
+    if (thumbUrl) {
+      const onThumbPixels = () => {
+        if (token !== imageViewerPreviewLoadToken || imageViewer.hidden) return;
+        if (!(imageViewerImage.naturalWidth > 0)) return;
+        setImageViewerAwaitingPixels(false);
+        setImageViewerPreviewNotFinal(true);
+        imageViewerContentAr =
+          imageViewerImage.naturalWidth / imageViewerImage.naturalHeight;
+        imageViewerDimensions.textContent = "preview — loading full resolution…";
+        fitImageViewerWindow();
+      };
+      imageViewerImage.addEventListener("load", onThumbPixels, { once: true });
+      imageViewerImage.src = thumbUrl;
+    }
+  }
   applyImageViewerCompare(current);
-  fitImageViewerWindow();
+  if (imageViewerContentAr) fitImageViewerWindow();
 }
 
 // A hidden viewer is not allowed to retain presentable content. A later open
 // may wait on the network/decode path, and exposing the old image's chrome
 // during that wait falsely associates it with the newly selected image.
 function clearImageViewerPresentation() {
+  imageViewerPaintedItem = null;
+  imageViewerNeighborStartPending = null;
+  hideImageViewerPreloadHud();
+  setImageViewerAwaitingPixels(false);
+  setImageViewerPreviewNotFinal(false);
   imageViewerImage.removeAttribute("src");
   imageViewerImage.alt = "";
   imageViewerPrompt.textContent = "";
@@ -9757,13 +9942,17 @@ async function renderImageViewer() {
     imageViewerDimensions.textContent = "";
     renderImageViewerPosition(null);
     applyImageViewerCompare(null);
+    imageViewerPaintedItem = null;
+    hideImageViewerPreloadHud();
+    setImageViewerPreviewNotFinal(false);
+    setImageViewerAwaitingPixels(false);
     return;
   }
 
   const version = ++imageViewerRenderVersion;
-  // Kick the deep ahead runway immediately. Pixels + chrome only advance
-  // together onto a fully decoded frame — never blank, never "loading…",
-  // never a new prompt sitting on the previous image.
+  scheduleImageViewerPreloadHud();
+  // Kick the selected original immediately. Neighbors wait until its bytes
+  // have arrived. The stage shows that item's card thumb plus chrome now.
   const currentEntry = prepareImageViewerWindow(prompts, current);
 
   const paint = (entry) => {
@@ -9797,16 +9986,7 @@ async function renderImageViewer() {
     return;
   }
 
-  // Cold open: the stage was cleared while the viewer was hidden, so there is
-  // no previous coherent frame to keep up — the user would stare at an empty
-  // window for the whole full-resolution download (multi-MB originals take
-  // seconds on a remote deployment). Paint the SAME item's card thumbnail
-  // (already in the browser cache — it is the picture that was just clicked)
-  // together with its chrome, then swap to the full-resolution frame when it
-  // decodes. Warm navigation (stage occupied) keeps the previous frame.
-  if (!imageViewerImage.getAttribute("src")) {
-    paintImageViewerColdOpenPreview(current);
-  }
+  paintImageViewerPreview(current);
 
   try {
     const entry = await currentEntry.promise;
@@ -9814,8 +9994,6 @@ async function renderImageViewer() {
   } catch (error) {
     if (version !== imageViewerRenderVersion || imageViewer.hidden) return;
     if (error && error.name === "AbortError") return;
-    // Keep the previous fully-loaded frame on screen; only the status line
-    // reports the miss.
     imageViewerDimensions.textContent = `load failed: ${error}`;
   }
 }
@@ -9883,6 +10061,73 @@ function renderImageViewerPosition(item) {
   imageViewerPosition.setAttribute(
     "aria-label",
     `item ${index + 1} of ${allItems.length} in the visible gallery`);
+}
+
+function imageViewerPreloadStatus(url) {
+  const entry = imageViewerCache.get(url);
+  if (!entry) return "idle";
+  if (entry.ready) return "ready";
+  if (entry.acquired || entry.fetched) return "loading";
+  return "queued";
+}
+
+function hideImageViewerPreloadHud() {
+  imageViewerPreload.hidden = true;
+  imageViewerPreload.replaceChildren();
+}
+
+function scheduleImageViewerPreloadHud() {
+  if (imageViewerPreloadHudScheduled) return;
+  imageViewerPreloadHudScheduled = true;
+  // Microtask, not rAF: background tabs throttle animation frames, and this
+  // HUD must update while the current image's fetch is still in flight.
+  queueMicrotask(() => {
+    imageViewerPreloadHudScheduled = false;
+    renderImageViewerPreloadHud();
+  });
+}
+
+// Sequential preload runway around the painted image. Neighbor ticks are
+// abstract status marks for the ±10 working set. The numbered current tick
+// is the viewed item, including a labeled card-thumb preview. This strip
+// is not item chrome: the place-in-list counter still swaps atomically
+// with the visible media.
+function renderImageViewerPreloadHud() {
+  if (imageViewer.hidden) {
+    hideImageViewerPreloadHud();
+    return;
+  }
+  const allItems = getImageViewerFlatItems();
+  const viewed = imageViewerPaintedItem || imageViewerState;
+  const viewedIndex = findImageViewerFlatIndex(allItems, viewed);
+  if (viewedIndex < 0) {
+    hideImageViewerPreloadHud();
+    return;
+  }
+  const start = Math.max(0, viewedIndex - ImageViewerPreloadBehind);
+  const end = Math.min(allItems.length - 1, viewedIndex + ImageViewerPreloadAhead);
+  const viewedKey = viewerSeenKeyFor(viewed.jobId, viewed.generator, viewed.imageIndex);
+  const selectedKey = imageViewerState
+    ? viewerSeenKeyFor(
+        imageViewerState.jobId, imageViewerState.generator, imageViewerState.imageIndex)
+    : "";
+  const fragment = document.createDocumentFragment();
+  for (let i = start; i <= end; i++) {
+    const item = allItems[i];
+    const tick = document.createElement("span");
+    tick.className = `image-viewer-preload-tick ${imageViewerPreloadStatus(item.url)}`;
+    const key = viewerSeenKeyFor(item.jobId, item.generator, item.imageIndex);
+    if (key === viewedKey) {
+      tick.classList.add("current");
+      tick.textContent = String(i + 1);
+    }
+    if (selectedKey && selectedKey !== viewedKey && key === selectedKey) {
+      tick.classList.add("pending");
+    }
+    fragment.appendChild(tick);
+  }
+  imageViewerPreload.replaceChildren(fragment);
+  imageViewerPreload.hidden = false;
 }
 
 // Halfway jump: move halfway through the remaining distance to an endpoint.
@@ -9964,7 +10209,7 @@ const ImageViewerCommands = [
     keys: ["Wheel"],
     name: "Intent-filtered wheel stepping",
     match: () => false,
-    help: "Vertical wheel movement advances one image only after a threshold; trackpad noise and horizontal gestures do not skip through the list.",
+    help: "Vertical wheel movement advances one image after a short threshold so trackpad noise does not skip. The selected item's card preview paints immediately; full resolution continues in the background.",
     run: () => {},
   },
   {
@@ -9982,7 +10227,7 @@ const ImageViewerCommands = [
     match: (event) =>
       !event.ctrlKey && !event.metaKey &&
       (event.key === "ArrowLeft" || event.key === "ArrowUp"),
-    help: "Select the previous image in the visible gallery, crossing prompt boundaries.",
+    help: "Select the previous image in the visible gallery, crossing prompt boundaries. The card preview appears immediately.",
     run: () => navigateImageViewerImage(-1),
   },
   {
@@ -9992,7 +10237,7 @@ const ImageViewerCommands = [
     match: (event) =>
       !event.ctrlKey && !event.metaKey &&
       (event.key === "ArrowRight" || event.key === "ArrowDown"),
-    help: "Select the next image in the visible gallery, crossing prompt boundaries.",
+    help: "Select the next image in the visible gallery, crossing prompt boundaries. The card preview appears immediately.",
     run: () => navigateImageViewerImage(1),
   },
   {
@@ -10250,8 +10495,8 @@ function getImageViewerFocusables() {
 function openImageViewer(link) {
   imageViewerFocusBeforeOpen =
     document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  // Clear while still hidden. The selected frame and all of its chrome will
-  // paint together only after that frame's preload has decoded.
+  // Clear while still hidden. The selected item's card thumb and chrome
+  // paint immediately; the original swaps in when it is decoded.
   clearImageViewerPresentation();
   imageViewerState = {
     jobId: link.dataset.jobId,
@@ -10288,7 +10533,8 @@ function closeImageViewer() {
   imageViewerWheelAccumulator = 0;
   recordImageViewerNavigation(0, "image");
   clearImageViewerPresentation();
-  for (const [url, entry] of imageViewerCache) discardImageViewerCacheEntry(url, entry);
+  abortImageViewerInFlight();
+  trimImageViewerReadyCache();
   const restore = imageViewerFocusBeforeOpen;
   imageViewerFocusBeforeOpen = null;
   if (departedAnchor) pulseViewerAnchor(departedAnchor);
@@ -10322,42 +10568,22 @@ document.addEventListener("click", (event) => {
   openImageViewer(link);
 });
 
-// ---------- hover prefetch of full-resolution originals ----------
-// Resting the pointer on a result thumbnail for a beat fetches the exact
-// bytes the viewer will need on click, so the click paints from the browser
-// HTTP cache instead of hanging on a multi-MB transfer over the server's
-// limited uplink (final images are served immutable, so a warmed URL is
-// never re-downloaded). Single-flight, latest hover wins: sweeping across a
-// grid replaces the in-flight prefetch instead of stacking downloads.
-// data-viewer-image anchors are images only (video results never get one).
-// Prefetch failure is silent by design: this is speculative cache warming,
-// and the click path performs its own fetch whose errors surface normally.
+// Hover uses the same original loader as the viewer. One URL identity, one
+// in-flight GET. Latest hover wins among unfinished hover-priority fetches.
 const HoverPrefetchIntentMs = 150;
-const hoverPrefetchWarmed = new Set();
 let hoverPrefetchTimer = null;
-let hoverPrefetchController = null;
 
 function startHoverPrefetch(urls) {
-  const pending = urls.filter((url) => !hoverPrefetchWarmed.has(url));
-  if (pending.length === 0) return;
-  if (hoverPrefetchController) hoverPrefetchController.abort();
-  const controller = new AbortController();
-  hoverPrefetchController = controller;
-  let open = pending.length;
-  for (const url of pending) {
-    fetch(url, { signal: controller.signal, priority: "low" })
-      .then(async (response) => {
-        if (!response.ok) return;
-        await response.blob(); // drain fully so the cache entry completes
-        hoverPrefetchWarmed.add(url);
-      })
-      .catch(() => {})
-      .finally(() => {
-        open--;
-        if (open === 0 && hoverPrefetchController === controller) {
-          hoverPrefetchController = null;
-        }
-      });
+  for (const [url, entry] of [...imageViewerCache]) {
+    if (urls.includes(url)) continue;
+    if (entry.priority !== ImageViewerHoverPriority) continue;
+    if (entry.fetched || entry.ready) continue;
+    discardImageViewerCacheEntry(url, entry);
+  }
+  for (const url of urls) {
+    const existing = imageViewerCache.get(url);
+    if (existing?.fetched || existing?.ready) continue;
+    loadImageViewerEntry(url, ImageViewerHoverPriority).promise.catch(() => {});
   }
 }
 
@@ -10379,13 +10605,14 @@ function hoverPrefetchUrlsFor(link) {
 }
 
 document.addEventListener("pointerover", (event) => {
-  // The open viewer runs its own prioritized preload window; stay out of
-  // its way. Warmed-set hits skip the timer entirely.
   if (!imageViewer.hidden) return;
   const link = event.target.closest('a[data-viewer-image="true"]');
   if (!link) return;
   const urls = hoverPrefetchUrlsFor(link);
-  if (urls.every((url) => hoverPrefetchWarmed.has(url))) return;
+  if (urls.every((url) => {
+    const entry = imageViewerCache.get(url);
+    return !!(entry?.fetched || entry?.ready);
+  })) return;
   if (hoverPrefetchTimer) clearTimeout(hoverPrefetchTimer);
   hoverPrefetchTimer = setTimeout(() => {
     hoverPrefetchTimer = null;
@@ -10394,15 +10621,12 @@ document.addEventListener("pointerover", (event) => {
 });
 
 document.addEventListener("pointerout", (event) => {
-  // Leaving the anchor cancels only the intent timer; an already-started
-  // transfer runs to completion (the pointer usually comes back, and the
-  // bytes cache either way).
   const link = event.target.closest('a[data-viewer-image="true"]');
   if (!link) return;
   const to = event.relatedTarget instanceof Element
     ? event.relatedTarget.closest('a[data-viewer-image="true"]')
     : null;
-  if (to === link) return; // moved between children of the same anchor
+  if (to === link) return;
   if (hoverPrefetchTimer) {
     clearTimeout(hoverPrefetchTimer);
     hoverPrefetchTimer = null;
@@ -10963,7 +11187,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
     thumbLink.target = "_blank";
     const thumb = document.createElement("img");
     thumb.className = "job-input-thumb";
-    thumb.src = `${thumbLink.href}?thumb=1`;
+    thumb.src = imageCardThumbUrl(thumbLink.href, null);
     thumb.loading = "lazy";
     thumbLink.appendChild(thumb);
     if (resolvedInputCount > 1) {
@@ -11223,9 +11447,7 @@ function buildProgressPreviews(id, evt) {
       a.title = `in-process preview ${p.partialIndex + 1}`;
       const img = document.createElement("img");
       img.alt = `${genLabel(evt.gen)} in-process preview ${p.partialIndex + 1}`;
-      // Hosted snapshots carry an explicit local ?thumb=1 card preview;
-      // appending ?thumb=1 to a B2 URL would pull the full bytes.
-      img.src = p.thumb ? apiUrl(p.thumb) : `${url}?thumb=1`;
+      setImageElementCardThumb(img, url, p.thumb);
       img.loading = "lazy";
       // A hidden/missing snapshot 404s; drop the tile rather than leaving
       // a broken-image icon in the strip.
@@ -11438,15 +11660,10 @@ function applyJobEvent(id, card, evt) {
         }
         const img = document.createElement("img");
         img.alt = `${genLabel(evt.gen)} image ${imageIndex + 1} of ${evt.images.length}`;
-        // Cards display the <=640px server-side preview; the anchor (viewer,
-        // open-in-new-tab, video source) keeps the exact original bytes.
-        // B2-hosted results carry a parallel `thumbs` array of local preview
-        // URLs, because ?thumb=1 means nothing to the B2 origin and would
-        // pull the full-resolution original into every card. Pre-hosting
-        // events have no thumbs and keep the local ?thumb=1 form.
-        img.src = Array.isArray(evt.thumbs) && evt.thumbs[imageIndex]
-          ? apiUrl(evt.thumbs[imageIndex])
-          : `${url}?thumb=1`;
+        setImageElementCardThumb(
+          img,
+          url,
+          Array.isArray(evt.thumbs) ? evt.thumbs[imageIndex] : null);
         img.loading = "lazy";
         // Reserve the final layout box before the bytes arrive: without an
         // intrinsic size every card collapses, the whole history fits inside
@@ -11512,12 +11729,10 @@ function applyJobEvent(id, card, evt) {
           a.target = "_blank";
           const img = document.createElement("img");
           img.alt = `${genLabel(evt.gen)} last streamed preview before failure`;
-          // Hosted kept previews carry index-aligned local thumbs in
-          // partialThumbs; ?thumb=1 on a B2 URL would pull the full bytes.
           const keptThumb = Array.isArray(evt.partialThumbs)
             ? evt.partialThumbs[imageIndex]
             : null;
-          img.src = keptThumb ? apiUrl(keptThumb) : `${url}?thumb=1`;
+          setImageElementCardThumb(img, url, keptThumb);
           img.loading = "lazy";
           // A hidden/evicted preview 404s; drop the tile rather than leaving
           // a broken-image icon under the error text.

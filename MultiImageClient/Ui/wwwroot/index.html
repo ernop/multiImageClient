@@ -381,6 +381,11 @@
       <span class="image-viewer-pane-label" id="image-viewer-input-label" hidden>input</span>
       <span class="image-viewer-pane-label" id="image-viewer-output-label" hidden>output</span>
       <img id="image-viewer-image" alt="Generated image">
+      <div id="image-viewer-awaiting-pixels" hidden aria-hidden="true"></div>
+      <div id="image-viewer-preview-badge" hidden aria-hidden="true">
+        <strong>preview</strong>
+        <span>not full resolution</span>
+      </div>
       <div id="image-viewer-help" hidden>
         <div id="image-viewer-help-panel">
           <h2>Viewer navigation and controls</h2>
@@ -424,6 +429,10 @@
     </div>
     <div id="image-viewer-resize" role="separator" aria-label="Resize image viewer" title="Drag to resize"></div>
   </div>
+  <!-- Decorative preload-runway HUD. The numbered current tick follows the
+       painted image; neighbor ticks show sequential preload status only.
+       Announced place-in-list remains #image-viewer-position. -->
+  <div id="image-viewer-preload" hidden aria-hidden="true"></div>
 </div>
 
 <dialog id="generator-config-dialog">
