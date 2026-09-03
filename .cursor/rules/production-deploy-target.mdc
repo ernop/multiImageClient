@@ -13,15 +13,23 @@ alwaysApply: true
 - `tpbeta` is only the colocated physical host. It is not the product/site
   identity, and its other services and vhosts are outside this repository's
   deployment scope.
-- In this repository, “push and deploy” normally means: run CI, push the
-  requested Git branch to GitHub, then re-release only
-  `multiimageclient-ui.service` through `deploy/agent-redeploy.sh`.
+- A request to **commit and push**, including the Cursor diff-tab
+  commit-and-push action, is a full local+production release unless the user
+  excludes a step. Order: commit the requested files; run the
+  [deploy/README.md](deploy/README.md) release gate; push the requested
+  branch; rebuild and restart the local `--ui` on `127.0.0.1:5960`; if that
+  push updated `origin/master`, redeploy only `multiimageclient-ui.service`
+  through `deploy/agent-redeploy.sh`; verify local `/healthz`, remote commit,
+  fresh service start, loopback, and private vhost.
+- Local restart: run `tools/restart-local-ui.sh`. Do not use
+  `tools/start-ui.sh` (Surface/WSL launcher). In-flight local jobs die.
+- Skip production redeploy when the push did not update `origin/master`.
+  Feature-branch pushes still restart the local site.
 - On this workstation, the `tpbeta` SSH alias logs in as `subcreation`, which
   does not own the checkout. Use the documented `tpbeta-root` command that
   runs the release as the `tparkour` Unix checkout owner. That account name
   does not make Terrain Parkour a deployment target. Never guess another
   checkout or service, and never replace the standard release script with an
   ad hoc host-wide update.
-- Verify the exact commit, active service, fresh start time, loopback response,
-  and private public vhost after deployment. Never print or disclose the
-  site's secret path, credentials, cookies, or provider keys.
+- Never print or disclose the site's secret path, credentials, cookies, or
+  provider keys.

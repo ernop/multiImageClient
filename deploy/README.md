@@ -23,6 +23,25 @@ Access is gated by three independent layers.
 | App login (username/password → long-lived cookie) | Anyone without credentials you handed out | `ui-auth.json` via `UiAuthFilePath` in settings.json |
 | Loopback bind | Direct access to Kestrel; nginx is the only public listener | built-in (`127.0.0.1` only) |
 
+## Commit and push (default agent sequence)
+
+A request to commit and push, including the Cursor diff-tab commit-and-push
+action, is a full local+production release unless the user excludes a step.
+
+1. Commit the requested files under the repository git safety rules.
+2. Run the release gate below.
+3. Push the requested branch to GitHub.
+4. Rebuild and restart the workstation local `--ui` with
+   `tools/restart-local-ui.sh`. That process listens on `127.0.0.1:5960`.
+   In-flight local jobs die. Do not use `tools/start-ui.sh`; that file is
+   the Surface/WSL launcher.
+5. If the push updated `origin/master`, redeploy production with the
+   `tpbeta-root` command below. Skip production when the push did not
+   update `origin/master`. Feature-branch pushes still restart the local
+   site.
+6. Verify local `http://127.0.0.1:5960/healthz`, then the production
+   checks listed after the redeploy command.
+
 ## Routine production release
 
 This repository currently has no hosted `.github/workflows` pipeline. The
