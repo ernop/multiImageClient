@@ -1,5 +1,7 @@
 ﻿using BFLAPIClient;
 
+using SixLabors.ImageSharp;
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -126,12 +128,62 @@ namespace MultiImageClient
                     throw new Exception($"BFLGenerator: no cost entry for {_apiType}");
             }
         }
+
+        public const int MinImagePromptDimension = 256;
+
+        public static string ImagePromptTooSmallMessage(int width, int height)
+        {
+            return $"Attached image is {width}x{height} pixels. "
+                + $"This BFL image remix field requires at least {MinImagePromptDimension}x{MinImagePromptDimension}. "
+                + "Upscaling is not performed.";
+        }
+
+        public static void RequireImagePromptDimensions(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                throw new InvalidOperationException("BFL image remix is missing an attached image path.");
+            }
+            if (!File.Exists(path))
+            {
+                throw new InvalidOperationException($"BFL image remix file is missing: {path}");
+            }
+
+            ImageInfo info;
+            try
+            {
+                using var stream = File.OpenRead(path);
+                info = SixLabors.ImageSharp.Image.Identify(stream);
+            }
+            catch (UnknownImageFormatException ex)
+            {
+                throw new InvalidOperationException(
+                    $"BFL could not identify the attached image '{path}'.",
+                    ex);
+            }
+
+            if (info == null || info.Width < 1 || info.Height < 1)
+            {
+                throw new InvalidOperationException(
+                    $"BFL could not read pixel dimensions from '{path}'.");
+            }
+            if (info.Width < MinImagePromptDimension || info.Height < MinImagePromptDimension)
+            {
+                throw new InvalidOperationException(ImagePromptTooSmallMessage(info.Width, info.Height));
+            }
+        }
+
         public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {
             await _bflSemaphore.WaitAsync();
 
             try
             {
+                if (UsesImagePrompt(_apiType) && !string.IsNullOrEmpty(_inputImagePath))
+                {
+                    RequireImagePromptDimensions(_inputImagePath);
+                }
+
                 GenerationResponse generationResponse = null;
                 // BFL rejects safety_tolerance 6 with a 403 ("safety_tolerance > 5
                 // requires authorization") on normal accounts; 5 is the max
@@ -358,6 +410,13 @@ namespace MultiImageClient
                 return null;
             }
             return Convert.ToBase64String(File.ReadAllBytes(_inputImagePath));
+        }
+
+        private static bool UsesImagePrompt(ImageGeneratorApiType apiType)
+        {
+            return apiType is ImageGeneratorApiType.BFLv11
+                or ImageGeneratorApiType.BFLv11Ultra
+                or ImageGeneratorApiType.BFLFluxDev;
         }
 
         private static string GetFlux2Endpoint(ImageGeneratorApiType apiType)

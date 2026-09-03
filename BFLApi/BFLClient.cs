@@ -51,7 +51,7 @@ namespace BFLAPIClient
             {
                 response = await _httpClient.GetAsync(url, cancellationToken);
                 responseContent = await response.Content.ReadAsStringAsync();
-                response.EnsureSuccessStatusCode();
+                ThrowIfUnsuccessful(response, responseContent);
                 return JsonConvert.DeserializeObject<GenerationResponse>(responseContent);
             }
             catch (Exception ex)
@@ -132,6 +132,15 @@ namespace BFLAPIClient
                     || status.Equals("Generating", StringComparison.OrdinalIgnoreCase));
         }
 
+        private static void ThrowIfUnsuccessful(HttpResponseMessage response, string responseContent)
+        {
+            if (response.IsSuccessStatusCode)
+            {
+                return;
+            }
+            throw BFLHttpError.ToException(response, responseContent);
+        }
+
         private async Task<GenerationResponse> GenerateAsync<TRequest>(string endpoint, TRequest request)
         {
             var serialized = JsonConvert.SerializeObject(request, new JsonSerializerSettings
@@ -148,17 +157,7 @@ namespace BFLAPIClient
             {
                 response = await _httpClient.PostAsync(url, content);
                 responseContent = await response.Content.ReadAsStringAsync();
-
-                if (response.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity)
-                {
-                    throw new HttpRequestException($"422 Unprocessable Entity: {responseContent}", null, System.Net.HttpStatusCode.UnprocessableEntity);
-                }
-                if (response.StatusCode == System.Net.HttpStatusCode.PaymentRequired)
-                {
-                    throw new HttpRequestException($"402 Payment Required: {responseContent}", null, System.Net.HttpStatusCode.PaymentRequired);
-                }
-
-                response.EnsureSuccessStatusCode();
+                ThrowIfUnsuccessful(response, responseContent);
                 return JsonConvert.DeserializeObject<GenerationResponse>(responseContent);
             }
             catch (Exception ex)
