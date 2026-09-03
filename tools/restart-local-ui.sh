@@ -43,11 +43,13 @@ stop_ui() {
 stop_ui
 "$dotnet_bin" build MultiImageClient/MultiImageClient.csproj -c Release --nologo
 
-nohup "$dotnet_bin" run \
+# setsid leaves the UI outside this script's process group. Agent shells
+# otherwise kill the child when the restart command exits.
+setsid "$dotnet_bin" run \
     --project MultiImageClient/MultiImageClient.csproj \
     -c Release --no-build -- \
     --ui --ui-port "$port" --ui-no-open \
-    >>"$log" 2>&1 &
+    >>"$log" 2>&1 </dev/null &
 printf '%s\n' "$!" > /tmp/mic-ui-local.pid
 
 i=0
