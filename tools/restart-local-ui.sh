@@ -11,9 +11,10 @@ log="${MIC_UI_LOCAL_LOG:-/tmp/mic-ui-local.log}"
 port="${MIC_UI_PORT:-5960}"
 export DOTNET_EnableWriteXorExecute="${DOTNET_EnableWriteXorExecute:-0}"
 
-dotnet_bin="${DOTNET_ROOT:-$HOME/.dotnet}/dotnet"
-if [[ ! -x $dotnet_bin ]]; then
-    dotnet_bin="$(command -v dotnet || true)"
+# Prefer PATH so a distro net10 host wins over a leftover ~/.dotnet net9 host.
+dotnet_bin="$(command -v dotnet || true)"
+if [[ -z ${dotnet_bin} || ! -x $dotnet_bin ]]; then
+    dotnet_bin="${DOTNET_ROOT:-$HOME/.dotnet}/dotnet"
 fi
 [[ -n ${dotnet_bin} && -x $dotnet_bin ]] || {
     printf 'ERROR: dotnet not found\n' >&2
