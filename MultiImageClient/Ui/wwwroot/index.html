@@ -257,20 +257,23 @@
 
     <div id="endpoint-picker">
       <div id="gen-controls">
-        <button id="gens-enable-all" class="generator-main-control" type="button">Enable all</button>
-        <button id="gens-disable-all" class="generator-main-control" type="button">Disable all</button>
-        <button id="gens-toggle-all" class="generator-main-control" type="button">Toggle all</button>
+        <button id="gens-enable-all" class="generator-main-control" type="button"
+          title="Enable every available target in open sections. A closed describe section is not changed.">Enable all</button>
+        <button id="gens-disable-all" class="generator-main-control" type="button"
+          title="Disable every available target in open sections. A closed describe section is not changed.">Disable all</button>
+        <button id="gens-toggle-all" class="generator-main-control" type="button"
+          title="Toggle every available target in open sections. A closed describe section is not changed.">Toggle all</button>
         <button id="gens-default" class="generator-main-control" type="button"
-          title="Set the complete image-generator selection to your configured defaults">Default</button>
+          title="Restore your configured defaults in open sections. A closed describe section is not changed.">Default</button>
         <span id="gen-personal-presets" class="generator-main-control"></span>
         <button id="gens-enable-image-capable" type="button"
           class="image-only-action generator-main-control" hidden
-          title="Enable every available endpoint that accepts the attached image">Enable image-capable</button>
+          title="Enable every available image-capable target in open sections. A closed describe section is not changed.">Enable image-capable</button>
         <button id="gens-disable-text-only" type="button"
           class="image-only-action generator-main-control" hidden
           title="Disable endpoints that can't accept the attached image (they'd run from the prompt text only)">Disable text-only</button>
         <button id="generator-config-toggle" type="button" aria-label="Configure generator chooser"
-          title="Configure visible targets, defaults, and personal generator buttons">⚙</button>
+          title="Configure visible targets, defaults, groups, and per-endpoint text">⚙</button>
       </div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
 
@@ -442,7 +445,8 @@
       <button id="generator-config-close" type="button" aria-label="Close">&times;</button>
     </div>
     <p class="compact-dialog-note">
-      Choose what appears in your composer, what starts selected, named groups, and private per-endpoint prompt text and notes.
+      Choose what appears in your composer. Choose defaults and named groups.
+      Configure extra text and notes for image and describe endpoints.
     </p>
     <div id="generator-config-tabs" role="tablist" aria-label="Generator chooser settings">
       <button type="button" role="tab" data-generator-config-view="shown" aria-selected="true">shown</button>
@@ -472,10 +476,11 @@
     <section id="generator-config-endpoint-panel" class="generator-config-panel" role="tabpanel" hidden>
       <p>
         Extra text is appended only to the selected endpoint's copy of each prompt.
+        Describe endpoints use the same extra-text and notes fields.
         Notes are private configuration: they are never sent to a provider or attached to a job.
       </p>
       <div class="generator-endpoint-layout">
-        <div id="generator-config-endpoint-list" aria-label="Image endpoints"></div>
+        <div id="generator-config-endpoint-list" aria-label="Image and describe endpoints"></div>
         <div id="generator-config-endpoint-editor"></div>
       </div>
     </section>

@@ -2830,6 +2830,12 @@ namespace MultiImageClient
         public static bool IsImageGeneratorKey(string key)
             => ImageGeneratorKeys.Contains(key, StringComparer.Ordinal);
 
+        public static bool IsConfigurableEndpointKey(string key)
+            => IsImageGeneratorKey(key) || IsAnalysisKey(key);
+
+        public static int ConfigurableEndpointCount =>
+            ImageGeneratorKeys.Length + DescribeKeys.Length + 1; // layout-map
+
         // Declared pre-operation default: used as the wire instruction when a
         // describe-only job is submitted with a blank prompt (the server
         // substitutes it BEFORE the job is accepted, and it becomes the job's
@@ -4414,11 +4420,11 @@ namespace MultiImageClient
         {
             if (IsDescribeKey(key))
             {
-                return await RunDescribeOneAsync(job, key, pd);
+                return await RunDescribeOneAsync(job, spec, key, pd);
             }
             if (IsLayoutMapKey(key))
             {
-                return await RunLayoutMapOneAsync(job, key, pd);
+                return await RunLayoutMapOneAsync(job, spec, key, pd);
             }
 
             var wallClock = Stopwatch.StartNew();
@@ -4504,19 +4510,7 @@ namespace MultiImageClient
                     // Each generator gets an independent prompt copy. Append only
                     // that endpoint's configured text and record the exact wire
                     // prompt in the normal transformation/archive pipeline.
-                    if (spec.GeneratorExtraTexts.TryGetValue(key, out var extraText)
-                        && !string.IsNullOrWhiteSpace(extraText))
-                    {
-                        var suffixed = $"{copy.Prompt}\n\n{extraText.Trim()}";
-                        copy.ReplacePrompt(suffixed, suffixed, TransformationType.ManualSuffixation);
-                    }
-                    else if (key == KeyGpt2)
-                    {
-                        // Loud on purpose: gpt-image-2 without the default
-                        // anti-murk suffix reliably comes back darker, and this once went
-                        // unnoticed for two days (2026-07-31 → 08-02).
-                        Logger.Log($"[ui #{job.Id}]   gpt-image-2 extra text is blank for this call — anti-murk guidance was not sent");
-                    }
+                    ApplyEndpointExtraText(copy, spec, key, job.Id);
                     if (key == KeyGrokWebVideo && !string.IsNullOrWhiteSpace(job.SourceGenerator))
                     {
                         copy.RuntimeMeta["sourceJobId"] = job.SourceJobId;
@@ -4928,6 +4922,27 @@ namespace MultiImageClient
             }
         }
 
+        private static void ApplyEndpointExtraText(
+            PromptDetails copy,
+            UiJobSpec spec,
+            string key,
+            string jobId)
+        {
+            if (spec.GeneratorExtraTexts.TryGetValue(key, out var extraText)
+                && !string.IsNullOrWhiteSpace(extraText))
+            {
+                var suffixed = $"{copy.Prompt}\n\n{extraText.Trim()}";
+                copy.ReplacePrompt(suffixed, suffixed, TransformationType.ManualSuffixation);
+            }
+            else if (key == KeyGpt2)
+            {
+                // Loud on purpose: gpt-image-2 without the default
+                // anti-murk suffix reliably comes back darker, and this once went
+                // unnoticed for two days (2026-07-31 → 08-02).
+                Logger.Log($"[ui #{jobId}]   gpt-image-2 extra text is blank for this call — anti-murk guidance was not sent");
+            }
+        }
+
         /// Describe targets return TEXT, not media: one provider call per
         /// attached input image, all-or-nothing (fail closed — a blank or
         /// missing description for ANY input fails the whole target rather
@@ -4935,8 +4950,14 @@ namespace MultiImageClient
         /// the persisted gen-result event (resultKind "text" + texts[]), which
         /// is how they survive restarts and reach archive views; they are
         /// deliberately absent from the image contact sheet.
-        private async Task<TaskProcessResult> RunDescribeOneAsync(UiJob job, string key, PromptDetails pd)
+        private async Task<TaskProcessResult> RunDescribeOneAsync(
+            UiJob job,
+            UiJobSpec spec,
+            string key,
+            PromptDetails pd)
         {
+            pd = pd.Copy();
+            ApplyEndpointExtraText(pd, spec, key, job.Id);
             var wallClock = Stopwatch.StartNew();
             job.Emit(new
             {
@@ -5065,8 +5086,14 @@ namespace MultiImageClient
         /// follow-ups, and favorites treat it like any generated image. The
         /// composer prompt is optional CONTEXT for the section labels, never
         /// the contract itself. Deliberately absent from the contact sheet.
-        private async Task<TaskProcessResult> RunLayoutMapOneAsync(UiJob job, string key, PromptDetails pd)
+        private async Task<TaskProcessResult> RunLayoutMapOneAsync(
+            UiJob job,
+            UiJobSpec spec,
+            string key,
+            PromptDetails pd)
         {
+            pd = pd.Copy();
+            ApplyEndpointExtraText(pd, spec, key, job.Id);
             var wallClock = Stopwatch.StartNew();
             job.Emit(new
             {

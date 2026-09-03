@@ -41,6 +41,19 @@ namespace MultiImageClient.Tests
         }
 
         [Fact]
+        public void ConfigurableEndpointsIncludeImageDescribeAndLayoutMap()
+        {
+            Assert.True(UiJobRunner.IsConfigurableEndpointKey(UiJobRunner.KeyGpt2));
+            Assert.True(UiJobRunner.IsConfigurableEndpointKey(UiJobRunner.KeyDescribeClaude));
+            Assert.True(UiJobRunner.IsConfigurableEndpointKey(UiJobRunner.KeyLayoutMap));
+            Assert.False(UiJobRunner.IsConfigurableEndpointKey(UiJobRunner.KeyGrokWebVideo));
+            Assert.False(UiJobRunner.IsConfigurableEndpointKey("not-a-real-key"));
+            Assert.Equal(
+                UiJobRunner.ImageGeneratorKeys.Length + UiJobRunner.DescribeKeys.Length + 1,
+                UiJobRunner.ConfigurableEndpointCount);
+        }
+
+        [Fact]
         public void ApiMappingsCoverEveryPersistedGeneratorType()
         {
             foreach (var apiType in Enum.GetValues<ImageGeneratorApiType>())

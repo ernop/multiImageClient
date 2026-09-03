@@ -2795,6 +2795,15 @@ body.image-viewer-open { overflow: hidden; }
   background: #f4f6ff;
   border-right: 1px solid var(--line);
 }
+#generator-config-endpoint-list .generator-endpoint-group {
+  margin: 6px 0 2px;
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 700;
+}
+#generator-config-endpoint-list .generator-endpoint-group:first-child {
+  margin-top: 0;
+}
 #generator-config-endpoint-list button {
   display: flex;
   flex-direction: column;

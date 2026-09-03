@@ -1095,7 +1095,7 @@ namespace MultiImageClient
                             },
                         // Keep the legacy gpt2 event fields while pre-feature
                         // browser windows remain possible. New clients use the
-                        // keyed map above for every image endpoint.
+                        // keyed map above for every image and describe endpoint.
                         gpt2GuidanceEnabled = spec.GeneratorExtraTexts.ContainsKey(UiJobRunner.KeyGpt2),
                         gpt2GuidanceText = spec.GeneratorExtraTexts.TryGetValue(
                             UiJobRunner.KeyGpt2,
@@ -2863,10 +2863,10 @@ namespace MultiImageClient
                 foreach (var property in document.RootElement.EnumerateObject())
                 {
                     var key = property.Name;
-                    if (!UiJobRunner.IsImageGeneratorKey(key))
+                    if (!UiJobRunner.IsConfigurableEndpointKey(key))
                     {
                         throw new InvalidDataException(
-                            $"Per-generator extra text contains unknown image generator '{key}'.");
+                            $"Per-generator extra text contains unknown generator '{key}'.");
                     }
                     if (!selected.Contains(key))
                     {
@@ -3008,7 +3008,7 @@ namespace MultiImageClient
             {
                 throw new InvalidDataException("At most 20 personal generator buttons may be saved.");
             }
-            if (submitted.EndpointConfigurations.Count > UiJobRunner.ImageGeneratorKeys.Length)
+            if (submitted.EndpointConfigurations.Count > UiJobRunner.ConfigurableEndpointCount)
             {
                 throw new InvalidDataException("Too many per-endpoint generator configurations were submitted.");
             }
@@ -3105,10 +3105,10 @@ namespace MultiImageClient
             foreach (var configuration in submitted.EndpointConfigurations)
             {
                 var key = configuration.Key.Trim();
-                if (!UiJobRunner.IsImageGeneratorKey(key))
+                if (!UiJobRunner.IsConfigurableEndpointKey(key))
                 {
                     throw new InvalidDataException(
-                        $"Per-endpoint configuration contains unknown image generator '{key}'.");
+                        $"Per-endpoint configuration contains unknown generator '{key}'.");
                 }
                 if (!configuredKeys.Add(key))
                 {

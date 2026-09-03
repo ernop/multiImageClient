@@ -582,7 +582,7 @@ function normalizeGeneratorPreferences(raw) {
   let configurationChars = 0;
   for (const configuration of raw.endpointConfigurations || []) {
     if (!configuration || typeof configuration !== "object" || Array.isArray(configuration) ||
-        typeof configuration.key !== "string" || !imageKeys.has(configuration.key) ||
+        typeof configuration.key !== "string" || !known.has(configuration.key) ||
         configuredKeys.has(configuration.key)) {
       throw new Error("a per-endpoint generator configuration is malformed");
     }
@@ -621,7 +621,7 @@ function normalizeGeneratorPreferences(raw) {
 }
 
 function endpointGenerator(key) {
-  return generators.find((generator) => generator.key === key && generator.kind !== "describe") || null;
+  return generators.find((generator) => generator.key === key) || null;
 }
 
 function endpointConfigurationOverride(key, preferences = generatorPreferences) {
@@ -641,7 +641,7 @@ function effectiveEndpointField(key, field, preferences = generatorPreferences) 
 
 function setEndpointFieldOverride(preferences, key, field, value) {
   const generator = endpointGenerator(key);
-  if (!generator) throw new Error(`unknown image generator ${key}`);
+  if (!generator) throw new Error(`unknown generator ${key}`);
   const defaultValue = field === "extraText"
     ? (generator.defaultExtraText || "")
     : (generator.defaultNotes || "");
@@ -904,7 +904,7 @@ function updateGeneratorCompatibility() {
     {
       cb.checked = false;
     }
-    else if (gainedFirstImage && isDescribe && showDescribeSection)
+    else if (gainedFirstImage && isDescribe && showDescribeSection && describeSectionIsOpen())
     {
       cb.checked = generatorPreferences.defaultSelectedKeys.includes(cb.value);
     }
@@ -2416,11 +2416,15 @@ function applyGeneratorSectionVisibility() {
   updateGeneratorCount();
 }
 
-function applyGeneratorPreset(preset) {
+function applyGeneratorPreset(preset, { includeDescribe = false } = {}) {
   const wanted = new Set(preset.generatorKeys);
-  for (const cb of gensRow.querySelectorAll("input")) {
-    cb.checked = !cb.disabled && wanted.has(cb.value);
-    cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
+  const rows = [gensRow];
+  if (includeDescribe && describeSectionIsOpen()) rows.push(describeRow);
+  for (const row of rows) {
+    for (const cb of row.querySelectorAll("input")) {
+      cb.checked = !cb.disabled && wanted.has(cb.value);
+      cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
+    }
   }
   updateGeneratorCount();
 }
@@ -2688,7 +2692,7 @@ function renderGeneratorConfigEndpointEditor() {
   if (!generator) {
     const empty = document.createElement("p");
     empty.className = "generator-config-empty";
-    empty.textContent = "No image endpoint is available to configure.";
+    empty.textContent = "No endpoint is available to configure.";
     generatorConfigEndpointEditor.appendChild(empty);
     return;
   }
@@ -2699,6 +2703,12 @@ function renderGeneratorConfigEndpointEditor() {
   detail.className = "generator-endpoint-detail";
   detail.textContent = generator.detail;
   generatorConfigEndpointEditor.append(heading, detail);
+
+  const extraTextDescription = generator.key === "describe-ideogram"
+    ? "Ideogram describe does not accept an instruction. Extra text is stored with the job, but it is not sent."
+    : generator.kind === "describe"
+      ? "Appended only to this endpoint's instruction after a blank line. Leave blank to send the composer prompt unchanged."
+      : "Appended only to this endpoint's prompt after a blank line. Leave blank to send the composer prompt unchanged.";
 
   const buildField = (field, title, description, maxLength) => {
     const wrapper = document.createElement("section");
@@ -2742,7 +2752,7 @@ function renderGeneratorConfigEndpointEditor() {
     buildField(
       "extraText",
       "Append extra text",
-      "Appended only to this endpoint's prompt after a blank line. Leave blank to send the composer prompt unchanged.",
+      extraTextDescription,
       generatorEndpointConfiguration.maxExtraTextChars),
     buildField(
       "notes",
@@ -2752,29 +2762,42 @@ function renderGeneratorConfigEndpointEditor() {
 }
 
 function renderGeneratorConfigEndpoints() {
-  const imageGenerators = generators.filter((generator) => generator.kind !== "describe");
   if (!generatorConfigActiveEndpointKey ||
-      !imageGenerators.some((generator) => generator.key === generatorConfigActiveEndpointKey)) {
-    generatorConfigActiveEndpointKey = imageGenerators[0]?.key || null;
+      !generators.some((generator) => generator.key === generatorConfigActiveEndpointKey)) {
+    generatorConfigActiveEndpointKey = generators[0]?.key || null;
   }
   generatorConfigEndpointList.replaceChildren();
-  for (const generator of imageGenerators) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.generatorKey = generator.key;
-    button.title = generator.detail;
-    const name = document.createElement("span");
-    name.className = "generator-endpoint-name";
-    name.textContent = generator.label;
-    const badges = document.createElement("span");
-    badges.className = "generator-endpoint-badges";
-    button.append(name, badges);
-    button.addEventListener("click", () => {
-      generatorConfigActiveEndpointKey = generator.key;
-      refreshGeneratorEndpointListMarkers();
-      renderGeneratorConfigEndpointEditor();
-    });
-    generatorConfigEndpointList.appendChild(button);
+  for (const [kind, title] of [["image", "make image"], ["describe", "describe image"]]) {
+    const heading = document.createElement("h3");
+    heading.className = "generator-endpoint-group";
+    heading.textContent = title;
+    generatorConfigEndpointList.appendChild(heading);
+    const group = generators.filter((generator) =>
+      (generator.kind === "describe" ? "describe" : "image") === kind);
+    for (const generator of group) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.generatorKey = generator.key;
+      button.title = generator.detail;
+      const name = document.createElement("span");
+      name.className = "generator-endpoint-name";
+      name.textContent = generator.label;
+      const badges = document.createElement("span");
+      badges.className = "generator-endpoint-badges";
+      button.append(name, badges);
+      button.addEventListener("click", () => {
+        generatorConfigActiveEndpointKey = generator.key;
+        refreshGeneratorEndpointListMarkers();
+        renderGeneratorConfigEndpointEditor();
+      });
+      generatorConfigEndpointList.appendChild(button);
+    }
+    if (group.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "generator-config-empty";
+      empty.textContent = "No targets in this section.";
+      generatorConfigEndpointList.appendChild(empty);
+    }
   }
   refreshGeneratorEndpointListMarkers();
   renderGeneratorConfigEndpointEditor();
@@ -2806,8 +2829,7 @@ function openGeneratorConfig() {
   generatorConfigDraft = copyGeneratorPreferences(generatorPreferences);
   generatorConfigStatus.textContent = "";
   generatorConfigActivePresetId = generatorConfigDraft.presets[0]?.id || null;
-  generatorConfigActiveEndpointKey =
-    generators.find((generator) => generator.kind !== "describe")?.key || null;
+  generatorConfigActiveEndpointKey = generators[0]?.key || null;
   generatorConfigView = "shown";
   renderGeneratorConfig();
   generatorConfigDialog.showModal();
@@ -2875,8 +2897,20 @@ generatorConfigForm.addEventListener("submit", async (event) => {
   }
 });
 
+function describeSectionIsOpen() {
+  return !describeSection.hidden && uiSettings.describeExpanded;
+}
+
+function bulkGeneratorInputs() {
+  const inputs = [...gensRow.querySelectorAll("input:not(:disabled)")];
+  if (describeSectionIsOpen()) {
+    inputs.push(...describeRow.querySelectorAll("input:not(:disabled)"));
+  }
+  return inputs;
+}
+
 function setAllGenerators(mode) {
-  for (const cb of gensRow.querySelectorAll("input:not(:disabled)")) {
+  for (const cb of bulkGeneratorInputs()) {
     cb.checked = mode === "enable" ? true : mode === "disable" ? false : !cb.checked;
     cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
   }
@@ -2888,10 +2922,10 @@ el("gens-disable-all").addEventListener("click", () => setAllGenerators("disable
 el("gens-toggle-all").addEventListener("click", () => setAllGenerators("toggle"));
 el("gens-default").addEventListener("click", () => applyGeneratorPreset({
   generatorKeys: generatorPreferences.defaultSelectedKeys,
-}));
+}, { includeDescribe: true }));
 // Attachment-aware bulk actions, visible only while an image is attached.
 function setGeneratorsByImageCapability(wantCapable, checked) {
-  for (const cb of gensRow.querySelectorAll("input:not(:disabled)")) {
+  for (const cb of bulkGeneratorInputs()) {
     if ((cb.dataset.imageCapable === "true") !== wantCapable) continue;
     cb.checked = checked;
     cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
@@ -2900,9 +2934,10 @@ function setGeneratorsByImageCapability(wantCapable, checked) {
 }
 el("gens-enable-image-capable").addEventListener("click", () => setGeneratorsByImageCapability(true, true));
 el("gens-disable-text-only").addEventListener("click", () => setGeneratorsByImageCapability(false, false));
-// The main bulk buttons act on the media-generator section only; the describe
-// section has its own all/none so a "Enable all" can't silently fan an image
-// out to every paid describe endpoint too.
+// Inner describe all/none still act on that section alone. Outer Enable all /
+// Disable all / Toggle all / Default include describe chips only while the
+// describe section is open. A collapsed or preference-hidden section is left
+// unchanged: the outer close dominates.
 function setAllDescribers(checked) {
   for (const cb of describeRow.querySelectorAll("input:not(:disabled)")) {
     cb.checked = checked;
@@ -8253,7 +8288,6 @@ async function submit() {
   const generatorExtraTexts = {};
   let generatorExtraTextChars = 0;
   for (const key of gens) {
-    if (isDescribeGenKey(key)) continue;
     const extraText = effectiveEndpointField(key, "extraText").trim();
     if (extraText) {
       generatorExtraTexts[key] = extraText;
