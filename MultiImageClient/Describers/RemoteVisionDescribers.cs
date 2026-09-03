@@ -56,10 +56,12 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(5),
         };
 
+        public const string DefaultModel = "gpt-5.6-sol";
+
         private readonly string _apiKey;
         private readonly string _model;
 
-        public OpenAIVisionDescriber(string apiKey, string model = "gpt-4.1")
+        public OpenAIVisionDescriber(string apiKey, string model = DefaultModel)
         {
             _apiKey = apiKey;
             _model = model;
@@ -97,6 +99,13 @@ namespace MultiImageClient
             if (RequestJsonOutput)
             {
                 payload["text"] = new { format = new { type = "json_object" } };
+            }
+            // GPT-5.x defaults to heavy reasoning. That can consume the 1200
+            // output cap before the JSON object lands. Low effort keeps the
+            // caption path on the current flagship without a thinking dump.
+            if (_model.StartsWith("gpt-5", StringComparison.Ordinal))
+            {
+                payload["reasoning"] = new { effort = "low" };
             }
 
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/responses")
@@ -155,10 +164,12 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(5),
         };
 
+        public const string DefaultModel = "claude-sonnet-5";
+
         private readonly string _apiKey;
         private readonly string _model;
 
-        public ClaudeVisionDescriber(string apiKey, string model = "claude-sonnet-4-5")
+        public ClaudeVisionDescriber(string apiKey, string model = DefaultModel)
         {
             _apiKey = apiKey;
             _model = model;
@@ -169,12 +180,11 @@ namespace MultiImageClient
         public async Task<string> DescribeImageAsync(byte[] imageBytes, string prompt, int maxTokens = 512, float temperature = 0.8f)
         {
             var mime = DescriberImageFormat.DetectMime(imageBytes);
-            var payload = new
+            var payload = new Dictionary<string, object>
             {
-                model = _model,
-                max_tokens = maxTokens,
-                temperature,
-                messages = new[]
+                ["model"] = _model,
+                ["max_tokens"] = maxTokens,
+                ["messages"] = new[]
                 {
                     new
                     {
@@ -191,6 +201,18 @@ namespace MultiImageClient
                     },
                 },
             };
+            // Claude 5 rejects non-default temperature/top_p/top_k (HTTP 400).
+            // Adaptive thinking is on by default and counts against max_tokens,
+            // so a 1200-token JSON caption can come back empty. Disable thinking
+            // for this path. Older models still take temperature.
+            if (UsesClaude5RequestShape(_model))
+            {
+                payload["thinking"] = new { type = "disabled" };
+            }
+            else
+            {
+                payload["temperature"] = temperature;
+            }
 
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
             {
@@ -221,6 +243,11 @@ namespace MultiImageClient
             }
             return string.Join(Environment.NewLine, chunks).Trim();
         }
+
+        private static bool UsesClaude5RequestShape(string model) =>
+            model.StartsWith("claude-sonnet-5", StringComparison.Ordinal)
+            || model.StartsWith("claude-opus-5", StringComparison.Ordinal)
+            || model.StartsWith("claude-fable-5", StringComparison.Ordinal);
     }
 
     /// Google Generative Language generateContent vision describe.
@@ -231,10 +258,12 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(5),
         };
 
+        public const string DefaultModel = "gemini-3.5-flash";
+
         private readonly string _apiKey;
         private readonly string _model;
 
-        public GeminiVisionDescriber(string apiKey, string model = "gemini-2.5-pro")
+        public GeminiVisionDescriber(string apiKey, string model = DefaultModel)
         {
             _apiKey = apiKey;
             _model = model;
@@ -244,12 +273,10 @@ namespace MultiImageClient
         // describe targets' {description, comments} reply contract.
         public bool RequestJsonOutput { get; init; }
 
-        // gemini-2.5-pro CANNOT run with thinking disabled: thinkingBudget 0 is
-        // rejected with HTTP 400 "Budget 0 is invalid. This model only works in
-        // thinking mode." (observed live 2026-08-05 — it looks like a billing
-        // error but is purely a request-shape rule). Pro's minimum budget is
-        // 128; we grant a modest fixed budget and add it to maxOutputTokens
-        // since thought tokens count against that cap.
+        // gemini-2.5-pro (legacy) cannot run with thinkingBudget 0: HTTP 400
+        // "Budget 0 is invalid. This model only works in thinking mode."
+        // Gemini 3.x rejects thinkingBudget and takes thinkingLevel instead.
+        // Describe uses low thinking so the JSON object still fits the cap.
         private const int ThinkingBudgetTokens = 1024;
 
         public string GetModelName() => _model;
@@ -257,11 +284,14 @@ namespace MultiImageClient
         public async Task<string> DescribeImageAsync(byte[] imageBytes, string prompt, int maxTokens = 512, float temperature = 0.8f)
         {
             var mime = DescriberImageFormat.DetectMime(imageBytes);
+            var isGemini3 = _model.StartsWith("gemini-3", StringComparison.Ordinal);
             var generationConfig = new Dictionary<string, object>
             {
                 ["maxOutputTokens"] = maxTokens + ThinkingBudgetTokens,
                 ["temperature"] = temperature,
-                ["thinkingConfig"] = new { thinkingBudget = ThinkingBudgetTokens },
+                ["thinkingConfig"] = isGemini3
+                    ? (object)new { thinkingLevel = "low" }
+                    : new { thinkingBudget = ThinkingBudgetTokens },
             };
             if (RequestJsonOutput)
             {
@@ -310,6 +340,11 @@ namespace MultiImageClient
             {
                 foreach (var part in parts.EnumerateArray())
                 {
+                    if (part.TryGetProperty("thought", out var thought)
+                        && thought.ValueKind == JsonValueKind.True)
+                    {
+                        continue;
+                    }
                     if (part.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
                     {
                         chunks.Add(text.GetString() ?? "");
@@ -321,9 +356,10 @@ namespace MultiImageClient
     }
 
     /// Ideogram /describe. Takes NO instruction: the endpoint accepts only the
-    /// image (plus an optional describe_model_version we leave at the API
-    /// default), so the caller's prompt is deliberately unused — the UI labels
-    /// this target as fixed-instruction.
+    /// image plus describe_model_version V_3 (the current API default). The
+    /// caller's prompt is deliberately unused — the UI labels this target as
+    /// fixed-instruction. POST /v1/ideogram-v4/describe is a different product
+    /// (structured generation prompts), not this caption path.
     public sealed class IdeogramDescriber : ILocalVisionModel
     {
         private readonly IdeogramClient _client;
@@ -340,6 +376,7 @@ namespace MultiImageClient
             var response = await _client.DescribeImageAsync(new IdeogramDescribeRequest
             {
                 ImageFile = imageBytes,
+                DescribeModelVersion = "V_3",
             });
             if (response.Descriptions == null || response.Descriptions.Count == 0)
             {

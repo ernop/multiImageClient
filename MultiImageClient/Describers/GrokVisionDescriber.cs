@@ -15,10 +15,12 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(5),
         };
 
+        public const string DefaultModel = "grok-4.6";
+
         private readonly string _apiKey;
         private readonly string _model;
 
-        public GrokVisionDescriber(string apiKey, string model = "grok-4.3")
+        public GrokVisionDescriber(string apiKey, string model = DefaultModel)
         {
             _apiKey = apiKey;
             _model = model;
@@ -31,10 +33,10 @@ namespace MultiImageClient
             // The data URI must carry the bytes' true type — UI describe inputs
             // can be JPEG or WEBP, not just PNG.
             var dataUri = $"data:{DescriberImageFormat.DetectMime(imageBytes)};base64," + Convert.ToBase64String(imageBytes);
-            var payload = new
+            var payload = new Dictionary<string, object>
             {
-                model = _model,
-                input = new[]
+                ["model"] = _model,
+                ["input"] = new[]
                 {
                     new
                     {
@@ -46,9 +48,15 @@ namespace MultiImageClient
                         },
                     },
                 },
-                max_output_tokens = maxTokens,
-                temperature,
+                ["max_output_tokens"] = maxTokens,
+                ["temperature"] = temperature,
             };
+            // grok-4.6 reasoning defaults to high and shares the output cap.
+            // Low effort keeps the JSON caption inside DescribeMaxTokens.
+            if (_model.StartsWith("grok-4.6", StringComparison.Ordinal))
+            {
+                payload["reasoning"] = new { effort = "low" };
+            }
 
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.x.ai/v1/responses")
             {

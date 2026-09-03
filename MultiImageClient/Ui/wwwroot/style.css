@@ -572,21 +572,25 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 
 #compose-top {
   display: flex;
-  align-items: flex-start;
+  /* Stretch both columns so #prompt fills leftover height beside the
+     paste-zone action row. Do not JS-assign #paste-zone height from
+     #prompt: that looped with this stretch and grew without bound. */
+  align-items: stretch;
   gap: 16px;
 }
 
 #compose-left {
-  display: flex;
+  display: grid;
   flex: 0 0 260px;
-  flex-direction: column;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: minmax(180px, 1fr) auto;
   gap: 8px;
 }
 
 #paste-zone {
   position: relative;
-  flex: 0 0 auto;
-  min-height: 0;
+  grid-column: 1 / -1;
+  min-height: 180px;
   border: 2px dashed var(--accent);
   border-radius: 4px;
   display: flex;
@@ -599,6 +603,7 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 #paste-zone.dragover { background: #dde2f7; border-style: solid; }
 #paste-zone.has-image {
   flex-direction: column;
+  min-height: 0;
   /* Centering an overflowing flex column creates negative overflow above
      scrollTop=0, making the first row—and its remove buttons—unreachable. */
   align-items: stretch;
@@ -714,18 +719,21 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 
 /* ---------- past-input-image picker ---------- */
 
-#input-library-control { position: relative; }
+#input-library-control { position: relative; min-width: 0; }
 #input-library-toggle,
 #sketch-open {
   width: 100%;
-  padding: 5px 10px;
+  height: 100%;
+  padding: 5px 8px;
   color: var(--accent-dark);
   background: #eef0fa;
   border: 1px solid var(--accent);
   border-radius: 3px;
   font: 700 12px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
+  text-align: center;
   cursor: pointer;
 }
+#sketch-open { min-width: 0; }
 #input-library-toggle:hover, #input-library-toggle[aria-expanded="true"],
 #sketch-open:hover {
   color: #fff;
@@ -800,12 +808,28 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
   object-fit: cover;
 }
 
-#compose-right { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+#compose-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+#compose-right > .mcphee-host {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+}
 #endpoint-picker { display: flex; flex-direction: column; gap: 10px; }
 
 #prompt {
   width: 100%;
-  height: 180px;
+  flex: 1 1 auto;
+  min-height: 180px;
+  height: auto;
   font: inherit;
   font-size: 22px;
   padding: 10px 12px;
@@ -930,7 +954,6 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 #describe-section { display: flex; flex-direction: column; gap: 5px; }
 #describe-section[hidden] { display: none; }
 #describe-head { display: flex; align-items: baseline; gap: 7px; font-size: 13px; }
-#describe-head-note { font-size: 11px; }
 #describe-head button {
   font: inherit; font-size: 11px;
   padding: 1px 8px;
@@ -944,7 +967,6 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
   gap: 7px;
 }
 #describe-section.collapsed { gap: 0; }
-#describe-section.collapsed #describe-head-note,
 #describe-section.collapsed #describe-enable-all,
 #describe-section.collapsed #describe-disable-all,
 #describe-section.collapsed #describe-row { display: none; }
@@ -1960,6 +1982,10 @@ body.image-viewer-open { overflow: hidden; }
   white-space: normal;
   overflow-wrap: anywhere;
 }
+#image-viewer-copy-wrap {
+  flex: 0 0 auto;
+}
+#image-viewer-copy-wrap[hidden] { display: none; }
 #image-viewer-dimensions {
   font-size: 12px;
   font-weight: 600;
@@ -2108,9 +2134,8 @@ body.image-viewer-open { overflow: hidden; }
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 4px;
-  margin-top: 2px;
 }
 #image-viewer-active-actions[hidden] { display: none; }
 #image-viewer-active-actions button {
@@ -2178,6 +2203,16 @@ body.image-viewer-open { overflow: hidden; }
 #image-viewer-window.side-status #image-viewer-generator {
   grid-column: 1 / -1;
   grid-row: 1;
+}
+#image-viewer-window.side-status #image-viewer-meta-row:has(#image-viewer-copy-wrap:not([hidden])) #image-viewer-generator {
+  grid-column: 1;
+}
+#image-viewer-window.side-status #image-viewer-copy-wrap {
+  grid-column: 2 / -1;
+  grid-row: 1;
+  margin-left: 0;
+  justify-self: end;
+  align-self: start;
 }
 #image-viewer-window.side-status #image-viewer-dimensions {
   grid-column: 1;

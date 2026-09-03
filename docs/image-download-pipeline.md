@@ -49,7 +49,13 @@ On open and on every step:
 5. Clear the not-final mark and the pulsing fill.
 
 Wheel and keys change the selection without waiting on the original.
-The 80 px wheel threshold still filters trackpad noise.
+The 80 px wheel threshold still filters trackpad noise. A wheel over a
+viewer chrome box that already has a vertical scrollbar (prompt,
+describe, guidance, side-status column, help panel) scrolls that box
+only. It does not change the selected image. Ctrl+wheel (and Cmd+wheel)
+jumps to the first image of the adjacent prompt, the same destination as
+Ctrl+Left / Ctrl+Right. Wheel down matches Ctrl+Right (older prompt).
+Wheel up matches Ctrl+Left (newer prompt).
 
 ## One original loader
 

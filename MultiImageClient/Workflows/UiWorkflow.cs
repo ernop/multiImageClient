@@ -392,17 +392,17 @@ namespace MultiImageClient
                     // attached (each one describes every attached input). The
                     // composer prompt, when non-blank, is the describe instruction;
                     // blank describe-only jobs get the standard instruction.
-                    new { key = UiJobRunner.KeyDescribeIdeogram, label = "Ideogram describe", detail = "Ideogram's /describe endpoint. Fixed built-in instruction — your prompt text is NOT sent to it. Returns Ideogram's own caption(s) for each attached image. $0.01 per image." },
-                    new { key = UiJobRunner.KeyDescribeOpenAi, label = "OpenAI describe (gpt-4.1)", detail = "OpenAI gpt-4.1 vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
-                    new { key = UiJobRunner.KeyDescribeClaude, label = "Claude describe (Sonnet)", detail = "Anthropic claude-sonnet-4-5 vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
-                    new { key = UiJobRunner.KeyDescribeGemini, label = "Gemini describe (2.5 Pro)", detail = "Google gemini-2.5-pro vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
-                    new { key = UiJobRunner.KeyDescribeGrok, label = "Grok describe (grok-4.3)", detail = "xAI grok-4.3 vision via api.x.ai. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeIdeogram, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeIdeogram), detail = "Ideogram POST /describe with describe_model_version V_3. Fixed built-in instruction — your prompt text is NOT sent to it. Returns Ideogram's own caption(s) for each attached image. $0.01 per image." },
+                    new { key = UiJobRunner.KeyDescribeOpenAi, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeOpenAi), detail = $"OpenAI {OpenAIVisionDescriber.DefaultModel} vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeClaude, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeClaude), detail = $"Anthropic {ClaudeVisionDescriber.DefaultModel} vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeGemini, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGemini), detail = $"Google {GeminiVisionDescriber.DefaultModel} vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeGrok, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGrok), detail = $"xAI {GrokVisionDescriber.DefaultModel} vision via api.x.ai. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     // Layout map: analysis target like describe (requires an
                     // attached image, ignores the output-options row) but its
                     // result is an IMAGE — a server-rendered flat-color map of
                     // the sections Gemini identified, with a numbered legend
                     // and one-sentence summary baked into the PNG.
-                    new { key = UiJobRunner.KeyLayoutMap, label = "Layout map (Gemini 2.5 Pro)", detail = "Google gemini-2.5-pro names each attached image's main sections and topics with bounding boxes; the server renders them as a simple flat-color map image with a numbered color legend and a one-sentence summary. Your prompt, when present, is passed as context for the section labels." },
+                    new { key = UiJobRunner.KeyLayoutMap, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyLayoutMap), detail = $"Google {GeminiVisionDescriber.DefaultModel} names each attached image's main sections and topics with bounding boxes; the server renders them as a simple flat-color map image with a numbered color legend and a one-sentence summary. Your prompt, when present, is passed as context for the section labels." },
                 }
                 .Select(g => new
                 {

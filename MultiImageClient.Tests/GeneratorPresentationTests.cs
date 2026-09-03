@@ -113,5 +113,29 @@ namespace MultiImageClient.Tests
                 "legacy custom producer",
                 GeneratorPresentation.ContactSheetLabel(result));
         }
+
+        [Fact]
+        public void DescribeDisplayNamesUseCurrentProviderModels()
+        {
+            Assert.Equal("gpt-5.6-sol", OpenAIVisionDescriber.DefaultModel);
+            Assert.Equal("claude-sonnet-5", ClaudeVisionDescriber.DefaultModel);
+            Assert.Equal("gemini-3.5-flash", GeminiVisionDescriber.DefaultModel);
+            Assert.Equal("grok-4.6", GrokVisionDescriber.DefaultModel);
+            Assert.Equal(
+                "OpenAI describe (gpt-5.6-sol)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeOpenAi));
+            Assert.Equal(
+                "Claude describe (claude-sonnet-5)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeClaude));
+            Assert.Equal(
+                "Gemini describe (gemini-3.5-flash)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGemini));
+            Assert.Equal(
+                "Grok describe (grok-4.6)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGrok));
+            Assert.Equal(
+                "Layout map (gemini-3.5-flash)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyLayoutMap));
+        }
     }
 }

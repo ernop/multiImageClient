@@ -49,11 +49,11 @@ namespace MultiImageClient
             UiJobRunner.KeyGrokApiPro => "grok-api pro",
             UiJobRunner.KeyMetaWeb => "Meta AI Muse Image (meta-web)",
             UiJobRunner.KeyDescribeIdeogram => "Ideogram describe",
-            UiJobRunner.KeyDescribeOpenAi => "OpenAI describe (gpt-4.1)",
-            UiJobRunner.KeyDescribeClaude => "Claude describe (Sonnet)",
-            UiJobRunner.KeyDescribeGemini => "Gemini describe (2.5 Pro)",
-            UiJobRunner.KeyDescribeGrok => "Grok describe (grok-4.3)",
-            UiJobRunner.KeyLayoutMap => "Layout map (Gemini 2.5 Pro)",
+            UiJobRunner.KeyDescribeOpenAi => $"OpenAI describe ({OpenAIVisionDescriber.DefaultModel})",
+            UiJobRunner.KeyDescribeClaude => $"Claude describe ({ClaudeVisionDescriber.DefaultModel})",
+            UiJobRunner.KeyDescribeGemini => $"Gemini describe ({GeminiVisionDescriber.DefaultModel})",
+            UiJobRunner.KeyDescribeGrok => $"Grok describe ({GrokVisionDescriber.DefaultModel})",
+            UiJobRunner.KeyLayoutMap => $"Layout map ({GeminiVisionDescriber.DefaultModel})",
             _ => throw new ArgumentException($"Unknown UI generator key '{key}'.", nameof(key)),
         };
 

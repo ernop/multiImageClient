@@ -206,6 +206,7 @@ let imageViewerContentAr = null; // current output image's aspect ratio, for win
 let imageViewerFocusBeforeOpen = null;
 let imageViewerWheelAccumulator = 0;
 let imageViewerWheelResetTimer = null;
+let imageViewerWheelPromptJump = false;
 let imageViewerPreloadActive = 0;
 // Waiters are { priority, resolve, reject, entry }; lower priority runs first.
 // Re-sorted on every insert / bump so a direction change can promote the new
@@ -213,12 +214,12 @@ let imageViewerPreloadActive = 0;
 const imageViewerPreloadWaiters = [];
 const imageViewerCache = new Map();
 // ±10 is enough to scrub Left/Right without hitching. Keep prompt-jump landing
-// points warm too: Ctrl+Left/Right selects the first image of another prompt,
+// points warm too: Ctrl+Left/Right and Ctrl+wheel select the first image of another prompt,
 // which may sit well outside the flat-image window when jobs have many results.
 // Every render recenters this bounded working set around the current item.
 const ImageViewerPreloadAhead = 10;
 const ImageViewerPreloadBehind = 10;
-// Ctrl+Left/Right lands on items[0] of another prompt. Keep that landing
+// Ctrl+Left/Right and Ctrl+wheel land on items[0] of another prompt. Keep that landing
 // warm for the same ±10 window as one-image steps, as its own job, not as
 // leftovers after the sequential ±10 queue.
 const ImageViewerPreloadNextPrompts = 10;
@@ -261,15 +262,6 @@ const clearBtn = el("clear-image");
 const fileInput = el("file-input");
 const promptBox = el("prompt");
 
-// The attachment target and prompt are one input row. Keep their visible
-// heights identical, including when the user vertically resizes the prompt.
-function syncPasteZoneHeight() {
-  pasteZone.style.height = `${Math.ceil(promptBox.getBoundingClientRect().height)}px`;
-}
-
-new ResizeObserver(syncPasteZoneHeight).observe(promptBox);
-syncPasteZoneHeight();
-
 const gensRow = el("gens-row");
 const describeSection = el("describe-section");
 const describeRow = el("describe-row");
@@ -293,9 +285,13 @@ const imageViewerOutputLabel = el("image-viewer-output-label");
 const imageViewerHelp = el("image-viewer-help");
 const imageViewerHelpList = el("image-viewer-help-list");
 const imageViewerPrompt = el("image-viewer-prompt");
+const imageViewerCopyWrap = el("image-viewer-copy-wrap");
+const imageViewerCopyPrompt = el("image-viewer-copy-prompt");
+const imageViewerCopyNote = el("image-viewer-copy-note");
 const imageViewerActiveActions = el("image-viewer-active-actions");
 const imageViewerSetImage = el("image-viewer-set-image");
 const imageViewerSetImagePrompt = el("image-viewer-set-image-prompt");
+const imageViewerSetPrompt = el("image-viewer-set-prompt");
 const imageViewerDescribe = el("image-viewer-describe");
 const imageViewerGuidance = el("image-viewer-guidance");
 const imageViewerGenerator = el("image-viewer-generator");
@@ -9735,9 +9731,27 @@ function imageViewerIdentityMatches(item) {
     Number(imageViewerState.imageIndex) === Number(item.imageIndex);
 }
 
-function renderImageViewerActiveActions(item) {
+function imageViewerActivationButtons() {
+  return [imageViewerSetImage, imageViewerSetImagePrompt, imageViewerSetPrompt];
+}
+
+function hideImageViewerCopyNote() {
+  imageViewerCopyNote.hidden = true;
+  imageViewerCopyNote.textContent = "";
+  imageViewerCopyNote.classList.remove("err");
+}
+
+function renderImageViewerCopyPrompt(prompt) {
+  hideImageViewerCopyNote();
+  imageViewerCopyWrap.hidden = !prompt;
+}
+
+function renderImageViewerActiveActions(target) {
+  const item = target?.item;
+  const prompt = target?.prompt?.prompt || "";
   imageViewerActiveActions.hidden = !item;
-  for (const button of [imageViewerSetImage, imageViewerSetImagePrompt]) {
+  renderImageViewerCopyPrompt(prompt);
+  for (const button of imageViewerActivationButtons()) {
     button.disabled = false;
     button.classList.remove("pending", "error", "success");
   }
@@ -9747,12 +9761,46 @@ function renderImageViewerActiveActions(item) {
   imageViewerSetImagePrompt.textContent = "set image + prompt active";
   imageViewerSetImagePrompt.title =
     "Replace the composer input with this image and replace the composer prompt with this image's prompt";
+  imageViewerSetPrompt.textContent = "set as active prompt";
+  imageViewerSetPrompt.title =
+    "Replace the composer prompt with this image's prompt; keep the current composer attachments";
+  imageViewerSetPrompt.disabled = !prompt;
 }
 
-// These controls intentionally set only the fields they name. Both replace
-// every current composer image with the exact viewed original; the second also
-// copies this item's prompt. Generator selection and output options remain
-// untouched. A later click supersedes an earlier in-flight fetch by identity.
+function applyViewedPromptToComposer(prompt) {
+  promptBox.value = prompt;
+  if (mcpheeCtl) mcpheeCtl.refresh();
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+}
+
+let imageViewerCopyNoteTimer = null;
+async function copyImageViewerPrompt() {
+  const current = locateImageViewerState(getImageViewerPrompts());
+  const prompt = current?.prompt?.prompt;
+  if (!prompt) {
+    imageViewerCopyNote.textContent = "copy failed";
+    imageViewerCopyNote.classList.add("err");
+    imageViewerCopyNote.hidden = false;
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(prompt);
+    imageViewerCopyNote.textContent = "prompt copied";
+    imageViewerCopyNote.classList.remove("err");
+  } catch {
+    imageViewerCopyNote.textContent = "copy failed";
+    imageViewerCopyNote.classList.add("err");
+  }
+  imageViewerCopyNote.hidden = false;
+  if (imageViewerCopyNoteTimer) clearTimeout(imageViewerCopyNoteTimer);
+  imageViewerCopyNoteTimer = setTimeout(() => { hideImageViewerCopyNote(); }, 1600);
+}
+
+// These controls set only the fields they name. Image actions replace every
+// current composer image with the exact viewed original. Prompt actions
+// replace the composer prompt with this item's prompt. Generator selection
+// and output options remain untouched. A later click supersedes an earlier
+// in-flight fetch by identity.
 async function setViewedImageActive(includePrompt) {
   const current = locateImageViewerState(getImageViewerPrompts());
   if (!current) return;
@@ -9765,7 +9813,7 @@ async function setViewedImageActive(includePrompt) {
   const controller = new AbortController();
   imageViewerActivationController = controller;
 
-  for (const button of [imageViewerSetImage, imageViewerSetImagePrompt]) {
+  for (const button of imageViewerActivationButtons()) {
     button.disabled = true;
     button.classList.remove("error", "success");
     button.classList.add("pending");
@@ -9792,7 +9840,7 @@ async function setViewedImageActive(includePrompt) {
         cache: "force-cache",
       });
       if (!response.ok) throw new Error(`image fetch returned HTTP ${response.status}`);
-      blob = await response.blob();
+      blob = await blobResponse.blob();
       if (!blob.type.startsWith("image/")) {
         throw new Error(`image fetch returned ${blob.type || "an unknown content type"}`);
       }
@@ -9800,11 +9848,7 @@ async function setViewedImageActive(includePrompt) {
     if (operationVersion !== imageViewerActivationVersion) return;
 
     await setImagesFromBlobs([blob]);
-    if (includePrompt) {
-      promptBox.value = prompt;
-      if (mcpheeCtl) mcpheeCtl.refresh();
-      if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
-    }
+    if (includePrompt) applyViewedPromptToComposer(prompt);
     sendError.textContent = "";
 
     if (imageViewerIdentityMatches(item)) {
@@ -9828,21 +9872,60 @@ async function setViewedImageActive(includePrompt) {
     if (operationVersion !== imageViewerActivationVersion) return;
     imageViewerActivationController = null;
     if (!imageViewerIdentityMatches(item)) return;
-    for (const button of [imageViewerSetImage, imageViewerSetImagePrompt]) {
+    for (const button of imageViewerActivationButtons()) {
       button.disabled = false;
       button.classList.remove("pending");
     }
     setTimeout(() => {
       if (operationVersion === imageViewerActivationVersion &&
           imageViewerIdentityMatches(item)) {
-        renderImageViewerActiveActions(item);
+        renderImageViewerActiveActions(current);
       }
     }, 1800);
   }
 }
 
+function setViewedPromptActive() {
+  const current = locateImageViewerState(getImageViewerPrompts());
+  if (!current) return;
+  const item = { ...current.item };
+  const prompt = current.prompt.prompt;
+  if (!prompt) return;
+  const operationVersion = ++imageViewerActivationVersion;
+  if (imageViewerActivationController) imageViewerActivationController.abort();
+  imageViewerActivationController = null;
+
+  for (const button of imageViewerActivationButtons()) {
+    button.disabled = true;
+    button.classList.remove("error", "success");
+    button.classList.add("pending");
+  }
+  imageViewerSetPrompt.textContent = "setting…";
+  applyViewedPromptToComposer(prompt);
+  sendError.textContent = "";
+  if (imageViewerIdentityMatches(item)) {
+    imageViewerSetPrompt.classList.remove("pending");
+    imageViewerSetPrompt.classList.add("success");
+    imageViewerSetPrompt.textContent = "prompt active";
+    imageViewerSetPrompt.title =
+      "This prompt is now active in the composer; composer attachments were left unchanged";
+  }
+  for (const button of imageViewerActivationButtons()) {
+    button.disabled = false;
+    button.classList.remove("pending");
+  }
+  setTimeout(() => {
+    if (operationVersion === imageViewerActivationVersion &&
+        imageViewerIdentityMatches(item)) {
+      renderImageViewerActiveActions(current);
+    }
+  }, 1800);
+}
+
+imageViewerCopyPrompt.addEventListener("click", () => copyImageViewerPrompt());
 imageViewerSetImage.addEventListener("click", () => setViewedImageActive(false));
 imageViewerSetImagePrompt.addEventListener("click", () => setViewedImageActive(true));
+imageViewerSetPrompt.addEventListener("click", () => setViewedPromptActive());
 
 // Item-specific chrome (prompt, guidance, describe panel, generator name).
 // Callers pair this with same-item stage pixels only — never with another
@@ -9856,7 +9939,7 @@ function paintImageViewerChrome(target) {
   scheduleImageViewerPreloadHud();
   imageViewerPrompt.textContent = target.prompt.prompt;
   renderImageViewerGuidance(target);
-  renderImageViewerActiveActions(target.item);
+  renderImageViewerActiveActions(target);
   renderImageViewerFavorite(target.item);
   renderImageViewerVideo(target.item);
   renderImageViewerHide(target.item);
@@ -10243,7 +10326,7 @@ const ImageViewerCommands = [
     keys: ["Wheel"],
     name: "Intent-filtered wheel stepping",
     match: () => false,
-    help: "Vertical wheel movement advances one image after a short threshold so trackpad noise does not skip. The selected item's card preview paints immediately; full resolution continues in the background.",
+    help: "Vertical wheel movement over the image advances one item after a short threshold so trackpad noise does not skip. Ctrl+wheel jumps to the first image of the next prompt, matching Ctrl+Left/Right. A wheel without Ctrl over a prompt, description, or other viewer box that already has a vertical scrollbar scrolls that box only and does not change the image.",
     run: () => {},
   },
   {
@@ -10276,7 +10359,7 @@ const ImageViewerCommands = [
   },
   {
     id: "newerPrompt",
-    keys: ["Ctrl+Left"],
+    keys: ["Ctrl+Left", "Ctrl+Wheel up"],
     name: "Prompt-boundary jump",
     match: (event) =>
       (event.ctrlKey || event.metaKey) && event.key === "ArrowLeft",
@@ -10285,7 +10368,7 @@ const ImageViewerCommands = [
   },
   {
     id: "olderPrompt",
-    keys: ["Ctrl+Right"],
+    keys: ["Ctrl+Right", "Ctrl+Wheel down"],
     name: "Prompt-boundary jump",
     match: (event) =>
       (event.ctrlKey || event.metaKey) && event.key === "ArrowRight",
@@ -10694,12 +10777,44 @@ function normalizedImageViewerWheelDelta(event) {
   return event.deltaY * unit;
 }
 
+function imageViewerElementHasVerticalScrollbar(node) {
+  if (!(node instanceof HTMLElement)) return false;
+  const overflowY = getComputedStyle(node).overflowY;
+  if (overflowY !== "auto" && overflowY !== "scroll" && overflowY !== "overlay") {
+    return false;
+  }
+  return node.scrollHeight > node.clientHeight + 1;
+}
+
+function imageViewerWheelOwnedByInnerScroller(event) {
+  let node = event.target instanceof Element
+    ? event.target
+    : event.target instanceof Node
+      ? event.target.parentElement
+      : null;
+  while (node && node !== imageViewer) {
+    if (imageViewerElementHasVerticalScrollbar(node)) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
 imageViewer.addEventListener("wheel", (event) => {
   if (imageViewer.hidden) return;
+  const promptJump = event.ctrlKey || event.metaKey;
+  // A prompt, description, guidance, help panel, or side-status column
+  // with its own scrollbar owns an unmodified wheel. Ctrl/Meta+wheel is
+  // a prompt-boundary jump (same as Ctrl+Left/Right) and must also
+  // cancel the browser's zoom default.
+  if (!promptJump && imageViewerWheelOwnedByInnerScroller(event)) return;
   event.preventDefault();
   const delta = normalizedImageViewerWheelDelta(event);
   if (delta === 0) return;
   if (imageViewerHelpOpen) hideImageViewerHelp();
+  if (imageViewerWheelPromptJump !== promptJump) {
+    imageViewerWheelAccumulator = 0;
+    imageViewerWheelPromptJump = promptJump;
+  }
   imageViewerWheelAccumulator += delta;
   if (imageViewerWheelResetTimer) clearTimeout(imageViewerWheelResetTimer);
   imageViewerWheelResetTimer = setTimeout(() => {
@@ -10709,7 +10824,8 @@ imageViewer.addEventListener("wheel", (event) => {
   if (Math.abs(imageViewerWheelAccumulator) < ImageViewerWheelThreshold) return;
   const direction = imageViewerWheelAccumulator > 0 ? 1 : -1;
   imageViewerWheelAccumulator = 0;
-  navigateImageViewerImage(direction);
+  if (promptJump) navigateImageViewerPrompt(direction);
+  else navigateImageViewerImage(direction);
 }, { passive: false });
 
 function isImageViewerSideButton(event) {

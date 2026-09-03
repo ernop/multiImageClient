@@ -32,8 +32,8 @@ public sealed class WorkflowDescriptionService
             },
             new()
             {
-                Id = "xai.grok-4.3",
-                Label = "xAI Grok 4.3 Vision",
+                Id = "xai.grok-4.6",
+                Label = "xAI Grok 4.6 Vision",
                 Enabled = !string.IsNullOrWhiteSpace(_settings.XAIGrokApiKey),
                 DisabledReason = string.IsNullOrWhiteSpace(_settings.XAIGrokApiKey)
                     ? "settings.json: XAIGrokApiKey is empty"
@@ -136,6 +136,7 @@ public sealed class WorkflowDescriptionService
         return describerId.ToLowerInvariant() switch
         {
             "mock.visual" => new MockVisionDescriber(),
+            "xai.grok-4.6" => new GrokVisionDescriber(_settings.XAIGrokApiKey, GrokVisionDescriber.DefaultModel),
             "xai.grok-4.3" => new GrokVisionDescriber(_settings.XAIGrokApiKey, "grok-4.3"),
             "local.internvl" => new LocalInternVLClient(
                 baseUrl: "http://127.0.0.1:11415",

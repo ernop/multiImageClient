@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260813-sketch-paint-floor">
+<link rel="stylesheet" href="style.css?v=20260903-viewer-sidebar-actions">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260813-mcphee-3-10-0">
 </head>
 <body>
@@ -341,7 +341,6 @@
           <strong>describe</strong>
           <button id="describe-collapse-toggle" type="button" aria-expanded="true"
             aria-controls="describe-row">− collapse</button>
-          <span id="describe-head-note">image &rarr; text — describes the attached image(s); your prompt is the instruction (blank = standard "describe this image"); output options above don't apply</span>
           <button id="describe-enable-all" type="button" title="Enable every available describe endpoint">all</button>
           <button id="describe-disable-all" type="button" title="Disable every describe endpoint">none</button>
         </div>
@@ -400,6 +399,16 @@
     <div id="image-viewer-status">
       <div id="image-viewer-meta-row">
         <span id="image-viewer-generator"></span>
+        <div id="image-viewer-copy-wrap" class="copy-prompt-wrap" hidden>
+          <span id="image-viewer-copy-note" class="copy-prompt-note" hidden></span>
+          <button id="image-viewer-copy-prompt" class="copy-prompt" type="button"
+            title="Copy this prompt" aria-label="Copy this prompt">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <rect x="1.5" y="1.5" width="9.5" height="9.5" rx="1.5"/>
+              <rect x="5" y="5" width="9.5" height="9.5" rx="1.5"/>
+            </svg>
+          </button>
+        </div>
         <span id="image-viewer-dimensions"></span>
         <span id="image-viewer-position" aria-live="polite"
           title="Place-in-list indicator: current item / all items in the visible gallery"></span>
@@ -416,18 +425,20 @@
         <button id="image-viewer-help-toggle" type="button"
           title="Viewer navigation and controls (?)">?</button>
       </div>
+      <div id="image-viewer-active-actions" hidden
+        aria-label="Set the viewed image or prompt as the composer input">
+        <button id="image-viewer-set-image" type="button"
+          title="Replace the composer input with this image; keep the current composer prompt">set image active</button>
+        <button id="image-viewer-set-image-prompt" type="button"
+          title="Replace the composer input with this image and replace the composer prompt with this image's prompt">set image + prompt active</button>
+        <button id="image-viewer-set-prompt" type="button"
+          title="Replace the composer prompt with this image's prompt; keep the current composer attachments">set as active prompt</button>
+      </div>
       <!-- Describe results: the stage shows the submitted input image and this
            panel carries the returned description text (the job prompt below it
            is the instruction that was sent). -->
       <div id="image-viewer-describe" hidden></div>
       <div id="image-viewer-prompt"></div>
-      <div id="image-viewer-active-actions" hidden
-        aria-label="Set the viewed image as the composer input">
-        <button id="image-viewer-set-image" type="button"
-          title="Replace the composer input with this image; keep the current composer prompt">set image active</button>
-        <button id="image-viewer-set-image-prompt" type="button"
-          title="Replace the composer input with this image and replace the composer prompt with this image's prompt">set image + prompt active</button>
-      </div>
       <div id="image-viewer-guidance" hidden></div>
     </div>
     <div id="image-viewer-resize" role="separator" aria-label="Resize image viewer" title="Drag to resize"></div>

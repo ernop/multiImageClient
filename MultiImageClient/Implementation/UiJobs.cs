@@ -4875,17 +4875,15 @@ namespace MultiImageClient
         private static decimal DescribeCostEstimate(string key) => key switch
         {
             KeyDescribeIdeogram => IdeogramModelPricing.IdeogramDescribe,
-            KeyDescribeOpenAi => 0.015m,
-            KeyDescribeClaude => 0.025m,
-            // Gemini runs with a mandatory thinking budget (2.5 Pro cannot
-            // disable thinking), so its estimate includes those output-rate
-            // thinking tokens.
-            KeyDescribeGemini => 0.025m,
-            KeyDescribeGrok => 0.025m,
+            KeyDescribeOpenAi => 0.04m,
+            KeyDescribeClaude => 0.03m,
+            // Gemini 3.x thinkingLevel=low still bills some thought tokens.
+            KeyDescribeGemini => 0.03m,
+            KeyDescribeGrok => 0.03m,
             // Layout map is one Gemini vision call per input image (same
             // transport and token budget class as describe-gemini); the
             // server-side map rendering itself costs nothing.
-            KeyLayoutMap => 0.025m,
+            KeyLayoutMap => 0.03m,
             _ => throw new ArgumentException($"Unknown describe key '{key}'.", nameof(key)),
         };
 
