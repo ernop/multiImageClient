@@ -214,6 +214,9 @@
 .goal-party.party-manager { background: var(--accent); }
 .goal-party.party-generator { background: var(--ok); }
 .goal-party.party-system { background: var(--ink); }
+.goal-party.party-critic { color: #000; background: #c9b6ff; }
+.goal-entry.kind-critique { border-left: 4px solid #8a6cff; }
+.goal-entry.kind-critique-request { border-left: 4px solid #c9b6ff; }
 .goal-arrow { font-size: 16px; font-weight: 900; }
 .goal-kind { font-size: 15px; font-weight: 800; }
 .goal-edited { padding: 2px 6px; font-size: 11px; font-weight: 800; color: #000; background: #ffe3a3; border-radius: 3px; }

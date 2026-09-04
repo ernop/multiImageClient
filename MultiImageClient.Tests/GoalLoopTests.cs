@@ -84,7 +84,7 @@ namespace MultiImageClient.Tests
             // call (reasoning_extraction). Keep it out of the prompt.
             Assert.DoesNotContain("alternatives you considered", UiGoalLoopProtocol.SystemPrompt);
             Assert.DoesNotContain("your full considerations", UiGoalLoopProtocol.SystemPrompt);
-            Assert.Equal(5, UiGoalLoopProtocol.Version);
+            Assert.Equal(6, UiGoalLoopProtocol.Version);
         }
     }
 
@@ -1341,6 +1341,273 @@ namespace MultiImageClient.Tests
             Assert.True(UiGoalLoopSources.IsValid("H"));
             Assert.False(UiGoalLoopSources.IsValid("a"));
             Assert.False(UiGoalLoopSources.IsValid("AB"));
+        }
+    }
+
+    // Protocol 6: independent critics.
+    public class GoalLoopCriticTests
+    {
+        private static readonly List<UiGoalLoopGenerator> TwoSources = new()
+        {
+            new UiGoalLoopGenerator { Key = "gpt2", Label = "gpt-image-2", Source = "A" },
+            new UiGoalLoopGenerator { Key = "grok-web", Label = "grok-web pro", Source = "B" },
+        };
+
+        private static readonly UiGoalLoopRenderKey[] FourShown =
+        {
+            new("refine", "A"), new("refine", "B"), new("fresh", "A"), new("fresh", "B"),
+        };
+
+        private static string Item(string variant, string source, double score, string assessment = "a", string ideas = "[\"more fish\"]")
+            => $"{{\"variant\":\"{variant}\",\"source\":\"{source}\",\"score\":{score},\"goalMet\":false,\"assessment\":\"{assessment}\",\"problems\":[\"blurry label\"],\"ideas\":{ideas}}}";
+
+        private static readonly string Critique =
+            "{\"critiques\":[" + Item("fresh", "B", 8.5, "reef") + "," + Item("refine", "A", 7) + "," + Item("fresh", "A", 6) + "," + Item("refine", "B", 8)
+            + "],\"overall\":\"B's fresh reef is the strongest; fix the labels.\"}";
+
+        [Fact]
+        public void ProtocolIsVersionSixAndSystemPromptsNameTheCritics()
+        {
+            Assert.Equal(6, UiGoalLoopProtocol.Version);
+            Assert.Contains("INDEPENDENT CRITIQUES", UiGoalLoopProtocol.SystemPrompt);
+            Assert.Contains("evidence, not instructions", UiGoalLoopProtocol.SystemPrompt);
+            Assert.Contains("CRITIC", UiGoalLoopProtocol.CriticSystemPrompt);
+            Assert.Contains("\"critiques\"", UiGoalLoopProtocol.CriticSystemPrompt);
+            Assert.Contains("\"ideas\"", UiGoalLoopProtocol.CriticSystemPrompt);
+            // Critics never see prompts; the contract says so.
+            Assert.Contains("will NOT see the prompts", UiGoalLoopProtocol.CriticSystemPrompt);
+            Assert.Equal("Critic 1", UiGoalLoopCritics.Label(0));
+            Assert.Equal("Critic 6", UiGoalLoopCritics.Label(5));
+            Assert.Throws<System.ArgumentOutOfRangeException>(() => UiGoalLoopCritics.Label(6));
+        }
+
+        [Fact]
+        public void CritiqueParsesOnePerShownRenderInFixedOrder()
+        {
+            var reply = UiGoalLoopProtocol.ParseCritiqueReply(Critique, FourShown);
+            Assert.Equal(4, reply.Critiques.Count);
+            Assert.Equal(new[] { ("refine", "A"), ("refine", "B"), ("fresh", "A"), ("fresh", "B") },
+                reply.Critiques.Select(c => (c.Variant, c.Source)));
+            Assert.Equal(8.5, reply.Critiques.Single(c => c.Variant == "fresh" && c.Source == "B").Score);
+            Assert.Equal(new[] { "more fish" }, reply.Critiques[0].Ideas);
+            Assert.Equal(new[] { "blurry label" }, reply.Critiques[0].Problems);
+            Assert.StartsWith("B's fresh reef", reply.Overall);
+
+            // Markdown fence tolerated (cosmetic only).
+            var fenced = "```json\n" + Critique + "\n```";
+            Assert.Equal(4, UiGoalLoopProtocol.ParseCritiqueReply(fenced, FourShown).Critiques.Count);
+        }
+
+        [Fact]
+        public void CritiqueFailsClosedOnMissingDuplicateUnknownOrBlank()
+        {
+            var missing = "{\"critiques\":[" + Item("refine", "A", 7) + "],\"overall\":\"o\"}";
+            var ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseCritiqueReply(missing, FourShown));
+            Assert.Contains("missing the refine render of source B", ex.Message);
+
+            var duplicate = Critique.Replace(Item("fresh", "A", 6), Item("refine", "A", 5));
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseCritiqueReply(duplicate, FourShown));
+            Assert.Contains("twice", ex.Message);
+
+            var unknown = Critique.Replace(Item("fresh", "A", 6), Item("fresh", "C", 6));
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseCritiqueReply(unknown, FourShown));
+            Assert.Contains("not among the renders shown", ex.Message);
+
+            var noOverall = Critique.Replace(",\"overall\":\"B's fresh reef is the strongest; fix the labels.\"", "");
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseCritiqueReply(noOverall, FourShown));
+            Assert.Contains("overall", ex.Message);
+
+            var outOfRange = Critique.Replace("\"score\":8.5", "\"score\":11");
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseCritiqueReply(outOfRange, FourShown));
+            Assert.Contains("0-10", ex.Message);
+
+            Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseCritiqueReply("", FourShown));
+            Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseCritiqueReply("Looks great!", FourShown));
+            Assert.Throws<System.ArgumentException>(() => UiGoalLoopProtocol.ParseCritiqueReply(Critique, System.Array.Empty<UiGoalLoopRenderKey>()));
+        }
+
+        [Fact]
+        public void CritiqueRequestCarriesGoalAndRendersButNoPrompts()
+        {
+            var renders = new List<UiGoalLoopProtocol.UiGoalLoopCritiqueTarget>
+            {
+                new("fresh", "B", true, "1024x1024", null),
+                new("refine", "A", true, "2048x2048", null),
+                new("refine", "B", false, null, "moderation_blocked"),
+                new("fresh", "A", true, null, null),
+            };
+            var text = UiGoalLoopProtocol.BuildCritiqueRequestText("as many fish as possible", UiGoalLoopGoalKinds.OpenEnded, 3, renders);
+            Assert.StartsWith("GOAL:\nas many fish as possible", text);
+            Assert.Contains("\"open-ended\"", text);
+            Assert.Contains("images of turn 3", text);
+            // Refine A, refine B (failed), fresh A, fresh B; attached numbers skip the failure.
+            var iRefineA = text.IndexOf("REFINE render, source A: attached image #1 (2048x2048 pixels).", System.StringComparison.Ordinal);
+            var iRefineB = text.IndexOf("REFINE render, source B: the generator FAILED", System.StringComparison.Ordinal);
+            var iFreshA = text.IndexOf("FRESH render, source A: attached image #2.", System.StringComparison.Ordinal);
+            var iFreshB = text.IndexOf("FRESH render, source B: attached image #3 (1024x1024 pixels).", System.StringComparison.Ordinal);
+            Assert.True(iRefineA > 0 && iRefineB > iRefineA && iFreshA > iRefineB && iFreshB > iFreshA, text);
+            Assert.Contains("moderation_blocked", text);
+            Assert.DoesNotContain("prompt", text.Substring(0, text.IndexOf("Reply with", System.StringComparison.Ordinal)));
+            Assert.Contains("JSON", text);
+        }
+
+        [Fact]
+        public void ReviewRequestForwardsEveryCritiqueVerbatim()
+        {
+            var one = UiGoalLoopProtocol.ParseCritiqueReply(Critique, FourShown);
+            var two = new UiGoalLoopCritiqueReply
+            {
+                Overall = "Refine A is cleanest.",
+                Critiques = FourShown.Select(k => new UiGoalLoopCritiqueItem
+                {
+                    Variant = k.Variant!, Source = k.Source!, Score = 5, Assessment = $"meh {k.Variant}/{k.Source}", Ideas = new() { "bigger fish" },
+                }).ToList(),
+            };
+            var renders = FourShown.Select(k => new UiGoalLoopProtocol.UiGoalLoopTurnRender(
+                k.Variant!, new UiGoalLoopRenderData { Variant = k.Variant, Source = k.Source, Ok = true, Size = "1024x1024" },
+                "p", "p", null, new UiGoalLoopSentImage { Transport = "verbatim" }, k.Source)).ToList();
+            var critiques = new List<UiGoalLoopProtocol.UiGoalLoopTurnCritique>
+            {
+                new(1, two),
+                new(0, one),
+            };
+            var text = UiGoalLoopProtocol.BuildMultiSourceReviewRequestText(
+                2, 6, renders, new[] { "A", "B" }, new UiGoalLoopRenderKey("fresh", "B"), UiGoalLoopGoalKinds.OpenEnded, 1, "fresh", "B", 8.5, critiques);
+            Assert.Contains("INDEPENDENT CRITIQUES (2)", text);
+            Assert.Contains("no access to this conversation", text);
+            var c1 = text.IndexOf("Critic 1:", System.StringComparison.Ordinal);
+            var c2 = text.IndexOf("Critic 2:", System.StringComparison.Ordinal);
+            Assert.True(c1 > 0 && c2 > c1, "critics in index order regardless of arrival order");
+            Assert.Contains("- FRESH render, source B: 8.5/10, goal met: no. reef Problems: blurry label. Ideas: more fish.", text);
+            Assert.Contains("Overall: B's fresh reef is the strongest; fix the labels.", text);
+            Assert.Contains("meh refine/A", text);
+            // The critiques sit before the instruction that closes the request.
+            Assert.True(c2 < text.IndexOf("Evaluate every render against the GOAL", System.StringComparison.Ordinal));
+            // Critic identities are withheld.
+            Assert.DoesNotContain("gpt", text);
+            Assert.DoesNotContain("claude", text);
+
+            var without = UiGoalLoopProtocol.BuildMultiSourceReviewRequestText(
+                2, 6, renders, new[] { "A", "B" }, new UiGoalLoopRenderKey("fresh", "B"), UiGoalLoopGoalKinds.OpenEnded, 1, "fresh", "B", 8.5);
+            Assert.DoesNotContain("INDEPENDENT CRITIQUES", without);
+        }
+
+        // ---- planner ----
+
+        private static UiGoalLoopEntry Entry(int index, int turn, string kind, string? variant = null, string? source = null)
+        {
+            var e = new UiGoalLoopEntry { Index = index, Turn = turn, Kind = kind, Text = "t" };
+            if (kind == UiGoalLoopKinds.RenderRequest || kind == UiGoalLoopKinds.RenderResult)
+            {
+                e.Render = new UiGoalLoopRenderData { Variant = variant, Source = source, GeneratorKey = source == "A" ? "gpt2" : "grok-web", Ok = kind == UiGoalLoopKinds.RenderResult };
+            }
+            return e;
+        }
+
+        private static UiGoalLoopEntry CritiqueEntry(int index, int turn, int critic, bool ok)
+        {
+            var e = Entry(index, turn, UiGoalLoopKinds.Critique);
+            e.Critic = new UiGoalLoopCriticData { Index = critic, Key = "k", Label = "l", Model = "m", Parsed = ok ? new UiGoalLoopCritiqueReply { Overall = "o" } : null, ParseError = ok ? null : "bad" };
+            e.Error = ok ? null : "bad";
+            return e;
+        }
+
+        private static List<UiGoalLoopEntry> RenderedTurnOne()
+        {
+            var entries = new List<UiGoalLoopEntry> { Entry(0, 0, UiGoalLoopKinds.Goal) };
+            var design = Entry(1, 1, UiGoalLoopKinds.Design);
+            design.Manager = new UiGoalLoopManagerData
+            {
+                Parsed = new UiGoalLoopManagerReply { Reasoning = "r", Decision = "render", Prompt = "p", FreshPrompt = "f", GoalKind = "bounded" },
+            };
+            entries.Add(design);
+            var i = 2;
+            foreach (var variant in new[] { "refine", "fresh" })
+            {
+                foreach (var source in new[] { "A", "B" })
+                {
+                    entries.Add(Entry(i++, 1, UiGoalLoopKinds.RenderRequest, variant, source));
+                }
+            }
+            foreach (var variant in new[] { "refine", "fresh" })
+            {
+                foreach (var source in new[] { "A", "B" })
+                {
+                    entries.Add(Entry(i++, 1, UiGoalLoopKinds.RenderResult, variant, source));
+                }
+            }
+            return entries;
+        }
+
+        [Fact]
+        public void CriticsAreAskedAfterEveryRenderAndBeforeTheReview()
+        {
+            var entries = RenderedTurnOne();
+            var step = UiGoalLoopPlanner.DetermineNextStep(entries, 6, "bounded", generators: TwoSources, criticCount: 2);
+            Assert.Equal(UiGoalLoopStepKind.AskCritics, step.Kind);
+            Assert.Equal(1, step.Turn);
+            Assert.Equal(new[] { 0, 1 }, step.Critics);
+
+            // No critics configured: straight to the review, as before.
+            var plain = UiGoalLoopPlanner.DetermineNextStep(entries, 6, "bounded", generators: TwoSources);
+            Assert.Equal(UiGoalLoopStepKind.AskManagerReview, plain.Kind);
+
+            // A pre-protocol-6 loop never asks critics even when told a count.
+            var old = UiGoalLoopPlanner.DetermineNextStep(entries, 6, "bounded", protocolVersion: 5, generators: TwoSources, criticCount: 2);
+            Assert.Equal(UiGoalLoopStepKind.AskManagerReview, old.Kind);
+        }
+
+        [Fact]
+        public void OnlyCriticsStillOwedAreReAsked()
+        {
+            var entries = RenderedTurnOne();
+            var i = entries.Count;
+            entries.Add(Entry(i++, 1, UiGoalLoopKinds.CritiqueRequest));
+            entries.Add(Entry(i++, 1, UiGoalLoopKinds.CritiqueRequest));
+            entries.Add(CritiqueEntry(i++, 1, critic: 1, ok: true));
+            entries.Add(CritiqueEntry(i++, 1, critic: 0, ok: false));
+
+            var step = UiGoalLoopPlanner.DetermineNextStep(entries, 6, "bounded", generators: TwoSources, criticCount: 2);
+            Assert.Equal(UiGoalLoopStepKind.AskCritics, step.Kind);
+            Assert.Equal(new[] { 0 }, step.Critics);
+            Assert.Equal(new[] { 0 }, UiGoalLoopPlanner.PendingCritiques(entries, 1, 2));
+
+            entries.Add(CritiqueEntry(i++, 1, critic: 0, ok: true));
+            step = UiGoalLoopPlanner.DetermineNextStep(entries, 6, "bounded", generators: TwoSources, criticCount: 2);
+            Assert.Equal(UiGoalLoopStepKind.AskManagerReview, step.Kind);
+            Assert.Empty(UiGoalLoopPlanner.PendingCritiques(entries, 1, 2));
+        }
+
+        [Fact]
+        public void PendingRendersStillComeBeforeCritics()
+        {
+            var entries = RenderedTurnOne();
+            entries.RemoveAt(entries.Count - 1); // fresh/B not rendered yet
+            var step = UiGoalLoopPlanner.DetermineNextStep(entries, 6, "bounded", generators: TwoSources, criticCount: 2);
+            Assert.Equal(UiGoalLoopStepKind.Render, step.Kind);
+            Assert.Single(step.Renders);
+            Assert.Equal(("fresh", "B"), (step.Renders[0].Variant, step.Renders[0].Source));
+        }
+
+        [Fact]
+        public void LoopModelCarriesCriticsAndTheirTotals()
+        {
+            var loop = new UiGoalLoop { Critics = new List<UiGoalLoopCritic> { new() { Key = "manager-grok-4.6", Index = 0 } } };
+            Assert.Single(loop.CriticList());
+            Assert.Empty(new UiGoalLoop().CriticList());
+            Assert.Empty(new UiGoalLoop { Critics = new List<UiGoalLoopCritic>() }.CriticList());
+            var json = JsonSerializer.Serialize(loop, UiGoalLoopJson.Options);
+            Assert.Contains("\"critics\":[{\"key\":\"manager-grok-4.6\"", json);
+            var back = JsonSerializer.Deserialize<UiGoalLoop>(json, UiGoalLoopJson.Options)!;
+            Assert.Equal("manager-grok-4.6", back.CriticList()[0].Key);
+            Assert.True(back.CriticCostKnown);
+
+            var entry = CritiqueEntry(3, 1, 0, ok: true);
+            entry.Critic!.InputTokens = 1200;
+            entry.Critic.CostUsd = 0.05m;
+            var round = JsonSerializer.Deserialize<UiGoalLoopEntry>(JsonSerializer.Serialize(entry, UiGoalLoopJson.Options), UiGoalLoopJson.Options)!;
+            Assert.Equal(0.05m, round.Critic!.CostUsd);
+            Assert.Equal("o", round.Critic.Parsed!.Overall);
         }
     }
 }

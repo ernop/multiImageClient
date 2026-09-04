@@ -560,6 +560,7 @@ namespace MultiImageClient
                         maxGoalChars = UiGoalLoopRunner.MaxGoalChars,
                         maxEditedTextChars = UiGoalLoopRunner.MaxEditedTextChars,
                         maxGenerators = UiGoalLoopSources.MaxGenerators,
+                        maxCritics = UiGoalLoopCritics.MaxCritics,
                         runningCount = goalLoopRunner.RunningCount,
                     },
                     generatorPreferences = generatorPreferences == null
@@ -1315,6 +1316,37 @@ namespace MultiImageClient
                 {
                     return Results.BadRequest(new { error = $"manager not available: {managerProblem}" });
                 }
+                // Protocol 6: zero or more independent critics from the same
+                // catalog. "critics" may repeat or be comma-separated. The
+                // manager's own model is allowed (a clean instance); the same
+                // critic model twice is not.
+                var criticKeys = form["critics"]
+                    .SelectMany(v => (v ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    .ToList();
+                if (criticKeys.Count > UiGoalLoopCritics.MaxCritics)
+                {
+                    return Results.BadRequest(new { error = $"pick at most {UiGoalLoopCritics.MaxCritics} critics" });
+                }
+                var duplicateCritic = criticKeys.GroupBy(k => k, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1);
+                if (duplicateCritic != null)
+                {
+                    return Results.BadRequest(new { error = $"critic '{duplicateCritic.Key}' was listed more than once" });
+                }
+                var critics = new List<UiGoalLoopCritic>();
+                foreach (var key in criticKeys)
+                {
+                    var critic = ManagerCatalog.Find(key);
+                    if (critic == null)
+                    {
+                        return Results.BadRequest(new { error = $"unknown critic model '{key}'" });
+                    }
+                    var criticProblem = ManagerCatalog.DescribeAvailabilityProblem(critic, settings);
+                    if (criticProblem != null)
+                    {
+                        return Results.BadRequest(new { error = $"critic {critic.Label} not available: {criticProblem}" });
+                    }
+                    critics.Add(new UiGoalLoopCritic { Key = critic.Key, Label = critic.Label, Model = critic.Model, Index = critics.Count });
+                }
                 var maxTurns = UiGoalLoopRunner.DefaultMaxTurns;
                 var maxTurnsText = form["maxTurns"].ToString();
                 if (!string.IsNullOrWhiteSpace(maxTurnsText))
@@ -1370,6 +1402,7 @@ namespace MultiImageClient
                     ManagerKey = manager.Key,
                     ManagerLabel = manager.Label,
                     ManagerModel = manager.Model,
+                    Critics = critics.Count == 0 ? null : critics,
                     MaxTurns = maxTurns,
                     Shape = shape,
                     Detail = detail,
@@ -1386,7 +1419,7 @@ namespace MultiImageClient
                 {
                     return Results.Json(new { error = ex.Message }, statusCode: 503);
                 }
-                Logger.Log($"[goal #{loop.Id}] started by '{createdBy}': generators={string.Join(",", generatorKeys)} manager={manager.Model} maxTurns={maxTurns} goalKind={goalKind}");
+                Logger.Log($"[goal #{loop.Id}] started by '{createdBy}': generators={string.Join(",", generatorKeys)} manager={manager.Model} critics={(criticKeys.Count == 0 ? "none" : string.Join(",", critics.Select(c => c.Model)))} maxTurns={maxTurns} goalKind={goalKind}");
                 return Results.Json(new { id = loop.Id }, UiGoalLoopJson.Options);
             });
 
@@ -1557,6 +1590,15 @@ namespace MultiImageClient
                 if (managerProblem != null)
                 {
                     return Results.BadRequest(new { error = $"manager not available: {managerProblem}" });
+                }
+                foreach (var critic in parent.Loop.CriticList())
+                {
+                    var criticDefinition = ManagerCatalog.Find(critic.Key);
+                    var criticProblem = criticDefinition == null ? "unknown critic model" : ManagerCatalog.DescribeAvailabilityProblem(criticDefinition, settings);
+                    if (criticProblem != null)
+                    {
+                        return Results.BadRequest(new { error = $"critic {critic.Label} not available: {criticProblem}" });
+                    }
                 }
                 UiGoalLoopState child;
                 try
@@ -3357,6 +3399,7 @@ namespace MultiImageClient
             managerKey = loop.ManagerKey,
             managerLabel = loop.ManagerLabel,
             managerModel = loop.ManagerModel,
+            critics = loop.CriticList().Select(c => new { key = c.Key, label = c.Label, model = c.Model, index = c.Index }).ToList(),
             maxTurns = loop.MaxTurns,
             protocolVersion = loop.ProtocolVersion,
             goalKind = loop.GoalKind,
@@ -3385,6 +3428,10 @@ namespace MultiImageClient
             managerCostUsd = loop.ManagerCostUsd,
             managerCostKnown = loop.ManagerCostKnown,
             renderCostUsd = loop.RenderCostUsd,
+            criticCostUsd = loop.CriticCostUsd,
+            criticCostKnown = loop.CriticCostKnown,
+            criticInputTokens = loop.CriticInputTokens,
+            criticOutputTokens = loop.CriticOutputTokens,
             canControl,
         };
 

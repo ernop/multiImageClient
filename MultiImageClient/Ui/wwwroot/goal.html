@@ -6,7 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="style.css?v=20260904-goal-loops">
 <link rel="stylesheet" href="viewer.css?v=20260904-shared-viewer">
-<link rel="stylesheet" href="goal.css?v=20260904-protocol3">
+<link rel="stylesheet" href="goal.css?v=20260904-protocol6">
 </head>
 <body class="goal-page">
 <header>
@@ -54,6 +54,11 @@
           <select id="goal-manager" required></select>
           <span id="goal-manager-detail" class="goal-help"></span>
         </label>
+        <div class="goal-field">
+          <span class="goal-label">independent critics (zero or more) <span id="goal-critics-count" class="goal-generators-count"></span></span>
+          <div id="goal-critics" class="goal-generators" role="group" aria-label="independent critics"></div>
+          <span class="goal-help">After every turn's renders, each critic — a fresh instance of that model with no access to the manager's conversation — sees only the goal and the turn's images and returns a score, problems, and ideas per render plus an overall verdict. All critiques go to the manager verbatim as "Critic 1", "Critic 2", … (identities withheld) as evidence beside its own judgment. The manager's own model is allowed as a critic: it is a separate clean instance.</span>
+        </div>
         <div class="goal-options">
           <label class="goal-field goal-field-small">
             <span class="goal-label">max turns</span>
@@ -109,6 +114,6 @@
 
 <script src="personal-config.js?v=20260904-goal-page"></script>
 <script src="viewer.js?v=20260904-shared-viewer"></script>
-<script src="goal.js?v=20260904-protocol3"></script>
+<script src="goal.js?v=20260904-protocol6"></script>
 </body>
 </html>

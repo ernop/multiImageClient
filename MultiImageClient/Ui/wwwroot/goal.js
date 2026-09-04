@@ -167,7 +167,43 @@ function updateGeneratorCount() {
   span.textContent = boxes.length === 0
     ? "— pick at least one"
     : `— ${boxes.length} selected${max ? ` of ${max} max` : ""}: ${named.join(", ")} · ${2 * boxes.length} renders per turn`;
-  span.classList.toggle("over", Boolean(max) && keys.length > max);
+  span.classList.toggle("over", Boolean(max) && boxes.length > max);
+}
+
+// Protocol 6: independent critics. One checkbox per manager-catalog model,
+// in catalog order; the first checked is Critic 1.
+function criticChoices(container, items) {
+  container.textContent = "";
+  for (const item of items) {
+    const label = document.createElement("label");
+    label.className = `goal-generator-choice ${item.disabled ? "disabled" : ""}`;
+    if (item.title) label.title = item.title;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = item.key;
+    box.disabled = item.disabled;
+    box.addEventListener("change", updateCriticCount);
+    const text = document.createElement("span");
+    text.textContent = item.label;
+    label.append(box, text);
+    container.appendChild(label);
+  }
+  updateCriticCount();
+}
+
+function selectedCriticBoxes() {
+  return Array.from(el("goal-critics").querySelectorAll("input[type=checkbox]:checked"));
+}
+
+function updateCriticCount() {
+  const boxes = selectedCriticBoxes();
+  const max = config && config.goalLoop && config.goalLoop.maxCritics;
+  const span = el("goal-critics-count");
+  const named = boxes.map((box, i) => `Critic ${i + 1}: ${box.parentElement.querySelector("span").textContent}`);
+  span.textContent = boxes.length === 0
+    ? "— none: the manager judges alone"
+    : `— ${boxes.length} selected${max ? ` of ${max} max` : ""}: ${named.join(", ")}`;
+  span.classList.toggle("over", Boolean(max) && boxes.length > max);
 }
 
 async function loadConfig() {
@@ -200,6 +236,9 @@ async function loadConfig() {
   const firstManager = managers.find((m) => !m.disabled);
   optionsFor(el("goal-manager"), managers, firstManager ? firstManager.key : undefined);
   updateManagerDetail();
+  // Critic picker: the same catalog, none checked by default (each critic
+  // is one more vision call per turn).
+  criticChoices(el("goal-critics"), managers);
 
   optionsFor(el("goal-shape"), (config.shapes || []).map((s) => ({ key: s.key, label: s.label })), "auto");
   optionsFor(el("goal-detail"), (config.details || []).map((d) => ({ key: d.key, label: d.label })), "standard");
@@ -266,11 +305,18 @@ el("goal-form").addEventListener("submit", async (event) => {
     error.textContent = `pick at most ${maxGenerators} image generators`;
     return;
   }
+  const criticKeys = selectedCriticBoxes().map((box) => box.value);
+  const maxCritics = config.goalLoop.maxCritics;
+  if (maxCritics && criticKeys.length > maxCritics) {
+    error.textContent = `pick at most ${maxCritics} critics`;
+    return;
+  }
   const form = new FormData();
   form.append("goal", el("goal-text").value);
   form.append("user", user);
   for (const key of generatorKeys) form.append("generators", key);
   form.append("manager", el("goal-manager").value);
+  for (const key of criticKeys) form.append("critics", key);
   form.append("maxTurns", el("goal-max-turns").value);
   form.append("goalKind", el("goal-kind").value);
   form.append("shape", el("goal-shape").value);
@@ -369,7 +415,8 @@ function renderList() {
     goal.textContent = loop.goal;
     const meta = document.createElement("div");
     meta.className = "goal-list-meta";
-    meta.textContent = `${generatorsSummary(loop)} · ${loop.managerLabel} · ${loop.createdBy} · ${formatTime(loop.createdAtUnixMs)}`;
+    const criticNote = (loop.critics || []).length > 0 ? ` · ${loop.critics.length} critic${loop.critics.length === 1 ? "" : "s"}` : "";
+    meta.textContent = `${generatorsSummary(loop)} · ${loop.managerLabel}${criticNote} · ${loop.createdBy} · ${formatTime(loop.createdAtUnixMs)}`;
     item.append(top, goal, meta);
     container.appendChild(item);
   }
@@ -570,9 +617,20 @@ function renderLoopHead() {
   }
   fact("manager", `${loop.managerLabel}`);
   fact("model", loop.managerModel);
+  const critics = loop.critics || [];
+  if (critics.length > 0) {
+    const criticsBox = fact("independent critics", critics.map((c) => `${c.index + 1} ${c.label}`).join(" · "), "goal-fact-sources");
+    criticsBox.title = "Each critic is a fresh instance with no access to the manager's conversation. It sees the goal and each turn's images only and returns a score, problems, and ideas per render. The manager receives every critique verbatim, labeled by number, as evidence beside its own judgment.";
+  } else if (loop.protocolVersion >= 6) {
+    fact("independent critics", "none");
+  }
   fact("output", `${loop.shape} · ${loop.detail} · ${loop.quality} · moderation ${loop.moderation}`);
   const managerCost = loop.managerCostKnown ? formatUsd(loop.managerCostUsd) : `${formatUsd(loop.managerCostUsd)}+ (price unknown for this model)`;
   fact("manager cost", `${managerCost} · ${loop.managerInputTokens.toLocaleString()} in / ${loop.managerOutputTokens.toLocaleString()} out tokens`);
+  if (critics.length > 0) {
+    const criticCost = loop.criticCostKnown ? formatUsd(loop.criticCostUsd) : `${formatUsd(loop.criticCostUsd)}+ (price unknown for a critic model)`;
+    fact("critic cost", `${criticCost} · ${(loop.criticInputTokens || 0).toLocaleString()} in / ${(loop.criticOutputTokens || 0).toLocaleString()} out tokens`);
+  }
   fact("render cost (estimate)", formatUsd(loop.renderCostUsd) || "$0.00");
   fact("created", `${loop.createdBy} · ${formatTime(loop.createdAtUnixMs)}`);
   head.appendChild(facts);
@@ -731,12 +789,14 @@ async function controlLoop(action, params, button) {
 
 // ---------- entries ----------
 
-const PartyLabels = { user: "you", manager: "manager", generator: "image generator", system: "loop" };
+const PartyLabels = { user: "you", manager: "manager", generator: "image generator", system: "loop", critic: "critic" };
 const KindLabels = {
   goal: "goal",
   design: "first design",
   "render-request": "render request",
   "render-result": "render result",
+  "critique-request": "critique request",
+  critique: "independent critique",
   "review-request": "review request",
   review: "review + next design",
   objection: "objection — \"done\" not accepted",
@@ -823,7 +883,81 @@ function entryKindLabel(entry) {
   }
   if (entry.kind === "design" && refused) return "first design — provider refused";
   if (entry.kind === "design" && entry.error && !parsed) return "first design — reply rejected";
+  if (entry.kind === "critique-request" || entry.kind === "critique") {
+    const c = entry.critic || {};
+    const who = `Critic ${(c.index || 0) + 1} (${c.label || c.key || "?"})`;
+    if (entry.kind === "critique-request") return `critique request — ${who}`;
+    if (c.providerStop) return `${who} — provider refused`;
+    if (entry.error && !c.parsed) return `${who} — reply rejected`;
+    return `independent critique — ${who}`;
+  }
   return KindLabels[entry.kind] || entry.kind;
+}
+
+// Protocol 6: a critic's message (goal + this turn's images) and its reply.
+function critiqueRequestBody(entry) {
+  const body = document.createElement("div");
+  body.appendChild(labeled("message sent to the critic (a fresh instance; it sees only this)", textBlock(entry.text)));
+  for (const sent of entry.images || []) {
+    const row = document.createElement("div");
+    row.className = "goal-sent-image";
+    const figure = imageFigure(sent.url, sent.thumbUrl, `${sent.originalWidth}x${sent.originalHeight}`, "image sent to the critic",
+      `${sent.jobId}|${sent.generatorKey}|${sent.imageIndex}`);
+    figure.classList.add("small");
+    const caption = document.createElement("div");
+    caption.className = "goal-sent-caption";
+    caption.textContent = `${renderName(sent.variant, sent.source, generatorLabelOfSource(sent.source) || "")} — original ${sent.width}x${sent.height} ${sent.mime}, ${formatBytes(sent.bytes)} — sent ${sent.transport || "verbatim"}`;
+    row.append(figure, caption);
+    body.appendChild(row);
+  }
+  return body;
+}
+
+function critiqueBody(entry) {
+  const body = document.createElement("div");
+  const data = entry.critic || {};
+  if (data.providerStop) {
+    body.appendChild(labeled("provider stop", textBlock(data.providerStop, "goal-error")));
+  }
+  if (entry.error && !data.parsed) {
+    body.appendChild(labeled("contract error — the loop re-asks this critic on resume", textBlock(entry.error, "goal-error")));
+    body.appendChild(detailsBlock("raw reply", textBlock(entry.text), false));
+  }
+  const parsed = data.parsed;
+  if (parsed) {
+    for (const c of parsed.critiques || []) {
+      const row = document.createElement("div");
+      row.className = "goal-eval-row";
+      row.appendChild(scoreBlock(c));
+      const text = document.createElement("div");
+      text.className = "goal-eval-text";
+      const h = document.createElement("div");
+      h.className = "goal-eval-heading";
+      h.textContent = renderName(c.variant, c.source, generatorLabelOfSource(c.source) || "?") + " render";
+      text.appendChild(h);
+      text.appendChild(labeled("assessment", textBlock(c.assessment)));
+      if (c.problems && c.problems.length) text.appendChild(labeled("problems", listBlock(c.problems, "problems")));
+      if (c.ideas && c.ideas.length) text.appendChild(labeled("ideas", listBlock(c.ideas, "keep")));
+      row.appendChild(text);
+      body.appendChild(row);
+    }
+    body.appendChild(labeled("overall verdict", textBlock(parsed.overall)));
+  }
+  if (data.providerReasoning) {
+    body.appendChild(detailsBlock(`provider thinking / reasoning summary (${data.providerReasoning.length.toLocaleString()} chars)`, textBlock(data.providerReasoning), false));
+  }
+  const usage = document.createElement("div");
+  usage.className = "goal-usage";
+  const parts = [];
+  if (data.model) parts.push(data.model);
+  if (data.inputTokens != null) parts.push(`${data.inputTokens.toLocaleString()} in`);
+  if (data.outputTokens != null) parts.push(`${data.outputTokens.toLocaleString()} out tokens`);
+  if (data.costUsd != null) parts.push(formatUsd(data.costUsd));
+  else if (data.inputTokens != null) parts.push("price not on file");
+  if (data.requestBytes != null) parts.push(`request ${formatBytes(data.requestBytes)}`);
+  usage.textContent = parts.join(" · ");
+  body.appendChild(usage);
+  return body;
 }
 
 // A review whose "done" the loop rejected is followed by an objection entry
@@ -1665,6 +1799,12 @@ function buildEntryElement(entry) {
       break;
     case "review-request":
       body.appendChild(reviewRequestBody(entry));
+      break;
+    case "critique-request":
+      body.appendChild(critiqueRequestBody(entry));
+      break;
+    case "critique":
+      body.appendChild(critiqueBody(entry));
       break;
     default: {
       const note = textBlock(entry.text, "goal-note-text");

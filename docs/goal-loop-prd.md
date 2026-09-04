@@ -13,21 +13,29 @@ look at the output. The goal loop is the second use case:
 2. The user picks **one or more image generators** (1–8, any image targets
    from the composer catalog; protocol 5) and exactly **one manager model**
    (a text+vision LLM). The manager sees each generator only as a stable
-   **source letter** (A, B, …).
+   **source letter** (A, B, …). Optionally the user adds **independent
+   critics** (0–6 models from the same catalog; protocol 6).
 3. The manager receives the goal and answers with **two** image designs
    (protocol 4): a **refine** prompt (its primary design) and a **fresh**
    prompt (a clearly different from-scratch approach), each complete, plus
    its reasoning.
 4. The server renders both prompts on every chosen generator, concurrently
    (2 × generators images per turn).
-5. Every rendered image (or the generator's error for it) goes back to the
+5. When critics are configured, each critic — a fresh model instance with a
+   one-message conversation — receives the goal and this turn's images (not
+   the prompts, not the manager's reasoning) and returns a strict JSON
+   critique: score, assessment, problems, and ideas per render plus an
+   overall verdict. All critics run concurrently.
+6. Every rendered image (or the generator's error for it) goes back to the
    manager, in the **same growing conversation**, together with the turn
-   number and remaining budget.
-6. The manager scores every render 0–10 against the goal, explains what it
+   number, the remaining budget, and every critique verbatim (labeled
+   "Critic 1", "Critic 2", …; identities withheld) as evidence beside its
+   own judgment.
+7. The manager scores every render 0–10 against the goal, explains what it
    sees, names the exact render (variant + source) the lineage **continues
    from**, and either sends the next pair — a refine of the chosen render
    and a new from-scratch attempt informed by everything learned — (steps
-   4–6 repeat) or declares the loop done and names the best turn, render,
+   4–7 repeat) or declares the loop done and names the best turn, render,
    and source. The objective is one best image from any source.
 
 Every step is recorded and shown live on a dedicated page. The loop can be
@@ -59,6 +67,7 @@ after editing the text of that message.
 | R19 | One image with every step | **build all-turns contact sheet** on the loop head renders one PNG: header band (goal, generator, manager, kind, best turn, status) above a square grid of every rendered turn with its score, `turn N of M`, pixel size, the exact prompt, and the manager's assessment/problems. Rebuild is offered when entries were added since. |
 | R20 (2026-09-04, later) | Leave the rut: two renders per turn | The user observed loops iterating on one image, each turn a small edit of the last prompt, never leaving a weak composition. Protocol 4: every turn renders a **refine** prompt (an improvement of the render the manager chose to continue from; on turn 1 the primary design) **and** a **fresh** prompt (a from-scratch re-attempt at the goal: new composition, staging, camera, medium/style, palette — a different way to convey the same point, written with what has been learned so far). The manager scores both and sets `continueFrom` to the render its next refine builds on, so the lineage can jump to the fresh image at any turn. See section 3, "Protocol version 4". |
 | R21 (2026-09-04, later) | Several generators per loop | The user asked to choose 1, 2, 4, … generators instead of exactly one, with every generator's output sent to the manager so it can learn and evaluate how each is doing; every later turn keeps all of them; the writer may choose which one to focus on; the objective stays **one image from any source that best satisfies and covers the requirements**. Protocol 5: each turn's refine and fresh prompts are rendered by every selected generator (renders per turn = 2 × generators); the manager sees each generator as a stable **source letter** (A, B, …), scores every render in an `evaluations[]` array, and names the exact render (`continueFrom: {variant, source}`) the next refine builds on; `bestSource` completes `bestTurn`/`bestVariant`. See section 3, "Protocol version 5". |
+| R22 (2026-09-04, later) | Critiques from several independent agents | The user asked to get critiques — feedback, problems, ideas, ratings of how well the image meets the requirements — from multiple agents independently, even with one main author set: e.g. Fable as the manager, plus a new clean instance of Fable, GPT, and Grok each asked what it thinks of the current image. Protocol 6: the new-loop form takes 0–6 **critics** from the manager catalog (the manager's own model allowed; the same critic twice not). After every turn's renders, each critic is called once, concurrently, as a fresh instance with a one-message conversation carrying the goal and the turn's images only; it returns a strict JSON `critiques[]` (exactly one `{variant, source, score, goalMet, assessment, problems, ideas}` per render shown) plus `overall`. The review request forwards every critique verbatim as `Critic N`, identities withheld, framed as evidence and not instructions; the manager's reply contract is unchanged. See section 3, "Protocol version 6". |
 
 ## 3. Settled decisions
 
@@ -262,6 +271,77 @@ after editing the text of that message.
     string `continueFrom`; `POST /api/goal-loops` accepts repeated
     `generators` fields or comma-separated values and still accepts the
     legacy single `generator` field.
+- **Protocol version 6: independent critics (2026-09-04, later).** The
+  user wants critiques — feedback, problems, ideas, ratings against the
+  requirements — from several agents independently of the main author, so
+  that with Fable as the manager a clean new Fable instance, GPT, and Grok
+  can each be asked what they think of the current image. Version 6
+  changes:
+  - **Loop model.** `UiGoalLoop.Critics[]` (`{key, label, model, index}`),
+    0–6 entries (`UiGoalLoopCritics.MaxCritics`), each a manager-catalog
+    key. The manager's own model is allowed as a critic (it runs as a
+    separate instance with no shared context); listing the same critic
+    model twice is rejected. `CriticList()` returns the list or empty;
+    critic tokens and cost accumulate separately (`criticCostUsd`,
+    `criticCostKnown`, `criticInputTokens`, `criticOutputTokens`).
+  - **Critics are clean instances.** A critic call is one system prompt
+    (`UiGoalLoopProtocol.CriticSystemPrompt`) plus one user message
+    (`BuildCritiqueRequestText`): the GOAL, the goal kind when known, and
+    the turn's renders listed refine A, B, …, then fresh A, B, … with the
+    successful ones attached in that order at full rendered resolution
+    (same `UiGoalLoopImageTransport` rules, per the critic provider's
+    published limits). Nothing of the manager's conversation is sent, and
+    **prompts are withheld**: a critic judges what the picture shows, not
+    what it was meant to show. Failed renders are listed with the
+    generator's error and scored 0 by contract. Generator identities are
+    withheld from critics as from the manager (letters only).
+  - **Critic reply contract.** Exactly one JSON object: `critiques[]` with
+    exactly one `{variant, source, score 0–10, goalMet, assessment,
+    problems[], ideas[]}` per render shown (missing, duplicate, or unknown
+    renders fail the parse) and a non-empty `overall` comparative verdict.
+    `ParseCritiqueReply` is strict fail-closed; a markdown fence is the only
+    tolerance.
+  - **Scheduling.** The planner adds `AskCritics` between the last render
+    result of a turn and the review request: `PendingCritiques` lists the
+    critic indices without an accepted critique for the turn; all of them
+    run concurrently (`Task.WhenAll`, each through the manager-call
+    semaphore). A provider refusal or a contract error is recorded on that
+    critic's `critique` entry with the raw reply; after every critic has
+    answered, any failure fails the step and pauses the loop `failed`
+    ("resume retries this step"). Resume re-asks **only** the critics still
+    owed, reusing the turn's existing `critique-request` entry for that
+    critic so the re-sent message is exactly the recorded one. Loops
+    without critics skip the step entirely.
+  - **The manager receives critiques verbatim.** The turn's review request
+    ends with an `INDEPENDENT CRITIQUES (N)` section
+    (`AppendCritiquesSection`) before the closing instruction: each critic
+    as `Critic 1`, `Critic 2`, … (identities withheld, like sources) with
+    one line per render — score, goal met, assessment, problems, ideas —
+    and its overall verdict. The section states that each critic is a
+    separate instance that saw only the goal and the same images, and that
+    critiques are evidence, not instructions. The version-6 system prompt
+    tells the manager to look again where several critics agree on a
+    defect it missed, to say in its reasoning where it disagrees and why,
+    and that its evaluations and decision remain its own. The manager's
+    reply contract is unchanged from version 5.
+  - **Page and sheet.** The new-loop form has an "independent critics"
+    checkbox picker over the manager catalog (none checked by default: each
+    critic is one more vision call per turn) with a count line naming
+    `Critic N: <full model label>`. The loop head lists the critics and a
+    separate critic cost; the list shows `· N critics`. Each turn shows a
+    `critique request` entry (message + attached images) and an
+    `independent critique` entry per critic (score block per render,
+    assessment, problems, ideas, overall verdict, usage, wire request and
+    response); a failed critique is labeled `reply rejected` /
+    `provider refused` with the contract error. Sheet cells append
+    `CRITIC N (<label>): score — assessment / Problems / Ideas` under the
+    manager's assessment; the header lists the critics.
+  - **Compatibility.** Stored version ≤ 5 loops have no critics and plan
+    exactly as before; `DetermineNextStep` ignores a critic count below
+    version 6. `POST /api/goal-loops` takes repeated `critics` fields or
+    comma-separated values; `/api/config.goalLoop.maxCritics` publishes
+    the cap; summaries carry `critics[] {key, label, model, index}`. Fork
+    re-validates every critic's availability like the manager's.
 - **Score scale.** 0–10; `goalMet` is meant for 9+ (and, for open-ended
   goals, only once the limit is demonstrated). The system prompt defines
   the bands so scores are comparable across turns and managers.
@@ -408,7 +488,8 @@ Gemini 3.5 Pro is not offered (partner-only as of 2026-09-04).
 |------|-----------|------|
 Parties: `user` (the person who started the loop), `manager` (the LLM),
 `generator` (the image endpoint), `system` (the loop runner acting as the
-operator between them).
+operator between them), `critic` (protocol 6: an independent critic
+instance).
 
 | kind | from → to | text |
 |------|-----------|------|
@@ -416,7 +497,9 @@ operator between them).
 | `design` | manager → system | raw JSON reply; `manager.parsed` holds the contract fields (protocol 4: `prompt` + `freshPrompt`), `manager.providerReasoning` the provider's thinking when returned |
 | `render-request` | system → generator | the exact prompt rendered; `render` holds job id, generator key/label, options, (protocol 4) `variant` = `refine` \| `fresh`, and (protocol 5) `source` letter; 2 × generators per turn from protocol 5 |
 | `render-result` | generator → system | image url/thumb/size/cost, or error + recovery hint; `render.variant` / `render.source` as above |
-| `review-request` | system → manager | review text; `images[]` holds the exact attachments sent, each with its `variant` and `source` (refine first, then fresh; sources alphabetical) |
+| `critique-request` | system → critic | protocol 6: the one message a critic receives (goal + this turn's renders); `images[]` as on a review request; `critic {index, key, label, model}` names which critic; one per critic per turn |
+| `critique` | critic → system | protocol 6: raw JSON reply; `critic` adds call metadata (tokens, cost, `requestBytes`, `providerStop`, `parseError`) and `parsed {critiques[] {variant, source, score, goalMet, assessment, problems, ideas}, overall}`; a failed critique keeps `error` and is re-asked on resume |
+| `review-request` | system → manager | review text (protocol 6: ends with the `INDEPENDENT CRITIQUES` section when critics exist); `images[]` holds the exact attachments sent, each with its `variant` and `source` (refine first, then fresh; sources alphabetical) |
 | `review` | manager → system | raw JSON reply; protocol 4: `evaluation` (refine), `freshEvaluation` (fresh), string `continueFrom`; protocol 5: `renderEvaluations[] {variant, source, evaluation}`, `continueFrom` + `continueFromSource`, `bestSource`; plus both next prompts |
 | `objection` | system → manager | protocol 3: the previous review's `done` is not accepted (open-ended goal, no demonstrated limit); the review is asked again with `done` barred |
 | `note` | system → user | stop/resume/fork/done/crash annotations; never advance the loop |
@@ -434,8 +517,9 @@ raw provider response). Render entries carry the `gen-result` event JSON as
 - `POST /api/goal-loops` — form: `user`, `goal`, `generators` (repeated
   field or comma-separated, 1–8 distinct keys; legacy single `generator`
   still accepted), `manager`, `maxTurns`, `shape`, `detail`, `quality`,
-  `moderation`, `goalKind` (`auto` | `bounded` | `open-ended`).
-  `/api/config.goalLoop.maxGenerators` publishes the cap.
+  `moderation`, `goalKind` (`auto` | `bounded` | `open-ended`), `critics`
+  (repeated field or comma-separated, 0–6 distinct manager-catalog keys).
+  `/api/config.goalLoop.maxGenerators` and `.maxCritics` publish the caps.
 - `POST /api/goal-loops/{id}/sheet` — build/rebuild the all-turns sheet;
   returns `{ sheetEntryCount, sheetTurns, url }`. 409 when nothing rendered.
 - `GET /api/goal-loops/{id}/sheet` — the PNG (404 until built).
@@ -473,10 +557,15 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   `GoalLoopMultiSourceTests` covers protocol 5 (`evaluations[]` exactness,
   object `continueFrom`, source letters in goal/review/objection text,
   2 × N planning, per-generator pending re-render, per-source done rule,
-  `rendersPerTurn` derivation).
+  `rendersPerTurn` derivation); `GoalLoopCriticTests` covers protocol 6
+  (critique parse exactness and fail-closed cases, critique request text
+  without prompts, verbatim forwarding in critic order inside the review
+  request, `AskCritics` scheduling after renders and before the review,
+  re-asking only owed critics, model round trip).
 - `GET /api/goal-loops` summaries and `GET /api/goal-loops/{id}` carry
-  `generators[] {key, label, source}`, `rendersPerTurn`, `bestVariant`, and
-  `bestSource`.
+  `generators[] {key, label, source}`, `critics[] {key, label, model,
+  index}`, `rendersPerTurn`, `bestVariant`, `bestSource`, and the critic
+  cost/token totals.
 
 ## 8. Live verification (2026-09-04, local `--ui`, gpt-image-2 low)
 
