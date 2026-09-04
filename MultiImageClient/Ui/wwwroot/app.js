@@ -11663,11 +11663,13 @@ function applyJobEvent(id, card, evt) {
         badge.className = "job-goal-loop";
         badge.href = apiUrl(`goal.html?loop=${encodeURIComponent(lineage.id)}`);
         const variant = typeof lineage.variant === "string" ? ` · ${lineage.variant}` : "";
-        badge.textContent = `goal loop · turn ${lineage.turn}${variant}`;
+        const source = typeof lineage.source === "string" ? ` · source ${lineage.source}` : "";
+        badge.textContent = `goal loop · turn ${lineage.turn}${variant}${source}`;
         badge.title = `Rendered for goal loop ${lineage.id} at turn ${lineage.turn}` +
           (typeof lineage.variant === "string"
             ? (lineage.variant === "fresh" ? " as the fresh from-scratch render" : " as the refine render")
             : "") +
+          (typeof lineage.source === "string" ? ` by source ${lineage.source} (the manager knows this generator only by that letter)` : "") +
           (typeof lineage.manager === "string" ? ` (manager: ${lineage.manager})` : "");
         meta.appendChild(badge);
       }

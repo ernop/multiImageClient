@@ -117,6 +117,44 @@ namespace MultiImageClient
         public static bool IsValid(string? value) => value == Refine || value == Fresh;
     }
 
+    // Protocol 5: several image generators ("sources") may render every
+    // prompt. The manager sees only a stable letter per source (A, B, …),
+    // never a name, so it can learn each source's behavior across turns
+    // without being told what it is. The letter is the generator's index in
+    // the loop's generator list.
+    public static class UiGoalLoopSources
+    {
+        public const int MaxGenerators = 8;
+
+        public static string Label(int index)
+        {
+            if (index < 0 || index >= 26)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+            return ((char)('A' + index)).ToString();
+        }
+
+        public static bool IsValid(string? value)
+            => value != null && value.Length == 1 && value[0] >= 'A' && value[0] <= 'Z';
+    }
+
+    public sealed class UiGoalLoopGenerator
+    {
+        public string Key { get; set; } = "";
+        public string Label { get; set; } = "";
+        // "A", "B", … under protocol 5; null on single-generator loops of
+        // earlier protocols (their contract had no sources).
+        public string? Source { get; set; }
+    }
+
+    // One scored render on a manager reply: which variant, which source
+    // (null on protocols without sources), and the evaluation.
+    public sealed record UiGoalLoopScoredRender(string? Variant, string? Source, UiGoalLoopEvaluation Evaluation);
+
+    // Identity of one render the manager was shown, for parser validation.
+    public sealed record UiGoalLoopRenderKey(string? Variant, string? Source);
+
     public sealed class UiGoalLoopManagerReply
     {
         public string Reasoning { get; set; } = "";
@@ -127,10 +165,14 @@ namespace MultiImageClient
         // REFINE render's evaluation and FreshEvaluation is the fresh one's.
         public UiGoalLoopEvaluation? Evaluation { get; set; }
         public UiGoalLoopEvaluation? FreshEvaluation { get; set; }
+        // Protocol 5: one evaluation per render shown (variant × source);
+        // Evaluation/FreshEvaluation stay null on such replies.
+        public List<UiGoalLoopScoredRender>? RenderEvaluations { get; set; }
         // Protocol 4: which of this turn's renders the next refine builds
         // on ("refine" | "fresh"); required on a render decision after a
-        // review, absent on the first design.
+        // review, absent on the first design. Protocol 5 adds the source.
         public string? ContinueFrom { get; set; }
+        public string? ContinueFromSource { get; set; }
         // "render" | "done"
         public string Decision { get; set; } = "";
         public string? Prompt { get; set; }
@@ -142,22 +184,39 @@ namespace MultiImageClient
         public int? BestTurn { get; set; }
         // Protocol 4: which render of BestTurn is the best ("refine" | "fresh").
         public string? BestVariant { get; set; }
+        // Protocol 5: which source rendered the best image.
+        public string? BestSource { get; set; }
 
-        public UiGoalLoopEvaluation? EvaluationOf(string? variant)
-            => variant == UiGoalLoopVariants.Fresh ? FreshEvaluation : Evaluation;
-
-        // Every evaluation on this reply with the variant it scores. A reply
-        // carrying only Evaluation (pre-protocol-4, or a fresh render that
-        // never happened) yields it under a null variant.
-        public IEnumerable<(string? Variant, UiGoalLoopEvaluation Evaluation)> Evaluations()
+        public UiGoalLoopEvaluation? EvaluationOf(string? variant, string? source = null)
         {
+            if (RenderEvaluations != null)
+            {
+                return RenderEvaluations.FirstOrDefault(r => r.Variant == variant && r.Source == source)?.Evaluation;
+            }
+            return variant == UiGoalLoopVariants.Fresh ? FreshEvaluation : Evaluation;
+        }
+
+        // Every evaluation on this reply with the render it scores. A reply
+        // carrying only Evaluation (pre-protocol-4, or a fresh render that
+        // never happened) yields it under a null variant; sources are null
+        // before protocol 5.
+        public IEnumerable<UiGoalLoopScoredRender> Evaluations()
+        {
+            if (RenderEvaluations != null)
+            {
+                foreach (var r in RenderEvaluations)
+                {
+                    yield return r;
+                }
+                yield break;
+            }
             if (Evaluation != null)
             {
-                yield return (FreshEvaluation != null ? UiGoalLoopVariants.Refine : null, Evaluation);
+                yield return new UiGoalLoopScoredRender(FreshEvaluation != null ? UiGoalLoopVariants.Refine : null, null, Evaluation);
             }
             if (FreshEvaluation != null)
             {
-                yield return (UiGoalLoopVariants.Fresh, FreshEvaluation);
+                yield return new UiGoalLoopScoredRender(UiGoalLoopVariants.Fresh, null, FreshEvaluation);
             }
         }
     }
@@ -184,6 +243,8 @@ namespace MultiImageClient
         public string? JobId { get; set; }
         // Protocol 4: "refine" | "fresh"; null on single-render loops.
         public string? Variant { get; set; }
+        // Protocol 5: the manager-facing source letter of this generator.
+        public string? Source { get; set; }
         public string GeneratorKey { get; set; } = "";
         public string GeneratorLabel { get; set; } = "";
         public string Shape { get; set; } = "";
@@ -206,6 +267,8 @@ namespace MultiImageClient
         public string JobId { get; set; } = "";
         // Protocol 4: which of the turn's renders this is ("refine" | "fresh").
         public string? Variant { get; set; }
+        // Protocol 5: source letter.
+        public string? Source { get; set; }
         public string GeneratorKey { get; set; } = "";
         public int ImageIndex { get; set; }
         public string Url { get; set; } = "";
@@ -258,8 +321,12 @@ namespace MultiImageClient
     {
         public string Id { get; set; } = Guid.NewGuid().ToString("N")[..12];
         public string Goal { get; set; } = "";
+        // The first (or only) generator; kept for stored loops and readers.
         public string GeneratorKey { get; set; } = "";
         public string GeneratorLabel { get; set; } = "";
+        // Protocol 5: every generator, in source-letter order. Null on
+        // loops stored before protocol 5.
+        public List<UiGoalLoopGenerator>? Generators { get; set; }
         public string ManagerKey { get; set; } = "";
         public string ManagerLabel { get; set; } = "";
         public string ManagerModel { get; set; } = "";
@@ -311,9 +378,21 @@ namespace MultiImageClient
         public int? BestTurn { get; set; }
         // Protocol 4: which render of BestTurn holds BestScore.
         public string? BestVariant { get; set; }
-        // Number of renders in every turn: 2 (refine + fresh) from protocol
-        // 4, 1 before. Derived from ProtocolVersion; stored for readers.
-        public int RendersPerTurn => ProtocolVersion >= 4 ? 2 : 1;
+        // Protocol 5: which source rendered it.
+        public string? BestSource { get; set; }
+        // Number of renders in every turn: 2 (refine + fresh) × the number
+        // of generators from protocol 5, 2 under protocol 4, 1 before.
+        // Derived from ProtocolVersion; stored for readers.
+        public int RendersPerTurn => ProtocolVersion >= 5
+            ? 2 * GeneratorList().Count
+            : (ProtocolVersion >= 4 ? 2 : 1);
+
+        // Every generator of the loop. Loops stored before protocol 5 have
+        // exactly one, without a source letter.
+        public IReadOnlyList<UiGoalLoopGenerator> GeneratorList()
+            => Generators is { Count: > 0 }
+                ? Generators
+                : new[] { new UiGoalLoopGenerator { Key = GeneratorKey, Label = GeneratorLabel, Source = null } };
         public decimal ManagerCostUsd { get; set; }
         public bool ManagerCostKnown { get; set; } = true;
         public decimal RenderCostUsd { get; set; }
@@ -359,42 +438,51 @@ namespace MultiImageClient
         // new composition, staging and style, informed by what has been
         // learned). The manager scores both and names which one the next
         // refine builds on, so the lineage can jump to the fresh image.
-        public const int Version = 4;
+        //
+        // Version 5 (2026-09-04): several generators per loop. The operator
+        // picks 1..8 image generators; every prompt of a turn is rendered by
+        // all of them. The manager sees each generator only as a stable
+        // letter ("source A", "source B", …), scores every render, and names
+        // the exact render (variant + source) the next refine builds on. The
+        // goal remains ONE best image from any source. The reply carries an
+        // "evaluations" array (one per render shown) instead of the
+        // evaluation/freshEvaluation pair.
+        public const int Version = 5;
 
         public const string SystemPrompt =
-            "You are the MANAGER of an iterative image-making loop. You cannot draw. An image generator renders the text prompts you write; its identity is withheld and you may not ask for it. The operator gives you a GOAL. Your job is to reach that goal by writing image prompts, studying the rendered results, scoring them against the goal, and deciding whether to render again with changed designs or to stop.\n\n"
+            "You are the MANAGER of an iterative image-making loop. You cannot draw. One or more image generators render the text prompts you write. They are called SOURCES and are labeled by letter (source A, source B, …). The same letter is the same generator on every turn. Their identities are withheld and you may not ask for them. The operator gives you a GOAL. Your job is to obtain ONE image, from any source, that best satisfies and covers the GOAL, by writing image prompts, studying every rendered result, scoring each against the goal, and deciding whether to render again with changed designs or to stop.\n\n"
             + "How the loop works:\n"
-            + "1. The operator sends the GOAL. You reply with your first design: TWO prompts (see \"two renders per turn\").\n"
-            + "2. The operator renders both prompts exactly as written (the operator may edit a prompt first and will tell you when that happened) and sends both resulting images back to you, or the generator's error text for any render that failed.\n"
-            + "3. You evaluate each result against the GOAL, give each a score, explain your reasoning, choose which of the two renders to continue from, and either provide the next two prompts to render or declare the loop done.\n"
+            + "1. The operator sends the GOAL and tells you how many sources there are. You reply with your first design: TWO prompts (see \"two renders per turn\").\n"
+            + "2. The operator renders both prompts exactly as written on EVERY source (the operator may edit a prompt first and will tell you when that happened) and sends every resulting image back to you, or the generator's error text for any render that failed.\n"
+            + "3. You evaluate each result against the GOAL, give each a score, explain your reasoning, choose exactly one render (variant + source) to continue from, and either provide the next two prompts to render or declare the loop done.\n"
             + "4. Steps 2-3 repeat. Each message tells you the current turn number and how many turns remain. When zero turns remain and you still want to render, say so with decision \"render\": the loop pauses and the operator may grant more turns.\n\n"
-            + "Two renders per turn:\n"
+            + "Two renders per turn (per source):\n"
             + "- \"prompt\" is the REFINE render: an improvement of the render you chose to continue from (continueFrom). Keep what worked, fix what did not, push further toward the goal. On turn 1 it is simply your primary design.\n"
-            + "- \"freshPrompt\" is the FRESH render: a from-scratch re-attempt at the GOAL. New composition, new subject staging, new camera and framing, new medium or rendering style, new palette — a different way to convey the same point, written with everything you have learned about this generator so far. It must not be a variant of \"prompt\": if a reader could mistake one for an edit of the other, the fresh prompt is not fresh. On turn 1 both prompts are new; make them two clearly different approaches.\n"
-            + "- After seeing both renders, set continueFrom to the render your next refine prompt builds on. Choosing \"fresh\" moves the lineage onto the new composition; choosing \"refine\" keeps the current one. Choose by score against the GOAL and by how much headroom each direction has, not by habit.\n\n"
+            + "- \"freshPrompt\" is the FRESH render: a from-scratch re-attempt at the GOAL. New composition, new subject staging, new camera and framing, new medium or rendering style, new palette — a different way to convey the same point, written with everything you have learned about the sources so far. It must not be a variant of \"prompt\": if a reader could mistake one for an edit of the other, the fresh prompt is not fresh. On turn 1 both prompts are new; make them two clearly different approaches.\n"
+            + "- Every source renders both prompts. Learn what each source does well and badly and use that: you may write the refine prompt for the source you continue from (its strengths, its failure modes), while still reading the other sources' renders as information. A source that keeps scoring lower is still rendered; it costs you nothing to keep learning from it.\n"
+            + "- After seeing all renders, set continueFrom to the exact render your next refine prompt builds on: { \"variant\": \"refine\" or \"fresh\", \"source\": letter }. Choosing a fresh render moves the lineage onto the new composition; choosing another source moves it onto that generator. Choose by score against the GOAL and by how much headroom each direction has, not by habit.\n\n"
             + "Goal kinds — classify the GOAL in your first design and report it in goalKind:\n"
             + "- \"bounded\": the GOAL names a finished state you can recognize in one image (a subject, a scene, a style, a specific composition). It is done when that state is met.\n"
-            + "- \"open-ended\": the GOAL asks for a maximum, a superlative, or \"as ... as possible\" (as many as possible, the most detailed, the largest crowd, the longest legible list). No single good image satisfies it. What satisfies it is the best image at this generator's demonstrated limit.\n"
+            + "- \"open-ended\": the GOAL asks for a maximum, a superlative, or \"as ... as possible\" (as many as possible, the most detailed, the largest crowd, the longest legible list). No single good image satisfies it. What satisfies it is the best image at the sources' demonstrated limit.\n"
             + "Rules for open-ended goals:\n"
             + "- Every refine render must push the maximized quantity beyond the best acceptable result so far. When the last step succeeded cleanly, take a larger step next; a run of clean successes means the limit is still ahead of you. The fresh render may explore a different way of fitting more in.\n"
-            + "- Continue until a refine render overshoots and degrades (wrong counts, duplicates, illegible or misspelled text, merged or missing subjects, lost coherence). That degradation is the only evidence of the limit. Then bisect between the best acceptable result and the failed one while turns remain.\n"
+            + "- Continue until a refine render on the source that holds your best result overshoots and degrades (wrong counts, duplicates, illegible or misspelled text, merged or missing subjects, lost coherence). That degradation is the only evidence of the limit. Then bisect between the best acceptable result and the failed one while turns remain.\n"
             + "- goalMet stays false until the limit has been demonstrated. The score measures how far the maximized quantity was pushed, with defects as deductions, so a larger clean result outscores a smaller clean one.\n"
-            + "- The loop does not accept decision \"done\" on an open-ended goal while your latest refine render is also your best: it replies with an objection and asks for the review again with \"done\" barred. Do not attempt it.\n\n"
+            + "- The loop does not accept decision \"done\" on an open-ended goal while the best source's latest refine render is also your best: it replies with an objection and asks for the review again with \"done\" barred. Do not attempt it.\n\n"
             + "The turn budget belongs to the operator, not to you. The number of turns remaining is never a reason to declare done. If you would render again given one more turn, answer decision \"render\" with both prompts — also when zero turns remain; the loop then pauses and the operator decides whether to grant more turns. Declaring done because the budget is exhausted is a contract violation.\n\n"
             + "Working method:\n"
-            + "- Iterate deliberately. Change one or two things per turn when the result is close; change the whole approach when it is far off. Vary composition, subject staging, camera and framing language, medium and rendering style, level of detail, ordering and emphasis of clauses, explicit negative instructions, text-rendering instructions, color palette, and lighting language. Learn what this particular generator responds to and exploit it.\n"
+            + "- Iterate deliberately. Change one or two things per turn when the result is close; change the whole approach when it is far off. Vary composition, subject staging, camera and framing language, medium and rendering style, level of detail, ordering and emphasis of clauses, explicit negative instructions, text-rendering instructions, color palette, and lighting language. Learn what each source responds to and exploit it.\n"
             + "- You may return to an earlier direction that worked better; say so explicitly in your reasoning and reference the turn number.\n"
-            + "- Prompts must be complete and self-contained. The generator never sees this conversation, only the prompt text.\n"
+            + "- Prompts must be complete and self-contained. The generators never see this conversation, only the prompt text.\n"
             + "- Default lighting and clarity unless the GOAL asks otherwise: clear, bright, full normal daytime lighting; not dim, murky, grimy, muddy, gloomy, shadow-choked, underexposed, dusk-like, night-like, or dark. Prefer readable, coherent, visually organized images with clean composition, clear separation of subjects or groups, concise high-contrast text when text is needed, and attractive balanced color. State this preference inside your prompt text when it matters.\n"
             + "- Score honestly on a 0-10 scale: 10 = the goal is fully met with no visible defects; 7-8 = clearly on target with fixable defects; 4-6 = partially on target; 0-3 = wrong or unusable. Set goalMet true only at 9 or above (and, for open-ended goals, only once the limit is demonstrated).\n"
-            + "- Declare done only when the goal is met (bounded goals), or when you have evidence from the renders you have seen that further renders will not improve on the best result: a change that failed to improve it, or a defect this generator has repeatedly failed to fix. A sequence of renders that each improved on the last is evidence that the next one would improve too. Name the best turn in bestTurn and which of its two renders in bestVariant.\n\n"
+            + "- Declare done only when the goal is met (bounded goals), or when you have evidence from the renders you have seen that further renders will not improve on the best result: a change that failed to improve it, or a defect the sources have repeatedly failed to fix. A sequence of renders that each improved on the last is evidence that the next one would improve too. Name the best render in bestTurn, bestVariant, and bestSource.\n\n"
             + "Reply format — every reply must be exactly one JSON object and nothing else (no prose before or after, no markdown fence), with these fields:\n"
             + "{\n"
             + "  \"reasoning\": string — your design rationale for this turn: what each image shows, what to keep, what to change, why you continue from the render you chose;\n"
             + "  \"goalKind\": \"bounded\" or \"open-ended\" — required in your first design; repeat it in later replies;\n"
-            + "  \"evaluation\": null on your first design (nothing rendered yet); otherwise an object { \"score\": number 0-10, \"goalMet\": boolean, \"assessment\": string, \"problems\": [string], \"keep\": [string] } describing the REFINE render you were just shown (a failed render scores 0 with the failure as its assessment);\n"
-            + "  \"freshEvaluation\": null on your first design; otherwise the same object shape describing the FRESH render you were just shown;\n"
-            + "  \"continueFrom\": \"refine\" or \"fresh\" — required when decision is \"render\" after a review: the render your next refine prompt builds on; null on your first design;\n"
+            + "  \"evaluations\": null on your first design (nothing rendered yet); otherwise an array with exactly one object per render you were shown: { \"variant\": \"refine\" or \"fresh\", \"source\": letter, \"score\": number 0-10, \"goalMet\": boolean, \"assessment\": string, \"problems\": [string], \"keep\": [string] } (a failed render scores 0 with the failure as its assessment);\n"
+            + "  \"continueFrom\": { \"variant\": \"refine\" or \"fresh\", \"source\": letter } — required when decision is \"render\" after a review: the render your next refine prompt builds on; null on your first design;\n"
             + "  \"decision\": \"render\" or \"done\";\n"
             + "  \"prompt\": string — the complete REFINE prompt to render next; required when decision is \"render\";\n"
             + "  \"freshPrompt\": string — the complete FRESH from-scratch prompt to render next; required when decision is \"render\";\n"
@@ -402,7 +490,8 @@ namespace MultiImageClient
             + "  \"freshDesignNotes\": string — what the fresh design attempts and how it differs in composition, staging, and style;\n"
             + "  \"doneStatement\": string — required when decision is \"done\": which render is best and why the loop should stop;\n"
             + "  \"bestTurn\": integer or null — the turn holding the best render so far;\n"
-            + "  \"bestVariant\": \"refine\" or \"fresh\" or null — which render of bestTurn is the best.\n"
+            + "  \"bestVariant\": \"refine\" or \"fresh\" or null — which render of bestTurn is the best;\n"
+            + "  \"bestSource\": letter or null — which source rendered it.\n"
             + "}\n"
             + "The word JSON appears here so that JSON-only output modes engage: reply with JSON.";
 
@@ -411,11 +500,21 @@ namespace MultiImageClient
         // (the instructions field does not count; observed 2026-09-04).
         // Pre-protocol-3 loops keep their original goal message wording so a
         // resumed conversation replays exactly what the manager saw.
-        public static string BuildGoalMessage(string goal, int maxTurns, int protocolVersion = Version, string? declaredGoalKind = null)
+        public static string BuildGoalMessage(
+            string goal, int maxTurns, int protocolVersion = Version, string? declaredGoalKind = null, int sourceCount = 1)
         {
             var sb = new StringBuilder();
             sb.Append("GOAL:\n").Append(goal.Trim());
-            if (protocolVersion >= 4)
+            if (protocolVersion >= 5)
+            {
+                if (sourceCount < 1)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(sourceCount));
+                }
+                var letters = string.Join(", ", Enumerable.Range(0, sourceCount).Select(UiGoalLoopSources.Label));
+                sb.Append($"\n\nThis is the start of the loop. Up to {maxTurns} turn(s) are allowed. There {(sourceCount == 1 ? "is 1 source" : $"are {sourceCount} sources")} ({letters}); every turn, each source renders your refine prompt and your fresh prompt, so you will see {2 * sourceCount} render(s) per turn. Your objective is one image, from any source, that best satisfies and covers the GOAL.");
+            }
+            else if (protocolVersion >= 4)
             {
                 sb.Append($"\n\nThis is the start of the loop. Up to {maxTurns} turn(s) are allowed; every turn renders your refine prompt and your fresh prompt.");
             }
@@ -436,7 +535,11 @@ namespace MultiImageClient
             {
                 sb.Append(" Classify the GOAL as \"bounded\" or \"open-ended\" in goalKind.");
             }
-            if (protocolVersion >= 4)
+            if (protocolVersion >= 5)
+            {
+                sb.Append(" Provide your first design now as the required JSON object: two clearly different prompts in \"prompt\" and \"freshPrompt\" (evaluations and continueFrom must be null).");
+            }
+            else if (protocolVersion >= 4)
             {
                 sb.Append(" Provide your first design now as the required JSON object: two clearly different prompts in \"prompt\" and \"freshPrompt\" (evaluation, freshEvaluation, and continueFrom must be null).");
             }
@@ -454,7 +557,102 @@ namespace MultiImageClient
             string RenderedPrompt,
             string? DesignPrompt,
             string? RenderError,
-            UiGoalLoopSentImage? Sent);
+            UiGoalLoopSentImage? Sent,
+            string? Source = null);
+
+        // Protocol 5 review request: every render of the turn, refine renders
+        // first then fresh, each in source-letter order, with the attached
+        // images in that same order. Sources lists every letter of the loop
+        // so a source whose render never happened is reported as such.
+        public static string BuildMultiSourceReviewRequestText(
+            int turn,
+            int maxTurns,
+            IReadOnlyList<UiGoalLoopTurnRender> renders,
+            IReadOnlyList<string> sources,
+            UiGoalLoopRenderKey? continuedFrom,
+            string? effectiveGoalKind,
+            int? bestTurnSoFar,
+            string? bestVariantSoFar,
+            string? bestSourceSoFar,
+            double? bestScoreSoFar)
+        {
+            if (sources.Count == 0)
+            {
+                throw new ArgumentException("a review needs at least one source", nameof(sources));
+            }
+            var sb = new StringBuilder();
+            var remaining = Math.Max(0, maxTurns - turn);
+            sb.Append($"Turn {turn} of {maxTurns}. Both of your turn-{turn} prompts were rendered by {(sources.Count == 1 ? "source A" : $"all {sources.Count} sources ({string.Join(", ", sources)})")}.");
+            if (continuedFrom != null)
+            {
+                sb.Append($" Your refine prompt built on the {continuedFrom.Variant} render of source {continuedFrom.Source} from turn {turn - 1}.");
+            }
+            var attached = 0;
+            foreach (var variant in UiGoalLoopVariants.All)
+            {
+                foreach (var source in sources)
+                {
+                    var r = renders.FirstOrDefault(x => x.Variant == variant && x.Source == source);
+                    sb.Append($"\n\n{variant.ToUpperInvariant()} render, source {source}: ");
+                    if (r == null)
+                    {
+                        sb.Append("not rendered (no prompt was supplied for it).");
+                        continue;
+                    }
+                    if (r.Render.Ok == true && r.Sent != null)
+                    {
+                        attached++;
+                        sb.Append("the source returned an image");
+                        if (!string.IsNullOrWhiteSpace(r.Render.Size))
+                        {
+                            sb.Append($" ({r.Render.Size} pixels)");
+                        }
+                        sb.Append($"; it is attached image #{attached} of this message at its full rendered resolution");
+                        if (!string.IsNullOrWhiteSpace(r.Sent.Transport) && r.Sent.Transport.Contains("downscaled", StringComparison.Ordinal))
+                        {
+                            sb.Append(" except as your provider's published input limit requires: ").Append(r.Sent.Transport);
+                        }
+                        sb.Append('.');
+                    }
+                    else
+                    {
+                        sb.Append("the source FAILED; no image was produced. Generator error: ");
+                        sb.Append(string.IsNullOrWhiteSpace(r.RenderError) ? "(no error text)" : r.RenderError.Trim());
+                        sb.Append(" Score it as a failed attempt and diagnose what in the prompt likely caused it on this source.");
+                    }
+                    if (r.DesignPrompt != null
+                        && !string.Equals(r.DesignPrompt.Trim(), r.RenderedPrompt.Trim(), StringComparison.Ordinal))
+                    {
+                        sb.Append(" Note: the operator edited this prompt before rendering. The exact prompt that was rendered is:\n\"\"\"\n");
+                        sb.Append(r.RenderedPrompt.Trim());
+                        sb.Append("\n\"\"\"");
+                    }
+                }
+            }
+            sb.Append($"\n\nEvaluate every render against the GOAL (one \"evaluations\" entry per render, each naming its variant and source), choose continueFrom (variant + source), and reply with the required JSON object with both next prompts. Turns remaining after this turn: {remaining}.");
+            if (effectiveGoalKind == UiGoalLoopGoalKinds.OpenEnded)
+            {
+                sb.Append(" This GOAL is open-ended: the remaining budget is never a reason to stop, and \"done\" is accepted only after a refine render on the source holding your best result has pushed past that result and degraded.");
+                if (bestTurnSoFar.HasValue && bestScoreSoFar.HasValue)
+                {
+                    sb.Append($" Best so far: turn {bestTurnSoFar.Value}");
+                    if (bestVariantSoFar != null)
+                    {
+                        sb.Append($" {bestVariantSoFar} render");
+                    }
+                    if (bestSourceSoFar != null)
+                    {
+                        sb.Append($" of source {bestSourceSoFar}");
+                    }
+                    sb.Append($" (score {bestScoreSoFar.Value:0.#}).");
+                }
+            }
+            if (remaining == 0)
+            {
+                sb.Append(" If you still want another turn, answer with decision \"render\" and both prompts anyway; the loop will pause and the operator may grant more turns.");
+            }
+            return sb.ToString();
+        }
 
         // Protocol 4 review request: both renders of the turn, in variant
         // order (refine, then fresh), with the attached images in that same
@@ -539,21 +737,25 @@ namespace MultiImageClient
         // The message that follows a rejected "done": names the rule, the
         // evidence on file, and exactly which decision is now required.
         public static string BuildObjectionText(
-            int turn, int maxTurns, int bestTurn, double bestScore, double latestScore, int protocolVersion = Version, string? bestVariant = null)
+            int turn, int maxTurns, int bestTurn, double bestScore, double latestScore, int protocolVersion = Version,
+            string? bestVariant = null, string? bestSource = null)
         {
             var remaining = Math.Max(0, maxTurns - turn);
             var pair = protocolVersion >= 4;
+            var sourced = protocolVersion >= 5 && bestSource != null;
             var sb = new StringBuilder();
             sb.Append("Your reply was recorded, but its decision \"done\" is not accepted. ");
-            sb.Append(pair
-                ? "This GOAL is open-ended: the loop may end only after a refine render has pushed past the best result and degraded, demonstrating the generator's limit. "
-                : "This GOAL is open-ended: the loop may end only after a render has pushed past the best result and degraded, demonstrating the generator's limit. ");
+            sb.Append(sourced
+                ? "This GOAL is open-ended: the loop may end only after a refine render on the source holding the best result has pushed past that result and degraded, demonstrating that source's limit. "
+                : pair
+                    ? "This GOAL is open-ended: the loop may end only after a refine render has pushed past the best result and degraded, demonstrating the generator's limit. "
+                    : "This GOAL is open-ended: the loop may end only after a render has pushed past the best result and degraded, demonstrating the generator's limit. ");
             sb.Append($"So far the best result is turn {bestTurn}");
             if (pair && bestVariant != null)
             {
-                sb.Append($" ({bestVariant} render)");
+                sb.Append(sourced ? $" ({bestVariant} render of source {bestSource})" : $" ({bestVariant} render)");
             }
-            sb.Append($" (score {bestScore:0.#}) and the latest {(pair ? "refine " : "")}render, turn {turn}, scored {latestScore:0.#}; no later {(pair ? "refine " : "")}render has scored below the best, so no limit has been demonstrated. ");
+            sb.Append($" (score {bestScore:0.#}) and the latest {(pair ? "refine " : "")}render{(sourced ? $" of source {bestSource}" : "")}, turn {turn}, scored {latestScore:0.#}; no later {(pair ? "refine " : "")}render{(sourced ? " on that source" : "")} has scored below the best, so no limit has been demonstrated. ");
             sb.Append(pair
                 ? $"Reply again to the same review with the required JSON object. Decision must be \"render\", with a refine prompt that pushes the maximized quantity further than turn {bestTurn} (take a larger step than last time) and a fresh prompt. \"done\" is barred for this reply. "
                 : $"Reply again to the same review with the required JSON object. Decision must be \"render\", with a prompt that pushes the maximized quantity further than turn {bestTurn} (take a larger step than last time). \"done\" is barred for this reply. ");
@@ -652,11 +854,16 @@ namespace MultiImageClient
         /// objected to a "done" and re-asked, so a repeated "done" is a
         /// contract violation rather than a decision.
         public static UiGoalLoopManagerReply ParseManagerReply(
-            string raw, bool expectEvaluation, int protocolVersion = Version, bool permitDone = true)
+            string raw, bool expectEvaluation, int protocolVersion = Version, bool permitDone = true,
+            IReadOnlyList<UiGoalLoopRenderKey>? shownRenders = null)
         {
             if (string.IsNullOrWhiteSpace(raw))
             {
                 throw new InvalidDataException("the manager returned no text");
+            }
+            if (protocolVersion >= 5 && expectEvaluation && (shownRenders == null || shownRenders.Count == 0))
+            {
+                throw new ArgumentException("protocol 5 review parsing needs the list of renders the manager was shown", nameof(shownRenders));
             }
             var s = StripMarkdownFence(raw);
             try
@@ -689,11 +896,23 @@ namespace MultiImageClient
                 {
                     reply.FreshPrompt = OptionalString(root, "freshPrompt");
                     reply.FreshDesignNotes = OptionalString(root, "freshDesignNotes");
-                    reply.ContinueFrom = OptionalString(root, "continueFrom")?.ToLowerInvariant();
                     reply.BestVariant = OptionalString(root, "bestVariant")?.ToLowerInvariant();
-                    if (reply.ContinueFrom != null && !UiGoalLoopVariants.IsValid(reply.ContinueFrom))
+                    if (protocolVersion >= 5)
                     {
-                        throw new JsonException($"\"continueFrom\" must be \"refine\" or \"fresh\", got \"{reply.ContinueFrom}\"");
+                        ParseContinueFromObject(root, reply);
+                        reply.BestSource = OptionalString(root, "bestSource")?.ToUpperInvariant();
+                        if (reply.BestSource != null && !UiGoalLoopSources.IsValid(reply.BestSource))
+                        {
+                            throw new JsonException($"\"bestSource\" must be a source letter or null, got \"{reply.BestSource}\"");
+                        }
+                    }
+                    else
+                    {
+                        reply.ContinueFrom = OptionalString(root, "continueFrom")?.ToLowerInvariant();
+                        if (reply.ContinueFrom != null && !UiGoalLoopVariants.IsValid(reply.ContinueFrom))
+                        {
+                            throw new JsonException($"\"continueFrom\" must be \"refine\" or \"fresh\", got \"{reply.ContinueFrom}\"");
+                        }
                     }
                     if (reply.BestVariant != null && !UiGoalLoopVariants.IsValid(reply.BestVariant))
                     {
@@ -710,25 +929,39 @@ namespace MultiImageClient
                     }
                     if (reply.Decision == "render" && expectEvaluation && reply.ContinueFrom == null)
                     {
-                        throw new JsonException("after a review, decision \"render\" requires \"continueFrom\" (\"refine\" or \"fresh\")");
+                        throw new JsonException(protocolVersion >= 5
+                            ? "after a review, decision \"render\" requires \"continueFrom\" ({ \"variant\", \"source\" })"
+                            : "after a review, decision \"render\" requires \"continueFrom\" (\"refine\" or \"fresh\")");
                     }
                     if (!expectEvaluation && reply.ContinueFrom != null)
                     {
                         throw new JsonException("nothing has been rendered yet, so \"continueFrom\" must be null");
                     }
-                    var hasFresh = root.TryGetProperty("freshEvaluation", out var freshEvaluation)
-                        && freshEvaluation.ValueKind == JsonValueKind.Object;
-                    if (expectEvaluation)
+                    if (protocolVersion >= 5)
                     {
-                        if (!hasFresh)
+                        ParseEvaluationsArray(root, reply, expectEvaluation, shownRenders);
+                        if (reply.ContinueFrom != null
+                            && !shownRenders!.Any(k => k.Variant == reply.ContinueFrom && k.Source == reply.ContinueFromSource))
                         {
-                            throw new JsonException("two renders were shown, so \"freshEvaluation\" must be an object");
+                            throw new JsonException($"\"continueFrom\" names the {reply.ContinueFrom} render of source {reply.ContinueFromSource}, which was not among the renders shown");
                         }
-                        reply.FreshEvaluation = ParseEvaluation(freshEvaluation);
                     }
-                    else if (hasFresh)
+                    else
                     {
-                        throw new JsonException("nothing has been rendered yet, so \"freshEvaluation\" must be null");
+                        var hasFresh = root.TryGetProperty("freshEvaluation", out var freshEvaluation)
+                            && freshEvaluation.ValueKind == JsonValueKind.Object;
+                        if (expectEvaluation)
+                        {
+                            if (!hasFresh)
+                            {
+                                throw new JsonException("two renders were shown, so \"freshEvaluation\" must be an object");
+                            }
+                            reply.FreshEvaluation = ParseEvaluation(freshEvaluation);
+                        }
+                        else if (hasFresh)
+                        {
+                            throw new JsonException("nothing has been rendered yet, so \"freshEvaluation\" must be null");
+                        }
                     }
                 }
                 if (protocolVersion >= 3)
@@ -766,6 +999,19 @@ namespace MultiImageClient
                 }
                 var hasEvaluation = root.TryGetProperty("evaluation", out var evaluation)
                     && evaluation.ValueKind == JsonValueKind.Object;
+                if (protocolVersion >= 5)
+                {
+                    // The per-render array is the only evaluation carrier.
+                    if (hasEvaluation || (root.TryGetProperty("freshEvaluation", out var fe) && fe.ValueKind == JsonValueKind.Object))
+                    {
+                        throw new JsonException("this loop scores renders in the \"evaluations\" array; \"evaluation\" and \"freshEvaluation\" must be absent or null");
+                    }
+                    if (!expectEvaluation && reply.Decision != "render")
+                    {
+                        throw new JsonException("the first reply must have decision \"render\"");
+                    }
+                    return reply;
+                }
                 if (expectEvaluation)
                 {
                     if (!hasEvaluation)
@@ -792,6 +1038,90 @@ namespace MultiImageClient
                 throw new InvalidDataException(
                     $"manager reply did not follow the required JSON contract ({ex.Message}); reply starts: {Truncate(raw, 300)}");
             }
+        }
+
+        // Protocol 5 "continueFrom": null or { "variant", "source" }.
+        private static void ParseContinueFromObject(JsonElement root, UiGoalLoopManagerReply reply)
+        {
+            if (!root.TryGetProperty("continueFrom", out var cf) || cf.ValueKind == JsonValueKind.Null)
+            {
+                return;
+            }
+            if (cf.ValueKind != JsonValueKind.Object)
+            {
+                throw new JsonException("\"continueFrom\" must be null or an object { \"variant\": \"refine\"|\"fresh\", \"source\": letter }");
+            }
+            var variant = OptionalString(cf, "variant")?.ToLowerInvariant();
+            var source = OptionalString(cf, "source")?.ToUpperInvariant();
+            if (!UiGoalLoopVariants.IsValid(variant))
+            {
+                throw new JsonException($"\"continueFrom.variant\" must be \"refine\" or \"fresh\", got \"{variant}\"");
+            }
+            if (!UiGoalLoopSources.IsValid(source))
+            {
+                throw new JsonException($"\"continueFrom.source\" must be a source letter, got \"{source}\"");
+            }
+            reply.ContinueFrom = variant;
+            reply.ContinueFromSource = source;
+        }
+
+        // Protocol 5 "evaluations": null before any render; afterwards
+        // exactly one entry per render shown, each naming its variant and
+        // source, with no duplicates and no entries for renders not shown.
+        private static void ParseEvaluationsArray(
+            JsonElement root, UiGoalLoopManagerReply reply, bool expectEvaluation, IReadOnlyList<UiGoalLoopRenderKey>? shownRenders)
+        {
+            var has = root.TryGetProperty("evaluations", out var arr) && arr.ValueKind != JsonValueKind.Null;
+            if (!expectEvaluation)
+            {
+                if (has && !(arr.ValueKind == JsonValueKind.Array && arr.GetArrayLength() == 0))
+                {
+                    throw new JsonException("nothing has been rendered yet, so \"evaluations\" must be null");
+                }
+                return;
+            }
+            if (!has || arr.ValueKind != JsonValueKind.Array)
+            {
+                throw new JsonException($"{shownRenders!.Count} render(s) were shown, so \"evaluations\" must be an array with one entry per render");
+            }
+            var list = new List<UiGoalLoopScoredRender>();
+            foreach (var item in arr.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    throw new JsonException("every \"evaluations\" entry must be an object");
+                }
+                var variant = OptionalString(item, "variant")?.ToLowerInvariant();
+                var source = OptionalString(item, "source")?.ToUpperInvariant();
+                if (!UiGoalLoopVariants.IsValid(variant))
+                {
+                    throw new JsonException($"\"evaluations[].variant\" must be \"refine\" or \"fresh\", got \"{variant}\"");
+                }
+                if (!UiGoalLoopSources.IsValid(source))
+                {
+                    throw new JsonException($"\"evaluations[].source\" must be a source letter, got \"{source}\"");
+                }
+                if (!shownRenders!.Any(k => k.Variant == variant && k.Source == source))
+                {
+                    throw new JsonException($"\"evaluations\" scores the {variant} render of source {source}, which was not among the renders shown");
+                }
+                if (list.Any(l => l.Variant == variant && l.Source == source))
+                {
+                    throw new JsonException($"\"evaluations\" scores the {variant} render of source {source} twice");
+                }
+                list.Add(new UiGoalLoopScoredRender(variant, source, ParseEvaluation(item)));
+            }
+            var missing = shownRenders!.Where(k => !list.Any(l => l.Variant == k.Variant && l.Source == k.Source)).ToList();
+            if (missing.Count > 0)
+            {
+                throw new JsonException("\"evaluations\" is missing the " + string.Join(", ",
+                    missing.Select(m => $"{m.Variant} render of source {m.Source}")));
+            }
+            // Fixed order: refine then fresh, sources alphabetical.
+            reply.RenderEvaluations = list
+                .OrderBy(l => Array.IndexOf(UiGoalLoopVariants.All, l.Variant))
+                .ThenBy(l => l.Source, StringComparer.Ordinal)
+                .ToList();
         }
 
         private static UiGoalLoopEvaluation ParseEvaluation(JsonElement e)
@@ -889,7 +1219,10 @@ namespace MultiImageClient
     // One render the runner must perform for a Render step. ReplaceIndex is
     // the index of an existing unrendered render-request entry to fill in
     // place (fork with an edited prompt, interrupted render); null appends.
-    public sealed record UiGoalLoopPlannedRender(string? Variant, string Prompt, int? ReplaceIndex);
+    // GeneratorKey/Source are set from protocol 5 (one planned render per
+    // variant per generator); null means the loop's single generator.
+    public sealed record UiGoalLoopPlannedRender(
+        string? Variant, string Prompt, int? ReplaceIndex, string? GeneratorKey = null, string? Source = null);
 
     // Prompt is the first planned render's prompt (the single render before
     // protocol 4, the refine render from protocol 4); Renders lists every
@@ -946,8 +1279,12 @@ namespace MultiImageClient
         /// has a result.
         public static UiGoalLoopStep DetermineNextStep(
             IReadOnlyList<UiGoalLoopEntry> entries, int maxTurns, string? effectiveGoalKind = null,
-            int protocolVersion = UiGoalLoopProtocol.Version)
+            int protocolVersion = UiGoalLoopProtocol.Version, IReadOnlyList<UiGoalLoopGenerator>? generators = null)
         {
+            if (protocolVersion >= 5 && (generators == null || generators.Count == 0))
+            {
+                throw new ArgumentException("protocol 5 planning needs the loop's generator list", nameof(generators));
+            }
             var tail = EffectiveTail(entries);
             if (tail == null)
             {
@@ -964,7 +1301,7 @@ namespace MultiImageClient
                     {
                         return new UiGoalLoopStep(UiGoalLoopStepKind.Done, 0, null, parsed.DoneStatement);
                     }
-                    return RenderOrExhausted(1, PlannedRenders(parsed, protocolVersion), maxTurns, protocolVersion);
+                    return RenderOrExhausted(1, PlannedRenders(parsed, protocolVersion, generators), maxTurns, protocolVersion);
                 }
                 case UiGoalLoopKinds.RenderRequest:
                 case UiGoalLoopKinds.RenderResult:
@@ -991,11 +1328,11 @@ namespace MultiImageClient
                         {
                             var best = BestReview(entries)!.Value;
                             return new UiGoalLoopStep(UiGoalLoopStepKind.Objection, tail.Turn, null,
-                                $"\"done\" on an open-ended goal without a demonstrated limit: best is turn {best.Turn}{(best.Variant != null ? $" {best.Variant} render" : "")} (score {best.Score:0.#}) and no later {(protocolVersion >= 4 ? "refine " : "")}render scored below it");
+                                $"\"done\" on an open-ended goal without a demonstrated limit: best is turn {best.Turn}{(best.Variant != null ? $" {best.Variant} render" : "")}{(best.Source != null ? $" of source {best.Source}" : "")} (score {best.Score:0.#}) and no later {(protocolVersion >= 4 ? "refine " : "")}render{(best.Source != null ? " on that source" : "")} scored below it");
                         }
                         return new UiGoalLoopStep(UiGoalLoopStepKind.Done, tail.Turn, null, parsed.DoneStatement);
                     }
-                    return RenderOrExhausted(tail.Turn + 1, PlannedRenders(parsed, protocolVersion), maxTurns, protocolVersion);
+                    return RenderOrExhausted(tail.Turn + 1, PlannedRenders(parsed, protocolVersion, generators), maxTurns, protocolVersion);
                 }
                 default:
                     return new UiGoalLoopStep(UiGoalLoopStepKind.Invalid, tail.Turn, null, $"unexpected tail entry kind '{tail.Kind}'");
@@ -1006,7 +1343,10 @@ namespace MultiImageClient
         // protocol 4; refine + fresh from protocol 4 (a reply that carries
         // only one prompt plans only that one — the parser is what enforces
         // the pair on live replies).
-        private static List<UiGoalLoopPlannedRender> PlannedRenders(UiGoalLoopManagerReply parsed, int protocolVersion)
+        // Protocol 5 plans every variant on every generator: refine on A, B,
+        // …, then fresh on A, B, ….
+        private static List<UiGoalLoopPlannedRender> PlannedRenders(
+            UiGoalLoopManagerReply parsed, int protocolVersion, IReadOnlyList<UiGoalLoopGenerator>? generators)
         {
             var list = new List<UiGoalLoopPlannedRender>(2);
             if (protocolVersion < 4)
@@ -1014,34 +1354,53 @@ namespace MultiImageClient
                 list.Add(new UiGoalLoopPlannedRender(null, parsed.Prompt!, null));
                 return list;
             }
+            var prompts = new List<(string Variant, string Prompt)>(2);
             if (!string.IsNullOrWhiteSpace(parsed.Prompt))
             {
-                list.Add(new UiGoalLoopPlannedRender(UiGoalLoopVariants.Refine, parsed.Prompt, null));
+                prompts.Add((UiGoalLoopVariants.Refine, parsed.Prompt));
             }
             if (!string.IsNullOrWhiteSpace(parsed.FreshPrompt))
             {
-                list.Add(new UiGoalLoopPlannedRender(UiGoalLoopVariants.Fresh, parsed.FreshPrompt, null));
+                prompts.Add((UiGoalLoopVariants.Fresh, parsed.FreshPrompt));
+            }
+            foreach (var (variant, prompt) in prompts)
+            {
+                if (protocolVersion >= 5)
+                {
+                    foreach (var g in generators!)
+                    {
+                        list.Add(new UiGoalLoopPlannedRender(variant, prompt, null, g.Key, g.Source));
+                    }
+                }
+                else
+                {
+                    list.Add(new UiGoalLoopPlannedRender(variant, prompt, null));
+                }
             }
             return list;
         }
 
         // Render-requests of the turn that have no render-result of the same
-        // variant after them, in variant order.
+        // variant and generator after them, in variant then source order.
         public static List<UiGoalLoopPlannedRender> PendingRenders(IReadOnlyList<UiGoalLoopEntry> entries, int turn)
         {
             var pending = new List<UiGoalLoopPlannedRender>();
             foreach (var request in entries.Where(e => e.Kind == UiGoalLoopKinds.RenderRequest && e.Turn == turn))
             {
                 var variant = request.Render?.Variant;
+                var generator = request.Render?.GeneratorKey;
                 var rendered = entries.Any(e => e.Kind == UiGoalLoopKinds.RenderResult && e.Turn == turn
-                    && e.Index > request.Index && e.Render?.Variant == variant);
+                    && e.Index > request.Index && e.Render?.Variant == variant
+                    && string.Equals(e.Render?.GeneratorKey, generator, StringComparison.Ordinal));
                 if (!rendered)
                 {
-                    pending.Add(new UiGoalLoopPlannedRender(variant, request.Text, request.Index));
+                    pending.Add(new UiGoalLoopPlannedRender(
+                        variant, request.Text, request.Index, request.Render?.Source == null ? null : generator, request.Render?.Source));
                 }
             }
             return pending
                 .OrderBy(p => p.Variant == null ? 0 : Array.IndexOf(UiGoalLoopVariants.All, p.Variant))
+                .ThenBy(p => p.Source ?? "", StringComparer.Ordinal)
                 .ToList();
         }
 
@@ -1087,11 +1446,12 @@ namespace MultiImageClient
         /// Best review so far: the first turn holding the maximum score. Every
         /// parsed review counts, including one whose "done" was objected to
         /// (its evaluation of the image stands).
-        /// Both renders of a protocol-4 turn count; Variant names which one
-        /// holds the maximum (null on single-render loops).
-        public static (int Turn, string? Variant, double Score)? BestReview(IReadOnlyList<UiGoalLoopEntry> entries)
+        /// Every render of a protocol-4 turn counts; Variant names which one
+        /// holds the maximum (null on single-render loops) and Source which
+        /// generator rendered it (null before protocol 5).
+        public static (int Turn, string? Variant, string? Source, double Score)? BestReview(IReadOnlyList<UiGoalLoopEntry> entries)
         {
-            (int Turn, string? Variant, double Score)? best = null;
+            (int Turn, string? Variant, string? Source, double Score)? best = null;
             foreach (var e in entries)
             {
                 var parsed = e.Kind == UiGoalLoopKinds.Review ? e.Manager?.Parsed : null;
@@ -1099,11 +1459,11 @@ namespace MultiImageClient
                 {
                     continue;
                 }
-                foreach (var (variant, evaluation) in parsed.Evaluations())
+                foreach (var scored in parsed.Evaluations())
                 {
-                    if (best == null || evaluation.Score > best.Value.Score)
+                    if (best == null || scored.Evaluation.Score > best.Value.Score)
                     {
-                        best = (e.Turn, variant, evaluation.Score);
+                        best = (e.Turn, scored.Variant, scored.Source, scored.Evaluation.Score);
                     }
                 }
             }
@@ -1116,7 +1476,9 @@ namespace MultiImageClient
         /// and unclassified goals leave the decision to the manager. Under
         /// protocol 4 only the REFINE render's score counts as the push: a
         /// fresh render is exploration and a low score there says nothing
-        /// about the limit.
+        /// about the limit. Under protocol 5 the refine must be on the SAME
+        /// source as the best render: a weaker source scoring low says
+        /// nothing about the best source's limit.
         public static bool IsDonePermitted(IReadOnlyList<UiGoalLoopEntry> entries, string? effectiveGoalKind)
         {
             if (effectiveGoalKind != UiGoalLoopGoalKinds.OpenEnded)
@@ -1130,13 +1492,44 @@ namespace MultiImageClient
             }
             foreach (var e in entries)
             {
-                var evaluation = e.Kind == UiGoalLoopKinds.Review ? e.Manager?.Parsed?.Evaluation : null;
-                if (evaluation != null && e.Turn > best.Value.Turn && evaluation.Score < best.Value.Score)
+                if (e.Kind != UiGoalLoopKinds.Review || e.Manager?.Parsed == null || e.Turn <= best.Value.Turn)
                 {
-                    return true;
+                    continue;
+                }
+                foreach (var scored in e.Manager.Parsed.Evaluations())
+                {
+                    if (scored.Variant == UiGoalLoopVariants.Fresh)
+                    {
+                        continue;
+                    }
+                    if (scored.Source == best.Value.Source && scored.Evaluation.Score < best.Value.Score)
+                    {
+                        return true;
+                    }
                 }
             }
             return false;
+        }
+
+        /// The latest refine score on the given source (any source when
+        /// null), for the objection text; null when no such review exists.
+        public static double? LatestRefineScore(IReadOnlyList<UiGoalLoopEntry> entries, string? source)
+        {
+            for (var i = entries.Count - 1; i >= 0; i--)
+            {
+                var e = entries[i];
+                if (e.Kind != UiGoalLoopKinds.Review || e.Manager?.Parsed == null)
+                {
+                    continue;
+                }
+                var scored = e.Manager.Parsed.Evaluations()
+                    .FirstOrDefault(s => s.Variant != UiGoalLoopVariants.Fresh && s.Source == source);
+                if (scored != null)
+                {
+                    return scored.Evaluation.Score;
+                }
+            }
+            return null;
         }
 
         /// Entries [0..entryIndex] copied for a fork; when newText is given the
@@ -1740,6 +2133,20 @@ namespace MultiImageClient
             EnsureCapacity();
             loop.SystemPrompt = UiGoalLoopProtocol.SystemPrompt;
             loop.ProtocolVersion = UiGoalLoopProtocol.Version;
+            if (loop.Generators == null || loop.Generators.Count == 0)
+            {
+                throw new InvalidOperationException("a goal loop needs at least one image generator");
+            }
+            if (loop.Generators.Count > UiGoalLoopSources.MaxGenerators)
+            {
+                throw new InvalidOperationException($"a goal loop allows at most {UiGoalLoopSources.MaxGenerators} image generators");
+            }
+            for (var i = 0; i < loop.Generators.Count; i++)
+            {
+                loop.Generators[i].Source = UiGoalLoopSources.Label(i);
+            }
+            loop.GeneratorKey = loop.Generators[0].Key;
+            loop.GeneratorLabel = loop.Generators[0].Label;
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var entries = new List<UiGoalLoopEntry>
             {
@@ -2023,7 +2430,7 @@ namespace MultiImageClient
             loop.TurnsRendered = UiGoalLoopPlanner.CountRenderedTurns(entries);
             double? last = null, best = null;
             int? bestTurn = null;
-            string? bestVariant = null;
+            string? bestVariant = null, bestSource = null;
             decimal managerCost = 0, renderCost = 0;
             var managerCostKnown = true;
             int inTok = 0, outTok = 0;
@@ -2031,19 +2438,27 @@ namespace MultiImageClient
             {
                 if (e.Kind == UiGoalLoopKinds.Review && e.Manager?.Parsed != null)
                 {
-                    foreach (var (variant, evaluation) in e.Manager.Parsed.Evaluations())
+                    double? reviewRefine = null;
+                    foreach (var scored in e.Manager.Parsed.Evaluations())
                     {
-                        // "Last" is the latest turn's primary (refine) score.
-                        if (variant != UiGoalLoopVariants.Fresh)
+                        // "Last" is the latest review's best primary (refine)
+                        // score across sources.
+                        if (scored.Variant != UiGoalLoopVariants.Fresh
+                            && (reviewRefine == null || scored.Evaluation.Score > reviewRefine))
                         {
-                            last = evaluation.Score;
+                            reviewRefine = scored.Evaluation.Score;
                         }
-                        if (best == null || evaluation.Score > best)
+                        if (best == null || scored.Evaluation.Score > best)
                         {
-                            best = evaluation.Score;
+                            best = scored.Evaluation.Score;
                             bestTurn = e.Turn;
-                            bestVariant = variant;
+                            bestVariant = scored.Variant;
+                            bestSource = scored.Source;
                         }
+                    }
+                    if (reviewRefine != null)
+                    {
+                        last = reviewRefine;
                     }
                 }
                 if (UiGoalLoopKinds.IsManagerReply(e.Kind) && e.Manager != null)
@@ -2070,6 +2485,7 @@ namespace MultiImageClient
             loop.BestScore = best;
             loop.BestTurn = bestTurn;
             loop.BestVariant = bestVariant;
+            loop.BestSource = bestSource;
             loop.ManagerCostUsd = managerCost;
             loop.ManagerCostKnown = managerCostKnown;
             loop.RenderCostUsd = renderCost;
@@ -2081,7 +2497,8 @@ namespace MultiImageClient
 
         private static UiGoalLoopStep NextStepLocked(UiGoalLoopState state)
             => UiGoalLoopPlanner.DetermineNextStep(
-                state.Entries, state.Loop.MaxTurns, state.Loop.EffectiveGoalKind, state.Loop.ProtocolVersion);
+                state.Entries, state.Loop.MaxTurns, state.Loop.EffectiveGoalKind, state.Loop.ProtocolVersion,
+                state.Loop.GeneratorList());
 
         // ---- manager turns ----
 
@@ -2094,8 +2511,8 @@ namespace MultiImageClient
             {
                 var best = UiGoalLoopPlanner.BestReview(state.Entries)
                     ?? throw new InvalidOperationException("objection without any scored review");
-                var latest = state.Entries.LastOrDefault(e => e.Kind == UiGoalLoopKinds.Review && e.Manager?.Parsed?.Evaluation != null)
-                    ?? throw new InvalidOperationException("objection without a latest review");
+                var latest = UiGoalLoopPlanner.LatestRefineScore(state.Entries, best.Source)
+                    ?? throw new InvalidOperationException("objection without a latest refine review");
                 AppendEntryLocked(state, new UiGoalLoopEntry
                 {
                     Turn = step.Turn,
@@ -2103,8 +2520,8 @@ namespace MultiImageClient
                     From = UiGoalLoopParties.System,
                     To = UiGoalLoopParties.Manager,
                     Text = UiGoalLoopProtocol.BuildObjectionText(
-                        step.Turn, state.Loop.MaxTurns, best.Turn, best.Score, latest.Manager!.Parsed!.Evaluation!.Score,
-                        state.Loop.ProtocolVersion, best.Variant),
+                        step.Turn, state.Loop.MaxTurns, best.Turn, best.Score, latest,
+                        state.Loop.ProtocolVersion, best.Variant, best.Source),
                 });
                 Logger.Log($"[goal #{state.Loop.Id}] objected to \"done\" at turn {step.Turn}: {step.Reason}");
             }
@@ -2136,6 +2553,19 @@ namespace MultiImageClient
             lock (state.Lock) snapshot = state.Entries.Select(e => e.Clone()).ToList();
             history = await BuildManagerHistoryAsync(state, snapshot, definition.ImageLimits, ct);
             var expectEvaluation = snapshot.Any(e => e.Kind == UiGoalLoopKinds.ReviewRequest);
+            // Protocol 5: the renders the latest review request describes
+            // (every render result of its turn), so the parser can demand
+            // exactly one evaluation per render shown.
+            IReadOnlyList<UiGoalLoopRenderKey>? shownRenders = null;
+            if (expectEvaluation && loop.ProtocolVersion >= 5)
+            {
+                var latestRequest = snapshot.Last(e => e.Kind == UiGoalLoopKinds.ReviewRequest);
+                shownRenders = snapshot
+                    .Where(e => e.Kind == UiGoalLoopKinds.RenderResult && e.Turn == latestRequest.Turn && e.Index < latestRequest.Index)
+                    .Select(e => new UiGoalLoopRenderKey(e.Render?.Variant, e.Render?.Source))
+                    .Distinct()
+                    .ToList();
+            }
 
             ManagerChatReply reply;
             await _managerCalls.WaitAsync(ct);
@@ -2172,7 +2602,7 @@ namespace MultiImageClient
             {
                 try
                 {
-                    data.Parsed = UiGoalLoopProtocol.ParseManagerReply(reply.Text, expectEvaluation, loop.ProtocolVersion, permitDone);
+                    data.Parsed = UiGoalLoopProtocol.ParseManagerReply(reply.Text, expectEvaluation, loop.ProtocolVersion, permitDone, shownRenders);
                 }
                 catch (InvalidDataException ex)
                 {
@@ -2203,7 +2633,8 @@ namespace MultiImageClient
                 throw new InvalidDataException(error);
             }
             Logger.Log($"[goal #{loop.Id}] manager turn {step.Turn}: decision={data.Parsed!.Decision}"
-                + (data.Parsed.Evaluation != null ? $" score={data.Parsed.Evaluation.Score:0.#}" : ""));
+                + string.Concat(data.Parsed.Evaluations().Select(s =>
+                    $" {s.Variant ?? "score"}{(s.Source != null ? $"/{s.Source}" : "")}={s.Evaluation.Score:0.#}")));
         }
 
         // Writes the review request for a turn whose renders are all on
@@ -2261,10 +2692,13 @@ namespace MultiImageClient
             var turnRenders = new List<UiGoalLoopProtocol.UiGoalLoopTurnRender>();
             var sentImages = new List<UiGoalLoopSentImage>();
             foreach (var result in results
-                .OrderBy(r => r.Render!.Variant == null ? 0 : Array.IndexOf(UiGoalLoopVariants.All, r.Render!.Variant)))
+                .OrderBy(r => r.Render!.Variant == null ? 0 : Array.IndexOf(UiGoalLoopVariants.All, r.Render!.Variant))
+                .ThenBy(r => r.Render!.Source ?? "", StringComparer.Ordinal)
+                .ThenBy(r => r.Index))
             {
                 var render = result.Render!;
-                var request = requests.LastOrDefault(e => e.Index < result.Index && e.Render?.Variant == render.Variant)
+                var request = requests.LastOrDefault(e => e.Index < result.Index && e.Render?.Variant == render.Variant
+                        && string.Equals(e.Render?.GeneratorKey, render.GeneratorKey, StringComparison.Ordinal))
                     ?? throw new InvalidOperationException($"render result {result.Index} has no preceding render request");
                 UiGoalLoopSentImage? sent = null;
                 if (infos.TryGetValue(result, out var info))
@@ -2274,6 +2708,7 @@ namespace MultiImageClient
                     {
                         JobId = render.JobId!,
                         Variant = render.Variant,
+                        Source = render.Source,
                         GeneratorKey = render.GeneratorKey,
                         ImageIndex = 0,
                         Url = render.ImageUrl ?? "",
@@ -2293,10 +2728,10 @@ namespace MultiImageClient
                     ? design?.Manager?.Parsed?.FreshPrompt
                     : design?.Manager?.Parsed?.Prompt;
                 turnRenders.Add(new UiGoalLoopProtocol.UiGoalLoopTurnRender(
-                    render.Variant ?? "", render, request.Text, designPrompt, result.Error, sent));
+                    render.Variant ?? "", render, request.Text, designPrompt, result.Error, sent, render.Source));
             }
 
-            (int Turn, string? Variant, double Score)? bestSoFar;
+            (int Turn, string? Variant, string? Source, double Score)? bestSoFar;
             string? effectiveKind;
             lock (state.Lock)
             {
@@ -2304,7 +2739,17 @@ namespace MultiImageClient
                 effectiveKind = loop.EffectiveGoalKind;
             }
             string text;
-            if (loop.ProtocolVersion >= 4)
+            if (loop.ProtocolVersion >= 5)
+            {
+                var parsedDesign = design?.Manager?.Parsed;
+                var continuedFrom = parsedDesign?.ContinueFrom != null
+                    ? new UiGoalLoopRenderKey(parsedDesign.ContinueFrom, parsedDesign.ContinueFromSource)
+                    : null;
+                text = UiGoalLoopProtocol.BuildMultiSourceReviewRequestText(
+                    turn, loop.MaxTurns, turnRenders, loop.GeneratorList().Select(g => g.Source!).ToList(), continuedFrom,
+                    effectiveKind, bestSoFar?.Turn, bestSoFar?.Variant, bestSoFar?.Source, bestSoFar?.Score);
+            }
+            else if (loop.ProtocolVersion >= 4)
             {
                 text = UiGoalLoopProtocol.BuildPairReviewRequestText(
                     turn, loop.MaxTurns, turnRenders, design?.Manager?.Parsed?.ContinueFrom,
@@ -2354,7 +2799,8 @@ namespace MultiImageClient
                             Role = "user",
                             Text = UiGoalLoopProtocol.BuildGoalMessage(
                                 e.Text, state.Loop.MaxTurns, state.Loop.ProtocolVersion,
-                                UiGoalLoopGoalKinds.IsManagerValue(state.Loop.GoalKind) ? state.Loop.GoalKind : null),
+                                UiGoalLoopGoalKinds.IsManagerValue(state.Loop.GoalKind) ? state.Loop.GoalKind : null,
+                                state.Loop.GeneratorList().Count),
                         });
                         break;
                     case UiGoalLoopKinds.Objection:
@@ -2455,20 +2901,22 @@ namespace MultiImageClient
             foreach (var result in entries.Where(e => e.Kind == UiGoalLoopKinds.RenderResult)
                 .OrderBy(e => e.Turn)
                 .ThenBy(e => e.Render?.Variant == null ? 0 : Array.IndexOf(UiGoalLoopVariants.All, e.Render.Variant))
+                .ThenBy(e => e.Render?.Source ?? "", StringComparer.Ordinal)
                 .ThenBy(e => e.Index))
             {
                 var render = result.Render
                     ?? throw new InvalidOperationException($"entry {result.Index} is a render result without render data");
                 var request = entries.LastOrDefault(e => e.Kind == UiGoalLoopKinds.RenderRequest && e.Index < result.Index
-                        && e.Turn == result.Turn && e.Render?.Variant == render.Variant)
+                        && e.Turn == result.Turn && e.Render?.Variant == render.Variant
+                        && string.Equals(e.Render?.GeneratorKey, render.GeneratorKey, StringComparison.Ordinal))
                     ?? throw new InvalidOperationException($"render result {result.Index} has no preceding render request");
                 // The review of THIS render: the first accepted review after
                 // it for the same turn (an objected-to review still holds the
                 // image's evaluation; the re-asked review carries the same
                 // score of the same image, so the first one is exact).
                 var review = entries.FirstOrDefault(e => e.Kind == UiGoalLoopKinds.Review && e.Index > result.Index
-                    && e.Turn == result.Turn && e.Error == null && e.Manager?.Parsed?.EvaluationOf(render.Variant) != null);
-                var evaluation = review?.Manager?.Parsed?.EvaluationOf(render.Variant);
+                    && e.Turn == result.Turn && e.Error == null && e.Manager?.Parsed?.EvaluationOf(render.Variant, render.Source) != null);
+                var evaluation = review?.Manager?.Parsed?.EvaluationOf(render.Variant, render.Source);
                 cellTurns.Add(result.Turn);
                 var (w, h) = ParseSize(render.Size);
                 string primary;
@@ -2486,6 +2934,10 @@ namespace MultiImageClient
                 {
                     secondaryParts.Add(render.Variant == UiGoalLoopVariants.Fresh ? "FRESH (from scratch)" : "REFINE");
                 }
+                if (render.Source != null)
+                {
+                    secondaryParts.Add($"source {render.Source}: {render.GeneratorLabel}");
+                }
                 if (!string.IsNullOrWhiteSpace(render.Size))
                 {
                     secondaryParts.Add(render.Size!);
@@ -2494,7 +2946,8 @@ namespace MultiImageClient
                 {
                     secondaryParts.Add("manager: done");
                 }
-                else if (evaluation != null && render.Variant != null && review!.Manager!.Parsed!.ContinueFrom == render.Variant)
+                else if (evaluation != null && render.Variant != null && review!.Manager!.Parsed!.ContinueFrom == render.Variant
+                    && review.Manager.Parsed.ContinueFromSource == render.Source)
                 {
                     secondaryParts.Add("manager: continue from this one");
                 }
@@ -2531,9 +2984,13 @@ namespace MultiImageClient
 
             var header = new StringBuilder();
             header.Append("GOAL: ").Append(loop.Goal.Trim());
-            header.Append($"\n\nGenerator: {loop.GeneratorLabel}   Manager: {loop.ManagerLabel} ({loop.ManagerModel})   Started by: {loop.CreatedBy}");
+            var generatorList = loop.GeneratorList();
+            var generatorText = generatorList.Count == 1 && generatorList[0].Source == null
+                ? $"Generator: {loop.GeneratorLabel}"
+                : $"Generators ({generatorList.Count}): " + string.Join("   ", generatorList.Select(g => $"{g.Source}: {g.Label}"));
+            header.Append($"\n\n{generatorText}   Manager: {loop.ManagerLabel} ({loop.ManagerModel})   Started by: {loop.CreatedBy}");
             header.Append(loop.RendersPerTurn > 1
-                ? $"\nRendered {loop.TurnsRendered} turn(s) of {loop.MaxTurns} allowed, {cells.Count} images (each turn: REFINE of the chosen lineage + FRESH from-scratch re-attempt)"
+                ? $"\nRendered {loop.TurnsRendered} turn(s) of {loop.MaxTurns} allowed, {cells.Count} images (each turn: REFINE of the chosen lineage + FRESH from-scratch re-attempt{(generatorList.Count > 1 ? $", on each of {generatorList.Count} sources" : "")})"
                 : $"\nRendered {cells.Count} turn(s) of {loop.MaxTurns} allowed");
             if (loop.EffectiveGoalKind != null)
             {
@@ -2541,7 +2998,7 @@ namespace MultiImageClient
             }
             if (loop.BestTurn.HasValue && loop.BestScore.HasValue)
             {
-                header.Append($"   Best: turn {loop.BestTurn}{(loop.BestVariant != null ? $" {loop.BestVariant}" : "")} (score {loop.BestScore:0.#}/10)");
+                header.Append($"   Best: turn {loop.BestTurn}{(loop.BestVariant != null ? $" {loop.BestVariant}" : "")}{(loop.BestSource != null ? $" source {loop.BestSource}" : "")} (score {loop.BestScore:0.#}/10)");
             }
             header.Append($"\nStatus: {loop.Status}");
             if (!string.IsNullOrWhiteSpace(loop.StatusDetail))
@@ -2622,10 +3079,13 @@ namespace MultiImageClient
                         $"the manager's {r.Variant ?? "render"} prompt for turn {step.Turn} is blank");
                 }
             }
-            var problem = GeneratorProblem(_jobRunner, loop.GeneratorKey);
-            if (problem.Length > 0)
+            foreach (var key in renders.Select(r => r.GeneratorKey ?? loop.GeneratorKey).Distinct(StringComparer.Ordinal))
             {
-                throw new InvalidOperationException($"generator {loop.GeneratorKey} is not available: {problem}");
+                var problem = GeneratorProblem(_jobRunner, key);
+                if (problem.Length > 0)
+                {
+                    throw new InvalidOperationException($"generator {key} is not available: {problem}");
+                }
             }
             var admissions = new List<IDisposable>(renders.Count);
             try
@@ -2644,9 +3104,12 @@ namespace MultiImageClient
                 {
                     started.Add(StartRenderJob(state, step.Turn, planned));
                 }
+                var generatorNames = string.Join(" + ", loop.GeneratorList()
+                    .Where(g => renders.Any(r => (r.GeneratorKey ?? loop.GeneratorKey) == g.Key))
+                    .Select(g => g.Source != null ? $"{g.Source}: {g.Label}" : g.Label));
                 SetActivity(state, renders.Count == 1
-                    ? $"rendering turn {step.Turn} with {loop.GeneratorLabel} (job {started[0].Job.Id})"
-                    : $"rendering turn {step.Turn} ({string.Join(" + ", renders.Select(r => r.Variant))}) with {loop.GeneratorLabel}");
+                    ? $"rendering turn {step.Turn} with {generatorNames} (job {started[0].Job.Id})"
+                    : $"rendering turn {step.Turn} ({string.Join(" + ", renders.Select(r => r.Variant).Distinct())}; {renders.Count} renders) with {generatorNames}");
                 // The provider calls themselves are not cancellable through
                 // the job runner; a stop takes effect once the renders return.
                 await Task.WhenAll(started.Select(s => RunRenderJobAsync(state, step.Turn, s.Planned, s.Job, s.Spec)));
@@ -2669,7 +3132,8 @@ namespace MultiImageClient
         {
             var loop = state.Loop;
             var prompt = planned.Prompt.Trim();
-            var genKeys = new List<string> { loop.GeneratorKey };
+            var generator = ResolveGenerator(loop, planned);
+            var genKeys = new List<string> { generator.Key };
             var job = new UiJob
             {
                 Prompt = prompt,
@@ -2703,8 +3167,9 @@ namespace MultiImageClient
                 {
                     JobId = job.Id,
                     Variant = planned.Variant,
-                    GeneratorKey = loop.GeneratorKey,
-                    GeneratorLabel = loop.GeneratorLabel,
+                    Source = generator.Source,
+                    GeneratorKey = generator.Key,
+                    GeneratorLabel = generator.Label,
                     Shape = spec.Shape,
                     Detail = spec.Detail,
                     Quality = spec.Quality,
@@ -2747,25 +3212,43 @@ namespace MultiImageClient
                 gpt2GuidanceText = "",
                 // Exact lineage for the main-page card badge and for
                 // tracing a render back to its loop turn.
-                goalLoop = new { id = loop.Id, turn, entryIndex = requestIndex, variant = planned.Variant, manager = loop.ManagerLabel },
+                goalLoop = new
+                {
+                    id = loop.Id, turn, entryIndex = requestIndex, variant = planned.Variant, source = generator.Source, manager = loop.ManagerLabel,
+                },
                 prompt,
                 at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             });
-            Logger.Log($"[goal #{loop.Id}] turn {turn}{(planned.Variant != null ? $" {planned.Variant}" : "")}: rendering with {loop.GeneratorKey} as job {job.Id}");
+            Logger.Log($"[goal #{loop.Id}] turn {turn}{(planned.Variant != null ? $" {planned.Variant}" : "")}{(generator.Source != null ? $" source {generator.Source}" : "")}: rendering with {generator.Key} as job {job.Id}");
             return (planned, job, spec);
+        }
+
+        // The generator a planned render names, by exact key; a plan without
+        // a key means the loop's single generator (pre-protocol-5 loops).
+        private static UiGoalLoopGenerator ResolveGenerator(UiGoalLoop loop, UiGoalLoopPlannedRender planned)
+        {
+            var list = loop.GeneratorList();
+            if (planned.GeneratorKey == null)
+            {
+                return list[0];
+            }
+            return list.FirstOrDefault(g => string.Equals(g.Key, planned.GeneratorKey, StringComparison.Ordinal))
+                ?? throw new InvalidOperationException($"planned render names generator '{planned.GeneratorKey}', which is not one of this loop's generators");
         }
 
         private async Task RunRenderJobAsync(UiGoalLoopState state, int turn, UiGoalLoopPlannedRender planned, UiJob job, UiJobSpec spec)
         {
             var loop = state.Loop;
+            var generator = ResolveGenerator(loop, planned);
             await _jobRunner.RunJobAsync(job, spec);
-            var result = ReadGenResult(job, loop.GeneratorKey);
+            var result = ReadGenResult(job, generator.Key);
             var render = new UiGoalLoopRenderData
             {
                 JobId = job.Id,
                 Variant = planned.Variant,
-                GeneratorKey = loop.GeneratorKey,
-                GeneratorLabel = loop.GeneratorLabel,
+                Source = generator.Source,
+                GeneratorKey = generator.Key,
+                GeneratorLabel = generator.Label,
                 Shape = spec.Shape,
                 Detail = spec.Detail,
                 Quality = spec.Quality,
@@ -2780,7 +3263,9 @@ namespace MultiImageClient
                 ErrorHint = result.ErrorHint,
                 ErrorHintUrl = result.ErrorHintUrl,
             };
-            var variantLabel = planned.Variant != null ? $"{planned.Variant} render: " : "";
+            var variantLabel = planned.Variant != null
+                ? $"{planned.Variant} render{(generator.Source != null ? $", source {generator.Source}" : "")}: "
+                : "";
             lock (state.Lock)
             {
                 AppendEntryLocked(state, new UiGoalLoopEntry
@@ -2791,8 +3276,8 @@ namespace MultiImageClient
                     To = UiGoalLoopParties.System,
                     Ms = result.Ms,
                     Text = result.Ok
-                        ? $"{variantLabel}{loop.GeneratorLabel} returned {result.Size ?? "an image"}"
-                        : $"{variantLabel}{loop.GeneratorLabel} failed: {result.Error}",
+                        ? $"{variantLabel}{generator.Label} returned {result.Size ?? "an image"}"
+                        : $"{variantLabel}{generator.Label} failed: {result.Error}",
                     Error = result.Ok ? null : (result.Error ?? "generator failed without error text"),
                     Render = render,
                     WireResponse = result.EventJson,

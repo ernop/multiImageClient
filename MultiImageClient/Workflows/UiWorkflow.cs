@@ -559,6 +559,7 @@ namespace MultiImageClient
                         maxTurnsCap = UiGoalLoopRunner.MaxTurnsCap,
                         maxGoalChars = UiGoalLoopRunner.MaxGoalChars,
                         maxEditedTextChars = UiGoalLoopRunner.MaxEditedTextChars,
+                        maxGenerators = UiGoalLoopSources.MaxGenerators,
                         runningCount = goalLoopRunner.RunningCount,
                     },
                     generatorPreferences = generatorPreferences == null
@@ -1275,16 +1276,34 @@ namespace MultiImageClient
                 {
                     return Results.BadRequest(new { error = userError });
                 }
-                var generatorKey = (form["generator"].ToString() ?? "").Trim();
-                if (generatorKey.Length == 0)
+                // Protocol 5: one or more generators. "generators" may repeat
+                // or be comma-separated; the older single "generator" field
+                // still works. Order is the source-letter order (A, B, …).
+                var generatorKeys = form["generators"].Concat(form["generator"])
+                    .SelectMany(v => (v ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    .ToList();
+                if (generatorKeys.Count == 0)
                 {
-                    return Results.BadRequest(new { error = "pick exactly one image generator" });
+                    return Results.BadRequest(new { error = "pick at least one image generator" });
                 }
-                var generatorProblem = UiGoalLoopRunner.GeneratorProblem(runner, generatorKey);
-                if (generatorProblem.Length > 0)
+                if (generatorKeys.Count > UiGoalLoopSources.MaxGenerators)
                 {
-                    return Results.BadRequest(new { error = $"generator not usable: {generatorProblem}" });
+                    return Results.BadRequest(new { error = $"pick at most {UiGoalLoopSources.MaxGenerators} image generators" });
                 }
+                var duplicate = generatorKeys.GroupBy(k => k, StringComparer.Ordinal).FirstOrDefault(g => g.Count() > 1);
+                if (duplicate != null)
+                {
+                    return Results.BadRequest(new { error = $"generator '{duplicate.Key}' was listed more than once" });
+                }
+                foreach (var key in generatorKeys)
+                {
+                    var generatorProblem = UiGoalLoopRunner.GeneratorProblem(runner, key);
+                    if (generatorProblem.Length > 0)
+                    {
+                        return Results.BadRequest(new { error = $"generator {key} not usable: {generatorProblem}" });
+                    }
+                }
+                var generatorKey = generatorKeys[0];
                 var managerKey = (form["manager"].ToString() ?? "").Trim();
                 var manager = ManagerCatalog.Find(managerKey);
                 if (manager == null)
@@ -1345,6 +1364,9 @@ namespace MultiImageClient
                     GoalKind = goalKind,
                     GeneratorKey = generatorKey,
                     GeneratorLabel = GeneratorPresentation.UiDisplayName(generatorKey),
+                    Generators = generatorKeys
+                        .Select(key => new UiGoalLoopGenerator { Key = key, Label = GeneratorPresentation.UiDisplayName(key) })
+                        .ToList(),
                     ManagerKey = manager.Key,
                     ManagerLabel = manager.Label,
                     ManagerModel = manager.Model,
@@ -1364,7 +1386,7 @@ namespace MultiImageClient
                 {
                     return Results.Json(new { error = ex.Message }, statusCode: 503);
                 }
-                Logger.Log($"[goal #{loop.Id}] started by '{createdBy}': generator={generatorKey} manager={manager.Model} maxTurns={maxTurns} goalKind={goalKind}");
+                Logger.Log($"[goal #{loop.Id}] started by '{createdBy}': generators={string.Join(",", generatorKeys)} manager={manager.Model} maxTurns={maxTurns} goalKind={goalKind}");
                 return Results.Json(new { id = loop.Id }, UiGoalLoopJson.Options);
             });
 
@@ -1522,10 +1544,13 @@ namespace MultiImageClient
                 }
                 // The fork re-validates the generator and manager because a
                 // key may have been removed since the parent was created.
-                var generatorProblem = UiGoalLoopRunner.GeneratorProblem(runner, parent.Loop.GeneratorKey);
-                if (generatorProblem.Length > 0)
+                foreach (var generator in parent.Loop.GeneratorList())
                 {
-                    return Results.BadRequest(new { error = $"generator not usable: {generatorProblem}" });
+                    var generatorProblem = UiGoalLoopRunner.GeneratorProblem(runner, generator.Key);
+                    if (generatorProblem.Length > 0)
+                    {
+                        return Results.BadRequest(new { error = $"generator {generator.Key} not usable: {generatorProblem}" });
+                    }
                 }
                 var manager = ManagerCatalog.Find(parent.Loop.ManagerKey);
                 var managerProblem = manager == null ? "unknown manager" : ManagerCatalog.DescribeAvailabilityProblem(manager, settings);
@@ -3328,6 +3353,7 @@ namespace MultiImageClient
             goal = loop.Goal,
             generatorKey = loop.GeneratorKey,
             generatorLabel = loop.GeneratorLabel,
+            generators = loop.GeneratorList().Select(g => new { key = g.Key, label = g.Label, source = g.Source }).ToList(),
             managerKey = loop.ManagerKey,
             managerLabel = loop.ManagerLabel,
             managerModel = loop.ManagerModel,
@@ -3352,6 +3378,7 @@ namespace MultiImageClient
             bestScore = loop.BestScore,
             bestTurn = loop.BestTurn,
             bestVariant = loop.BestVariant,
+            bestSource = loop.BestSource,
             rendersPerTurn = loop.RendersPerTurn,
             parentLoopId = loop.ParentLoopId,
             forkedAtEntry = loop.ForkedAtEntry,

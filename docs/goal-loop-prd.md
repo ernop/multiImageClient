@@ -10,21 +10,25 @@ The original use case is one shot: type an image description, pick targets,
 look at the output. The goal loop is the second use case:
 
 1. The user enters a **goal** — the outcome they want, not a prompt.
-2. The user picks exactly **one image generator** (any image target from the
-   composer catalog) and exactly **one manager model** (a text+vision LLM).
+2. The user picks **one or more image generators** (1–8, any image targets
+   from the composer catalog; protocol 5) and exactly **one manager model**
+   (a text+vision LLM). The manager sees each generator only as a stable
+   **source letter** (A, B, …).
 3. The manager receives the goal and answers with **two** image designs
    (protocol 4): a **refine** prompt (its primary design) and a **fresh**
    prompt (a clearly different from-scratch approach), each complete, plus
    its reasoning.
-4. The server renders both prompts with the chosen generator, concurrently.
-5. Both rendered images (or the generator's error for either) go back to
-   the manager, in the **same growing conversation**, together with the turn
+4. The server renders both prompts on every chosen generator, concurrently
+   (2 × generators images per turn).
+5. Every rendered image (or the generator's error for it) goes back to the
+   manager, in the **same growing conversation**, together with the turn
    number and remaining budget.
-6. The manager scores each render 0–10 against the goal, explains what it
-   sees, names which of the two renders the lineage **continues from**, and
-   either sends the next pair — a refine of the chosen render and a new
-   from-scratch attempt informed by everything learned — (steps 4–6 repeat)
-   or declares the loop done and names the best turn and render.
+6. The manager scores every render 0–10 against the goal, explains what it
+   sees, names the exact render (variant + source) the lineage **continues
+   from**, and either sends the next pair — a refine of the chosen render
+   and a new from-scratch attempt informed by everything learned — (steps
+   4–6 repeat) or declares the loop done and names the best turn, render,
+   and source. The objective is one best image from any source.
 
 Every step is recorded and shown live on a dedicated page. The loop can be
 stopped, resumed, granted more turns, and forked from any message — including
@@ -34,7 +38,7 @@ after editing the text of that message.
 
 | # | Requirement | Behavior |
 |---|-------------|----------|
-| R1 | Goal text in, one generator, one manager | New-loop form on `goal.html`. Both selectors accept exactly one choice; unavailable targets are listed disabled with their exact availability problem. |
+| R1 (amended by R21) | Goal text in, one or more generators, one manager | New-loop form on `goal.html`. The generator picker accepts 1–8 checked generators (catalog order = source-letter order); the manager selector accepts exactly one. Unavailable targets are listed disabled with their exact availability problem. |
 | R2 | Manager stays in one long conversation | Every manager call replays the full conversation rebuilt from the loop's entries (system prompt, goal, each earlier design/review reply, each review request with its image). |
 | R3 | Manager iterates until the goal is met | System prompt instructs deliberate iteration, learning what the generator responds to, returning to earlier directions, and stopping when done or when further renders are unlikely to help. |
 | R4 | Dedicated live-updating page | `goal.html` polls the selected loop every second and appends turns as they happen. Head shows status, activity, score, best turn, spend. The header's **main page** chip and the `MultiImageClient` title both link to `./` (the composer and job feed), matching the composer's **goal loops** chip. |
@@ -46,14 +50,15 @@ after editing the text of that message.
 | R10 | Stop / resume / resume from here | Stop marks the loop `stopped` and cancels in-flight work at the next boundary. Resume continues from the effective tail. Fork from any entry creates a child loop that continues from that point. |
 | R11 | Edit text inside a turn, fork after modifying | Editable entries (goal, design, render request, review request, review) have an `edit + fork` control. The fork copies entries up to that point, replaces the text, drops everything derived from the old text, and runs from there. |
 | R12 | Default 6 turns, settable at initiation | `maxTurns` defaults to 6, range 1–30, set on the new-loop form; resume may grant more turns. A "turn" is one manager design cycle: one render before protocol 4, the refine + fresh pair from protocol 4. |
-| R13 | Manager is not told the generator identity | The system prompt says the generator's identity is withheld. No generator name, label, or model appears in any manager-bound text. |
-| R14 | Manager rates and explains whether to try again | Required `evaluation` object on every reply after a render; `decision` is `render` or `done` with the reason in `reasoning`/`doneStatement`. |
+| R13 | Manager is not told the generator identity | The system prompt says the generators' identities are withheld. No generator name, label, or model appears in any manager-bound text. Protocol 5 names each generator only by a stable letter (source A, B, …). |
+| R14 | Manager rates and explains whether to try again | Required evaluation on every reply after a render (`evaluation` before protocol 4, `evaluation` + `freshEvaluation` on protocol 4, one `evaluations[]` entry per render shown on protocol 5); `decision` is `render` or `done` with the reason in `reasoning`/`doneStatement`. |
 | R15 (2026-09-04) | "As many as possible" must not stop early | Protocol 3 goal kinds. An open-ended goal may end only after a render pushed past the best result and degraded; the turn budget is never a reason to stop; the server objects to a premature `done` and re-asks with `done` barred. See section 3, "Goal kinds". |
 | R16 | Same viewer, page-independent | `viewer.js` is a standalone viewer module with a source-parameterized interface (`MultiImageViewer.create({ items, resolveUrl })`). The goal page walks every render of the selected loop with it: preview-first atomic paint, ±10 preloading over 6 fetch slots, arrow/wheel/side-button/Home/End navigation, `f` fullscreen, `?` help, Esc/click-outside close. |
 | R17 | Reuse the existing identity | The page shows the composer's creating-as name (authenticated profile display name first, else the canonical personal configuration document's `creatingAs`, else the legacy mirror key) as a read-only chip. A name input appears only when none exists; what it collects is written back to the canonical document. |
 | R18 | See the prompt changes turn to turn | Word-level LCS diff (`ins`/`del`, `+N −M words` summary, plain-text toggle) on every render request against the previous rendered prompt, and on every review's next prompt against the prompt just rendered. |
 | R19 | One image with every step | **build all-turns contact sheet** on the loop head renders one PNG: header band (goal, generator, manager, kind, best turn, status) above a square grid of every rendered turn with its score, `turn N of M`, pixel size, the exact prompt, and the manager's assessment/problems. Rebuild is offered when entries were added since. |
 | R20 (2026-09-04, later) | Leave the rut: two renders per turn | The user observed loops iterating on one image, each turn a small edit of the last prompt, never leaving a weak composition. Protocol 4: every turn renders a **refine** prompt (an improvement of the render the manager chose to continue from; on turn 1 the primary design) **and** a **fresh** prompt (a from-scratch re-attempt at the goal: new composition, staging, camera, medium/style, palette — a different way to convey the same point, written with what has been learned so far). The manager scores both and sets `continueFrom` to the render its next refine builds on, so the lineage can jump to the fresh image at any turn. See section 3, "Protocol version 4". |
+| R21 (2026-09-04, later) | Several generators per loop | The user asked to choose 1, 2, 4, … generators instead of exactly one, with every generator's output sent to the manager so it can learn and evaluate how each is doing; every later turn keeps all of them; the writer may choose which one to focus on; the objective stays **one image from any source that best satisfies and covers the requirements**. Protocol 5: each turn's refine and fresh prompts are rendered by every selected generator (renders per turn = 2 × generators); the manager sees each generator as a stable **source letter** (A, B, …), scores every render in an `evaluations[]` array, and names the exact render (`continueFrom: {variant, source}`) the next refine builds on; `bestSource` completes `bestTurn`/`bestVariant`. See section 3, "Protocol version 5". |
 
 ## 3. Settled decisions
 
@@ -187,6 +192,76 @@ after editing the text of that message.
     cells turn → refine → fresh, labels each with its variant, marks the
     continued-from render, and the header states "2 renders per turn".
     The viewer walks refine then fresh within each turn.
+- **Protocol version 5: several generators per loop (2026-09-04, later).**
+  The user wants to pick 1, 2, 4, … generators and have every output sent
+  to the manager, so the manager learns how each generator performs, keeps
+  all of them every turn, and may write for the one it chooses to focus on;
+  the objective is one best image from any source. Version 5 changes:
+  - **Loop model.** `UiGoalLoop.Generators[]` (`{key, label, source}`),
+    1–8 entries (`UiGoalLoopSources.MaxGenerators`), in the order picked;
+    `source` is the letter at that index (`A`…`H`). `GeneratorKey` /
+    `GeneratorLabel` keep the first generator for stored loops and legacy
+    readers; `GeneratorList()` returns the list, or the single legacy
+    generator with `source = null` for loops stored before version 5.
+    `rendersPerTurn` = 2 × generators on version 5.
+  - **Sources are opaque and stable (R13).** The manager is told how many
+    sources exist and their letters in the goal message; every review names
+    each render as `REFINE render, source A` etc. The same letter is the
+    same generator on every turn, so the manager can learn a source's
+    strengths and failure modes without being told what it is. No name,
+    label, model, or provider reaches any manager-bound text.
+  - **Every prompt on every source.** `UiGoalLoopPlanner.PlannedRenders`
+    yields refine on A, B, …, then fresh on A, B, …; the runner starts all
+    2 × N `UiJob`s concurrently (one per render, each a single-generator
+    job carrying `goalLoop { …, variant, source }` in its `accepted` event;
+    the main-feed badge reads `goal loop · turn N · refine · source A`).
+    Pending-render detection (crash, stop, fork) matches on variant **and**
+    generator, so exactly the missing renders re-run.
+  - **Reply contract.** `evaluations`: null on the first design; afterwards
+    an array with exactly one `{variant, source, score, goalMet,
+    assessment, problems, keep}` per render shown — a missing render, a
+    duplicate, an entry for a render not shown, or the old
+    `evaluation`/`freshEvaluation` objects are parse errors (fail closed;
+    the runner passes the parser the exact `(variant, source)` list of the
+    review request's turn). `continueFrom`: null on the first design; after
+    a review `{variant, source}` naming one of the renders shown (a string
+    is rejected). `bestSource` joins `bestTurn`/`bestVariant`. Everything
+    else is unchanged from version 4.
+  - **Review request.** Renders are listed refine A, refine B, …, fresh A,
+    fresh B, …, with the attached images in the same order; a failed render
+    is described by its error text and skipped in attachment numbering; a
+    source with no render request is reported as "not rendered". The
+    request states which render the refine built on ("the fresh render of
+    source B from turn 1") and the best so far with its source.
+  - **Open-ended rule is per source.** `IsDonePermitted` accepts `done`
+    only when a later turn's **refine render on the source that holds the
+    best result** scored strictly below the best. A weaker source scoring
+    low says nothing about the best source's limit, and a fresh render is
+    still exploration. The objection names the source; the loop's
+    `lastScore` is the latest review's best refine score across sources.
+  - **Image transport.** 2 × N images per turn join the replayed
+    conversation as before (one at a time from disk/B2 to a temp-file
+    body). Provider count/size thresholds (`ManagerImageLimits`) apply to
+    the whole request, so with many sources a provider's published
+    downscale rule (e.g. Anthropic above 20 images) engages in fewer turns;
+    each change is recorded in the stored request as before.
+  - **Page.** The new-loop form is a checkbox picker with a live
+    "N selected: A gpt-image-2, B … · 2N renders per turn" readout. The
+    loop head lists the sources with their generator names; every render
+    entry carries a `source A · <generator>` tag next to its refine/fresh
+    badge; the chosen-lineage marker compares variant **and** source;
+    reviews show one scored block per render (heading `refine render ·
+    source B (grok-web pro)`), the decision names the render continued
+    from; the viewer walks turn → refine → fresh → source order and titles
+    each item with its source and generator; the sheet orders cells the
+    same way, labels each `source A: <generator>`, and lists all generators
+    in the header. Stored version-1–4 loops render exactly as before
+    (single source, no letters).
+  - **Compatibility.** `rendersPerTurn` and the parser branch on the
+    recorded `protocolVersion`; version-4 loops keep the pair fields and
+    string `continueFrom`; `POST /api/goal-loops` accepts repeated
+    `generators` fields or comma-separated values and still accepts the
+    legacy single `generator` field.
 - **Score scale.** 0–10; `goalMet` is meant for 9+ (and, for open-ended
   goals, only once the limit is demonstrated). The system prompt defines
   the bands so scores are comparable across turns and managers.
@@ -339,10 +414,10 @@ operator between them).
 |------|-----------|------|
 | `goal` | user → manager | the goal message (includes the turn budget) |
 | `design` | manager → system | raw JSON reply; `manager.parsed` holds the contract fields (protocol 4: `prompt` + `freshPrompt`), `manager.providerReasoning` the provider's thinking when returned |
-| `render-request` | system → generator | the exact prompt rendered; `render` holds job id, options, and (protocol 4) `variant` = `refine` \| `fresh`; two per turn from protocol 4 |
-| `render-result` | generator → system | image url/thumb/size/cost, or error + recovery hint; `render.variant` as above |
-| `review-request` | system → manager | review text; `images[]` holds the exact attachments sent, each with its `variant` (refine first, then fresh) |
-| `review` | manager → system | raw JSON reply with `evaluation` (refine), `freshEvaluation` (fresh), `continueFrom`, and both next prompts |
+| `render-request` | system → generator | the exact prompt rendered; `render` holds job id, generator key/label, options, (protocol 4) `variant` = `refine` \| `fresh`, and (protocol 5) `source` letter; 2 × generators per turn from protocol 5 |
+| `render-result` | generator → system | image url/thumb/size/cost, or error + recovery hint; `render.variant` / `render.source` as above |
+| `review-request` | system → manager | review text; `images[]` holds the exact attachments sent, each with its `variant` and `source` (refine first, then fresh; sources alphabetical) |
+| `review` | manager → system | raw JSON reply; protocol 4: `evaluation` (refine), `freshEvaluation` (fresh), string `continueFrom`; protocol 5: `renderEvaluations[] {variant, source, evaluation}`, `continueFrom` + `continueFromSource`, `bestSource`; plus both next prompts |
 | `objection` | system → manager | protocol 3: the previous review's `done` is not accepted (open-ended goal, no demonstrated limit); the review is asked again with `done` barred |
 | `note` | system → user | stop/resume/fork/done/crash annotations; never advance the loop |
 
@@ -356,9 +431,11 @@ raw provider response). Render entries carry the `gen-result` event JSON as
 - `GET /api/goal-loops` — list summaries (newest first).
 - `GET /api/goal-loops/{id}?after=N` — metadata + entries from index N;
   `revision` changes mean refetch from 0.
-- `POST /api/goal-loops` — form: `user`, `goal`, `generator`, `manager`,
-  `maxTurns`, `shape`, `detail`, `quality`, `moderation`, `goalKind`
-  (`auto` | `bounded` | `open-ended`).
+- `POST /api/goal-loops` — form: `user`, `goal`, `generators` (repeated
+  field or comma-separated, 1–8 distinct keys; legacy single `generator`
+  still accepted), `manager`, `maxTurns`, `shape`, `detail`, `quality`,
+  `moderation`, `goalKind` (`auto` | `bounded` | `open-ended`).
+  `/api/config.goalLoop.maxGenerators` publishes the cap.
 - `POST /api/goal-loops/{id}/sheet` — build/rebuild the all-turns sheet;
   returns `{ sheetEntryCount, sheetTurns, url }`. 409 when nothing rendered.
 - `GET /api/goal-loops/{id}/sheet` — the PNG (404 until built).
@@ -377,8 +454,8 @@ raw provider response). Render entries carry the `gen-result` event JSON as
 - `MultiImageClient/Workflows/UiWorkflow.cs` — endpoints and
   `/api/config.goalLoop`.
 - The runner emits each render job's `accepted` event itself with a
-  `goalLoop { id, turn, entryIndex, manager }` lineage object; `app.js`
-  renders it as the card badge.
+  `goalLoop { id, turn, entryIndex, variant, source, manager }` lineage
+  object; `app.js` renders it as the card badge.
 - `MultiImageClient/Ui/wwwroot/goal.html`, `goal.js`, `goal.css` — the page
   (identity chip, goal-kind selector, prompt diffs, sheet controls, viewer
   wiring).
@@ -392,9 +469,14 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   barred `done`), next-step planning (open-ended objection, done-permitted
   rule, best review), fork semantics; `GoalLoopPairTests` covers protocol 4
   (two prompts, both evaluations, `continueFrom`, pending-variant re-render,
-  refine-only degradation rule, single-render replay of stored v3 loops).
+  refine-only degradation rule, single-render replay of stored v3 loops);
+  `GoalLoopMultiSourceTests` covers protocol 5 (`evaluations[]` exactness,
+  object `continueFrom`, source letters in goal/review/objection text,
+  2 × N planning, per-generator pending re-render, per-source done rule,
+  `rendersPerTurn` derivation).
 - `GET /api/goal-loops` summaries and `GET /api/goal-loops/{id}` carry
-  `rendersPerTurn` and `bestVariant`.
+  `generators[] {key, label, source}`, `rendersPerTurn`, `bestVariant`, and
+  `bestSource`.
 
 ## 8. Live verification (2026-09-04, local `--ui`, gpt-image-2 low)
 

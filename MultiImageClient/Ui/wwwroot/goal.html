@@ -44,10 +44,11 @@
           </select>
           <span class="goal-help">Open-ended goals never stop on budget: the loop objects to a "done" until a render has pushed past the best result and degraded, demonstrating the generator's limit.</span>
         </label>
-        <label class="goal-field">
-          <span class="goal-label">image generator (exactly one)</span>
-          <select id="goal-generator" required></select>
-        </label>
+        <div class="goal-field">
+          <span class="goal-label">image generators (one or more) <span id="goal-generators-count" class="goal-generators-count"></span></span>
+          <div id="goal-generators" class="goal-generators" role="group" aria-label="image generators"></div>
+          <span class="goal-help">Every prompt of every turn is rendered by each selected generator. The manager sees them only as source A, B, … (the same letter is the same generator every turn), scores every render, and continues from the one render it chooses. The goal is one best image from any source.</span>
+        </div>
         <label class="goal-field">
           <span class="goal-label">manager model (exactly one)</span>
           <select id="goal-manager" required></select>
@@ -82,7 +83,7 @@
             </select>
           </label>
         </div>
-        <p class="goal-help">Every turn renders <strong>two</strong> images: a <strong>refine</strong> prompt that improves the render the manager chose to continue from, and a <strong>fresh</strong> prompt that re-attempts the goal from scratch with a new composition and style. The manager scores both and picks which one the next refine builds on, so the loop can leave a weak composition instead of iterating on it. Max turns counts turns, not images.</p>
+        <p class="goal-help">Every turn renders <strong>two</strong> images: a <strong>refine</strong> prompt that improves the render the manager chose to continue from, and a <strong>fresh</strong> prompt that re-attempts the goal from scratch with a new composition and style. With several generators, both prompts render on every one of them (2 × generators images per turn); the manager sees each generator only as a source letter (A, B, …) and scores every render. It picks the exact render the next refine builds on, so the loop can leave a weak composition or a weak source instead of iterating on it. Max turns counts turns, not images.</p>
         <p class="goal-help">The manager is not told which generator renders its prompts. No per-endpoint extra text is appended: the manager owns the whole prompt.</p>
         <div class="goal-form-row">
           <button id="goal-start" type="submit">start loop</button>

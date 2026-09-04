@@ -376,3 +376,25 @@
 .goal-eval-heading { font-size: 14px; font-weight: 900; color: var(--ink); }
 .goal-prompt-fresh { border-left: 4px solid #7a3fb8; padding-left: 10px; }
 .goal-fact-pair .goal-fact-value { color: #7a3fb8; }
+
+/* Protocol 5: several generators ("sources"). */
+.goal-generators {
+  display: flex; flex-wrap: wrap; gap: 6px 8px;
+  padding: 8px; border: 1px solid var(--accent); border-radius: 6px; background: #fff;
+}
+.goal-generator-choice {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px 4px 6px; border: 1px solid var(--accent); border-radius: 14px;
+  font-size: 13px; font-weight: 700; color: var(--ink); background: #fff; cursor: pointer;
+}
+.goal-generator-choice:has(input:checked) { color: #fff; background: var(--accent); }
+.goal-generator-choice.disabled { cursor: not-allowed; border-style: dashed; }
+.goal-generator-choice input { margin: 0; accent-color: #fff; }
+.goal-generators-count { font-size: 12px; font-weight: 700; color: var(--accent-dark); }
+.goal-generators-count.over { color: #b00020; }
+.goal-source-tag {
+  padding: 2px 9px; border-radius: 10px;
+  font-size: 12px; font-weight: 900; letter-spacing: 0;
+  color: #fff; background: var(--accent-dark);
+}
+.goal-fact-sources .goal-fact-value { font-size: 14px; line-height: 1.35; }
