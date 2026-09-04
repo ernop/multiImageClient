@@ -84,7 +84,7 @@ namespace MultiImageClient.Tests
             // call (reasoning_extraction). Keep it out of the prompt.
             Assert.DoesNotContain("alternatives you considered", UiGoalLoopProtocol.SystemPrompt);
             Assert.DoesNotContain("your full considerations", UiGoalLoopProtocol.SystemPrompt);
-            Assert.Equal(3, UiGoalLoopProtocol.Version);
+            Assert.Equal(4, UiGoalLoopProtocol.Version);
         }
     }
 
@@ -194,6 +194,9 @@ namespace MultiImageClient.Tests
 
     public class GoalLoopProtocolTests
     {
+        // Single-render contract; protocol 4 adds the fresh render (below).
+        private const int V3 = 3;
+
         private const string FirstDesign =
             "{\"reasoning\":\"Start with a literal reading of the goal.\",\"goalKind\":\"bounded\",\"evaluation\":null,"
             + "\"decision\":\"render\",\"designNotes\":\"Literal first pass.\","
@@ -203,7 +206,7 @@ namespace MultiImageClient.Tests
         [Fact]
         public void FirstReplyParsesWithoutEvaluation()
         {
-            var reply = UiGoalLoopProtocol.ParseManagerReply(FirstDesign, expectEvaluation: false);
+            var reply = UiGoalLoopProtocol.ParseManagerReply(FirstDesign, expectEvaluation: false, protocolVersion: V3);
             Assert.Equal("render", reply.Decision);
             Assert.Null(reply.Evaluation);
             Assert.Equal("Literal first pass.", reply.DesignNotes);
@@ -217,7 +220,7 @@ namespace MultiImageClient.Tests
             var raw = FirstDesign.Replace("\"evaluation\":null",
                 "\"evaluation\":{\"score\":5,\"goalMet\":false,\"assessment\":\"n/a\"}");
             var ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: false));
+                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: false, protocolVersion: V3));
             Assert.Contains("nothing has been rendered yet", ex.Message);
         }
 
@@ -226,7 +229,7 @@ namespace MultiImageClient.Tests
         {
             var raw = "{\"reasoning\":\"x\",\"goalKind\":\"bounded\",\"evaluation\":null,\"decision\":\"done\",\"doneStatement\":\"nothing to do\"}";
             var ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: false));
+                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: false, protocolVersion: V3));
             Assert.Contains("first reply must have decision \"render\"", ex.Message);
         }
 
@@ -235,13 +238,13 @@ namespace MultiImageClient.Tests
         {
             var raw = "{\"reasoning\":\"Looks close.\",\"decision\":\"render\",\"prompt\":\"again\"}";
             var ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: true));
+                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: true, protocolVersion: V3));
             Assert.Contains("\"evaluation\" must be an object", ex.Message);
 
             var missingGoalMet = "{\"reasoning\":\"r\",\"decision\":\"render\",\"prompt\":\"p\","
                 + "\"evaluation\":{\"score\":7,\"assessment\":\"ok\"}}";
             ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(missingGoalMet, expectEvaluation: true));
+                () => UiGoalLoopProtocol.ParseManagerReply(missingGoalMet, expectEvaluation: true, protocolVersion: V3));
             Assert.Contains("goalMet", ex.Message);
         }
 
@@ -253,7 +256,7 @@ namespace MultiImageClient.Tests
                 + "\"problems\":[\"beige wall\",\"\"],\"keep\":[\"framing\"]},"
                 + "\"decision\":\"render\",\"designNotes\":\"Force pure white.\","
                 + "\"prompt\":\"...\",\"doneStatement\":null,\"bestTurn\":1}\n```";
-            var reply = UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: true);
+            var reply = UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: true, protocolVersion: V3);
             Assert.NotNull(reply.Evaluation);
             Assert.Equal(6.5, reply.Evaluation!.Score);
             Assert.False(reply.Evaluation.GoalMet);
@@ -268,7 +271,7 @@ namespace MultiImageClient.Tests
             var raw = "{\"reasoning\":\"r\",\"decision\":\"done\",\"doneStatement\":\"d\","
                 + "\"evaluation\":{\"score\":11,\"goalMet\":true,\"assessment\":\"a\"}}";
             var ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: true));
+                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: true, protocolVersion: V3));
             Assert.Contains("within 0-10", ex.Message);
         }
 
@@ -277,21 +280,21 @@ namespace MultiImageClient.Tests
         {
             var noPrompt = "{\"reasoning\":\"r\",\"goalKind\":\"bounded\",\"decision\":\"render\",\"evaluation\":null}";
             Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(noPrompt, expectEvaluation: false));
+                () => UiGoalLoopProtocol.ParseManagerReply(noPrompt, expectEvaluation: false, protocolVersion: V3));
             var noStatement = "{\"reasoning\":\"r\",\"decision\":\"done\","
                 + "\"evaluation\":{\"score\":9,\"goalMet\":true,\"assessment\":\"a\"}}";
             Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(noStatement, expectEvaluation: true));
+                () => UiGoalLoopProtocol.ParseManagerReply(noStatement, expectEvaluation: true, protocolVersion: V3));
         }
 
         [Fact]
         public void ProseIsNeverAcceptedAsADesign()
         {
             var ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply("Sure! Here is a prompt: a red bicycle.", expectEvaluation: false));
+                () => UiGoalLoopProtocol.ParseManagerReply("Sure! Here is a prompt: a red bicycle.", expectEvaluation: false, protocolVersion: V3));
             Assert.Contains("did not follow the required JSON contract", ex.Message);
             Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply("   ", expectEvaluation: false));
+                () => UiGoalLoopProtocol.ParseManagerReply("   ", expectEvaluation: false, protocolVersion: V3));
         }
 
         [Fact]
@@ -313,7 +316,7 @@ namespace MultiImageClient.Tests
         {
             var raw = FirstDesign.Replace("\"goalKind\":\"bounded\",", "");
             var ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: false));
+                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: false, protocolVersion: V3));
             Assert.Contains("goalKind", ex.Message);
             // A protocol-2 loop never asked for the field: unchanged contract.
             var v2 = UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: false, protocolVersion: 2);
@@ -325,10 +328,10 @@ namespace MultiImageClient.Tests
         {
             var raw = FirstDesign.Replace("\"goalKind\":\"bounded\"", "\"goalKind\":\"maximal\"");
             var ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: false));
+                () => UiGoalLoopProtocol.ParseManagerReply(raw, expectEvaluation: false, protocolVersion: V3));
             Assert.Contains("\"goalKind\" must be", ex.Message);
             var open = UiGoalLoopProtocol.ParseManagerReply(
-                FirstDesign.Replace("\"goalKind\":\"bounded\"", "\"goalKind\":\"Open-Ended\""), expectEvaluation: false);
+                FirstDesign.Replace("\"goalKind\":\"bounded\"", "\"goalKind\":\"Open-Ended\""), expectEvaluation: false, protocolVersion: V3);
             Assert.Equal(UiGoalLoopGoalKinds.OpenEnded, open.GoalKind);
         }
 
@@ -337,16 +340,16 @@ namespace MultiImageClient.Tests
         {
             var done = "{\"reasoning\":\"r\",\"decision\":\"done\",\"doneStatement\":\"d\","
                 + "\"evaluation\":{\"score\":9,\"goalMet\":true,\"assessment\":\"a\"}}";
-            Assert.Equal("done", UiGoalLoopProtocol.ParseManagerReply(done, expectEvaluation: true).Decision);
+            Assert.Equal("done", UiGoalLoopProtocol.ParseManagerReply(done, expectEvaluation: true, protocolVersion: V3).Decision);
             var ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopProtocol.ParseManagerReply(done, expectEvaluation: true, permitDone: false));
+                () => UiGoalLoopProtocol.ParseManagerReply(done, expectEvaluation: true, permitDone: false, protocolVersion: V3));
             Assert.Contains("barred", ex.Message);
         }
 
         [Fact]
         public void GoalMessageCarriesTheOperatorsClassificationOrAsksForOne()
         {
-            var auto = UiGoalLoopProtocol.BuildGoalMessage("as many fish as possible", 6);
+            var auto = UiGoalLoopProtocol.BuildGoalMessage("as many fish as possible", 6, V3);
             Assert.Contains("Classify the GOAL", auto);
             var declared = UiGoalLoopProtocol.BuildGoalMessage("as many fish as possible", 6, 3, UiGoalLoopGoalKinds.OpenEnded);
             Assert.Contains("classified this GOAL as \"open-ended\"", declared);
@@ -384,7 +387,7 @@ namespace MultiImageClient.Tests
         [Fact]
         public void ObjectionNamesTheRuleTheEvidenceAndTheRequiredDecision()
         {
-            var text = UiGoalLoopProtocol.BuildObjectionText(2, 2, bestTurn: 2, bestScore: 9, latestScore: 9);
+            var text = UiGoalLoopProtocol.BuildObjectionText(2, 2, bestTurn: 2, bestScore: 9, latestScore: 9, protocolVersion: V3);
             Assert.Contains("not accepted", text);
             Assert.Contains("best result is turn 2 (score 9)", text);
             Assert.Contains("\"done\" is barred", text);
@@ -539,10 +542,12 @@ namespace MultiImageClient.Tests
         public void OpenEndedDoneWithoutADemonstratedLimitIsObjectedTo()
         {
             var entries = FishLoop();
-            var step = UiGoalLoopPlanner.DetermineNextStep(entries, 2, UiGoalLoopGoalKinds.OpenEnded);
+            var step = UiGoalLoopPlanner.DetermineNextStep(entries, 2, UiGoalLoopGoalKinds.OpenEnded, protocolVersion: 3);
             Assert.Equal(UiGoalLoopStepKind.Objection, step.Kind);
             Assert.Equal(2, step.Turn);
             Assert.Contains("no later render scored below", step.Reason);
+            Assert.Equal(UiGoalLoopStepKind.Objection,
+                UiGoalLoopPlanner.DetermineNextStep(entries, 2, UiGoalLoopGoalKinds.OpenEnded).Kind);
             Assert.False(UiGoalLoopPlanner.IsDonePermitted(entries, UiGoalLoopGoalKinds.OpenEnded));
             // The budget being exhausted (maxTurns 2) changes nothing.
             Assert.Equal(UiGoalLoopStepKind.Objection,
@@ -574,8 +579,8 @@ namespace MultiImageClient.Tests
         public void BestReviewIsTheFirstTurnHoldingTheMaximum()
         {
             var best = UiGoalLoopPlanner.BestReview(FishLoop(turn2Score: 9));
-            Assert.Equal((1, 9d), best);
-            Assert.Equal((2, 9.5d), UiGoalLoopPlanner.BestReview(FishLoop(turn2Score: 9.5)));
+            Assert.Equal((1, (string?)null, 9d), best);
+            Assert.Equal((2, (string?)null, 9.5d), UiGoalLoopPlanner.BestReview(FishLoop(turn2Score: 9.5)));
         }
 
         [Fact]
@@ -627,7 +632,7 @@ namespace MultiImageClient.Tests
                 {
                     Model = "test-model", InputTokens = 10, OutputTokens = 20, CostUsd = 0.01m,
                     Parsed = UiGoalLoopProtocol.ParseManagerReply(
-                        "{\"reasoning\":\"r\",\"goalKind\":\"bounded\",\"evaluation\":null,\"decision\":\"render\",\"prompt\":\"prompt one\"}", false),
+                        "{\"reasoning\":\"r\",\"goalKind\":\"bounded\",\"evaluation\":null,\"decision\":\"render\",\"prompt\":\"prompt one\"}", false, protocolVersion: 3),
                 },
             };
             var request = new UiGoalLoopEntry
@@ -698,7 +703,7 @@ namespace MultiImageClient.Tests
         public void EditingAManagerReplyReparsesAndDropsProviderAccounting()
         {
             var newReply = "{\"reasoning\":\"operator rewrite\",\"goalKind\":\"bounded\",\"evaluation\":null,\"decision\":\"render\",\"prompt\":\"prompt zero\"}";
-            var copies = UiGoalLoopPlanner.BuildForkEntries(Parent(), 1, newReply, out _);
+            var copies = UiGoalLoopPlanner.BuildForkEntries(Parent(), 1, newReply, out _, protocolVersion: 3);
             // An edited first design in a protocol-2 loop needs no goalKind.
             var v2 = UiGoalLoopPlanner.BuildForkEntries(Parent(), 1,
                 "{\"reasoning\":\"r\",\"evaluation\":null,\"decision\":\"render\",\"prompt\":\"p\"}", out _, protocolVersion: 2);
@@ -719,7 +724,7 @@ namespace MultiImageClient.Tests
         public void EditedManagerReplyMustStillFollowTheContract()
         {
             var ex = Assert.Throws<InvalidDataException>(
-                () => UiGoalLoopPlanner.BuildForkEntries(Parent(), 1, "just make it bluer", out _));
+                () => UiGoalLoopPlanner.BuildForkEntries(Parent(), 1, "just make it bluer", out _, protocolVersion: 3));
             Assert.Contains("must itself follow the JSON contract", ex.Message);
         }
 
@@ -742,6 +747,287 @@ namespace MultiImageClient.Tests
             Assert.Equal(6, UiGoalLoopPlanner.ValidateMaxTurns(6));
             Assert.Throws<InvalidDataException>(() => UiGoalLoopPlanner.ValidateMaxTurns(0));
             Assert.Throws<InvalidDataException>(() => UiGoalLoopPlanner.ValidateMaxTurns(UiGoalLoopPlanner.MaxTurnsCap + 1));
+        }
+    }
+
+    // ---- protocol 4: two renders per turn (refine + fresh) ----
+    public class GoalLoopPairTests
+    {
+        private const string FirstDesign =
+            "{\"reasoning\":\"Two approaches.\",\"goalKind\":\"open-ended\",\"evaluation\":null,\"freshEvaluation\":null,\"continueFrom\":null,"
+            + "\"decision\":\"render\",\"prompt\":\"A poster grid of 20 labeled fish.\",\"freshPrompt\":\"A coral reef teeming with 20 species, each labeled.\","
+            + "\"designNotes\":\"grid\",\"freshDesignNotes\":\"scene\",\"doneStatement\":null,\"bestTurn\":null,\"bestVariant\":null}";
+
+        private const string Review =
+            "{\"reasoning\":\"The reef shows more and reads better.\",\"goalKind\":\"open-ended\","
+            + "\"evaluation\":{\"score\":7,\"goalMet\":false,\"assessment\":\"grid ok\",\"problems\":[],\"keep\":[]},"
+            + "\"freshEvaluation\":{\"score\":8.5,\"goalMet\":false,\"assessment\":\"reef better\",\"problems\":[\"two labels merged\"],\"keep\":[\"depth\"]},"
+            + "\"continueFrom\":\"fresh\",\"decision\":\"render\",\"prompt\":\"Reef with 30 species.\",\"freshPrompt\":\"An aquarium wall of 30 tanks.\","
+            + "\"bestTurn\":1,\"bestVariant\":\"fresh\"}";
+
+        [Fact]
+        public void FirstDesignCarriesTwoDifferentPrompts()
+        {
+            var reply = UiGoalLoopProtocol.ParseManagerReply(FirstDesign, expectEvaluation: false);
+            Assert.StartsWith("A poster grid", reply.Prompt);
+            Assert.StartsWith("A coral reef", reply.FreshPrompt);
+            Assert.Null(reply.ContinueFrom);
+            Assert.Equal("scene", reply.FreshDesignNotes);
+
+            var noFresh = FirstDesign.Replace(",\"freshPrompt\":\"A coral reef teeming with 20 species, each labeled.\"", "");
+            var ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(noFresh, expectEvaluation: false));
+            Assert.Contains("freshPrompt", ex.Message);
+
+            var same = FirstDesign.Replace("A coral reef teeming with 20 species, each labeled.", "A poster grid of 20 labeled fish.");
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(same, expectEvaluation: false));
+            Assert.Contains("must differ", ex.Message);
+
+            var early = FirstDesign.Replace("\"continueFrom\":null", "\"continueFrom\":\"refine\"");
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(early, expectEvaluation: false));
+            Assert.Contains("continueFrom", ex.Message);
+        }
+
+        [Fact]
+        public void ReviewCarriesBothEvaluationsAndTheLineageChoice()
+        {
+            var reply = UiGoalLoopProtocol.ParseManagerReply(Review, expectEvaluation: true);
+            Assert.Equal(7, reply.Evaluation!.Score);
+            Assert.Equal(8.5, reply.FreshEvaluation!.Score);
+            Assert.Equal(UiGoalLoopVariants.Fresh, reply.ContinueFrom);
+            Assert.Equal(UiGoalLoopVariants.Fresh, reply.BestVariant);
+            Assert.Equal(2, reply.Evaluations().Count());
+            Assert.Equal(UiGoalLoopVariants.Refine, reply.Evaluations().First().Variant);
+
+            var noFreshEval = Review.Replace("\"freshEvaluation\":{\"score\":8.5,\"goalMet\":false,\"assessment\":\"reef better\",\"problems\":[\"two labels merged\"],\"keep\":[\"depth\"]},", "");
+            var ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(noFreshEval, expectEvaluation: true));
+            Assert.Contains("freshEvaluation", ex.Message);
+
+            var noChoice = Review.Replace("\"continueFrom\":\"fresh\",", "");
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(noChoice, expectEvaluation: true));
+            Assert.Contains("continueFrom", ex.Message);
+
+            var badChoice = Review.Replace("\"continueFrom\":\"fresh\"", "\"continueFrom\":\"both\"");
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(badChoice, expectEvaluation: true));
+            Assert.Contains("\"continueFrom\" must be", ex.Message);
+        }
+
+        [Fact]
+        public void DoneAfterAReviewNeedsNeitherPromptsNorALineageChoice()
+        {
+            var done = "{\"reasoning\":\"r\",\"decision\":\"done\",\"doneStatement\":\"turn 1 fresh is best\","
+                + "\"evaluation\":{\"score\":5,\"goalMet\":false,\"assessment\":\"a\"},"
+                + "\"freshEvaluation\":{\"score\":4,\"goalMet\":false,\"assessment\":\"b\"},\"bestTurn\":1,\"bestVariant\":\"fresh\"}";
+            var reply = UiGoalLoopProtocol.ParseManagerReply(done, expectEvaluation: true);
+            Assert.Equal("done", reply.Decision);
+            Assert.Null(reply.ContinueFrom);
+        }
+
+        [Fact]
+        public void OlderLoopsNeverDemandTheFreshFields()
+        {
+            var v3 = "{\"reasoning\":\"r\",\"goalKind\":\"bounded\",\"evaluation\":null,\"decision\":\"render\",\"prompt\":\"p\"}";
+            var reply = UiGoalLoopProtocol.ParseManagerReply(v3, expectEvaluation: false, protocolVersion: 3);
+            Assert.Null(reply.FreshPrompt);
+            Assert.Empty(reply.Evaluations());
+            var v3Review = "{\"reasoning\":\"r\",\"decision\":\"render\",\"prompt\":\"p\",\"evaluation\":{\"score\":6,\"goalMet\":false,\"assessment\":\"a\"}}";
+            var reviewed = UiGoalLoopProtocol.ParseManagerReply(v3Review, expectEvaluation: true, protocolVersion: 3);
+            Assert.Equal(((string?)null, 6d), reviewed.Evaluations().Select(x => (x.Variant, x.Evaluation.Score)).Single());
+        }
+
+        [Fact]
+        public void GoalMessageAndSystemPromptDescribeTheTwoRenders()
+        {
+            var goal = UiGoalLoopProtocol.BuildGoalMessage("as many fish as possible", 6);
+            Assert.Contains("freshPrompt", goal);
+            Assert.Contains("turn(s)", goal);
+            Assert.Contains("freshPrompt", UiGoalLoopProtocol.SystemPrompt);
+            Assert.Contains("continueFrom", UiGoalLoopProtocol.SystemPrompt);
+            Assert.Contains("from-scratch", UiGoalLoopProtocol.SystemPrompt);
+        }
+
+        private static UiGoalLoopProtocol.UiGoalLoopTurnRender TurnRender(string variant, bool ok, string prompt = "p")
+            => new(variant,
+                new UiGoalLoopRenderData { Variant = variant, Ok = ok, Size = ok ? "1024x1024" : null },
+                prompt, prompt, ok ? null : "boom",
+                ok ? new UiGoalLoopSentImage { Variant = variant, Transport = "verbatim" } : null);
+
+        [Fact]
+        public void PairReviewRequestNamesEachRenderAndItsAttachmentNumber()
+        {
+            var text = UiGoalLoopProtocol.BuildPairReviewRequestText(
+                2, 6, new[] { TurnRender("refine", true), TurnRender("fresh", true) }, "fresh",
+                UiGoalLoopGoalKinds.OpenEnded, 1, "fresh", 8.5);
+            Assert.Contains("REFINE render: the generator returned an image (1024x1024 pixels); it is attached image #1", text);
+            Assert.Contains("FRESH render: the generator returned an image (1024x1024 pixels); it is attached image #2", text);
+            Assert.Contains("built on the fresh render of turn 1", text);
+            Assert.Contains("Best so far: turn 1 fresh render (score 8.5)", text);
+            Assert.Contains("JSON", text);
+
+            // A failed refine keeps the fresh image as attachment #1.
+            var oneFailed = UiGoalLoopProtocol.BuildPairReviewRequestText(
+                1, 6, new[] { TurnRender("refine", false), TurnRender("fresh", true) }, null, null, null, null, null);
+            Assert.Contains("REFINE render: the generator FAILED", oneFailed);
+            Assert.Contains("FRESH render: the generator returned an image (1024x1024 pixels); it is attached image #1", oneFailed);
+        }
+
+        [Fact]
+        public void ObjectionUnderProtocol4SpeaksOfTheRefineRender()
+        {
+            var text = UiGoalLoopProtocol.BuildObjectionText(2, 6, 1, 8.5, 8, protocolVersion: 4, bestVariant: "fresh");
+            Assert.Contains("refine render has pushed past", text);
+            Assert.Contains("turn 1 (fresh render) (score 8.5)", text);
+            Assert.Contains("and a fresh prompt", text);
+            Assert.Contains("Turns remaining after turn 2: 4", text);
+        }
+
+        // ---- planner ----
+
+        private static UiGoalLoopEntry Entry(int index, int turn, string kind, string? variant = null, string text = "t")
+        {
+            var e = new UiGoalLoopEntry { Index = index, Turn = turn, Kind = kind, Text = text };
+            if (variant != null || kind == UiGoalLoopKinds.RenderRequest || kind == UiGoalLoopKinds.RenderResult)
+            {
+                e.Render = new UiGoalLoopRenderData { Variant = variant, Ok = kind == UiGoalLoopKinds.RenderResult };
+            }
+            return e;
+        }
+
+        private static UiGoalLoopEntry Reply(int index, int turn, string kind, string decision, string? prompt, string? fresh,
+            double? refineScore, double? freshScore, string? continueFrom)
+        {
+            var e = Entry(index, turn, kind, text: "{...}");
+            e.Manager = new UiGoalLoopManagerData
+            {
+                Model = "m",
+                Parsed = new UiGoalLoopManagerReply
+                {
+                    Reasoning = "r",
+                    Decision = decision,
+                    Prompt = prompt,
+                    FreshPrompt = fresh,
+                    ContinueFrom = continueFrom,
+                    DoneStatement = decision == "done" ? "done" : null,
+                    GoalKind = UiGoalLoopGoalKinds.OpenEnded,
+                    Evaluation = refineScore.HasValue ? new UiGoalLoopEvaluation { Score = refineScore.Value, Assessment = "a" } : null,
+                    FreshEvaluation = freshScore.HasValue ? new UiGoalLoopEvaluation { Score = freshScore.Value, Assessment = "b" } : null,
+                },
+            };
+            return e;
+        }
+
+        // Turn 1: refine 7, fresh 8.5 → continue from fresh. Turn 2 pending.
+        private static List<UiGoalLoopEntry> PairLoop() => new()
+        {
+            Entry(0, 0, UiGoalLoopKinds.Goal, text: "as many fish as possible"),
+            Reply(1, 1, UiGoalLoopKinds.Design, "render", "grid 20", "reef 20", null, null, null),
+            Entry(2, 1, UiGoalLoopKinds.RenderRequest, "refine", "grid 20"),
+            Entry(3, 1, UiGoalLoopKinds.RenderRequest, "fresh", "reef 20"),
+            Entry(4, 1, UiGoalLoopKinds.RenderResult, "fresh"),
+            Entry(5, 1, UiGoalLoopKinds.RenderResult, "refine"),
+            Entry(6, 1, UiGoalLoopKinds.ReviewRequest),
+            Reply(7, 1, UiGoalLoopKinds.Review, "render", "reef 30", "tanks 30", 7, 8.5, "fresh"),
+        };
+
+        [Fact]
+        public void ADesignPlansBothRendersRefineFirst()
+        {
+            var step = UiGoalLoopPlanner.DetermineNextStep(PairLoop().Take(2).ToList(), 6);
+            Assert.Equal(UiGoalLoopStepKind.Render, step.Kind);
+            Assert.Equal(2, step.Renders.Count);
+            Assert.Equal(("refine", "grid 20"), (step.Renders[0].Variant, step.Renders[0].Prompt));
+            Assert.Equal(("fresh", "reef 20"), (step.Renders[1].Variant, step.Renders[1].Prompt));
+            Assert.Equal("grid 20", step.Prompt);
+            Assert.All(step.Renders, r => Assert.Null(r.ReplaceIndex));
+        }
+
+        [Fact]
+        public void TheReviewWaitsUntilEveryRequestedRenderHasAResult()
+        {
+            // Both requested, only fresh rendered: the refine is still owed,
+            // filled in place at its request index.
+            var step = UiGoalLoopPlanner.DetermineNextStep(PairLoop().Take(5).ToList(), 6);
+            Assert.Equal(UiGoalLoopStepKind.Render, step.Kind);
+            Assert.Single(step.Renders);
+            Assert.Equal("refine", step.Renders[0].Variant);
+            Assert.Equal(2, step.Renders[0].ReplaceIndex);
+            Assert.Equal("grid 20", step.Renders[0].Prompt);
+            // Both rendered (in either order): ask for the review.
+            Assert.Equal(UiGoalLoopStepKind.AskManagerReview, UiGoalLoopPlanner.DetermineNextStep(PairLoop().Take(6).ToList(), 6).Kind);
+            // Both requested, neither rendered: both owed, refine first.
+            var both = UiGoalLoopPlanner.DetermineNextStep(PairLoop().Take(4).ToList(), 6);
+            Assert.Equal(new[] { "refine", "fresh" }, both.Renders.Select(r => r.Variant));
+            Assert.Equal(new int?[] { 2, 3 }, both.Renders.Select(r => r.ReplaceIndex));
+        }
+
+        [Fact]
+        public void AReviewPlansTheNextPairAndTheBudgetCountsTurns()
+        {
+            var step = UiGoalLoopPlanner.DetermineNextStep(PairLoop(), 6);
+            Assert.Equal(UiGoalLoopStepKind.Render, step.Kind);
+            Assert.Equal(2, step.Turn);
+            Assert.Equal(new[] { "reef 30", "tanks 30" }, step.Renders.Select(r => r.Prompt));
+            var exhausted = UiGoalLoopPlanner.DetermineNextStep(PairLoop(), 1);
+            Assert.Equal(UiGoalLoopStepKind.Exhausted, exhausted.Kind);
+            Assert.Contains("allows 1 turn(s)", exhausted.Reason);
+            Assert.Equal(1, UiGoalLoopPlanner.CountRenderedTurns(PairLoop()));
+            Assert.Equal(2, UiGoalLoopPlanner.CountRenders(PairLoop()));
+        }
+
+        [Fact]
+        public void BestReviewSeesBothRendersAndOnlyRefineDegradationPermitsDone()
+        {
+            var entries = PairLoop();
+            Assert.Equal((1, "fresh", 8.5), UiGoalLoopPlanner.BestReview(entries));
+            // Turn 2: refine 9 (new best), fresh 3 (exploration flopped) → no limit shown.
+            entries.Add(Entry(8, 2, UiGoalLoopKinds.RenderRequest, "refine", "reef 30"));
+            entries.Add(Entry(9, 2, UiGoalLoopKinds.RenderRequest, "fresh", "tanks 30"));
+            entries.Add(Entry(10, 2, UiGoalLoopKinds.RenderResult, "refine"));
+            entries.Add(Entry(11, 2, UiGoalLoopKinds.RenderResult, "fresh"));
+            entries.Add(Entry(12, 2, UiGoalLoopKinds.ReviewRequest));
+            entries.Add(Reply(13, 2, UiGoalLoopKinds.Review, "done", null, null, 9, 3, null));
+            Assert.Equal((2, "refine", 9d), UiGoalLoopPlanner.BestReview(entries));
+            Assert.False(UiGoalLoopPlanner.IsDonePermitted(entries, UiGoalLoopGoalKinds.OpenEnded));
+            var step = UiGoalLoopPlanner.DetermineNextStep(entries, 6, UiGoalLoopGoalKinds.OpenEnded);
+            Assert.Equal(UiGoalLoopStepKind.Objection, step.Kind);
+            Assert.Contains("no later refine render scored below", step.Reason);
+            // Turn 3: refine 6 (overshot), fresh 9.5 (a new best elsewhere) → the
+            // refine push degraded below the best-at-that-time... but the best is
+            // now the fresh 9.5 at turn 3, and nothing after it has degraded.
+            entries.Add(Entry(14, 2, UiGoalLoopKinds.Objection));
+            entries.Add(Reply(15, 2, UiGoalLoopKinds.Review, "render", "reef 45", "mural 45", 9, 3, "refine"));
+            entries.Add(Entry(16, 3, UiGoalLoopKinds.RenderRequest, "refine", "reef 45"));
+            entries.Add(Entry(17, 3, UiGoalLoopKinds.RenderRequest, "fresh", "mural 45"));
+            entries.Add(Entry(18, 3, UiGoalLoopKinds.RenderResult, "refine"));
+            entries.Add(Entry(19, 3, UiGoalLoopKinds.RenderResult, "fresh"));
+            entries.Add(Entry(20, 3, UiGoalLoopKinds.ReviewRequest));
+            entries.Add(Reply(21, 3, UiGoalLoopKinds.Review, "done", null, null, 6, 9.5, null));
+            Assert.Equal((3, "fresh", 9.5), UiGoalLoopPlanner.BestReview(entries));
+            Assert.False(UiGoalLoopPlanner.IsDonePermitted(entries, UiGoalLoopGoalKinds.OpenEnded));
+            // Turn 4: refine (continuing from the 9.5 fresh) scores 8 → degraded past the best.
+            entries.Add(Entry(22, 3, UiGoalLoopKinds.Objection));
+            entries.Add(Reply(23, 3, UiGoalLoopKinds.Review, "render", "mural 60", "atlas 60", 6, 9.5, "fresh"));
+            entries.Add(Entry(24, 4, UiGoalLoopKinds.RenderRequest, "refine", "mural 60"));
+            entries.Add(Entry(25, 4, UiGoalLoopKinds.RenderRequest, "fresh", "atlas 60"));
+            entries.Add(Entry(26, 4, UiGoalLoopKinds.RenderResult, "refine"));
+            entries.Add(Entry(27, 4, UiGoalLoopKinds.RenderResult, "fresh"));
+            entries.Add(Entry(28, 4, UiGoalLoopKinds.ReviewRequest));
+            entries.Add(Reply(29, 4, UiGoalLoopKinds.Review, "done", null, null, 8, 9.5, null));
+            Assert.True(UiGoalLoopPlanner.IsDonePermitted(entries, UiGoalLoopGoalKinds.OpenEnded));
+            Assert.Equal(UiGoalLoopStepKind.Done, UiGoalLoopPlanner.DetermineNextStep(entries, 6, UiGoalLoopGoalKinds.OpenEnded).Kind);
+        }
+
+        [Fact]
+        public void SingleRenderLoopsStillPlanOneRenderUnderTheirOwnVersion()
+        {
+            var entries = new List<UiGoalLoopEntry>
+            {
+                Entry(0, 0, UiGoalLoopKinds.Goal),
+                Reply(1, 1, UiGoalLoopKinds.Design, "render", "only prompt", null, null, null, null),
+            };
+            var step = UiGoalLoopPlanner.DetermineNextStep(entries, 6, null, protocolVersion: 3);
+            Assert.Single(step.Renders);
+            Assert.Null(step.Renders[0].Variant);
+            Assert.Equal("only prompt", step.Prompt);
         }
     }
 }

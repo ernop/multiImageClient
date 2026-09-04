@@ -3351,6 +3351,8 @@ namespace MultiImageClient
             lastScore = loop.LastScore,
             bestScore = loop.BestScore,
             bestTurn = loop.BestTurn,
+            bestVariant = loop.BestVariant,
+            rendersPerTurn = loop.RendersPerTurn,
             parentLoopId = loop.ParentLoopId,
             forkedAtEntry = loop.ForkedAtEntry,
             managerCostUsd = loop.ManagerCostUsd,

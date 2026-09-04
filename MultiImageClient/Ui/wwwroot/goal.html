@@ -82,6 +82,7 @@
             </select>
           </label>
         </div>
+        <p class="goal-help">Every turn renders <strong>two</strong> images: a <strong>refine</strong> prompt that improves the render the manager chose to continue from, and a <strong>fresh</strong> prompt that re-attempts the goal from scratch with a new composition and style. The manager scores both and picks which one the next refine builds on, so the loop can leave a weak composition instead of iterating on it. Max turns counts turns, not images.</p>
         <p class="goal-help">The manager is not told which generator renders its prompts. No per-endpoint extra text is appended: the manager owns the whole prompt.</p>
         <div class="goal-form-row">
           <button id="goal-start" type="submit">start loop</button>

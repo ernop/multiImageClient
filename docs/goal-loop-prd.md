@@ -12,15 +12,19 @@ look at the output. The goal loop is the second use case:
 1. The user enters a **goal** — the outcome they want, not a prompt.
 2. The user picks exactly **one image generator** (any image target from the
    composer catalog) and exactly **one manager model** (a text+vision LLM).
-3. The manager receives the goal and answers with an image design (a complete
-   prompt plus its reasoning).
-4. The server renders that prompt with the chosen generator.
-5. The rendered image (or the generator's error) goes back to the manager,
-   in the **same growing conversation**, together with the turn number and
-   remaining budget.
-6. The manager scores the render 0–10 against the goal, explains what it
-   sees, and either sends a redesigned prompt (steps 4–6 repeat) or declares
-   the loop done and names the best turn.
+3. The manager receives the goal and answers with **two** image designs
+   (protocol 4): a **refine** prompt (its primary design) and a **fresh**
+   prompt (a clearly different from-scratch approach), each complete, plus
+   its reasoning.
+4. The server renders both prompts with the chosen generator, concurrently.
+5. Both rendered images (or the generator's error for either) go back to
+   the manager, in the **same growing conversation**, together with the turn
+   number and remaining budget.
+6. The manager scores each render 0–10 against the goal, explains what it
+   sees, names which of the two renders the lineage **continues from**, and
+   either sends the next pair — a refine of the chosen render and a new
+   from-scratch attempt informed by everything learned — (steps 4–6 repeat)
+   or declares the loop done and names the best turn and render.
 
 Every step is recorded and shown live on a dedicated page. The loop can be
 stopped, resumed, granted more turns, and forked from any message — including
@@ -41,7 +45,7 @@ after editing the text of that message.
 | R9 | Vertical readable series of turns | Entries are grouped under turn headings, newest at the bottom, each turn one bordered column. |
 | R10 | Stop / resume / resume from here | Stop marks the loop `stopped` and cancels in-flight work at the next boundary. Resume continues from the effective tail. Fork from any entry creates a child loop that continues from that point. |
 | R11 | Edit text inside a turn, fork after modifying | Editable entries (goal, design, render request, review request, review) have an `edit + fork` control. The fork copies entries up to that point, replaces the text, drops everything derived from the old text, and runs from there. |
-| R12 | Default 6 turns, settable at initiation | `maxTurns` defaults to 6, range 1–30, set on the new-loop form; resume may grant more turns. A "turn" is one render. |
+| R12 | Default 6 turns, settable at initiation | `maxTurns` defaults to 6, range 1–30, set on the new-loop form; resume may grant more turns. A "turn" is one manager design cycle: one render before protocol 4, the refine + fresh pair from protocol 4. |
 | R13 | Manager is not told the generator identity | The system prompt says the generator's identity is withheld. No generator name, label, or model appears in any manager-bound text. |
 | R14 | Manager rates and explains whether to try again | Required `evaluation` object on every reply after a render; `decision` is `render` or `done` with the reason in `reasoning`/`doneStatement`. |
 | R15 (2026-09-04) | "As many as possible" must not stop early | Protocol 3 goal kinds. An open-ended goal may end only after a render pushed past the best result and degraded; the turn budget is never a reason to stop; the server objects to a premature `done` and re-asks with `done` barred. See section 3, "Goal kinds". |
@@ -49,6 +53,7 @@ after editing the text of that message.
 | R17 | Reuse the existing identity | The page shows the composer's creating-as name (authenticated profile display name first, else the canonical personal configuration document's `creatingAs`, else the legacy mirror key) as a read-only chip. A name input appears only when none exists; what it collects is written back to the canonical document. |
 | R18 | See the prompt changes turn to turn | Word-level LCS diff (`ins`/`del`, `+N −M words` summary, plain-text toggle) on every render request against the previous rendered prompt, and on every review's next prompt against the prompt just rendered. |
 | R19 | One image with every step | **build all-turns contact sheet** on the loop head renders one PNG: header band (goal, generator, manager, kind, best turn, status) above a square grid of every rendered turn with its score, `turn N of M`, pixel size, the exact prompt, and the manager's assessment/problems. Rebuild is offered when entries were added since. |
+| R20 (2026-09-04, later) | Leave the rut: two renders per turn | The user observed loops iterating on one image, each turn a small edit of the last prompt, never leaving a weak composition. Protocol 4: every turn renders a **refine** prompt (an improvement of the render the manager chose to continue from; on turn 1 the primary design) **and** a **fresh** prompt (a from-scratch re-attempt at the goal: new composition, staging, camera, medium/style, palette — a different way to convey the same point, written with what has been learned so far). The manager scores both and sets `continueFrom` to the render its next refine builds on, so the lineage can jump to the fresh image at any turn. See section 3, "Protocol version 4". |
 
 ## 3. Settled decisions
 
@@ -131,6 +136,57 @@ after editing the text of that message.
     far. Stored version-1/2 loops keep their recorded contract: no goal
     kinds, no objections, original goal-message wording on replay; an
     edited manager reply in a fork is parsed under the parent's version.
+- **Protocol version 4: two renders per turn (2026-09-04, later).**
+  What happened: loops iterated on one image. Each review's next prompt
+  was a small edit of the prompt just rendered, so a weak first composition
+  stayed for the whole budget; the manager never tried another way to
+  convey the goal. Version 4 changes:
+  - Every `render` reply carries two complete prompts. `prompt` is the
+    **refine** render: an improvement of the render the manager chose to
+    continue from (on turn 1, the primary design). `freshPrompt` is the
+    **fresh** render: a from-scratch re-attempt at the goal with new
+    composition, staging, camera, medium/style, and palette, written with
+    everything learned so far. The prompt states the test: "if a reader
+    could mistake one for an edit of the other, the fresh prompt is not
+    fresh". Identical prompt texts are a parse error. `freshDesignNotes`
+    explains how the fresh design differs.
+  - After a render, the reply carries `evaluation` (refine) and
+    `freshEvaluation` (fresh), each the full 0–10 object, and a required
+    `continueFrom` (`refine` | `fresh`): the render the next refine builds
+    on. Choosing `fresh` moves the lineage onto the new composition. On
+    `done`, `bestVariant` names which render of `bestTurn` is best.
+  - The runner writes both `render-request` entries, then runs both
+    render jobs concurrently (two normal single-generator `UiJob`s; the
+    main-feed badge reads `goal loop · turn N · refine|fresh`). Each
+    result is appended as it finishes. The review request describes the
+    two renders in order (refine, then fresh) and attaches both images in
+    that order; a failed render is described by its error text. Stop or
+    crash between the two results leaves the turn with pending renders,
+    and the planner re-renders exactly the missing variant on resume.
+  - **Open-ended rule uses the refine lineage.** Each refine render must
+    push the maximized quantity past the best acceptable result; the fresh
+    render may explore another way of fitting more in.
+    `UiGoalLoopPlanner.IsDonePermitted` accepts `done` only when a later
+    turn's **refine** evaluation scored strictly below the best score
+    across all renders; a fresh render scoring low is exploration, not a
+    demonstrated limit. The objection text asks for a refine prompt that
+    pushes further plus a fresh prompt, with `done` barred.
+  - `BestReview` returns `(turn, variant, score)`; the loop records
+    `bestTurn` + `bestVariant`; `rendersPerTurn` (`2` from version 4, else
+    `1`) is derived from the recorded `protocolVersion`, so stored version
+    1–3 loops replay, resume, fork, and parse under their own single-render
+    contract (`freshPrompt`/`freshEvaluation`/`continueFrom` are ignored
+    there, never required).
+  - Page: each render request and result carries a `refine` / `fresh`
+    badge; the result the manager continued from shows **manager continues
+    from this one**; reviews show both scores with the chosen one marked;
+    the refine prompt diff is computed against its **lineage base** (the
+    prompt of the render the manager continued from, traced through
+    `continueFrom`), and the fresh prompt is shown plain, since a diff
+    against an unrelated prompt has no meaning. The all-turns sheet orders
+    cells turn → refine → fresh, labels each with its variant, marks the
+    continued-from render, and the header states "2 renders per turn".
+    The viewer walks refine then fresh within each turn.
 - **Score scale.** 0–10; `goalMet` is meant for 9+ (and, for open-ended
   goals, only once the limit is demonstrated). The system prompt defines
   the bands so scores are comparable across turns and managers.
@@ -160,10 +216,10 @@ after editing the text of that message.
   applied to goal-loop renders. The universal daylight/clarity default lives
   in the manager's system prompt instead, so the manager writes it into the
   prompt when it matters.
-- **One render per turn, exactly the manager's text.** The render is a normal
+- **Each render is exactly the manager's text.** A render is a normal
   `UiJob` (one generator, `n=1`, the loop's shape/detail/quality/moderation)
-  and appears in the main job feed with a `goal loop · turn N` badge linking
-  back to the loop. Contact sheets, favorites, hide, and video follow-ups work
+  and appears in the main job feed with a `goal loop · turn N` badge (plus
+  `· refine` / `· fresh` from protocol 4) linking back to the loop. Contact sheets, favorites, hide, and video follow-ups work
   unchanged. If the operator edited the prompt in a fork, the manager is told
   and shown the exact rendered text.
 - **Images to the manager are full resolution (owner requirement,
@@ -282,11 +338,11 @@ operator between them).
 | kind | from → to | text |
 |------|-----------|------|
 | `goal` | user → manager | the goal message (includes the turn budget) |
-| `design` | manager → system | raw JSON reply; `manager.parsed` holds the contract fields, `manager.providerReasoning` the provider's thinking when returned |
-| `render-request` | system → generator | the exact prompt rendered; `render` holds job id and options |
-| `render-result` | generator → system | image url/thumb/size/cost, or error + recovery hint |
-| `review-request` | system → manager | review text; `images[]` holds the exact attachment sent |
-| `review` | manager → system | raw JSON reply with evaluation |
+| `design` | manager → system | raw JSON reply; `manager.parsed` holds the contract fields (protocol 4: `prompt` + `freshPrompt`), `manager.providerReasoning` the provider's thinking when returned |
+| `render-request` | system → generator | the exact prompt rendered; `render` holds job id, options, and (protocol 4) `variant` = `refine` \| `fresh`; two per turn from protocol 4 |
+| `render-result` | generator → system | image url/thumb/size/cost, or error + recovery hint; `render.variant` as above |
+| `review-request` | system → manager | review text; `images[]` holds the exact attachments sent, each with its `variant` (refine first, then fresh) |
+| `review` | manager → system | raw JSON reply with `evaluation` (refine), `freshEvaluation` (fresh), `continueFrom`, and both next prompts |
 | `objection` | system → manager | protocol 3: the previous review's `done` is not accepted (open-ended goal, no demonstrated limit); the review is asked again with `done` barred |
 | `note` | system → user | stop/resume/fork/done/crash annotations; never advance the loop |
 
@@ -334,7 +390,11 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   link and job-card badge.
 - `MultiImageClient.Tests/GoalLoopTests.cs` — protocol parse (v3 goal kinds,
   barred `done`), next-step planning (open-ended objection, done-permitted
-  rule, best review), fork semantics.
+  rule, best review), fork semantics; `GoalLoopPairTests` covers protocol 4
+  (two prompts, both evaluations, `continueFrom`, pending-variant re-render,
+  refine-only degradation rule, single-render replay of stored v3 loops).
+- `GET /api/goal-loops` summaries and `GET /api/goal-loops/{id}` carry
+  `rendersPerTurn` and `bestVariant`.
 
 ## 8. Live verification (2026-09-04, local `--ui`, gpt-image-2 low)
 

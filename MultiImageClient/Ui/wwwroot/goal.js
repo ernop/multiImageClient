@@ -483,9 +483,17 @@ function renderLoopHead() {
     facts.appendChild(box);
     return box;
   };
-  fact("renders / max turns", `${loop.turnsRendered} / ${loop.maxTurns}`);
-  fact("last score", formatScore(loop.lastScore), "goal-fact-score");
-  fact("best score", loop.bestScore != null ? `${formatScore(loop.bestScore)} (turn ${loop.bestTurn})` : "—", "goal-fact-score");
+  fact("turns rendered / max turns", `${loop.turnsRendered} / ${loop.maxTurns}`);
+  if (loop.rendersPerTurn > 1) {
+    const pair = fact("renders per turn", `${loop.rendersPerTurn} — refine + fresh`, "goal-fact-pair");
+    pair.title = "Every turn renders two prompts: REFINE improves the render the manager chose to continue from; FRESH is a from-scratch re-attempt with a new composition and style. The manager scores both and chooses which one the next refine builds on.";
+  } else {
+    fact("renders per turn", `1 (protocol v${loop.protocolVersion})`);
+  }
+  fact("last refine score", formatScore(loop.lastScore), "goal-fact-score");
+  fact("best score", loop.bestScore != null
+    ? `${formatScore(loop.bestScore)} (turn ${loop.bestTurn}${loop.bestVariant ? ` ${loop.bestVariant}` : ""})`
+    : "—", "goal-fact-score");
   if (loop.protocolVersion >= 3) {
     const kindBox = fact("goal kind", loop.effectiveGoalKind
       ? `${loop.effectiveGoalKind} (${loop.goalKindSource === "operator" ? "set by you" : "manager's classification"})`
@@ -672,11 +680,21 @@ const KindLabels = {
   note: "note",
 };
 
+const VariantLabels = { refine: "refine", fresh: "fresh (from scratch)" };
+
+function variantOf(entry) {
+  return (entry.render && entry.render.variant) || null;
+}
+
 // The label states what the manager decided, when that is known; a reply
 // that failed the contract is labeled as such rather than as a design.
 function entryKindLabel(entry) {
   const parsed = entry.manager && entry.manager.parsed;
   const refused = Boolean(entry.manager && entry.manager.providerStop);
+  if (entry.kind === "render-request" || entry.kind === "render-result") {
+    const variant = variantOf(entry);
+    return variant ? `${KindLabels[entry.kind]} — ${VariantLabels[variant] || variant}` : KindLabels[entry.kind];
+  }
   if (entry.kind === "review") {
     if (refused) return "review — provider refused";
     if (entry.error && !parsed) return "review — reply rejected";
@@ -833,14 +851,46 @@ function previousRenderedPrompt(beforeIndex) {
 }
 
 // The prompt rendered in this same turn (the review compares the manager's
-// next design against what was just rendered).
-function renderedPromptOfTurn(turn, beforeIndex) {
+// next design against what was just rendered). With two renders per turn,
+// variant selects which one; null matches a single-render turn.
+function renderedPromptOfTurn(turn, beforeIndex, variant) {
   if (!loopState) return null;
   for (let i = beforeIndex - 1; i >= 0; i--) {
     const e = loopState.entries[i];
-    if (e.kind === "render-request" && e.turn === turn) return { text: e.text, label: `turn ${turn} prompt` };
+    if (e.kind === "render-request" && e.turn === turn && (variant === undefined || variantOf(e) === variant)) {
+      const v = variantOf(e);
+      return { text: e.text, label: v ? `turn ${turn} ${v} prompt` : `turn ${turn} prompt` };
+    }
   }
   return null;
+}
+
+// The prompt a REFINE render-request builds on: the previous turn's render
+// that the manager chose to continue from. Single-render loops compare
+// against the previous rendered prompt.
+function lineageBasePrompt(entry) {
+  const variant = variantOf(entry);
+  if (!variant) return previousRenderedPrompt(entry.index);
+  if (variant !== "refine") return null;
+  for (let i = entry.index - 1; i >= 0; i--) {
+    const e = loopState.entries[i];
+    if ((e.kind === "review" || e.kind === "design") && e.manager && e.manager.parsed && !e.error) {
+      const from = e.manager.parsed.continueFrom;
+      return from ? renderedPromptOfTurn(e.turn, entry.index, from) : null;
+    }
+  }
+  return null;
+}
+
+// A fresh prompt is a from-scratch re-attempt: diffing it against anything
+// would only show noise, so it is shown plain with that statement.
+function freshPromptBlock(label, text) {
+  const box = labeled(label, textBlock(text, "goal-prompt goal-prompt-fresh"));
+  const note = document.createElement("div");
+  note.className = "goal-diff-summary";
+  note.textContent = "from scratch — new composition and style, not compared to earlier prompts";
+  box.appendChild(note);
+  return box;
 }
 
 function turnSection(turn) {
@@ -861,6 +911,15 @@ function turnSection(turn) {
 
 function appendEntryElement(entry) {
   turnSection(entry.turn).appendChild(buildEntryElement(entry));
+  if (entry.kind === "review" && !entry.error && entry.manager && entry.manager.parsed) {
+    // The turn's render results show their score and the chosen-lineage
+    // mark, both of which this review decides.
+    for (let i = entry.index - 1; i >= 0; i--) {
+      const prev = loopState.entries[i];
+      if (prev.turn !== entry.turn) break;
+      if (prev.kind === "render-result") replaceEntryElement(prev);
+    }
+  }
   if (entry.kind === "objection") {
     // The objected-to review's label depends on this later entry.
     for (let i = entry.index - 1; i >= 0; i--) {
@@ -995,18 +1054,21 @@ function viewerItemId(render) {
 function loopViewerItems() {
   if (!loopState) return [];
   const items = [];
-  for (const entry of loopState.entries) {
-    if (entry.kind !== "render-result" || !entry.render || !entry.render.ok || !entry.render.imageUrl) continue;
+  // Walk order: turn, then refine before fresh (results land on file in
+  // completion order).
+  const VariantOrder = { refine: 0, fresh: 1 };
+  const results = loopState.entries
+    .filter((entry) => entry.kind === "render-result" && entry.render && entry.render.ok && entry.render.imageUrl)
+    .sort((a, b) => a.turn - b.turn
+      || (VariantOrder[variantOf(a)] || 0) - (VariantOrder[variantOf(b)] || 0)
+      || a.index - b.index);
+  for (const entry of results) {
     const r = entry.render;
-    const request = renderedPromptOfTurn(entry.turn, entry.index);
-    let review = null;
-    for (let i = entry.index + 1; i < loopState.entries.length; i++) {
-      const e = loopState.entries[i];
-      if (e.kind === "review" && e.turn === entry.turn && !e.error && e.manager && e.manager.parsed && e.manager.parsed.evaluation) {
-        review = e.manager.parsed;
-        break;
-      }
-    }
+    const variant = variantOf(entry);
+    const request = renderedPromptOfTurn(entry.turn, entry.index, variant === null ? undefined : variant);
+    const reviewed = reviewOfRender(entry);
+    const review = reviewed ? reviewed.parsed : null;
+    const evaluation = reviewed ? reviewed.evaluation : null;
     const match = /^(\d+)x(\d+)$/.exec(r.size || "");
     const meta = [
       { label: "generator", value: r.generatorLabel },
@@ -1015,12 +1077,20 @@ function loopViewerItems() {
       { label: "cost (estimate)", value: r.cost != null ? formatUsd(r.cost) : "" },
       { label: "job", value: r.jobId },
     ];
-    if (review) {
-      meta.push({ label: "goal met", value: review.evaluation.goalMet ? "yes" : "no" });
-      if (review.evaluation.problems && review.evaluation.problems.length) {
-        meta.push({ label: "problems", value: review.evaluation.problems.join("; ") });
+    if (variant) {
+      meta.unshift({ label: "render", value: variant === "fresh" ? "fresh — from-scratch re-attempt" : "refine — continues the chosen lineage" });
+    }
+    if (evaluation) {
+      meta.push({ label: "goal met", value: evaluation.goalMet ? "yes" : "no" });
+      if (evaluation.problems && evaluation.problems.length) {
+        meta.push({ label: "problems", value: evaluation.problems.join("; ") });
       }
-      meta.push({ label: "decision", value: review.decision === "done" ? "done" : "render again" });
+      meta.push({
+        label: "decision",
+        value: review.decision === "done"
+          ? "done"
+          : (review.continueFrom ? `render again — continue from the ${review.continueFrom} render` : "render again"),
+      });
     }
     items.push({
       id: viewerItemId(r),
@@ -1028,9 +1098,9 @@ function loopViewerItems() {
       thumbUrl: r.thumbUrl || (/^https?:\/\//i.test(r.imageUrl) ? "" : r.imageUrl + (r.imageUrl.includes("?") ? "&thumb=1" : "?thumb=1")),
       width: match ? Number(match[1]) : 0,
       height: match ? Number(match[2]) : 0,
-      title: `Turn ${entry.turn} of ${loopState.loop.maxTurns} — loop ${loopState.loop.id}`,
-      subtitle: review
-        ? `${formatScore(review.evaluation.score)}/10 — ${review.evaluation.assessment}`
+      title: `Turn ${entry.turn} of ${loopState.loop.maxTurns}${variant ? ` — ${variant} render` : ""} — loop ${loopState.loop.id}`,
+      subtitle: evaluation
+        ? `${formatScore(evaluation.score)}/10 — ${evaluation.assessment}`
         : "not yet reviewed by the manager",
       prompt: request ? request.text : "",
       meta,
@@ -1136,31 +1206,46 @@ function managerBody(entry) {
       body.appendChild(labeled("raw reply", textBlock(entry.text)));
     }
   } else {
-    if (parsed.evaluation) {
+    const pair = Boolean(parsed.freshEvaluation || parsed.freshPrompt);
+    const evaluationBlock = (evaluation, heading, chosen) => {
       const evalRow = document.createElement("div");
-      evalRow.className = "goal-eval-row";
-      evalRow.appendChild(scoreBlock(parsed.evaluation));
+      evalRow.className = `goal-eval-row ${chosen ? "chosen" : ""}`;
+      evalRow.appendChild(scoreBlock(evaluation));
       const evalText = document.createElement("div");
       evalText.className = "goal-eval-text";
-      evalText.appendChild(labeled("assessment of the rendered image", textBlock(parsed.evaluation.assessment)));
-      if (parsed.evaluation.problems && parsed.evaluation.problems.length) {
-        evalText.appendChild(labeled("problems", listBlock(parsed.evaluation.problems, "problems")));
+      if (heading) {
+        const h = document.createElement("div");
+        h.className = "goal-eval-heading";
+        h.textContent = heading + (chosen ? " — continue from this one" : "");
+        evalText.appendChild(h);
       }
-      if (parsed.evaluation.keep && parsed.evaluation.keep.length) {
-        evalText.appendChild(labeled("keep", listBlock(parsed.evaluation.keep, "keep")));
+      evalText.appendChild(labeled("assessment of the rendered image", textBlock(evaluation.assessment)));
+      if (evaluation.problems && evaluation.problems.length) {
+        evalText.appendChild(labeled("problems", listBlock(evaluation.problems, "problems")));
+      }
+      if (evaluation.keep && evaluation.keep.length) {
+        evalText.appendChild(labeled("keep", listBlock(evaluation.keep, "keep")));
       }
       evalRow.appendChild(evalText);
-      body.appendChild(evalRow);
+      return evalRow;
+    };
+    if (parsed.evaluation) {
+      body.appendChild(evaluationBlock(parsed.evaluation, pair ? "refine render" : null, pair && parsed.continueFrom === "refine"));
+    }
+    if (parsed.freshEvaluation) {
+      body.appendChild(evaluationBlock(parsed.freshEvaluation, "fresh render (from scratch)", parsed.continueFrom === "fresh"));
     }
     const decision = document.createElement("div");
     decision.className = `goal-decision decision-${parsed.decision}`;
     decision.textContent = parsed.decision === "done"
       ? "decision: done — stop the loop"
-      : (parsed.evaluation ? "decision: render again with a new design" : "decision: render this first design");
+      : (parsed.evaluation
+        ? (pair ? `decision: render again — continue from the ${parsed.continueFrom || "?"} render` : "decision: render again with a new design")
+        : (pair ? "decision: render these two first designs" : "decision: render this first design"));
     if (parsed.bestTurn) {
       const best = document.createElement("span");
       best.className = "goal-best-turn";
-      best.textContent = ` best so far: turn ${parsed.bestTurn}`;
+      best.textContent = ` best so far: turn ${parsed.bestTurn}${parsed.bestVariant ? ` ${parsed.bestVariant}` : ""}`;
       decision.appendChild(best);
     }
     body.appendChild(decision);
@@ -1168,12 +1253,23 @@ function managerBody(entry) {
       body.appendChild(labeled("done statement", textBlock(parsed.doneStatement)));
     }
     if (parsed.prompt) {
-      body.appendChild(parsed.evaluation
-        ? promptWithDiff("next prompt to render", parsed.prompt, renderedPromptOfTurn(entry.turn, entry.index))
-        : labeled("prompt to render", textBlock(parsed.prompt, "goal-prompt")));
+      if (!parsed.evaluation) {
+        body.appendChild(labeled(pair ? "refine prompt to render (primary design)" : "prompt to render", textBlock(parsed.prompt, "goal-prompt")));
+      } else if (pair) {
+        const base = parsed.continueFrom ? renderedPromptOfTurn(entry.turn, entry.index, parsed.continueFrom) : null;
+        body.appendChild(promptWithDiff(`next refine prompt (builds on the turn ${entry.turn} ${parsed.continueFrom || ""} render)`, parsed.prompt, base));
+      } else {
+        body.appendChild(promptWithDiff("next prompt to render", parsed.prompt, renderedPromptOfTurn(entry.turn, entry.index)));
+      }
     }
     if (parsed.designNotes) {
-      body.appendChild(labeled("design notes", textBlock(parsed.designNotes)));
+      body.appendChild(labeled(pair ? "refine design notes" : "design notes", textBlock(parsed.designNotes)));
+    }
+    if (parsed.freshPrompt) {
+      body.appendChild(freshPromptBlock("next fresh prompt", parsed.freshPrompt));
+    }
+    if (parsed.freshDesignNotes) {
+      body.appendChild(labeled("fresh design notes", textBlock(parsed.freshDesignNotes)));
     }
     body.appendChild(detailsBlock(`manager reasoning (${parsed.reasoning.length.toLocaleString()} chars)`, textBlock(parsed.reasoning), true));
   }
@@ -1196,7 +1292,16 @@ function managerBody(entry) {
 
 function renderRequestBody(entry) {
   const body = document.createElement("div");
-  body.appendChild(promptWithDiff("prompt sent to the image generator", entry.text, previousRenderedPrompt(entry.index)));
+  const variant = variantOf(entry);
+  if (variant === "fresh") {
+    body.appendChild(freshPromptBlock("fresh prompt sent to the image generator", entry.text));
+  } else {
+    const base = lineageBasePrompt(entry);
+    const label = variant === "refine"
+      ? (base ? `refine prompt sent to the image generator (builds on ${base.label.replace(/ prompt$/, " render")})` : "refine prompt sent to the image generator (primary design)")
+      : "prompt sent to the image generator";
+    body.appendChild(promptWithDiff(label, entry.text, base));
+  }
   const r = entry.render || {};
   const meta = document.createElement("div");
   meta.className = "goal-usage";
@@ -1212,13 +1317,55 @@ function renderRequestBody(entry) {
   return body;
 }
 
+// The variant the manager's accepted review of this turn chose to continue
+// from, or null while the turn is unreviewed / on single-render loops.
+function chosenVariantOfTurn(turn, afterIndex) {
+  if (!loopState) return null;
+  for (let i = afterIndex + 1; i < loopState.entries.length; i++) {
+    const e = loopState.entries[i];
+    if (e.kind === "review" && e.turn === turn && !e.error && e.manager && e.manager.parsed && e.manager.parsed.continueFrom) {
+      return e.manager.parsed.continueFrom;
+    }
+  }
+  return null;
+}
+
+// The review of this render (first accepted review of the same turn after it)
+// and its evaluation of this render's variant.
+function reviewOfRender(entry) {
+  if (!loopState) return null;
+  const variant = variantOf(entry);
+  for (let i = entry.index + 1; i < loopState.entries.length; i++) {
+    const e = loopState.entries[i];
+    if (e.kind === "review" && e.turn === entry.turn && !e.error && e.manager && e.manager.parsed) {
+      const evaluation = variant === "fresh" ? e.manager.parsed.freshEvaluation : e.manager.parsed.evaluation;
+      if (evaluation) return { parsed: e.manager.parsed, evaluation };
+    }
+  }
+  return null;
+}
+
 function renderResultBody(entry) {
   const body = document.createElement("div");
   const r = entry.render || {};
+  const variant = variantOf(entry);
+  if (variant) {
+    const badge = document.createElement("div");
+    badge.className = `goal-variant-badge variant-${variant}`;
+    badge.textContent = variant === "fresh" ? "FRESH — from-scratch re-attempt" : "REFINE — continues the chosen lineage";
+    const chosen = chosenVariantOfTurn(entry.turn, entry.index);
+    if (chosen === variant) {
+      const mark = document.createElement("span");
+      mark.className = "goal-chosen-mark";
+      mark.textContent = "manager continues from this one";
+      badge.appendChild(mark);
+    }
+    body.appendChild(badge);
+  }
   if (r.ok) {
     const row = document.createElement("div");
     row.className = "goal-render-row";
-    row.appendChild(imageFigure(r.imageUrl, r.thumbUrl, r.size, `turn ${entry.turn} render`, viewerItemId(r)));
+    row.appendChild(imageFigure(r.imageUrl, r.thumbUrl, r.size, `turn ${entry.turn}${variant ? ` ${variant}` : ""} render`, viewerItemId(r)));
     const facts = document.createElement("div");
     facts.className = "goal-render-facts";
     const fact = (label, value) => {
@@ -1234,6 +1381,8 @@ function renderResultBody(entry) {
       box.append(v, l);
       facts.appendChild(box);
     };
+    const reviewed = reviewOfRender(entry);
+    if (reviewed) fact("manager score", `${formatScore(reviewed.evaluation.score)}/10`);
     fact("pixels", r.size);
     fact("render time", formatDuration(entry.ms));
     fact("cost (estimate)", r.cost != null ? formatUsd(r.cost) : "");
@@ -1299,6 +1448,13 @@ function buildEntryElement(entry) {
   article.className = `goal-entry kind-${entry.kind}`;
   article.dataset.index = String(entry.index);
   if (entry.error && entry.kind !== "render-result") article.classList.add("has-error");
+  const entryVariant = variantOf(entry);
+  if (entryVariant) {
+    article.classList.add(`variant-${entryVariant}`);
+    if (entry.kind === "render-result" && chosenVariantOfTurn(entry.turn, entry.index) === entryVariant) {
+      article.classList.add("chosen-lineage");
+    }
+  }
 
   const head = document.createElement("div");
   head.className = "goal-entry-head";
