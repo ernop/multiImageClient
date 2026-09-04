@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -141,6 +142,18 @@ namespace MultiImageClient
         // build Discord share links. Blank unless the webhook above is set.
         // Example: https://host.example/instance-path  (no trailing slash).
         public string UiPublicBaseUrl { get; set; } = "";
+
+        // FableBot (FableBot/ project): Discord bot-account token used to
+        // post into channels the bot account is a member of. Both FableBot
+        // settings are blank by default, which disables FableBot. Reuse the
+        // SocialAI bot's token or create a new bot application; see
+        // docs/fablebot-discord-prd.md for the setup checklist.
+        public string FableBotDiscordBotToken { get; set; } = "";
+
+        // Default Discord channel id (numeric snowflake) FableBot posts to.
+        // Discord Desktop: Settings > Advanced > Developer Mode, then
+        // right-click the channel > Copy Channel ID.
+        public string FableBotDiscordChannelId { get; set; } = "";
 
         /// Maximum number of memory-heavy UI job finalizations (contact-sheet
         /// rendering and cleanup) allowed at once. Endpoint requests from
@@ -426,6 +439,31 @@ namespace MultiImageClient
             {
                 throw new InvalidOperationException(
                     "settings.json: B2KeepLocalRawImages=false requires EnableB2ImageHosting=true — evicting local raw images without an upload destination would discard data.");
+            }
+
+            var fableBotToken = FableBotDiscordBotToken?.Trim() ?? "";
+            var fableBotChannel = FableBotDiscordChannelId?.Trim() ?? "";
+            if (fableBotToken.Length != 0 || fableBotChannel.Length != 0)
+            {
+                if (fableBotToken.Length == 0 || fableBotChannel.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        "settings.json: FableBotDiscordBotToken and FableBotDiscordChannelId must be set together. Leave both blank to disable FableBot.");
+                }
+                if (fableBotToken.Length < 50
+                    || fableBotToken.Any(char.IsWhiteSpace)
+                    || fableBotToken.StartsWith("Bot ", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        "settings.json: FableBotDiscordBotToken must be the raw bot token from the Discord Developer Portal — no whitespace and no 'Bot ' prefix.");
+                }
+                if (fableBotChannel.Length < 15
+                    || fableBotChannel.Length > 21
+                    || !fableBotChannel.All(char.IsAsciiDigit))
+                {
+                    throw new InvalidOperationException(
+                        "settings.json: FableBotDiscordChannelId must be the numeric channel id (snowflake) copied from Discord's Copy Channel ID.");
+                }
             }
 
             var webhook = DiscordVibecodersWebhookUrl?.Trim() ?? "";

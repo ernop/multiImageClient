@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MultiImageClient\MultiImageClient.csproj" />
+    <ProjectReference Include="..\FableBot\FableBot.csproj" />
   </ItemGroup>
 
 </Project>
