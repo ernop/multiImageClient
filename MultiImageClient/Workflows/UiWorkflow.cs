@@ -151,6 +151,41 @@ namespace MultiImageClient
                 ? new ClaudeService(settings.AnthropicApiKey, maxConcurrency: 2, stats)
                 : null;
 
+            // Goal loops: manager-model-driven iterative design → render →
+            // review conversations. Each render is an ordinary UiJob (cards,
+            // thumbs, B2, deletion all apply); the loop itself persists under
+            // UiGoalLoops/. See docs/goal-loop-prd.md.
+            UiGoalLoopRegistry goalLoops;
+            try
+            {
+                goalLoops = new UiGoalLoopRegistry(settings);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"UI aborted: goal loop history could not be loaded: {ex.Message}");
+                return;
+            }
+            var goalLoopRunner = new UiGoalLoopRunner(
+                settings,
+                jobs,
+                runner,
+                goalLoops,
+                onRenderJobCreated: job =>
+                {
+                    try
+                    {
+                        community.RecordGenerationStart(
+                            job.CreatorLogin,
+                            job.CreatedBy,
+                            job.Id,
+                            new DateTimeOffset(UiJobStorage.EnsureUtc(job.CreatedAt)).ToUnixTimeMilliseconds());
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"UI activity: could not record generation start for goal-loop render {job.Id}: {ex.Message}");
+                    }
+                });
+
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
                 Args = Array.Empty<string>(),
@@ -502,6 +537,29 @@ namespace MultiImageClient
                     {
                         available = claudeAdviceProblem == null,
                         availabilityProblem = claudeAdviceProblem,
+                    },
+                    // Goal loop manager catalog + limits, consumed by goal.html.
+                    // Generators come from the `generators` list above (image
+                    // kind, available, not requiring an input image).
+                    goalLoop = new
+                    {
+                        managers = ManagerCatalog.All.Select(m => new
+                        {
+                            m.Key,
+                            m.Label,
+                            m.Provider,
+                            m.Model,
+                            m.Detail,
+                            available = ManagerCatalog.DescribeAvailabilityProblem(m, settings) == null,
+                            availabilityProblem = ManagerCatalog.DescribeAvailabilityProblem(m, settings),
+                            inputUsdPerMTok = m.InputUsdPerMTok,
+                            outputUsdPerMTok = m.OutputUsdPerMTok,
+                        }),
+                        defaultMaxTurns = UiGoalLoopRunner.DefaultMaxTurns,
+                        maxTurnsCap = UiGoalLoopRunner.MaxTurnsCap,
+                        maxGoalChars = UiGoalLoopRunner.MaxGoalChars,
+                        maxEditedTextChars = UiGoalLoopRunner.MaxEditedTextChars,
+                        runningCount = goalLoopRunner.RunningCount,
                     },
                     generatorPreferences = generatorPreferences == null
                         ? null
@@ -1135,6 +1193,361 @@ namespace MultiImageClient
                 {
                     admission?.Dispose();
                 }
+            });
+
+            // ---- goal loops ----
+            // Manager-driven iterative loops. Every mutation is recorded as an
+            // append-only entry on disk; the API exposes the loop metadata, a
+            // cursor-based entry read for live pages, and stop / resume /
+            // fork controls. Renders are ordinary jobs on the main feed.
+            bool CanControlGoalLoop(UiGoalLoop loop, string authUser)
+                => auth == null
+                    || IsDeveloperLogin(authUser)
+                    || (authUser.Length > 0
+                        && string.Equals(authUser, loop.CreatorLogin, StringComparison.OrdinalIgnoreCase));
+
+            app.MapGet("/api/goal-loops", (HttpContext ctx) =>
+            {
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var loops = goalLoops.ListSummaries()
+                    .Take(300)
+                    .Select(loop => SummarizeGoalLoop(loop, CanControlGoalLoop(loop, authUser)))
+                    .ToList();
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new { loops, runningCount = goalLoopRunner.RunningCount }, UiGoalLoopJson.Options);
+            });
+
+            app.MapGet("/api/goal-loops/{id}", (string id, HttpContext ctx) =>
+            {
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var state = goalLoops.Get(id);
+                if (state == null)
+                {
+                    return Results.NotFound(new { error = "unknown goal loop" });
+                }
+                var after = 0;
+                if (int.TryParse(ctx.Request.Query["after"], out var parsedAfter) && parsedAfter >= 0)
+                {
+                    after = parsedAfter;
+                }
+                UiGoalLoop loop;
+                List<UiGoalLoopEntry> entries;
+                int total;
+                lock (state.Lock)
+                {
+                    loop = state.Loop.Clone();
+                    total = state.Entries.Count;
+                    entries = after >= total
+                        ? new List<UiGoalLoopEntry>()
+                        : state.Entries.Skip(after).Select(e => e.Clone()).ToList();
+                }
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new
+                {
+                    loop,
+                    running = state.IsRunning,
+                    canControl = CanControlGoalLoop(loop, authUser),
+                    total,
+                    after,
+                    entries,
+                }, UiGoalLoopJson.Options);
+            });
+
+            app.MapPost("/api/goal-loops", async (HttpRequest request) =>
+            {
+                var diskProblem = DescribeDiskCapacityProblem(settings);
+                if (diskProblem != null)
+                {
+                    return Results.Json(new { error = diskProblem }, statusCode: 503);
+                }
+                var form = await request.ReadFormAsync();
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                var goal = (form["goal"].ToString() ?? "").Trim();
+                if (goal.Length == 0)
+                {
+                    return Results.BadRequest(new { error = "goal text is required" });
+                }
+                if (goal.Length > UiGoalLoopRunner.MaxGoalChars)
+                {
+                    return Results.BadRequest(new { error = $"goal text exceeds {UiGoalLoopRunner.MaxGoalChars} characters" });
+                }
+                if (!TryResolveCreatorName(form["user"].ToString(), authUser, community, out var createdBy, out var userError))
+                {
+                    return Results.BadRequest(new { error = userError });
+                }
+                var generatorKey = (form["generator"].ToString() ?? "").Trim();
+                if (generatorKey.Length == 0)
+                {
+                    return Results.BadRequest(new { error = "pick exactly one image generator" });
+                }
+                var generatorProblem = UiGoalLoopRunner.GeneratorProblem(runner, generatorKey);
+                if (generatorProblem.Length > 0)
+                {
+                    return Results.BadRequest(new { error = $"generator not usable: {generatorProblem}" });
+                }
+                var managerKey = (form["manager"].ToString() ?? "").Trim();
+                var manager = ManagerCatalog.Find(managerKey);
+                if (manager == null)
+                {
+                    return Results.BadRequest(new { error = "pick exactly one manager model" });
+                }
+                var managerProblem = ManagerCatalog.DescribeAvailabilityProblem(manager, settings);
+                if (managerProblem != null)
+                {
+                    return Results.BadRequest(new { error = $"manager not available: {managerProblem}" });
+                }
+                var maxTurns = UiGoalLoopRunner.DefaultMaxTurns;
+                var maxTurnsText = form["maxTurns"].ToString();
+                if (!string.IsNullOrWhiteSpace(maxTurnsText))
+                {
+                    if (!int.TryParse(maxTurnsText, out maxTurns))
+                    {
+                        return Results.BadRequest(new { error = "max turns must be a whole number" });
+                    }
+                    try
+                    {
+                        UiGoalLoopRunner.ValidateMaxTurns(maxTurns);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        return Results.BadRequest(new { error = ex.Message });
+                    }
+                }
+                var shape = NormalizeOption(form["shape"].ToString(), "auto");
+                if (!UiShapeMapping.IsKnownShape(shape))
+                {
+                    return Results.BadRequest(new { error = $"Unknown output shape '{shape}'. Expected one of: {string.Join(", ", UiShapeMapping.Shapes)}." });
+                }
+                var detail = NormalizeOption(form["detail"].ToString(), "standard");
+                if (detail is not ("standard" or "high" or "max"))
+                {
+                    return Results.BadRequest(new { error = $"Unknown detail tier '{detail}'. Expected standard, high, or max." });
+                }
+                var quality = NormalizeOption(form["quality"].ToString(), "high");
+                if (quality is not ("low" or "medium" or "high" or "auto"))
+                {
+                    return Results.BadRequest(new { error = $"Unknown quality '{quality}'. Expected low, medium, high, or auto." });
+                }
+                var moderation = NormalizeOption(form["moderation"].ToString(), "low");
+                if (moderation is not ("low" or "auto"))
+                {
+                    return Results.BadRequest(new { error = $"Unknown moderation '{moderation}'. Expected low or auto." });
+                }
+                var goalKind = NormalizeOption(form["goalKind"].ToString(), UiGoalLoopGoalKinds.Auto);
+                if (!UiGoalLoopGoalKinds.IsOperatorValue(goalKind))
+                {
+                    return Results.BadRequest(new { error = $"Unknown goal kind '{goalKind}'. Expected auto, bounded, or open-ended." });
+                }
+
+                var loop = new UiGoalLoop
+                {
+                    Goal = goal,
+                    GoalKind = goalKind,
+                    GeneratorKey = generatorKey,
+                    GeneratorLabel = GeneratorPresentation.UiDisplayName(generatorKey),
+                    ManagerKey = manager.Key,
+                    ManagerLabel = manager.Label,
+                    ManagerModel = manager.Model,
+                    MaxTurns = maxTurns,
+                    Shape = shape,
+                    Detail = detail,
+                    Quality = quality,
+                    Moderation = moderation,
+                    CreatedBy = createdBy,
+                    CreatorLogin = authUser,
+                };
+                try
+                {
+                    goalLoopRunner.Start(loop);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 503);
+                }
+                Logger.Log($"[goal #{loop.Id}] started by '{createdBy}': generator={generatorKey} manager={manager.Model} maxTurns={maxTurns} goalKind={goalKind}");
+                return Results.Json(new { id = loop.Id }, UiGoalLoopJson.Options);
+            });
+
+            // The all-turns contact sheet: built on request from the entries
+            // on file (any signed-in viewer may build; it is a read of the
+            // loop), served from the loop folder. The page appends the
+            // loop's sheetEntryCount to the GET URL so a rebuild is a new URL.
+            app.MapPost("/api/goal-loops/{id}/sheet", async (string id, HttpContext ctx) =>
+            {
+                var state = goalLoops.Get(id);
+                if (state == null)
+                {
+                    return Results.NotFound(new { error = "unknown goal loop" });
+                }
+                try
+                {
+                    await goalLoopRunner.BuildSheetAsync(state, ctx.RequestAborted);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 409);
+                }
+                UiGoalLoop loop;
+                lock (state.Lock) loop = state.Loop.Clone();
+                return Results.Json(new
+                {
+                    ok = true,
+                    sheetEntryCount = loop.SheetEntryCount,
+                    sheetTurns = loop.SheetTurns,
+                    url = $"/api/goal-loops/{id}/sheet?v={loop.SheetEntryCount}",
+                }, UiGoalLoopJson.Options);
+            });
+
+            app.MapGet("/api/goal-loops/{id}/sheet", (string id, HttpContext ctx) =>
+            {
+                var state = goalLoops.Get(id);
+                if (state == null)
+                {
+                    return Results.NotFound(new { error = "unknown goal loop" });
+                }
+                var path = UiGoalLoopRunner.SheetPath(state);
+                if (path == null)
+                {
+                    return Results.NotFound(new { error = "this loop has no sheet yet; build one first" });
+                }
+                ctx.Response.Headers.CacheControl = "no-cache";
+                return Results.File(path, "image/png", fileDownloadName: null, lastModified: File.GetLastWriteTimeUtc(path), enableRangeProcessing: false);
+            });
+
+            app.MapPost("/api/goal-loops/{id}/stop", (string id, HttpContext ctx) =>
+            {
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var state = goalLoops.Get(id);
+                if (state == null)
+                {
+                    return Results.NotFound(new { error = "unknown goal loop" });
+                }
+                if (!CanControlGoalLoop(state.Loop, authUser))
+                {
+                    return Results.Json(new { error = "only the loop's creator can stop it" }, statusCode: 403);
+                }
+                try
+                {
+                    goalLoopRunner.Stop(state, authUser.Length > 0 ? authUser : state.Loop.CreatedBy);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 409);
+                }
+                Logger.Log($"[goal #{id}] stop requested");
+                return Results.Json(new { ok = true });
+            });
+
+            app.MapPost("/api/goal-loops/{id}/resume", async (string id, HttpRequest request) =>
+            {
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                var state = goalLoops.Get(id);
+                if (state == null)
+                {
+                    return Results.NotFound(new { error = "unknown goal loop" });
+                }
+                if (!CanControlGoalLoop(state.Loop, authUser))
+                {
+                    return Results.Json(new { error = "only the loop's creator can resume it" }, statusCode: 403);
+                }
+                // maxTurns is optional, and so is the form body itself.
+                var maxTurnsText = request.HasFormContentType
+                    ? (await request.ReadFormAsync())["maxTurns"].ToString()
+                    : "";
+                int? maxTurns = null;
+                if (!string.IsNullOrWhiteSpace(maxTurnsText))
+                {
+                    if (!int.TryParse(maxTurnsText, out var parsed))
+                    {
+                        return Results.BadRequest(new { error = "max turns must be a whole number" });
+                    }
+                    maxTurns = parsed;
+                }
+                try
+                {
+                    goalLoopRunner.Resume(state, maxTurns);
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 409);
+                }
+                Logger.Log($"[goal #{id}] resumed (maxTurns={state.Loop.MaxTurns})");
+                return Results.Json(new { ok = true, maxTurns = state.Loop.MaxTurns });
+            });
+
+            app.MapPost("/api/goal-loops/{id}/fork", async (string id, HttpRequest request) =>
+            {
+                var diskProblem = DescribeDiskCapacityProblem(settings);
+                if (diskProblem != null)
+                {
+                    return Results.Json(new { error = diskProblem }, statusCode: 503);
+                }
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                var parent = goalLoops.Get(id);
+                if (parent == null)
+                {
+                    return Results.NotFound(new { error = "unknown goal loop" });
+                }
+                var form = await request.ReadFormAsync();
+                if (!int.TryParse(form["entryIndex"].ToString(), out var entryIndex))
+                {
+                    return Results.BadRequest(new { error = "entryIndex is required" });
+                }
+                string? text = null;
+                if (form.ContainsKey("text"))
+                {
+                    text = form["text"].ToString();
+                    if (text.Length > UiGoalLoopRunner.MaxEditedTextChars)
+                    {
+                        return Results.BadRequest(new { error = $"edited text exceeds {UiGoalLoopRunner.MaxEditedTextChars} characters" });
+                    }
+                }
+                int? maxTurns = null;
+                var maxTurnsText = form["maxTurns"].ToString();
+                if (!string.IsNullOrWhiteSpace(maxTurnsText))
+                {
+                    if (!int.TryParse(maxTurnsText, out var parsed))
+                    {
+                        return Results.BadRequest(new { error = "max turns must be a whole number" });
+                    }
+                    maxTurns = parsed;
+                }
+                if (!TryResolveCreatorName(form["user"].ToString(), authUser, community, out var createdBy, out var userError))
+                {
+                    return Results.BadRequest(new { error = userError });
+                }
+                // The fork re-validates the generator and manager because a
+                // key may have been removed since the parent was created.
+                var generatorProblem = UiGoalLoopRunner.GeneratorProblem(runner, parent.Loop.GeneratorKey);
+                if (generatorProblem.Length > 0)
+                {
+                    return Results.BadRequest(new { error = $"generator not usable: {generatorProblem}" });
+                }
+                var manager = ManagerCatalog.Find(parent.Loop.ManagerKey);
+                var managerProblem = manager == null ? "unknown manager" : ManagerCatalog.DescribeAvailabilityProblem(manager, settings);
+                if (managerProblem != null)
+                {
+                    return Results.BadRequest(new { error = $"manager not available: {managerProblem}" });
+                }
+                UiGoalLoopState child;
+                try
+                {
+                    child = goalLoopRunner.Fork(parent, entryIndex, text, maxTurns, createdBy, authUser);
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 503);
+                }
+                Logger.Log($"[goal #{child.Loop.Id}] forked from {id} at entry {entryIndex}{(text == null ? "" : " with edited text")} by '{createdBy}'");
+                return Results.Json(new { id = child.Loop.Id }, UiGoalLoopJson.Options);
             });
 
             app.MapPost("/api/video-jobs", async (HttpRequest request) =>
@@ -2903,6 +3316,48 @@ namespace MultiImageClient
             }
             return result;
         }
+
+        private static string NormalizeOption(string? value, string fallbackBeforeStart)
+            => string.IsNullOrWhiteSpace(value) ? fallbackBeforeStart : value.Trim().ToLowerInvariant();
+
+        // List projection for goal.html's sidebar: everything except the
+        // (identical, multi-KB) system prompt, which the detail view carries.
+        private static object SummarizeGoalLoop(UiGoalLoop loop, bool canControl) => new
+        {
+            id = loop.Id,
+            goal = loop.Goal,
+            generatorKey = loop.GeneratorKey,
+            generatorLabel = loop.GeneratorLabel,
+            managerKey = loop.ManagerKey,
+            managerLabel = loop.ManagerLabel,
+            managerModel = loop.ManagerModel,
+            maxTurns = loop.MaxTurns,
+            protocolVersion = loop.ProtocolVersion,
+            goalKind = loop.GoalKind,
+            effectiveGoalKind = loop.EffectiveGoalKind,
+            goalKindSource = loop.GoalKindSource,
+            sheetFile = loop.SheetFile,
+            sheetEntryCount = loop.SheetEntryCount,
+            sheetTurns = loop.SheetTurns,
+            turnsRendered = loop.TurnsRendered,
+            entryCount = loop.EntryCount,
+            status = loop.Status,
+            statusDetail = loop.StatusDetail,
+            activity = loop.Activity,
+            activitySinceUnixMs = loop.ActivitySinceUnixMs,
+            createdBy = loop.CreatedBy,
+            createdAtUnixMs = loop.CreatedAtUnixMs,
+            updatedAtUnixMs = loop.UpdatedAtUnixMs,
+            lastScore = loop.LastScore,
+            bestScore = loop.BestScore,
+            bestTurn = loop.BestTurn,
+            parentLoopId = loop.ParentLoopId,
+            forkedAtEntry = loop.ForkedAtEntry,
+            managerCostUsd = loop.ManagerCostUsd,
+            managerCostKnown = loop.ManagerCostKnown,
+            renderCostUsd = loop.RenderCostUsd,
+            canControl,
+        };
 
         private static bool TryResolveCreatorName(
             string? submitted,

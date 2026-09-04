@@ -45,6 +45,28 @@ header.environment-local {
 }
 header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
 #environment-name { color: var(--ink); }
+#goal-loops-link {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  text-decoration: none;
+}
+#goal-loops-link:hover { color: #fff; background: var(--accent); }
+.job-goal-loop {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.job-goal-loop:hover { background: var(--accent-dark); }
 #logs-toggle, #settings-toggle, #activity-toggle {
   padding: 5px 12px;
   font: inherit;

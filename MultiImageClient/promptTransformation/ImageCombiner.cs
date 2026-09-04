@@ -16,6 +16,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
 
@@ -669,6 +670,102 @@ namespace MultiImageClient
             }
         }
 
+
+        /// One cell of a goal-loop sheet: a rendered turn. LoadImage null =
+        /// the render failed (Error is drawn in the placeholder); otherwise it
+        /// returns the original bytes, which are decoded, capped, and dropped
+        /// before the next cell loads. Primary is the bold first token of the
+        /// label (the score, so the number is the most legible element of the
+        /// band); Secondary follows it smaller.
+        public sealed record LoopSheetCell(
+            Func<CancellationToken, Task<byte[]>>? LoadImage,
+            string Primary,
+            string? Secondary,
+            string? Text,
+            string? Error,
+            int PlaceholderWidth,
+            int PlaceholderHeight);
+
+        // Loop sheet: a header band (goal, parties, outcome) above a square
+        // grid of every rendered turn in order, each with its score band and
+        // the exact prompt it rendered plus the manager's assessment. Every
+        // image is decoded, capped to a 1024 px long edge, drawn, and
+        // disposed inside this call; nothing stays resident. The caller
+        // serializes builds (one at a time per process).
+        public static async Task CreateGoalLoopSheetAsync(
+            IReadOnlyList<LoopSheetCell> cells,
+            string headerText,
+            string outputPath,
+            CancellationToken ct = default)
+        {
+            var generatorFont = FontUtils.CreateFont(GeneratedImageLabelFontSize, FontStyle.Bold);
+            var promptFont = FontUtils.CreateFont(CombinedImagePromptFontSize, FontStyle.Regular);
+            var headerFont = FontUtils.CreateFont(GeneratedImageLabelFontSize, FontStyle.Regular);
+            var loaded = new List<LoadedImage>(cells.Count);
+            try
+            {
+                foreach (var cell in cells)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (cell.LoadImage == null)
+                    {
+                        loaded.Add(new LoadedImage
+                        {
+                            Success = false,
+                            Result = cell.Error ?? "render failed",
+                            Generator = cell.Primary,
+                            SourceResolutionLabel = cell.Secondary,
+                            PromptText = cell.Text,
+                            Width = Math.Max(PlaceholderWidth, cell.PlaceholderWidth),
+                            Height = Math.Max(PlaceholderWidth, cell.PlaceholderHeight),
+                        });
+                        continue;
+                    }
+                    var bytes = await cell.LoadImage(ct);
+                    var image = Image.Load<Rgba32>(bytes);
+                    var longEdge = Math.Max(image.Width, image.Height);
+                    if (longEdge > 1300)
+                    {
+                        var scale = 1024.0 / longEdge;
+                        image.Mutate(x => x.Resize(
+                            Math.Max(1, (int)Math.Round(image.Width * scale)),
+                            Math.Max(1, (int)Math.Round(image.Height * scale))));
+                    }
+                    loaded.Add(new LoadedImage
+                    {
+                        Success = true,
+                        Result = "ok",
+                        Generator = cell.Primary,
+                        SourceResolutionLabel = cell.Secondary,
+                        PromptText = cell.Text,
+                        Image = image,
+                        Width = image.Width,
+                        Height = image.Height,
+                    });
+                }
+
+                using var layoutImage = RenderSquareLayout(loaded, generatorFont, promptFont, includeCellPrompts: true);
+                using var header = RenderPromptPanel(layoutImage.Width, headerText, headerFont);
+                using var combined = ImageUtils.CreateStandardImage(
+                    layoutImage.Width, header.Height + layoutImage.Height, UIConstants.White);
+                combined.Mutate(ctx =>
+                {
+                    ctx.DrawImage(header, new Point(0, 0), 1f);
+                    ctx.DrawImage(layoutImage, new Point(0, header.Height), 1f);
+                });
+                Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+                var tmp = outputPath + ".tmp";
+                await combined.SaveAsPngAsync(tmp);
+                File.Move(tmp, outputPath, overwrite: true);
+            }
+            finally
+            {
+                foreach (var li in loaded)
+                {
+                    li.Image?.Dispose();
+                }
+            }
+        }
 
         // this is how werender the "roundtrip workflow". In this case, the user provided an image to us.
         // we used an LLM to describe it, then we sent that description to a bunch of images.

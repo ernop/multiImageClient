@@ -59,7 +59,15 @@ Wheel up matches Ctrl+Left (newer prompt).
 
 ## One original loader
 
-`loadImageViewerEntry` is the only GET of an original.
+`loadImageViewerEntry` is the only GET of an original in the composer's
+viewer (`app.js`).
+
+The goal-loop page uses the standalone module `Ui/wwwroot/viewer.js`
+(2026-09-04). It applies the same rules with its own loader: card-thumb
+preview first, atomic chrome, selected original holds the network,
+±10 preload over 6 slots, late fetches guarded by selection identity.
+The two implementations are the known duplication; the intended end
+state is `app.js` on `viewer.js`. See `docs/goal-loop-prd.md`.
 
 Hover, the viewer window, and set-active reuse that cache. The same
 URL never has two in-flight GETs. Hover does not use a second

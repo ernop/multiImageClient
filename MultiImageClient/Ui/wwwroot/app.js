@@ -11651,6 +11651,23 @@ function applyJobEvent(id, card, evt) {
       card.dataset.gpt2Guidance = guidanceSent ? "sent" : "off";
       card.dataset.gpt2GuidanceText = guidanceSent ? guidanceText : "";
     }
+    // Renders commissioned by a goal loop carry exact lineage; the badge
+    // links to that loop's page and names the turn. Nothing is inferred
+    // from the prompt or the user for jobs without this field.
+    const lineage = evt.goalLoop;
+    if (lineage && typeof lineage.id === "string" && Number.isInteger(lineage.turn) &&
+        !card.querySelector(".job-goal-loop")) {
+      const meta = card.querySelector(".job-meta");
+      if (meta) {
+        const badge = document.createElement("a");
+        badge.className = "job-goal-loop";
+        badge.href = apiUrl(`goal.html?loop=${encodeURIComponent(lineage.id)}`);
+        badge.textContent = `goal loop · turn ${lineage.turn}`;
+        badge.title = `Rendered for goal loop ${lineage.id} at turn ${lineage.turn}` +
+          (typeof lineage.manager === "string" ? ` (manager: ${lineage.manager})` : "");
+        meta.appendChild(badge);
+      }
+    }
     if (Number.isInteger(evt.inputCount) && evt.inputCount >= 0) {
       card.dataset.inputCount = String(evt.inputCount);
       card.dataset.hasInputImage = String(evt.inputCount > 0);

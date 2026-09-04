@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MultiImageClient — goal loops</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css?v=20260904-goal-loops">
+<link rel="stylesheet" href="viewer.css?v=20260904-shared-viewer">
+<link rel="stylesheet" href="goal.css?v=20260904-protocol3">
+</head>
+<body class="goal-page">
+<header>
+  <h1><a class="header-home" href="./" title="Back to the composer and job feed">MultiImageClient</a><span id="environment-name"></span><span class="goal-page-title">goal loops</span></h1>
+  <a class="header-link" id="main-page-link" href="./" title="Back to the composer and job feed">main page</a>
+  <span id="goal-running-count" title="Goal loops currently running on this server"></span>
+  <button id="goal-new-toggle" type="button" class="header-button" aria-expanded="true" aria-controls="goal-new">new loop</button>
+</header>
+
+<main id="goal-main">
+  <aside id="goal-sidebar">
+    <section id="goal-new" class="goal-panel">
+      <h2>New goal loop</h2>
+      <form id="goal-form" autocomplete="off">
+        <div class="goal-field" id="goal-identity">
+          <span class="goal-label">creating as</span>
+          <div id="goal-identity-known" hidden>
+            <span id="goal-identity-name" class="goal-identity-name"></span>
+            <span id="goal-identity-source" class="goal-identity-source"></span>
+            <a id="goal-identity-change" href="./" class="goal-identity-change" title="The name is the composer's creating-as name; change it on the main page">change on main page</a>
+          </div>
+          <input id="goal-user" type="text" maxlength="32" placeholder="your name (no creating-as name is stored yet)" hidden>
+        </div>
+        <label class="goal-field">
+          <span class="goal-label">goal</span>
+          <textarea id="goal-text" rows="7" required
+            placeholder="Describe the image outcome you want. The manager model writes prompts, sees each render, scores it, and iterates."></textarea>
+        </label>
+        <label class="goal-field">
+          <span class="goal-label">goal kind</span>
+          <select id="goal-kind">
+            <option value="auto" selected>let the manager classify</option>
+            <option value="bounded">bounded — a recognizable finished state</option>
+            <option value="open-ended">open-ended — a maximum / "as … as possible"</option>
+          </select>
+          <span class="goal-help">Open-ended goals never stop on budget: the loop objects to a "done" until a render has pushed past the best result and degraded, demonstrating the generator's limit.</span>
+        </label>
+        <label class="goal-field">
+          <span class="goal-label">image generator (exactly one)</span>
+          <select id="goal-generator" required></select>
+        </label>
+        <label class="goal-field">
+          <span class="goal-label">manager model (exactly one)</span>
+          <select id="goal-manager" required></select>
+          <span id="goal-manager-detail" class="goal-help"></span>
+        </label>
+        <div class="goal-options">
+          <label class="goal-field goal-field-small">
+            <span class="goal-label">max turns</span>
+            <input id="goal-max-turns" type="number" min="1" max="30" value="6" required>
+          </label>
+          <label class="goal-field goal-field-small">
+            <span class="goal-label">shape</span>
+            <select id="goal-shape"></select>
+          </label>
+          <label class="goal-field goal-field-small">
+            <span class="goal-label">detail</span>
+            <select id="goal-detail"></select>
+          </label>
+          <label class="goal-field goal-field-small">
+            <span class="goal-label">quality</span>
+            <select id="goal-quality">
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high" selected>high</option>
+            </select>
+          </label>
+          <label class="goal-field goal-field-small">
+            <span class="goal-label">moderation</span>
+            <select id="goal-moderation">
+              <option value="low" selected>low</option>
+              <option value="auto">auto</option>
+            </select>
+          </label>
+        </div>
+        <p class="goal-help">The manager is not told which generator renders its prompts. No per-endpoint extra text is appended: the manager owns the whole prompt.</p>
+        <div class="goal-form-row">
+          <button id="goal-start" type="submit">start loop</button>
+          <span id="goal-form-error" class="goal-error" role="alert"></span>
+        </div>
+      </form>
+    </section>
+
+    <section id="goal-list-section" class="goal-panel">
+      <h2>Loops <span id="goal-list-count"></span></h2>
+      <div id="goal-list" aria-live="polite"></div>
+    </section>
+  </aside>
+
+  <section id="goal-view">
+    <div id="goal-empty">Select a loop on the left, or start a new one.</div>
+    <div id="goal-loop" hidden>
+      <div id="goal-loop-head" class="goal-panel"></div>
+      <div id="goal-turns"></div>
+    </div>
+  </section>
+</main>
+
+<script src="personal-config.js?v=20260904-goal-page"></script>
+<script src="viewer.js?v=20260904-shared-viewer"></script>
+<script src="goal.js?v=20260904-protocol3"></script>
+</body>
+</html>
