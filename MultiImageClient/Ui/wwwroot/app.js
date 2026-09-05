@@ -8249,6 +8249,7 @@ function isDescribeGenKey(key) {
 async function submit() {
   sendError.textContent = "";
   const prompt = promptBox.value.trim();
+  const promptRevision = promptRewrites.revision;
   const gens = checkedGeneratorKeys();
   if (gens.length === 0) { sendError.textContent = "pick at least one generator"; return; }
   const describeOnly = gens.every(isDescribeGenKey);
@@ -8312,6 +8313,7 @@ async function submit() {
     const resp = await fetch(apiUrl("api/jobs"), { method: "POST", body: form });
     const body = await resp.json();
     if (!resp.ok) { sendError.textContent = body.error || `HTTP ${resp.status}`; return; }
+    if (!describeOnly && user === currentUsername()) promptRewrites.submitted(prompt, promptRevision);
     ownedJobIds.add(body.id);
     addJobCard(
       body.id,

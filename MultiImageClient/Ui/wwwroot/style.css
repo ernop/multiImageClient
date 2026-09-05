@@ -3331,3 +3331,19 @@ body.image-viewer-open { overflow: hidden; }
 #prompt-rewrite-history button:disabled { opacity: 0.5; cursor: default; }
 #prompt-rewrite-history nav { display: flex; gap: 8px; }
 #prompt-tools [data-rewrite-model]:disabled { opacity: 0.5; cursor: default; }
+
+/* One quiet amber treatment marks a changed prompt awaiting image submission. */
+#prompt.prompt-not-submitted,
+.prompt-rewrite-exchange section.prompt-not-submitted {
+  background-color: #fffaf0;
+  box-shadow: inset 3px 0 0 #c79b45;
+}
+.prompt-rewrite-exchange section.prompt-not-submitted {
+  padding: 10px 12px;
+  border-radius: 4px;
+}
+/* McPhee keeps its textarea transparent so spelling marks remain visible. */
+#compose-right > .mcphee-host:has(#prompt.prompt-not-submitted) {
+  background-color: #fffaf0;
+  border-radius: 4px;
+}

@@ -89,3 +89,15 @@ No new server history cache exists.
 - Desktop and 390-pixel layouts kept the new controls within the viewport.
 - Browser verification used simulated provider replies; live provider access remains unverified.
 - Run the browser regression with `node tools/test-prompt-rewrites.cjs` in an environment that provides Playwright.
+
+## Unsubmitted prompt highlight (2026-09-05)
+
+Use one subtle amber tint and left edge for changed composer text awaiting image submission.
+Apply the same treatment to the exact matching version in visible prompt history.
+Typing, advice, rewrites, and restores mark the current text as changed.
+Clear the treatment only when an image-generation job accepts that same composer version.
+Describe-only jobs and rejected submissions do not clear it.
+A delayed acceptance cannot clear a newer edit.
+The cue means “not yet submitted for images”; it does not claim that generation succeeded.
+Keep the cue within the current page session; do not infer global generation history.
+Use a hover title to explain the color without adding another visible label.

@@ -46,6 +46,15 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent.startsWith('Expanded prompt applied'));
  assert((await page.locator('#prompt').inputValue()).includes('claude-fable-5-1'));
  assert.equal(await page.locator('.prompt-rewrite-exchange pre').first().textContent(),'  A botanical library inside a greenhouse.\nKeep the books dry.  ');
+ assert(await page.locator('#prompt').evaluate(e=>e.classList.contains('prompt-not-submitted')));
+ assert.equal(await page.locator('section.prompt-not-submitted').count(),1);
+ await page.evaluate(()=>controls.submitted(document.getElementById('prompt').value.trim(), controls.revision));
+ assert(!(await page.locator('#prompt').evaluate(e=>e.classList.contains('prompt-not-submitted'))));
+ assert.equal(await page.locator('section.prompt-not-submitted').count(),0);
+ const acceptedRevision = await page.evaluate(()=>controls.revision);
+ await page.locator('#prompt').fill('A newer draft');
+ await page.evaluate(r=>controls.submitted('A newer draft',r),acceptedRevision);
+ assert(await page.locator('#prompt').evaluate(e=>e.classList.contains('prompt-not-submitted')));
  await page.getByRole('button',{name:'flesh out · GPT-6',exact:true}).click();
  await page.waitForFunction(()=>document.querySelectorAll('.prompt-rewrite-exchange').length===2);
  await page.locator('.prompt-rewrite-exchange').last().getByRole('button',{name:'restore this version'}).first().click();

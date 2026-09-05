@@ -11,9 +11,29 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
   const buttons = [...document.querySelectorAll("[data-rewrite-model]")];
   let catalog = [], busy = false, revision = 0, historyRequest = 0;
   let cursors = [null], page = 0, nextCursor = null;
-  promptBox.addEventListener("input", () => { revision++; });
+  let lastSubmittedPrompt = null;
+  const originalTitle = promptBox.title;
+  function refreshDraft() {
+    const pending = !!promptBox.value.trim() && promptBox.value.trim() !== lastSubmittedPrompt;
+    promptBox.classList.toggle("prompt-not-submitted", pending);
+    promptBox.title = pending ? "Changed prompt · not yet submitted for images" : originalTitle;
+    for (const section of list.querySelectorAll("section")) {
+      section.classList.toggle("prompt-not-submitted",
+        pending && section.querySelector("pre").textContent === promptBox.value);
+    }
+  }
+  function submitted(prompt, sourceRevision) {
+    // A late acceptance belongs to the submitted version, never a newer edit.
+    if (sourceRevision !== revision || promptBox.value.trim() !== prompt) return;
+    lastSubmittedPrompt = prompt;
+    refreshDraft();
+  }
+  promptBox.addEventListener("input", () => { revision++; refreshDraft(); });
   document.getElementById("username-input").addEventListener("input", () => {
     historyRequest++;
+    lastSubmittedPrompt = null;
+    promptBox.classList.remove("prompt-not-submitted");
+    promptBox.title = originalTitle;
     list.replaceChildren();
     status.textContent = "";
     panel.hidden = true;
@@ -102,6 +122,7 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
         article.append(details);
         list.append(article);
       }
+      refreshDraft();
       if (!body.exchanges.length) list.textContent = "No saved prompt versions yet.";
       const last = body.exchanges.at(-1);
       nextCursor = body.exchanges.length === 20 ? { time: last.requestedAtUnixMs, id: last.id } : null;
@@ -156,5 +177,5 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
   document.getElementById("prompt-history-refresh").addEventListener("click", () => loadHistory(true));
   newer.addEventListener("click", () => { if (page > 0) { page--; loadHistory(); } });
   older.addEventListener("click", () => { if (nextCursor) { cursors[++page] = nextCursor; loadHistory(); } });
-  return { configure, loadHistory, run, get busy() { return busy; }, get revision() { return revision; } };
+  return { configure, loadHistory, run, submitted, get busy() { return busy; }, get revision() { return revision; } };
 };
