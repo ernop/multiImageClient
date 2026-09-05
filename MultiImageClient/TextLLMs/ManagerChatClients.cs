@@ -149,6 +149,7 @@ namespace MultiImageClient
 
     public static class ManagerCatalog
     {
+        public const string KeyGpt6Astra = "manager-gpt-6-astra";
         public const string KeyGpt56Sol = "manager-gpt-5.6-sol";
         public const string KeyClaudeFable51 = "manager-claude-fable-5-1";
         public const string KeyClaudeOpus5 = "manager-claude-opus-5";
@@ -216,14 +217,22 @@ namespace MultiImageClient
         {
             new ManagerDefinition
             {
-                Key = KeyGpt56Sol, Label = "GPT-5.6 Sol (OpenAI)", Provider = "openai", Model = "gpt-5.6-sol",
+                Key = KeyGpt56Sol, Label = "GPT-5.6 Sol", Provider = "openai", Model = "gpt-5.6-sol",
                 SettingsKeyName = nameof(Settings.OpenAIApiKey),
                 Detail = "OpenAI Responses API with reasoning summaries; JSON object output mode; images at detail original (full resolution).",
                 ImageLimits = OpenAiLimits,
             },
             new ManagerDefinition
             {
-                Key = KeyClaudeFable51, Label = "Claude Fable 5.1 (Anthropic)", Provider = "anthropic", Model = "claude-fable-5-1",
+                Key = KeyGpt6Astra, Label = "GPT-6 Astra", Provider = "openai", Model = "gpt-6-astra",
+                SettingsKeyName = nameof(Settings.OpenAIApiKey),
+                InputUsdPerMTok = 10m, OutputUsdPerMTok = 50m,
+                Detail = "OpenAI Responses API with reasoning summaries, JSON output, and full-resolution image input.",
+                ImageLimits = OpenAiLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyClaudeFable51, Label = "Fable 5.1", Provider = "anthropic", Model = "claude-fable-5-1",
                 SettingsKeyName = nameof(Settings.AnthropicApiKey),
                 InputUsdPerMTok = 10m, OutputUsdPerMTok = 50m,
                 Detail = "Anthropic Messages API. Adaptive thinking is always on; thinking blocks are shown as provider reasoning.",
@@ -231,7 +240,7 @@ namespace MultiImageClient
             },
             new ManagerDefinition
             {
-                Key = KeyClaudeOpus5, Label = "Claude Opus 5 (Anthropic)", Provider = "anthropic", Model = "claude-opus-5",
+                Key = KeyClaudeOpus5, Label = "Opus 5", Provider = "anthropic", Model = "claude-opus-5",
                 SettingsKeyName = nameof(Settings.AnthropicApiKey),
                 InputUsdPerMTok = 5m, OutputUsdPerMTok = 25m,
                 Detail = "Anthropic Messages API with adaptive thinking.",
@@ -239,7 +248,7 @@ namespace MultiImageClient
             },
             new ManagerDefinition
             {
-                Key = KeyClaudeSonnet5, Label = "Claude Sonnet 5 (Anthropic)", Provider = "anthropic", Model = "claude-sonnet-5",
+                Key = KeyClaudeSonnet5, Label = "Sonnet 5", Provider = "anthropic", Model = "claude-sonnet-5",
                 SettingsKeyName = nameof(Settings.AnthropicApiKey),
                 InputUsdPerMTok = 2m, OutputUsdPerMTok = 10m,
                 Detail = "Anthropic Messages API with adaptive thinking.",
@@ -247,14 +256,14 @@ namespace MultiImageClient
             },
             new ManagerDefinition
             {
-                Key = KeyGemini35Flash, Label = "Gemini 3.5 Flash (Google)", Provider = "google", Model = "gemini-3.5-flash",
+                Key = KeyGemini35Flash, Label = "Gemini 3.5 Flash", Provider = "google", Model = "gemini-3.5-flash",
                 SettingsKeyName = nameof(Settings.GoogleGeminiApiKey),
                 Detail = "Google generateContent with high thinking level and thought parts returned; JSON MIME output mode; images at MEDIA_RESOLUTION_ULTRA_HIGH.",
                 ImageLimits = GeminiLimits,
             },
             new ManagerDefinition
             {
-                Key = KeyGrok46, Label = "Grok 4.6 (xAI)", Provider = "xai", Model = "grok-4.6",
+                Key = KeyGrok46, Label = "Grok 4.6", Provider = "xai", Model = "grok-4.6",
                 SettingsKeyName = nameof(Settings.XAIGrokApiKey),
                 Detail = "xAI Responses API (api.x.ai), store=false so large images are accepted.",
                 ImageLimits = XaiLimits,
@@ -303,8 +312,10 @@ namespace MultiImageClient
             {
                 return null;
             }
-            return (inputTokens.Value * definition.InputUsdPerMTok.Value
-                + outputTokens.Value * definition.OutputUsdPerMTok.Value) / 1_000_000m;
+            // Astra's published long-context rates apply to the complete request.
+            bool astraLongContext = definition.Key == KeyGpt6Astra && inputTokens.Value > 272_000;
+            return (inputTokens.Value * definition.InputUsdPerMTok.Value * (astraLongContext ? 2m : 1m)
+                + outputTokens.Value * definition.OutputUsdPerMTok.Value * (astraLongContext ? 1.5m : 1m)) / 1_000_000m;
         }
     }
 
@@ -587,7 +598,7 @@ namespace MultiImageClient
             w.WriteString("type", "json_object");
             w.WriteEndObject();
             w.WriteEndObject();
-            if (Model.StartsWith("gpt-5", StringComparison.Ordinal))
+            if (Model.StartsWith("gpt-5", StringComparison.Ordinal) || Model == "gpt-6-astra")
             {
                 w.WritePropertyName("reasoning");
                 w.WriteStartObject();

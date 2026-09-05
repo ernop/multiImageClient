@@ -161,5 +161,5 @@
       contributions,
     };
   }
-  root.GoalRecap = { collect };
+  root.GoalRecap = { collect, shortName: label => label.replace(/^Claude /, "").replace(/ \((?:Anthropic|OpenAI|Google|xAI)\)$/, "") };
 })(globalThis);

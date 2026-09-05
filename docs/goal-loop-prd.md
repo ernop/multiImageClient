@@ -71,6 +71,8 @@ after editing the text of that message.
 | R23 (2026-09-05) | Reduce repetition and distinguish contributors | Show each image once in the default turn view. Pair each generator’s Refine and Fresh images. Name every contributor in score rows and contribution headers. Separate manager and critic instances of the same model by role. Keep full records expandable. |
 | R24 (2026-09-05, not implemented) | Configurable participants with separate histories | The user wants image makers, image understanders, and prompt writers with controllable instructions and context. Allow multiple participants using the same model, including two Groks with different personas. Each participant knows only its assigned context and own conversation history. |
 | R25 (2026-09-05) | Reusable visual artifacts for every group image loop | Every loop provides best/latest/all/per-generator browsing, named contributors, fullscreen viewing, compact PNG pages, and portable HTML export. |
+| R26 (2026-09-05) | Usable goal selectors | Hide unavailable models. Let the user resize the left picker with pointer or keyboard. |
+| R27 (2026-09-05) | Astra critic | Offer GPT-6 Astra through the shared manager/critic catalog and existing OpenAI key. |
 
 ## 3. Settled decisions
 
@@ -473,6 +475,16 @@ after editing the text of that message.
   price); render cost sums the jobs' estimates.
 
 
+### Goal selectors and sidebar width (2026-09-05)
+
+- Show only available image generators, managers, and critics in the creation form.
+- Keep availability enforcement on the server. This changes the selector presentation only.
+- Allow dragging the divider beside the left picker to set its width on desktop.
+- Support Left/Right arrows, Home, and End when the divider has keyboard focus.
+- Remember the chosen width in browser storage. Clamp it to preserve room for the conversation.
+- Keep the single-column layout on narrow screens.
+- Double-click the divider to restore the initial width proportion.
+
 ### Contributor view (2026-09-05)
 
 The default page supports comparing images and tracing individual contributions.
@@ -519,6 +531,20 @@ Manual turns and a configurable repeating sequence remain the proposed control m
 
 ### Reusable visual recap (2026-09-05)
 
+Presentation decisions (2026-09-05):
+- Use the shared `style.css` and `goal.css` styling, header, and navigation controls.
+- Link to the main page, goal loops, and the exact source conversation. Mark the current results page.
+- Use short model labels: Fable 5.1, Opus 5, GPT-5.6 Sol, and Gemini 3.5 Flash.
+- Omit redundant Claude prefixes and provider parentheses. Preserve model versions and generator transport distinctions.
+- Keep stored provider identities unchanged. Short names affect display only.
+- Omit the routine offline-preview notice from the page. Keep export limitations in export feedback and documentation.
+- Serve local recap previews through the image app on port 5960, not a separate preview server.
+- Standalone exports omit private source-site links. The local preview can link explicitly to the local app.
+
+
+The page heading is **Goal loop results**. Show the supplied goal verbatim.
+Use brief, literal labels without added emphasis or slogans (owner decision, 2026-09-05).
+
 Every goal conversation exposes **Visual recap · browse / PNG / HTML** beside its sheet controls.
 This applies to existing and future loops without new model calls.
 The recap uses a complete snapshot from the existing loop endpoint.
@@ -554,6 +580,7 @@ settings keys as the describe endpoints.
 
 | Key | Model | Transport |
 |-----|-------|-----------|
+| `manager-gpt-6-astra` | gpt-6-astra | OpenAI Responses API, medium reasoning, JSON object mode |
 | `manager-gpt-5.6-sol` | gpt-5.6-sol | OpenAI Responses API, reasoning summaries, JSON object mode |
 | `manager-claude-fable-5-1` | claude-fable-5-1 | Anthropic Messages, adaptive thinking |
 | `manager-claude-opus-5` | claude-opus-5 | Anthropic Messages, adaptive thinking |
@@ -562,6 +589,16 @@ settings keys as the describe endpoints.
 | `manager-grok-4.6` | grok-4.6 | xAI Responses API |
 
 Gemini 3.5 Pro is not offered (partner-only as of 2026-09-04).
+
+GPT-6 Astra joins the shared manager/critic catalog on 2026-09-05, including the critic selector.
+It uses the existing OpenAI key, image transport, strict critique contract, and medium reasoning.
+The manager selector also exposes it because both roles use the same catalog.
+Pricing estimates use $10 input and $50 output per million tokens.
+Above 272,000 input tokens, input rates double and output rates multiply by 1.5.
+Sources: [Astra model](https://developers.openai.com/api/docs/models/gpt-6-astra) and
+[OpenAI image inputs](https://developers.openai.com/api/docs/guides/images-vision), checked 2026-09-05.
+Provider acceptance still depends on the configured account.
+Verification: all 12 Astra catalog/pricing and critic tests passed. No live Astra critic call was made.
 
 ## 5. Entry model
 
@@ -628,6 +665,7 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   (contributor roster, paired images, score comparison, expandable contributions,
   request records, identity chip, prompt diffs, sheet controls, and viewer wiring).
 - `tools/tests/goal-recap.test.cjs` — exact joins, tied best scores, missing reviews, failed replies, and legacy identities.
+- `MultiImageClient/Ui/wwwroot/goal-sidebar.js` — persistent, keyboard-accessible sidebar resizing.
 - `MultiImageClient/Ui/wwwroot/recap.html`, `recap.css`, `recap-model.js`, `recap.js` — reusable recap and browser exports.
 - `MultiImageClient/Ui/wwwroot/viewer.js`, `viewer.css` — the shared viewer
   module.

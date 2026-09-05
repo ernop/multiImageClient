@@ -40,7 +40,7 @@
   max-width: none;
   margin: 0;
   display: grid;
-  grid-template-columns: minmax(250px, 22%) minmax(0, 1fr);
+  grid-template-columns: var(--goal-sidebar-width, minmax(250px, 22%)) 8px minmax(0, 1fr);
   gap: 16px;
   width: 100%;
   padding: 16px 22px 40px;
@@ -438,3 +438,7 @@ details.goal-entry[open] > summary::before { content: "▾"; }
   .goal-page header .header-link, .goal-page header .header-button { padding: 5px 8px; white-space: nowrap; }
   #goal-running-count:empty { display: none; }
 }
+
+#goal-sidebar-resize { align-self: stretch; cursor: col-resize; background: var(--line); border-radius: 4px; touch-action: none; }
+#goal-sidebar-resize:hover, #goal-sidebar-resize:focus-visible { background: var(--accent); outline: 2px solid var(--accent); }
+@media(max-width:980px) { #goal-sidebar-resize { display: none; } }

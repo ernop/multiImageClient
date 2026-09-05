@@ -42,3 +42,6 @@ w-detection/__pycache__/
 # Runtime log artifacts (e.g. ideogram smoke-test logs)
 logs/
 tpdiscord-archive/
+
+# Generated local recap snapshots, never source artifacts.
+MultiImageClient/Ui/wwwroot/recap-snapshots/

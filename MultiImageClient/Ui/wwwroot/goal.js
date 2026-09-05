@@ -107,6 +107,14 @@ async function fetchJson(path, init) {
     const message = body && body.error ? body.error : `HTTP ${resp.status}`;
     throw new Error(message);
   }
+  for (const loop of [body?.loop, ...(body?.loops || [])].filter(Boolean)) {
+    loop.managerLabel = GoalRecap.shortName(loop.managerLabel);
+    for (const critic of loop.critics || []) critic.label = GoalRecap.shortName(critic.label);
+  }
+  for (const manager of body?.goalLoop?.managers || []) manager.label = GoalRecap.shortName(manager.label);
+  for (const entry of body?.entries || []) {
+    if (entry.critic?.label) entry.critic.label = GoalRecap.shortName(entry.critic.label);
+  }
   return body;
 }
 
@@ -217,7 +225,7 @@ async function loadConfig() {
   renderIdentity();
 
   const generators = (config.generators || [])
-    .filter((g) => g.kind === "image" && !g.requiresImage && g.key !== "grok-web-video")
+    .filter((g) => g.available && g.kind === "image" && !g.requiresImage && g.key !== "grok-web-video")
     .map((g) => ({
       key: g.key,
       label: g.available ? g.label : `${g.label} — ${g.availabilityProblem || "unavailable"}`,
@@ -227,7 +235,7 @@ async function loadConfig() {
   const firstGenerator = generators.find((g) => !g.disabled);
   generatorChoices(el("goal-generators"), generators, firstGenerator ? [firstGenerator.key] : []);
 
-  const managers = (config.goalLoop.managers || []).map((m) => ({
+  const managers = (config.goalLoop.managers || []).filter((m) => m.available).map((m) => ({
     key: m.key,
     label: m.available ? m.label : `${m.label} — ${m.availabilityProblem || "unavailable"}`,
     disabled: !m.available,

@@ -5,14 +5,24 @@
     content="width=device-width,initial-scale=1"
   />
   <title>Visual recap · MultiImageClient</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="goal.css" />
   <link rel="stylesheet" href="recap.css" /><link
     rel="stylesheet"
     href="viewer.css"
   />
+  <body class="goal-page recap-page">
   <header>
-    <a id="back" href="goal.html">← Goal conversation</a>
-    <div class="eyebrow">MultiImageClient / visual conversation</div>
-    <h1>One goal. Many images.</h1>
+    <h1><a class="header-home" id="site-title" href="./">MultiImageClient</a><span id="environment-name"></span></h1>
+    <nav class="recap-nav" aria-label="Site navigation">
+      <a class="header-link" id="site-home" href="./">main page</a>
+      <a class="header-link" id="site-loops" href="goal.html">goal loops</a>
+      <a class="header-link" id="back" href="goal.html">this conversation</a>
+      <span class="goal-page-title" aria-current="page">Goal loop results</span>
+    </nav>
+  </header>
+  <main id="recap-main">
+  <section class="goal-panel" aria-label="Goal and contributors">
     <p id="goal"></p>
     <p id="stats"></p>
     <div class="roster" id="roster"></div>
@@ -28,8 +38,7 @@
         images can lack a manager review.
       </p>
     </details>
-  </header>
-  <main>
+  </section>
     <nav class="toolbar" aria-label="Image selections">
       <button data-cut="best">Best per generator</button
       ><button data-cut="latest">Latest per generator</button
@@ -57,4 +66,5 @@
   <script src="viewer.js"></script>
   <script src="recap-model.js"></script>
   <script src="recap.js"></script>
+</body>
 </html>

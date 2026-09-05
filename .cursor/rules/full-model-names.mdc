@@ -1,11 +1,15 @@
 ---
-description: Require complete model names on every user-facing surface
+description: Use concise, complete model identities on user-facing surfaces
 alwaysApply: true
 ---
 
-# Full Model Names
+# Model display names
 
-- Always display the complete configured/catalog model or generator name in every user-facing surface.
-- Never abbreviate, ellipsize, clamp, truncate, or hide any part of a model name.
-- Constrained layouts must wrap or reflow surrounding metadata and controls so the full name remains visible. A tooltip does not substitute for visible text.
-- Internal keys may remain in diagnostics, but they must not replace the full display name in UI, documentation, release notes, or other user-facing prose.
+Owner decision, 2026-09-05, supersedes the earlier requirement to display every catalog prefix and provider suffix.
+
+- Use the shortest correct model name. Preserve its version and distinguishing variant.
+- Omit redundant provider names and parentheses: Fable 5.1, Opus 5, Sonnet 5, GPT-5.6 Sol, GPT-6 Astra.
+- Keep generator transport distinctions such as grok-api and grok-web.
+- Do not ellipsize, clamp, or truncate the resulting display name. Wrap it when space is limited.
+- Keep exact provider model IDs and catalog keys in requests and stored records.
+- Use role labels to distinguish separate participants using the same model.

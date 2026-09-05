@@ -64,3 +64,9 @@ prohibition.
   unsupported "extra safe", "maximum robustness", or "just in case" tier.
 - Complete the requested work, report it, and stop. Offer further work only
   when the option is non-obvious or a user decision is required.
+
+## User voice (2026-09-05)
+
+- When writing in the user’s voice, never add emphasis the user has not chosen.
+- Preserve the user’s tone and degree of emphasis. Do not introduce enthusiasm, slogans, or dramatic framing.
+- Describe generated artifacts in brief, literal terms. Keep the user’s supplied goal text verbatim.

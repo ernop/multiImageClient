@@ -142,9 +142,9 @@ async function png() {
     canvas.width = 1920;
     canvas.height = 140 + Math.ceil(Math.min(8, selection.length - start) / 4) * 590;
     const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#f5f2e9";
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--paper").trim();
     ctx.fillRect(0, 0, 1920, 1320);
-    ctx.fillStyle = "#163c3a";
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim();
     ctx.font = "bold 30px system-ui";
     ctx.fillText(`VISUAL RECAP / ${label}`, 24, 42);
     ctx.font = "18px system-ui";
@@ -196,6 +196,7 @@ async function png() {
 async function portable() {
   clearDownloads();
   const copy = structuredClone(data);
+  delete copy.siteHome;
   for (let n = 0; n < copy.items.length; n++) {
     const item = copy.items[n];
     $("message").textContent =
@@ -223,10 +224,12 @@ async function portable() {
       "viewer.js",
       "recap-model.js",
       "recap.js",
+      "style.css",
+      "goal.css",
     ].map(async (name) => (await response(resolve(name))).text()),
   );
   const doc = new DOMParser().parseFromString(texts[0], "text/html");
-  for (const [name, text] of [["recap.css", texts[1]], ["viewer.css", texts[2]]]) {
+  for (const [name, text] of [["style.css", texts[6]], ["goal.css", texts[7]], ["recap.css", texts[1]], ["viewer.css", texts[2]]]) {
     const style = doc.createElement("style");
     style.textContent = text;
     doc.querySelector(`link[href="${name}"]`).replaceWith(style);
@@ -271,6 +274,20 @@ async function init() {
     data = GoalRecap.collect(body.loop, body.entries, resolve);
     $("back").href = `goal.html?loop=${encodeURIComponent(id)}`;
   }
+  const siteHome = embedded ? data.siteHome : new URL("./", location.href).href;
+  if (siteHome) {
+    $("site-home").href = $("site-title").href = siteHome;
+    $("site-loops").href = new URL("goal.html", siteHome).href;
+    const host = new URL(siteHome).hostname.toLowerCase();
+    const online = host === "fuseki.net" || host.endsWith(".fuseki.net");
+    $("environment-name").textContent = online ? "-alpha.fuseki.net" : "-local";
+    document.querySelector("header").classList.add(online ? "environment-online" : "environment-local");
+  } else {
+    $("site-home").hidden = $("site-loops").hidden = true;
+    $("site-title").removeAttribute("href");
+  }
+  if (embedded) $("environment-name").textContent += " · saved snapshot";
+  for (const item of [...data.participants, ...data.items, ...data.failures]) item.label = GoalRecap.shortName(item.label);
   people = new Map(data.participants.map((p) => [p.id, p]));
   $("goal").textContent = data.goal;
   $("stats").textContent =
@@ -324,9 +341,7 @@ async function init() {
   $("html").onclick = () => action(portable);
   if (!data.cuts.best.length) cut = "all";
   render();
-  $("message").textContent = embedded
-    ? "Saved snapshot. Previews and comments work offline. Originals need access to their recorded host."
-    : "Snapshot of this conversation. Reload to include later turns. Select an image to use arrow keys, wheel, or fullscreen.";
+  $("message").textContent = "";
   if (data.failures.length)
     $("message").textContent +=
       "\n" +
