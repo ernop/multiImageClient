@@ -538,6 +538,12 @@ namespace MultiImageClient
                         available = claudeAdviceProblem == null,
                         availabilityProblem = claudeAdviceProblem,
                     },
+                    promptRewrites = new[] { DirectedPromptRewrite.FableModel, DirectedPromptRewrite.OpenAiModel }.Select(model => new
+                    {
+                        model,
+                        available = DirectedPromptRewrite.AvailabilityProblem(model, settings) == null,
+                        availabilityProblem = DirectedPromptRewrite.AvailabilityProblem(model, settings),
+                    }),
                     // Goal loop manager catalog + limits, consumed by goal.html.
                     // Generators come from the `generators` list above (image
                     // kind, available, not requiring an input image).
@@ -1813,14 +1819,18 @@ namespace MultiImageClient
 
             app.MapPost("/api/prompt/advice", async (HttpRequest request) =>
             {
-                if (claudeService == null)
-                {
-                    return Results.BadRequest(new { error = claudeAdviceProblem });
-                }
                 var form = await request.ReadFormAsync();
+                var model = form["model"].ToString();
+                var restore = model == "restore";
+                var directed = model.Length > 0 && !restore;
+                var problem = directed ? DirectedPromptRewrite.AvailabilityProblem(model, settings)
+                    : restore ? null : claudeAdviceProblem;
+                if (problem != null) return Results.BadRequest(new { error = problem });
+                if (!directed && !restore) model = ClaudeService.PromptAdviceModel;
                 var prompt = form["prompt"].ToString();
-                var instruction = form["instruction"].ToString().Trim();
-                if (string.IsNullOrWhiteSpace(prompt))
+                var instruction = directed ? DirectedPromptRewrite.Instruction
+                    : restore ? "Restore a saved prompt version." : form["instruction"].ToString().Trim();
+                if (!restore && string.IsNullOrWhiteSpace(prompt))
                 {
                     return Results.BadRequest(new { error = "prompt is empty" });
                 }
@@ -1845,14 +1855,27 @@ namespace MultiImageClient
                 var identityKey = authUser.Length > 0
                     ? "login:" + authUser
                     : "display:" + actorDisplay.ToUpperInvariant();
-                var wirePrompt = ClaudeService.BuildPromptAdviceWirePrompt(instruction, prompt);
+                string? restoredPrompt = null;
+                if (restore)
+                {
+                    var sourceId = form["exchangeId"].ToString();
+                    var side = form["side"].ToString();
+                    if (sourceId.Length == 0 || (side != "original" && side != "result"))
+                        return Results.BadRequest(new { error = "Select an exact saved prompt version." });
+                    var source = community.ReadClaudePromptExchanges(identityKey, 1, exchangeId: sourceId).SingleOrDefault();
+                    if (source == null || (side == "result" && source.Status != "succeeded"))
+                        return Results.BadRequest(new { error = "This saved prompt version is unavailable." });
+                    restoredPrompt = side == "original" ? source.OriginalPrompt : source.ResultPrompt;
+                    instruction = $"Restore {sourceId} / {side}.";
+                }
+                var wirePrompt = restore ? "" : ClaudeService.BuildPromptAdviceWirePrompt(instruction, prompt);
                 var exchange = community.StartClaudePromptExchange(
                     identityKey,
                     actorDisplay,
-                    ClaudeService.PromptAdviceModel,
+                    model,
                     instruction,
                     prompt,
-                    ClaudeService.PromptAdviceSystemPrompt,
+                    restore ? "" : ClaudeService.PromptAdviceSystemPrompt,
                     wirePrompt,
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 string rawResponse;
@@ -1860,7 +1883,11 @@ namespace MultiImageClient
                 string failure;
                 try
                 {
-                    var result = await claudeService.GetPromptAdviceAsync(instruction, prompt);
+                    var result = restore
+                        ? new ClaudePromptAdviceResult { ResultPrompt = restoredPrompt! }
+                        : directed
+                            ? await DirectedPromptRewrite.RewriteAsync(model, prompt, settings, request.HttpContext.RequestAborted)
+                            : await claudeService!.GetPromptAdviceAsync(instruction, prompt);
                     rawResponse = result.RawResponse;
                     replacement = result.ResultPrompt;
                     failure = result.Error;
@@ -1880,11 +1907,11 @@ namespace MultiImageClient
                 if (failure.Length > 0)
                 {
                     var actionHint = ProviderActionHints.For(
-                        UiJobRunner.KeyDescribeClaude,
+                        model == DirectedPromptRewrite.OpenAiModel ? UiJobRunner.KeyDescribeOpenAi : UiJobRunner.KeyDescribeClaude,
                         failure);
-                    Logger.Log($"UI Claude advice {exchange.Id} failed for '{actorDisplay}': {failure}"
+                    Logger.Log($"UI prompt edit {exchange.Id} failed for '{actorDisplay}': {failure}"
                         + (actionHint != null
-                            ? $"\nUI Claude advice next step: {actionHint.Text} -> {actionHint.Url}"
+                            ? $"\nUI prompt edit next step: {actionHint.Text} -> {actionHint.Url}"
                             : ""));
                     return Results.Json(
                         new
@@ -1896,10 +1923,12 @@ namespace MultiImageClient
                         },
                         statusCode: 502);
                 }
-                Logger.Log($"UI Claude advice {exchange.Id} completed for '{actorDisplay}'.");
+                Logger.Log($"UI prompt edit {exchange.Id} completed for '{actorDisplay}'.");
                 return Results.Json(new
                 {
                     replacement,
+                    model,
+                    originalPrompt = prompt,
                     exchangeId = exchange.Id,
                 });
             });
@@ -1907,8 +1936,12 @@ namespace MultiImageClient
             app.MapGet("/api/prompt/advice/history", (
                 string? user,
                 int? limit,
+                long? beforeTime,
+                string? beforeId,
                 HttpContext ctx) =>
             {
+                if (beforeTime.HasValue != !string.IsNullOrEmpty(beforeId))
+                    return Results.BadRequest(new { error = "History requires both cursor fields." });
                 var authUser = ctx.Items["micUser"] as string ?? "";
                 if (!TryResolveCreatorName(
                     user,
@@ -1922,7 +1955,7 @@ namespace MultiImageClient
                 var identityKey = authUser.Length > 0
                     ? "login:" + authUser
                     : "display:" + actorDisplay.ToUpperInvariant();
-                var records = community.ReadClaudePromptExchanges(identityKey, limit ?? 50);
+                var records = community.ReadClaudePromptExchanges(identityKey, limit ?? 50, beforeTime, beforeId);
                 return Results.Json(new
                 {
                     exchanges = records.Select(record => new

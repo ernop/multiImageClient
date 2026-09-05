@@ -249,6 +249,10 @@
               aria-controls="spelling-panel" title="Open spelling suggestions and settings">spelling</button>
             <button id="prompt-advice" type="button"
               title="Give Claude your own editing instruction, with this exact prompt appended as source text">get Claude's advice</button>
+            <button type="button" data-rewrite-model="claude-fable-5-1" disabled>flesh out · Fable 5.1</button>
+            <button type="button" data-rewrite-model="gpt-6-astra" disabled>flesh out · GPT-6</button>
+            <button id="prompt-history-toggle" type="button" aria-expanded="false"
+              aria-controls="prompt-rewrite-history">prompt history</button>
             <button id="prompt-advice-undo" type="button" hidden
               title="Restore the exact prompt from before Claude edited it">undo Claude edit</button>
           </div>
@@ -256,6 +260,19 @@
       </div>
     </div>
 
+    <p id="prompt-rewrite-status" role="status" aria-live="polite"></p>
+    <section id="prompt-rewrite-history" hidden aria-label="Saved prompt versions">
+      <div class="prompt-history-heading">
+        <h2>Prompt versions</h2>
+        <button id="prompt-history-refresh" type="button">refresh history</button>
+      </div>
+      <p>Each change keeps its exact source and replacement. Restore any version to explore another direction.</p>
+      <div id="prompt-rewrite-list"></div>
+      <nav aria-label="Prompt history pages">
+        <button id="prompt-history-newer" type="button" disabled>newer changes</button>
+        <button id="prompt-history-older" type="button" disabled>older changes</button>
+      </nav>
+    </section>
     <div id="endpoint-picker">
       <div id="gen-controls">
         <button id="gens-enable-all" class="generator-main-control" type="button"
@@ -861,6 +878,7 @@
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20260818-ctrl-tap"></script>
 <script src="personal-config.js"></script>
+<script src="prompt-rewrites.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

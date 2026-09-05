@@ -1194,7 +1194,9 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 #send-row { display: flex; align-items: center; gap: 12px; }
 #prompt-tools #mcphee-panel-toggle,
 #prompt-tools #prompt-advice,
-#prompt-tools #prompt-advice-undo {
+#prompt-tools #prompt-advice-undo,
+#prompt-tools [data-rewrite-model],
+#prompt-tools #prompt-history-toggle {
   font: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -3308,3 +3310,24 @@ body.image-viewer-open { overflow: hidden; }
   }
 }
 
+
+/* Full prompt text stays readable without inner scroll boxes or collapsed versions. */
+#prompt-rewrite-status:empty { display: none; }
+#prompt-rewrite-status { margin: 8px 0; color: var(--accent-dark); }
+#prompt-rewrite-history { margin: 12px 0 20px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+.prompt-history-heading, .prompt-version-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.prompt-history-heading h2 { margin: 0; font-size: 17px; }
+.prompt-rewrite-exchange { margin: 18px 0; padding: 16px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.prompt-rewrite-exchange h3 { margin: 0 0 16px; font-size: 14px; overflow-wrap: anywhere; }
+.prompt-rewrite-exchange section + section { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
+.prompt-rewrite-exchange pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; margin: 10px 0; }
+.prompt-rewrite-exchange details { margin-top: 14px; }
+.prompt-rewrite-exchange summary { cursor: pointer; color: var(--accent-dark); }
+#prompt-rewrite-history button {
+  padding: 5px 9px; border: 1px solid var(--accent); border-radius: 4px;
+  color: var(--accent-dark); background: transparent; font: inherit; font-size: 12px; cursor: pointer;
+}
+#prompt-rewrite-history button:hover:not(:disabled) { background: var(--accent); color: #fff; }
+#prompt-rewrite-history button:disabled { opacity: 0.5; cursor: default; }
+#prompt-rewrite-history nav { display: flex; gap: 8px; }
+#prompt-tools [data-rewrite-model]:disabled { opacity: 0.5; cursor: default; }

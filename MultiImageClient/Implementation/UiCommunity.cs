@@ -439,7 +439,10 @@ namespace MultiImageClient
 
         public List<UiClaudePromptExchangeRecord> ReadClaudePromptExchanges(
             string identityKey,
-            int limit = 50)
+            int limit = 50,
+            long? beforeTime = null,
+            string? beforeId = null,
+            string? exchangeId = null)
         {
             identityKey = identityKey.Trim();
             if (identityKey.Length == 0)
@@ -459,11 +462,17 @@ namespace MultiImageClient
                            raw_response, result_prompt, status, error
                     FROM ui_claude_prompt_exchanges
                     WHERE identity_key = $identity
-                    ORDER BY requested_at_unix_ms DESC
+                      AND ($id IS NULL OR id = $id)
+                      AND ($beforeTime IS NULL OR requested_at_unix_ms < $beforeTime
+                           OR (requested_at_unix_ms = $beforeTime AND id < $beforeId))
+                    ORDER BY requested_at_unix_ms DESC, id DESC
                     LIMIT $limit;
                     """;
                 command.Parameters.AddWithValue("$identity", identityKey);
                 command.Parameters.AddWithValue("$limit", limit);
+                command.Parameters.AddWithValue("$id", (object?)exchangeId ?? DBNull.Value);
+                command.Parameters.AddWithValue("$beforeTime", (object?)beforeTime ?? DBNull.Value);
+                command.Parameters.AddWithValue("$beforeId", (object?)beforeId ?? DBNull.Value);
                 var records = new List<UiClaudePromptExchangeRecord>();
                 using var reader = command.ExecuteReader();
                 while (reader.Read())

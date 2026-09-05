@@ -95,7 +95,6 @@ let videoGeneration = { available: false, availabilityProblem: "video configurat
 let setActiveJobVersion = 0;
 let setActiveJobController = null;
 let claudeAdvice = { available: false, availabilityProblem: "configuration not loaded" };
-let promptAdvicePrevious = null;  // exact prompt from before the last Claude edit
 let generatorPreferences = null;
 const GeneratorPreferencesLocalKey = "mic_generator_preferences_v1";
 const ClaudeAdviceInstructionKey = "mic_claude_advice_instruction_v1";
@@ -703,6 +702,7 @@ async function loadConfig() {
   vibecodersAvailable = !!(cfg.vibecoders && cfg.vibecoders.available);
   claudeAdvice = cfg.claudeAdvice || claudeAdvice;
   applyClaudeAdviceAvailability();
+  promptRewrites.configure(cfg.promptRewrites || []);
   describeConfig = cfg.describe || describeConfig;
   if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
     maxInputImages = cfg.maxInputImages;
@@ -8354,6 +8354,17 @@ const claudeAdviceHistory = el("claude-advice-history");
 const claudeAdviceHistoryList = el("claude-advice-history-list");
 let claudeAdviceOriginalPrompt = "";
 let claudeAdviceHistoryLoaded = false;
+const promptRewrites = window.createPromptRewrites({
+  apiUrl, promptBox, username: currentUsername,
+  applyPrompt(text) {
+    promptBox.value = text;
+    promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+    if (mcpheeCtl) mcpheeCtl.refresh();
+    if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+    updatePromptLimitNotice();
+  },
+});
+let promptAdviceExchangeId = null;
 const DefaultClaudeAdviceInstruction =
   "Fix spelling and obvious typos. Improve organization only where needed, while preserving the meaning and useful detail.";
 
@@ -8463,15 +8474,18 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
     claudeAdviceStatus.className = "error";
     return;
   }
+  const original = claudeAdviceOriginalPrompt;
+  const actor = currentUsername();
+  const sourceRevision = promptRewrites.revision;
   const submitButton = el("claude-advice-submit");
   submitButton.disabled = true;
   claudeAdviceStatus.className = "";
   claudeAdviceStatus.textContent = "Claude is editing…";
   try {
-    const form = new FormData();
+    const form = new URLSearchParams();
     form.append("instruction", instruction);
-    form.append("prompt", claudeAdviceOriginalPrompt);
-    form.append("user", currentUsername());
+    form.append("prompt", original);
+    form.append("user", actor);
     const response = await fetch(apiUrl("api/prompt/advice"), { method: "POST", body: form });
     if (response.status === 401) { location.reload(); return; }
     const body = await response.json();
@@ -8481,8 +8495,17 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
       failure.providerHintUrl = body.errorHintUrl || "";
       throw failure;
     }
-    promptAdvicePrevious = claudeAdviceOriginalPrompt;
-    promptBox.value = body.replacement;
+    if (typeof body.replacement !== "string" || !body.exchangeId || body.originalPrompt !== original)
+      throw new Error("The advice response does not match this request.");
+    if (actor !== currentUsername()) { claudeAdviceDialog.close(); return; }
+    promptAdviceExchangeId = body.exchangeId;
+    if (promptBox.value === original && sourceRevision === promptRewrites.revision) {
+      promptBox.value = body.replacement;
+      promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+    } else {
+      el("prompt-rewrite-status").textContent = "Your prompt changed. Restore the saved Claude replacement from history to apply it.";
+    }
+    await promptRewrites.loadHistory(true);
     promptAdviceUndoBtn.hidden = false;
     claudeAdviceDialog.close();
     if (mcpheeCtl) mcpheeCtl.refresh();
@@ -8509,15 +8532,9 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
   }
 });
 
-promptAdviceUndoBtn.addEventListener("click", () => {
-  if (promptAdvicePrevious === null) return;
-  promptBox.value = promptAdvicePrevious;
-  promptAdvicePrevious = null;
-  promptAdviceUndoBtn.hidden = true;
-  if (mcpheeCtl) mcpheeCtl.refresh();
-  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
-  updatePromptLimitNotice();
-  promptBox.focus();
+promptAdviceUndoBtn.addEventListener("click", async () => {
+  if (!promptAdviceExchangeId || promptRewrites.busy) return;
+  await promptRewrites.run("restore", { exchangeId: promptAdviceExchangeId, side: "original" });
 });
 
 // ---------- McPhee: local writing checks, corrections panel, and fixes ----------
