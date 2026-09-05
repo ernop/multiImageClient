@@ -104,6 +104,67 @@
     return parsed;
   }
 
+  // A first visit can start on the goal page before the composer writes its
+  // complete document. Preserve legacy browser fields during that migration.
+  function saveGeneratorPreferences(storage, preferences) {
+    const stored = parseStored(storage.getItem(StorageKey));
+    const json = (key, initial) => {
+      const raw = storage.getItem(key);
+      return raw === null ? initial : JSON.parse(raw);
+    };
+    const ui = stored ? {} : json("mic_ui_settings_v1", {});
+    const library = stored ? {} : json("multi-image-client.inspiration-library.v1", {});
+    const audio = stored ? {} : json("mic_video_audio_v1", {});
+    const document = stored || {
+      format: Format,
+      version: Version,
+      creatingAs: storage.getItem("mic_username") || "",
+      peopleFilters: json("mic_user_filter_v1", []),
+      uiSettings: {
+        nightHideEnabled: ui.nightHideEnabled === true,
+        nightWords: ui.nightWords ?? "",
+        showCosts: ui.showCosts === true,
+        contentMaxWidth: ui.contentMaxWidth ?? 1280,
+        describeExpanded: ui.describeExpanded !== false,
+        activityOwnGens: ui.activityOwnGens !== false,
+        activityReturning: ui.activityReturning !== false,
+        activityMyFavorites: ui.activityMyFavorites !== false,
+        activitySharedFavorites: ui.activitySharedFavorites !== false,
+        activityRequestAlerts: ui.activityRequestAlerts !== false,
+        activitySound: ui.activitySound === true,
+        activityBrowserPopup: ui.activityBrowserPopup !== false,
+        activityExpanded: ui.activityExpanded === true,
+        activityLeft: ui.activityLeft ?? null,
+        activityTop: ui.activityTop ?? null,
+        activityWidth: ui.activityWidth ?? null,
+        activityHeight: ui.activityHeight ?? null,
+      },
+      promptTools: {
+        claudeAdviceInstruction: storage.getItem("mic_claude_advice_instruction_v1") ||
+          "Fix spelling and obvious typos. Improve organization only where needed, while preserving the meaning and useful detail.",
+      },
+      spelling: {
+        enabled: storage.getItem("mic_mcphee_enabled") !== "false",
+        customDictionary: json("mic_spellwell_custom_dict", []),
+        ignoredWords: json("mic_spellwell_custom_dict:ignored", []),
+        notRareWords: json("mic_spellwell_custom_dict:notrare", []),
+        formality: storage.getItem("mic_mcphee_formality") || "standard",
+        ruleOverrides: json("mic_mcphee_rule_overrides", {}),
+      },
+      inspirationLibrary: {
+        custom: library.custom ?? [], favorites: library.favorites ?? [], recent: library.recent ?? [],
+      },
+      viewer: {
+        compareWithInput: storage.getItem("imageViewerCompareInput") === "true",
+        closeHandback: storage.getItem("imageViewerReturnSync") === "true",
+      },
+      videoAudio: { volume: audio.volume ?? 0.5, muted: audio.muted ?? false },
+      costSummaryCollapsed: storage.getItem("multi-image-client.cost-summary-collapsed") === "true",
+    };
+    document.generatorPreferences = preferences;
+    storage.setItem(StorageKey, JSON.stringify(document));
+  }
+
   function browserFields(fields) {
     assertRegistry(fields);
     return fields.filter((field) => field.scope !== "account").map((field) => field.name);
@@ -118,5 +179,6 @@
     normalize,
     parseStored,
     browserFields,
+    saveGeneratorPreferences,
   });
 });

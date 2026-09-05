@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <title>MultiImageClient — goal loops</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="style.css?v=20260904-goal-loops">
+<link rel="stylesheet" href="style.css?v=20260905-shared-chooser">
 <link rel="stylesheet" href="viewer.css?v=20260904-shared-viewer">
 <link rel="stylesheet" href="goal.css?v=20260905-contributors">
 </head>
@@ -46,7 +46,9 @@
         </label>
         <div class="goal-field">
           <span class="goal-label">Image generators <span id="goal-generators-count" class="goal-generators-count"></span></span>
-          <div id="goal-generators" class="goal-generators" role="group" aria-label="image generators"></div>
+          <div id="generator-controls-host"></div>
+          <div id="gens-row" role="group" aria-label="image generators"></div>
+          <span class="goal-help">Chooser settings are shared with the main page. Endpoint extra text applies only on the main page.</span>
           <span class="goal-help">Each generator makes two images per turn: one refinement and one fresh approach.</span>
         </div>
         <label class="goal-field">
@@ -118,10 +120,11 @@
   </section>
 </main>
 
-<script src="personal-config.js?v=20260904-goal-page"></script>
+<script src="personal-config.js?v=20260905-shared-chooser"></script>
 <script src="viewer.js?v=20260904-shared-viewer"></script>
 <script src="recap-model.js"></script>
 <script src="goal-sidebar.js"></script>
-<script src="goal.js?v=20260905-contributors"></script>
+<script src="generator-chooser.js?v=20260905-shared"></script>
+<script src="goal.js?v=20260905-shared-chooser"></script>
 </body>
 </html>

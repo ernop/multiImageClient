@@ -73,3 +73,53 @@ test("stored document parsing fails closed", () => {
     () => schema.parseStored(JSON.stringify({ format: schema.Format, version: 99 })),
     /unsupported/);
 });
+
+function memoryStorage(entries = []) {
+  const values = new Map(entries);
+  return {
+    getItem: (key) => values.has(key) ? values.get(key) : null,
+    setItem: (key, value) => values.set(key, value),
+  };
+}
+
+test("chooser saves preserve unrelated canonical fields and ignore obsolete legacy values", () => {
+  const original = schema.build(fields());
+  const storage = memoryStorage([
+    [schema.StorageKey, JSON.stringify(original)],
+    ["mic_ui_settings_v1", "malformed obsolete value"],
+  ]);
+  schema.saveGeneratorPreferences(storage, { enabled: false });
+  const saved = schema.parseStored(storage.getItem(schema.StorageKey));
+  assert.deepEqual(saved, { ...original, generatorPreferences: { enabled: false } });
+  assert.deepEqual(schema.normalize(saved, fields()), saved);
+});
+
+test("first chooser save preserves legacy browser preferences in the complete document", () => {
+  const storage = memoryStorage([
+    ["mic_username", "Alice"],
+    ["mic_user_filter_v1", '["Bob"]'],
+    ["mic_ui_settings_v1", '{"showCosts":true,"activitySound":true}'],
+    ["mic_spellwell_custom_dict", '["specialword"]'],
+    ["mic_video_audio_v1", '{"volume":0.3,"muted":true}'],
+  ]);
+  schema.saveGeneratorPreferences(storage, { enabled: true });
+  const saved = schema.parseStored(storage.getItem(schema.StorageKey));
+  assert.equal(saved.creatingAs, "Alice");
+  assert.deepEqual(saved.peopleFilters, ["Bob"]);
+  assert.equal(saved.uiSettings.showCosts, true);
+  assert.equal(saved.uiSettings.activitySound, true);
+  assert.deepEqual(saved.spelling.customDictionary, ["specialword"]);
+  assert.deepEqual(saved.videoAudio, { volume: 0.3, muted: true });
+  assert.deepEqual(Object.keys(saved).sort(), [
+    "format", "version", "creatingAs", "peopleFilters", "generatorPreferences", "uiSettings",
+    "promptTools", "spelling", "inspirationLibrary", "viewer", "videoAudio", "costSummaryCollapsed",
+  ].sort());
+});
+
+test("chooser saves reject malformed or unsupported canonical documents without replacing them", () => {
+  for (const raw of ['{', JSON.stringify({format:schema.Format,version:99})]) {
+    const storage = memoryStorage([[schema.StorageKey, raw]]);
+    assert.throws(() => schema.saveGeneratorPreferences(storage, { enabled: true }));
+    assert.equal(storage.getItem(schema.StorageKey), raw);
+  }
+});

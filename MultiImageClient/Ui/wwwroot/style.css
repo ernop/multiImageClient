@@ -937,6 +937,7 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
   grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
   gap: 7px;
 }
+#gens-row[hidden] { display: none; }
 .gen-toggle {
   display: inline-flex; align-items: center; gap: 5px;
   border: 1px solid var(--line); border-radius: 4px;

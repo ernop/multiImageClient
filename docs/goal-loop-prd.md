@@ -46,7 +46,7 @@ after editing the text of that message.
 
 | # | Requirement | Behavior |
 |---|-------------|----------|
-| R1 (amended by R21) | Goal text in, one or more generators, one manager | New-loop form on `goal.html`. The generator picker accepts 1–8 checked generators (catalog order = source-letter order); the manager selector accepts exactly one. Unavailable targets are listed disabled with their exact availability problem. |
+| R1 (amended by R21) | Goal text in, one or more generators, one manager | New-loop form on `goal.html`. The generator picker accepts 1–8 checked generators (catalog order = source-letter order); the manager selector accepts exactly one. Unavailable targets remain absent from the picker; the shared settings dialog lists their availability problems. |
 | R2 | Manager stays in one long conversation | Every manager call replays the full conversation rebuilt from the loop's entries (system prompt, goal, each earlier design/review reply, each review request with its image). |
 | R3 | Manager iterates until the goal is met | System prompt instructs deliberate iteration, learning what the generator responds to, returning to earlier directions, and stopping when done or when further renders are unlikely to help. |
 | R4 | Dedicated live-updating page | `goal.html` polls the selected loop every second and appends turns as they happen. Head shows status, activity, score, best turn, spend. The header's **main page** chip and the `MultiImageClient` title both link to `./` (the composer and job feed), matching the composer's **goal loops** chip. |
@@ -73,6 +73,7 @@ after editing the text of that message.
 | R25 (2026-09-05) | Reusable visual artifacts for every group image loop | Every loop provides best/latest/all/per-generator browsing, named contributors, fullscreen viewing, compact PNG pages, and portable HTML export. |
 | R26 (2026-09-05) | Usable goal selectors | Hide unavailable models. Let the user resize the left picker with pointer or keyboard. |
 | R27 (2026-09-05) | Astra critic | Offer GPT-6 Astra through the shared manager/critic catalog and existing OpenAI key. |
+| R28 (2026-09-05) | Shared generator chooser | Reuse the composer’s buttons, standard and personal groups, defaults, visibility settings, and configuration dialog. |
 
 ## 3. Settled decisions
 
@@ -572,6 +573,43 @@ The existing large all-turns sheet remains available beside the recap.
 The recap supplies a standard artifact view, rather than a separate one-time fruit page.
 Exports do not publish a website or change access to the production application.
 
+### Shared generator chooser (2026-09-05)
+
+The goal setup and main composer use `generator-chooser.js` for generator chips and selection controls.
+Both pages use the same standard groups from `/api/config` and the same editable personal groups.
+Both expose Enable all, Disable all, Toggle all, Default, and the configuration dialog.
+Group buttons replace the current selection with that group’s eligible, visible generators.
+Hidden and unavailable generators remain absent from the picker.
+Goal loops also exclude videos, describe targets, and generators requiring an input image.
+The configuration dialog retains the complete catalog so settings apply consistently across both pages.
+
+Initial selection uses the shared configured defaults.
+It no longer selects the first available generator independently.
+Source letters follow catalog order after selection.
+Groups can select more than eight eligible generators.
+The count marks that excess, and submission requires the user to reduce the selection.
+Never truncate a group silently to fit the limit.
+
+The shared section-visibility setting also applies to goal setup.
+Hiding the image section clears its active selection and leaves the settings button available.
+Settings saves preserve the goal text, manager, critics, and output options.
+They retain current generator selections where those generators remain visible.
+Default selections take effect on a fresh page or through the Default button.
+
+Authenticated preferences use the existing account endpoint.
+Local preferences use the existing canonical personal configuration document.
+A first goal-page save creates the complete document, preserving legacy browser fields.
+Later saves update only its generator-preferences field.
+Both pages read the shared settings when loaded; existing pages require refresh to receive changes from another page.
+Portable configuration export and import retain the same schema and generator-preferences field.
+Malformed preferences fail visibly through the existing validation.
+Failed account saves leave the active chooser unchanged.
+
+Per-endpoint extra text still applies only to composer jobs.
+Goal-loop managers continue to own their exact prompts.
+Private endpoint notes remain available in the shared chooser tooltip.
+No loop API, prompt protocol, or running loop changes.
+
 ## 4. Manager catalog
 
 Defined once in `TextLLMs/ManagerChatClients.cs` (`ManagerCatalog`), exposed
@@ -650,6 +688,10 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   optional `maxTurns`; returns the child id.
 
 ## 7. Files
+
+- `MultiImageClient/Ui/wwwroot/generator-chooser.js` — shared chips, controls, groups, validation, and configuration dialog.
+- `MultiImageClient/Ui/wwwroot/personal-config.js` — canonical chooser persistence, including first-visit browser migration.
+- `tools/test-generator-chooser.cjs` — browser checks for both pages, persistence, visibility, groups, and selection limits.
 
 - `MultiImageClient/TextLLMs/ManagerChatClients.cs` — multi-turn vision chat
   clients + catalog.

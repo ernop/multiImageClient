@@ -1,0 +1,99 @@
+const { chromium } = require('playwright');
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const root = path.resolve(__dirname, '../MultiImageClient/Ui/wwwroot');
+const schema = require(root + '/personal-config.js');
+const generators = Array.from({length:10}, (_,i)=>({key:'image-'+i,label:'Image Model '+i,detail:'Fixture model',kind:'image',available:true,defaultOn:i===0,standardGroupIds:['all'],imageCapable:i%2===0}));
+generators.push({key:'offline',label:'Offline Model',kind:'image',available:false,standardGroupIds:['all']}, {key:'video',label:'Video Model',kind:'video',available:true,requiresImage:true,standardGroupIds:['all']}, {key:'describe',label:'Describe Model',kind:'describe',available:true,requiresImage:true,standardGroupIds:[]});
+const initial = {showImageSection:true,showDescribeSection:true,hiddenGeneratorKeys:['image-2'],defaultSelectedKeys:['image-1'],presets:[{id:'pair',name:'Pair',generatorKeys:['image-1','image-3']}],endpointConfigurations:[]};
+const config = {clientInstanceId:"a".repeat(32),defaults:{shape:"auto",detail:"standard",quality:"high",moderation:"low",n:1},generators,standardGeneratorGroups:[{id:'all',name:'All models'}],auth:{enabled:false},generatorEndpointConfiguration:{maxExtraTextChars:16000,maxNotesChars:16000,maxConfigurationTotalChars:128000},goalLoop:{managers:[{key:'manager',label:'Manager',available:true,detail:'Fixture'}],maxGenerators:8,maxCritics:6,defaultMaxTurns:6,maxTurnsCap:30,maxGoalChars:10000,runningCount:0},shapes:[{key:'auto',label:'auto'}],details:[{key:'standard',label:'standard'}]};
+(async()=>{
+ const browser = await chromium.launch({headless:true});
+ try {
+ const page = await browser.newPage({viewport:{width:1280,height:1000}});
+ const errors=[]; page.on('pageerror', e=>errors.push(e.message));
+ let authenticated=false, failSave=false, accountPreferences=structuredClone(initial), posts=0;
+ await page.route('https://chooser.test/**', async route=>{
+  const p = new URL(route.request().url()).pathname;
+  if(p==='/api/config') return route.fulfill({json:{...config, auth:{enabled:authenticated},generatorPreferences:authenticated?accountPreferences:null}});
+  if(p==='/api/generator-preferences') {
+   if(failSave) return route.fulfill({status:503,json:{error:'Save failed'}});
+   accountPreferences=route.request().postDataJSON(); return route.fulfill({json:{ok:true}});
+  }
+  if(p==='/api/goal-loops') { if(route.request().method()==='POST') posts++; return route.fulfill({json:{loops:[],runningCount:0}}); }
+  const file=path.join(root,p==='/'?'index.html':p);
+  if(fs.existsSync(file)&&fs.statSync(file).isFile()) return route.fulfill({path:file});
+  return route.fulfill({status:404,body:'Missing fixture route'});
+ });
+ await page.goto('https://chooser.test/goal.html');
+ await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===10);
+ await page.evaluate(p=>MultiImagePersonalConfiguration.saveGeneratorPreferences(localStorage,p),initial);
+ await page.reload();
+ await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===9);
+ const selected=()=>page.locator('#gens-row input:checked').evaluateAll(xs=>xs.map(x=>x.value));
+ assert.deepEqual(await selected(),['image-1']);
+ await page.getByRole('button',{name:'Pair',exact:true}).click();
+ assert.deepEqual(await selected(),['image-1','image-3']);
+ await page.getByRole('button',{name:'All models',exact:true}).click();
+ assert.equal((await selected()).length,9);
+ assert.equal(await page.locator('#goal-generators-count.over').count(),1);
+ await page.locator('#goal-user').fill('Tester');
+ await page.locator('#goal-text').fill('A diagram');
+ await page.locator('#goal-start').click();
+ assert.equal(posts,0);
+ assert.match(await page.locator('#goal-form-error').textContent(),/at most 8/);
+ await page.locator('#gens-disable-all').click(); assert.deepEqual(await selected(),[]);
+ await page.locator('#gens-default').click(); assert.deepEqual(await selected(),['image-1']);
+ await page.locator('#generator-config-toggle').click();
+ await page.locator('#generator-config-shown .generator-config-choice').filter({hasText:'Image Model 1'}).locator('input').uncheck();
+ await page.locator('#generator-config-save').click();
+ assert.equal(await page.locator('#gens-row input[value="image-1"]').count(),0);
+ assert.equal(await page.locator('#goal-text').inputValue(),'A diagram');
+ const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem(MultiImagePersonalConfiguration.StorageKey)));
+ assert.deepEqual(saved.generatorPreferences.hiddenGeneratorKeys,['image-2','image-1']);
+ await page.reload(); await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===8);
+ // Create and edit groups through the same dialog used by the composer.
+ await page.locator('#generator-config-toggle').click();
+ await page.locator('[data-generator-config-view="groups"]').click();
+ await page.locator('#generator-config-add-preset').click();
+ await page.getByRole('textbox',{name:'Personal generator group name'}).fill('New pair');
+ for(const n of [4,5]) await page.locator('#generator-config-preset-list label').filter({hasText:'Image Model '+n}).locator('input').check();
+ await page.locator('#generator-config-save').click();
+ await page.getByRole('button',{name:'New pair',exact:true}).click();
+ assert.deepEqual(await selected(),['image-4','image-5']);
+ await page.setViewportSize({width:390,height:844});
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await page.screenshot({path:'/tmp/goal-generator-chooser.png',fullPage:true});
+ // Account settings take precedence. Failed saves preserve local and active state.
+ authenticated=true;
+ await page.reload(); await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===9);
+ assert.deepEqual(await selected(),['image-1']);
+ failSave=true;
+ await page.locator('#generator-config-toggle').click();
+ await page.locator('#generator-config-show-image').uncheck();
+ await page.locator('#generator-config-save').click();
+ await page.waitForFunction(()=>document.querySelector('#generator-config-status').textContent.includes('Save failed'));
+ assert.deepEqual(await selected(),['image-1']);
+ failSave=false; await page.locator('#generator-config-save').click();
+ await page.waitForFunction(()=>!document.querySelector('#generator-config-dialog').open);
+ assert.equal(await page.locator('#gens-row').isVisible(),false);
+ await page.locator('#generator-config-toggle').click();
+ await page.locator('#generator-config-show-image').check();
+ await page.locator('#generator-config-save').click();
+ await page.waitForFunction(()=>!document.querySelector('#generator-config-dialog').open);
+ assert.equal(await page.locator('#gens-row').isVisible(),true);
+ // The real composer must accept a document created on the goal page.
+ authenticated=false;
+ await page.goto('https://chooser.test/');
+ await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length>0);
+ assert.equal(await page.locator('#gen-controls').count(),1);
+ await page.getByRole('button',{name:'Pair',exact:true}).click();
+ assert.deepEqual(await selected(),['image-1','image-3']);
+ await page.locator('#generator-config-toggle').click();
+ await page.locator('[data-generator-config-view="defaults"]').click();
+ assert.equal(await page.locator('#generator-config-dialog').isVisible(),true);
+ assert.deepEqual(errors,[]);
+ console.log('Goal chooser: groups, defaults, visibility, account precedence, failed saves, cap, and mobile layout passed.');
+ } finally {await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

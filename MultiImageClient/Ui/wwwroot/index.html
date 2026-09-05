@@ -7,7 +7,7 @@
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260903-viewer-sidebar-actions">
+<link rel="stylesheet" href="style.css?v=20260905-shared-chooser">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260813-mcphee-3-10-0">
 </head>
 <body>
@@ -274,25 +274,7 @@
       </nav>
     </section>
     <div id="endpoint-picker">
-      <div id="gen-controls">
-        <button id="gens-enable-all" class="generator-main-control" type="button"
-          title="Enable every available target in open sections. A closed describe section is not changed.">Enable all</button>
-        <button id="gens-disable-all" class="generator-main-control" type="button"
-          title="Disable every available target in open sections. A closed describe section is not changed.">Disable all</button>
-        <button id="gens-toggle-all" class="generator-main-control" type="button"
-          title="Toggle every available target in open sections. A closed describe section is not changed.">Toggle all</button>
-        <button id="gens-default" class="generator-main-control" type="button"
-          title="Restore your configured defaults in open sections. A closed describe section is not changed.">Default</button>
-        <span id="gen-personal-presets" class="generator-main-control"></span>
-        <button id="gens-enable-image-capable" type="button"
-          class="image-only-action generator-main-control" hidden
-          title="Enable every available image-capable target in open sections. A closed describe section is not changed.">Enable image-capable</button>
-        <button id="gens-disable-text-only" type="button"
-          class="image-only-action generator-main-control" hidden
-          title="Disable endpoints that can't accept the attached image (they'd run from the prompt text only)">Disable text-only</button>
-        <button id="generator-config-toggle" type="button" aria-label="Configure generator chooser"
-          title="Configure visible targets, defaults, groups, and per-endpoint text">⚙</button>
-      </div>
+      <div id="generator-controls-host"></div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
 
       <div id="opts-row">
@@ -467,59 +449,7 @@
   <div id="image-viewer-preload" hidden aria-hidden="true"></div>
 </div>
 
-<dialog id="generator-config-dialog">
-  <form id="generator-config-form">
-    <div class="compact-dialog-head">
-      <h2>Generator configuration</h2>
-      <button id="generator-config-close" type="button" aria-label="Close">&times;</button>
-    </div>
-    <p class="compact-dialog-note">
-      Choose what appears in your composer. Choose defaults and named groups.
-      Configure extra text and notes for image and describe endpoints.
-    </p>
-    <div id="generator-config-tabs" role="tablist" aria-label="Generator chooser settings">
-      <button type="button" role="tab" data-generator-config-view="shown" aria-selected="true">shown</button>
-      <button type="button" role="tab" data-generator-config-view="defaults" aria-selected="false">defaults</button>
-      <button type="button" role="tab" data-generator-config-view="groups" aria-selected="false">groups</button>
-      <button type="button" role="tab" data-generator-config-view="endpoint" aria-selected="false">per endpoint</button>
-    </div>
-    <section id="generator-config-shown-panel" class="generator-config-panel" role="tabpanel">
-      <p>Toggle which targets exist in your normal composer. Hidden targets can only be restored here.</p>
-      <div class="generator-config-sections">
-        <label><input id="generator-config-show-image" type="checkbox"> show image-generation section</label>
-        <label><input id="generator-config-show-describe" type="checkbox"> show describe section when images are attached</label>
-      </div>
-      <div id="generator-config-shown"></div>
-    </section>
-    <section id="generator-config-defaults-panel" class="generator-config-panel" role="tabpanel" hidden>
-      <p>Toggle which visible targets start selected when you open a fresh page.</p>
-      <div id="generator-config-defaults"></div>
-    </section>
-    <section id="generator-config-groups-panel" class="generator-config-panel" role="tabpanel" hidden>
-      <div class="generator-config-subhead">
-        <div id="generator-config-group-tabs" aria-label="Personal generator groups"></div>
-        <button id="generator-config-add-preset" type="button">+ new group</button>
-      </div>
-      <div id="generator-config-preset-list"></div>
-    </section>
-    <section id="generator-config-endpoint-panel" class="generator-config-panel" role="tabpanel" hidden>
-      <p>
-        Extra text is appended only to the selected endpoint's copy of each prompt.
-        Describe endpoints use the same extra-text and notes fields.
-        Notes are private configuration: they are never sent to a provider or attached to a job.
-      </p>
-      <div class="generator-endpoint-layout">
-        <div id="generator-config-endpoint-list" aria-label="Image and describe endpoints"></div>
-        <div id="generator-config-endpoint-editor"></div>
-      </div>
-    </section>
-    <div class="compact-dialog-actions">
-      <span id="generator-config-status"></span>
-      <button id="generator-config-cancel" type="button">cancel</button>
-      <button id="generator-config-save" type="submit">save</button>
-    </div>
-  </form>
-</dialog>
+
 
 <dialog id="claude-advice-dialog">
   <form id="claude-advice-form">
@@ -877,8 +807,9 @@
 
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20260818-ctrl-tap"></script>
-<script src="personal-config.js"></script>
+<script src="personal-config.js?v=20260905-shared-chooser"></script>
 <script src="prompt-rewrites.js"></script>
-<script src="app.js"></script>
+<script src="generator-chooser.js?v=20260905-shared"></script>
+<script src="app.js?v=20260905-shared-chooser"></script>
 </body>
 </html>

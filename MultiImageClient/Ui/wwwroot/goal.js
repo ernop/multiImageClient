@@ -135,31 +135,48 @@ function optionsFor(select, items, selectedKey) {
   }
 }
 
-// The generator picker: one checkbox per image generator, in catalog order.
-// The selection order (first checked = source A) is the order the boxes
-// appear in, so the source letters are predictable.
-function generatorChoices(container, items, checkedKeys) {
-  container.textContent = "";
-  for (const item of items) {
-    const label = document.createElement("label");
-    label.className = `goal-generator-choice ${item.disabled ? "disabled" : ""}`;
-    if (item.title) label.title = item.title;
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.value = item.key;
-    box.disabled = item.disabled;
-    box.checked = !item.disabled && checkedKeys.includes(item.key);
-    box.addEventListener("change", updateGeneratorCount);
-    const text = document.createElement("span");
-    text.textContent = item.label;
-    label.append(box, text);
-    container.appendChild(label);
+// Selection stays in catalog order, which defines source letters.
+const gensRow = el("gens-row");
+let generators = [];
+let standardGeneratorGroups = [];
+let generatorPreferences = null;
+let generatorEndpointConfiguration = {};
+let authInfo = { enabled: false };
+const GeneratorPreferencesLocalKey = "mic_generator_preferences_v1";
+const storedPersonalField = (name) => PersonalConfigurationSchema.parseStored(
+  localStorage.getItem(PersonalConfigurationSchema.StorageKey))?.[name];
+function describeSectionIsOpen() { return false; }
+function bulkGeneratorInputs() { return [...gensRow.querySelectorAll("input:not(:disabled)")]; }
+function renderGoalGeneratorPicker(checkedKeys = generatorPreferences.defaultSelectedKeys) {
+  gensRow.replaceChildren();
+  for (const generator of generators) {
+    if (!generator.available || generator.kind !== "image" || generator.requiresImage ||
+        generatorPreferences.hiddenGeneratorKeys.includes(generator.key)) continue;
+    const chip = buildGenChip(generator);
+    const box = chip.querySelector("input");
+    box.checked = checkedKeys.includes(generator.key) && generatorPreferences.showImageSection;
+    chip.classList.toggle("checked", box.checked);
+    gensRow.appendChild(chip);
+  }
+  gensRow.hidden = !generatorPreferences.showImageSection;
+  renderGeneratorPresetButtons();
+  for (const control of document.querySelectorAll(".generator-main-control")) {
+    control.classList.toggle("preference-hidden", !generatorPreferences.showImageSection);
   }
   updateGeneratorCount();
 }
+async function generatorPreferencesSaved(normalized) {
+  PersonalConfigurationSchema.saveGeneratorPreferences(localStorage, normalized);
+  const selected = selectedGeneratorKeys();
+  generatorPreferences = normalized;
+  renderGoalGeneratorPicker(selected);
+}
+initializeGeneratorControls();
+initializeGeneratorConfig();
+initializeGeneratorBulkControls();
 
 function selectedGeneratorBoxes() {
-  return Array.from(el("goal-generators").querySelectorAll("input[type=checkbox]:checked"));
+  return Array.from(gensRow.querySelectorAll("input[type=checkbox]:checked"));
 }
 
 function selectedGeneratorKeys() {
@@ -171,7 +188,7 @@ function updateGeneratorCount() {
   const max = config && config.goalLoop && config.goalLoop.maxGenerators;
   const span = el("goal-generators-count");
   // Full catalog names, never the internal keys (full-model-names rule).
-  const named = boxes.map((box, i) => `${String.fromCharCode(65 + i)} ${box.parentElement.querySelector("span").textContent}`);
+  const named = boxes.map((box, i) => `${String.fromCharCode(65 + i)} ${generators.find((g) => g.key === box.value).label}`);
   span.textContent = boxes.length === 0
     ? "— pick at least one"
     : `— ${boxes.length} selected${max ? ` of ${max} max` : ""}: ${named.join(", ")} · ${2 * boxes.length} renders per turn`;
@@ -224,16 +241,12 @@ async function loadConfig() {
   }
   renderIdentity();
 
-  const generators = (config.generators || [])
-    .filter((g) => g.available && g.kind === "image" && !g.requiresImage && g.key !== "grok-web-video")
-    .map((g) => ({
-      key: g.key,
-      label: g.available ? g.label : `${g.label} — ${g.availabilityProblem || "unavailable"}`,
-      disabled: !g.available,
-      title: g.detail || "",
-    }));
-  const firstGenerator = generators.find((g) => !g.disabled);
-  generatorChoices(el("goal-generators"), generators, firstGenerator ? [firstGenerator.key] : []);
+  generators = config.generators;
+  authInfo = config.auth || { enabled: false };
+  generatorEndpointConfiguration = config.generatorEndpointConfiguration;
+  standardGeneratorGroups = normalizeStandardGeneratorGroups(config.standardGeneratorGroups);
+  generatorPreferences = loadGeneratorPreferences(config);
+  renderGoalGeneratorPicker();
 
   const managers = (config.goalLoop.managers || []).filter((m) => m.available).map((m) => ({
     key: m.key,
