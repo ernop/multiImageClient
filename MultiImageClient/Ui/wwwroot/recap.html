@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  />
+  <title>Visual recap · MultiImageClient</title>
+  <link rel="stylesheet" href="recap.css" /><link
+    rel="stylesheet"
+    href="viewer.css"
+  />
+  <header>
+    <a id="back" href="goal.html">← Goal conversation</a>
+    <div class="eyebrow">MultiImageClient / visual conversation</div>
+    <h1>One goal. Many images.</h1>
+    <p id="goal"></p>
+    <p id="stats"></p>
+    <div class="roster" id="roster"></div>
+    <details>
+      <summary>Run status and selection rules</summary>
+      <p id="status"></p>
+      <p>
+        Best includes all ties at each generator’s highest manager score. Latest
+        shows each generator’s last successful turn.
+      </p>
+      <p>
+        Scores and comments are model judgments. No scores are averaged. Latest
+        images can lack a manager review.
+      </p>
+    </details>
+  </header>
+  <main>
+    <nav class="toolbar" aria-label="Image selections">
+      <button data-cut="best">Best per generator</button
+      ><button data-cut="latest">Latest per generator</button
+      ><button data-cut="all">All images</button
+      ><label
+        >Generator
+        <select id="generator">
+          <option value="">All generators</option>
+        </select></label
+      ><button id="present">Present selection</button
+      ><button id="png">Export PNG pages</button
+      ><button id="html">Export portable HTML</button><span id="count"></span>
+    </nav>
+    <p id="message" role="status">Loading conversation…</p>
+    <div class="grid" id="grid"></div>
+    <div id="downloads"></div>
+    <details>
+      <summary>Complete contributions and image prompts</summary>
+      <div id="contributions"></div>
+    </details>
+  </main>
+  <script id="recap-data" type="application/json">
+    null
+  </script>
+  <script src="viewer.js"></script>
+  <script src="recap-model.js"></script>
+  <script src="recap.js"></script>
+</html>

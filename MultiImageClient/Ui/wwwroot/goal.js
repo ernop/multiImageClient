@@ -229,7 +229,7 @@ async function loadConfig() {
 
   const managers = (config.goalLoop.managers || []).map((m) => ({
     key: m.key,
-    label: m.available ? `${m.label} · ${m.model}` : `${m.label} — ${m.availabilityProblem || "unavailable"}`,
+    label: m.available ? m.label : `${m.label} — ${m.availabilityProblem || "unavailable"}`,
     disabled: !m.available,
     title: m.detail || "",
   }));
@@ -269,7 +269,7 @@ function updateRunningCount(count) {
     span.textContent = "";
     return;
   }
-  span.textContent = count === 0 ? "no loops running" : `${count} running`;
+  span.textContent = count === 0 ? "" : `${count} running`;
   span.classList.toggle("active", count > 0);
 }
 
@@ -459,6 +459,9 @@ function selectLoop(id, pushHistory) {
   selectedVersion++;
   loopState = null;
   renderedHeadSignature = "";
+  el("goal-new").hidden = true;
+  el("goal-new-toggle").setAttribute("aria-expanded", "false");
+  el("goal-new-toggle").classList.remove("open");
   el("goal-empty").hidden = true;
   el("goal-loop").hidden = false;
   el("goal-loop-head").textContent = "";
@@ -507,6 +510,7 @@ async function pollLoop() {
         appendEntryElement(entry);
       }
     }
+    for (const turn of new Set(body.entries.map((entry) => entry.turn))) refreshTurnComparison(turn);
     renderLoopHead();
     if (body.total > loopState.entries.length) {
       // Cursor gap: ask again immediately from what we have.
@@ -539,6 +543,7 @@ function renderLoopHead() {
   if (signature === renderedHeadSignature && head.childElementCount > 0) return;
   renderedHeadSignature = signature;
   const systemPromptOpen = !!head.querySelector("details.goal-wire[open]");
+  const settingsOpen = !!head.querySelector(".goal-settings[open]");
   head.textContent = "";
 
   const title = document.createElement("div");
@@ -568,74 +573,51 @@ function renderLoopHead() {
   goal.textContent = loop.goal;
   head.appendChild(goal);
 
-  const facts = document.createElement("div");
-  facts.className = "goal-facts";
-  const fact = (label, value, cls) => {
-    const box = document.createElement("div");
-    box.className = `goal-fact ${cls || ""}`;
-    const v = document.createElement("div");
-    v.className = "goal-fact-value";
-    v.textContent = value;
-    const l = document.createElement("div");
-    l.className = "goal-fact-label";
-    l.textContent = label;
-    box.append(v, l);
-    facts.appendChild(box);
-    return box;
-  };
-  fact("turns rendered / max turns", `${loop.turnsRendered} / ${loop.maxTurns}`);
-  const sourceCount = (loop.generators || []).length || 1;
-  if (loop.rendersPerTurn > 1) {
-    const pair = fact("renders per turn", sourceCount > 1
-      ? `${loop.rendersPerTurn} — refine + fresh × ${sourceCount} sources`
-      : `${loop.rendersPerTurn} — refine + fresh`, "goal-fact-pair");
-    pair.title = "Every turn renders two prompts: REFINE improves the render the manager chose to continue from; FRESH is a from-scratch re-attempt with a new composition and style."
-      + (sourceCount > 1 ? " Each prompt is rendered by every source (generator); the manager sees the sources only as letters." : "")
-      + " The manager scores every render and chooses which one the next refine builds on.";
-  } else {
-    fact("renders per turn", `1 (protocol v${loop.protocolVersion})`);
+  const progress = document.createElement("div");
+  progress.className = "goal-progress";
+  progress.textContent = `Turn ${loop.turnsRendered} / ${loop.maxTurns}`;
+  if (loop.bestScore != null) {
+    progress.append(` · Best ${formatScore(loop.bestScore)}/10 · turn ${loop.bestTurn}`
+      + `${loop.bestSource ? ` · ${loop.bestSource}` : ""}${loop.bestVariant ? ` ${loop.bestVariant}` : ""}`);
   }
-  fact(sourceCount > 1 ? "last best refine score" : "last refine score", formatScore(loop.lastScore), "goal-fact-score");
-  fact("best score", loop.bestScore != null
-    ? `${formatScore(loop.bestScore)} (turn ${loop.bestTurn}${loop.bestVariant ? ` ${loop.bestVariant}` : ""}${loop.bestSource ? ` · source ${loop.bestSource}` : ""})`
-    : "—", "goal-fact-score");
-  if (loop.protocolVersion >= 3) {
-    const kindBox = fact("goal kind", loop.effectiveGoalKind
-      ? `${loop.effectiveGoalKind} (${loop.goalKindSource === "operator" ? "set by you" : "manager's classification"})`
-      : (loop.goalKind === "auto" ? "not yet classified by the manager" : loop.goalKind), `goal-fact-kind kind-${loop.effectiveGoalKind || "unknown"}`);
-    kindBox.title = loop.effectiveGoalKind === "open-ended"
-      ? "Open-ended: the loop objects to any \"done\" until a later render scores below the best one (the generator's limit is demonstrated). The turn budget is never a reason to stop."
-      : "Bounded: done when the manager judges the finished state met.";
-  } else {
-    fact("goal kind", `protocol v${loop.protocolVersion}: no goal kinds`);
-  }
-  if (sourceCount > 1) {
-    const gens = fact("image generators (sources)", loop.generators.map((g) => `${g.source} ${g.label}`).join(" · "), "goal-fact-sources");
-    gens.title = "The manager is told only the letters. Every prompt is rendered by each of these.";
-  } else {
-    fact("image generator", loop.generatorLabel);
-  }
-  fact("manager", `${loop.managerLabel}`);
-  fact("model", loop.managerModel);
-  const critics = loop.critics || [];
-  if (critics.length > 0) {
-    const criticsBox = fact("independent critics", critics.map((c) => `${c.index + 1} ${c.label}`).join(" · "), "goal-fact-sources");
-    criticsBox.title = "Each critic is a fresh instance with no access to the manager's conversation. It sees the goal and each turn's images only and returns a score, problems, and ideas per render. The manager receives every critique verbatim, labeled by number, as evidence beside its own judgment.";
-  } else if (loop.protocolVersion >= 6) {
-    fact("independent critics", "none");
-  }
-  fact("output", `${loop.shape} · ${loop.detail} · ${loop.quality} · moderation ${loop.moderation}`);
-  const managerCost = loop.managerCostKnown ? formatUsd(loop.managerCostUsd) : `${formatUsd(loop.managerCostUsd)}+ (price unknown for this model)`;
-  fact("manager cost", `${managerCost} · ${loop.managerInputTokens.toLocaleString()} in / ${loop.managerOutputTokens.toLocaleString()} out tokens`);
-  if (critics.length > 0) {
-    const criticCost = loop.criticCostKnown ? formatUsd(loop.criticCostUsd) : `${formatUsd(loop.criticCostUsd)}+ (price unknown for a critic model)`;
-    fact("critic cost", `${criticCost} · ${(loop.criticInputTokens || 0).toLocaleString()} in / ${(loop.criticOutputTokens || 0).toLocaleString()} out tokens`);
-  }
-  fact("render cost (estimate)", formatUsd(loop.renderCostUsd) || "$0.00");
-  fact("created", `${loop.createdBy} · ${formatTime(loop.createdAtUnixMs)}`);
-  head.appendChild(facts);
+  head.appendChild(progress);
 
-  if (loop.statusDetail) {
+  const roster = document.createElement("div");
+  roster.className = "goal-roster";
+  roster.setAttribute("aria-label", "Contributors");
+  roster.appendChild(contributorBadge("manager"));
+  for (const c of loop.critics || []) roster.appendChild(contributorBadge("critic", c));
+  for (const g of loop.generators || [{ label: loop.generatorLabel }]) {
+    roster.appendChild(contributorBadge("generator", g));
+  }
+  head.appendChild(roster);
+
+  const settings = document.createElement("div");
+  settings.className = "goal-settings-body";
+  const line = (label, value) => {
+    const row = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = label + ": ";
+    row.append(name, value);
+    settings.appendChild(row);
+  };
+  line("Output", `${loop.shape} · ${loop.detail} · ${loop.quality} · moderation ${loop.moderation}`);
+  line("Images per turn", String(loop.rendersPerTurn));
+  line("Goal kind", loop.effectiveGoalKind || loop.goalKind || "not classified");
+  line("Last refine score", formatScore(loop.lastScore));
+  line("Manager model", loop.managerModel);
+  const cost = (value, known) => known ? formatUsd(value) : (value > 0 ? `${formatUsd(value)} + unpriced calls` : "price unknown");
+  line("Manager cost", `${cost(loop.managerCostUsd, loop.managerCostKnown)} · ${loop.managerInputTokens.toLocaleString()} input / ${loop.managerOutputTokens.toLocaleString()} output tokens`);
+  if ((loop.critics || []).length) {
+    line("Critic cost", `${cost(loop.criticCostUsd, loop.criticCostKnown)} · ${(loop.criticInputTokens || 0).toLocaleString()} input / ${(loop.criticOutputTokens || 0).toLocaleString()} output tokens`);
+  }
+  line("Image cost estimate", formatUsd(loop.renderCostUsd));
+  line("Created", `${loop.createdBy} · ${formatTime(loop.createdAtUnixMs)}`);
+  const settingsDetails = detailsBlock("Settings & usage", settings, settingsOpen);
+  settingsDetails.classList.add("goal-settings");
+  head.appendChild(settingsDetails);
+
+  if (loop.statusDetail && loop.status !== "done") {
     const detail = document.createElement("div");
     detail.className = `goal-status-detail ${loop.status === "failed" ? "goal-error" : ""}`;
     detail.textContent = loop.statusDetail;
@@ -682,7 +664,7 @@ function renderLoopHead() {
   } else {
     const doneNote = document.createElement("span");
     doneNote.className = "goal-done-note";
-    doneNote.textContent = "The manager declared this loop done. Fork from any entry to continue differently.";
+    doneNote.textContent = "Open a contribution to fork from that point.";
     controls.appendChild(doneNote);
   }
   const controlError = document.createElement("span");
@@ -696,6 +678,11 @@ function renderLoopHead() {
   // combined contact sheet, one cell per turn instead of per generator).
   const sheetRow = document.createElement("div");
   sheetRow.className = "goal-controls goal-sheet-row";
+  const recap = document.createElement("a");
+  recap.className = "goal-sheet-link";
+  recap.href = `recap.html?loop=${encodeURIComponent(loop.id)}`;
+  recap.textContent = "Visual recap · browse / PNG / HTML";
+  sheetRow.appendChild(recap);
   const stale = loop.sheetFile && loop.sheetEntryCount != null && loop.sheetEntryCount < loop.entryCount;
   if (loop.turnsRendered > 0) {
     const build = document.createElement("button");
@@ -727,7 +714,7 @@ function renderLoopHead() {
   system.className = "goal-wire";
   system.open = systemPromptOpen;
   const summary = document.createElement("summary");
-  summary.textContent = `manager system prompt (protocol v${loop.protocolVersion}, sent with every manager call)`;
+  summary.textContent = `System prompt · v${loop.protocolVersion}`;
   const pre = document.createElement("pre");
   pre.textContent = loop.systemPrompt;
   system.append(summary, pre);
@@ -790,20 +777,7 @@ async function controlLoop(action, params, button) {
 // ---------- entries ----------
 
 const PartyLabels = { user: "you", manager: "manager", generator: "image generator", system: "loop", critic: "critic" };
-const KindLabels = {
-  goal: "goal",
-  design: "first design",
-  "render-request": "render request",
-  "render-result": "render result",
-  "critique-request": "critique request",
-  critique: "independent critique",
-  "review-request": "review request",
-  review: "review + next design",
-  objection: "objection — \"done\" not accepted",
-  note: "note",
-};
-
-const VariantLabels = { refine: "refine", fresh: "fresh (from scratch)" };
+const VariantLabels = { refine: "Refine", fresh: "Fresh" };
 
 function variantOf(entry) {
   return (entry.render && entry.render.variant) || null;
@@ -864,34 +838,57 @@ function hasEvaluations(parsed) {
 
 // The label states what the manager decided, when that is known; a reply
 // that failed the contract is labeled as such rather than as a design.
+// Labels identify the action; the adjacent badge identifies its author.
 function entryKindLabel(entry) {
-  const parsed = entry.manager && entry.manager.parsed;
-  const refused = Boolean(entry.manager && entry.manager.providerStop);
-  if (entry.kind === "render-request" || entry.kind === "render-result") {
-    const variant = variantOf(entry);
-    const source = sourceOf(entry);
-    if (!variant) return KindLabels[entry.kind];
-    return `${KindLabels[entry.kind]} — ${VariantLabels[variant] || variant}${source ? ` · source ${source} (${entry.render.generatorLabel})` : ""}`;
+  if (entry.manager?.providerStop || entry.critic?.providerStop) return "Provider refused";
+  if (entry.error) return "Failed";
+  const parsed = entry.manager?.parsed;
+  if (entry.kind === "review" && parsed) {
+    if (parsed.decision === "done") return isObjectedReview(entry) ? "Stop disputed" : "Done";
+    const from = continueFromOf(parsed);
+    return from ? `Continue from ${[from.source, from.variant].filter(Boolean).join(" ")}` : "Next design";
   }
-  if (entry.kind === "review") {
-    if (refused) return "review — provider refused";
-    if (entry.error && !parsed) return "review — reply rejected";
-    if (parsed && parsed.decision === "done") {
-      return isObjectedReview(entry) ? "review + done (objected to below)" : "review + done";
-    }
-    return KindLabels.review;
+  if (entry.kind === "render-result") return VariantLabels[variantOf(entry)] || "Image";
+  if (entry.kind === "render-request") return `${VariantLabels[variantOf(entry)] || "Image"} request`;
+  return { design: "Design", critique: "Feedback", "critique-request": "Critique request",
+    "review-request": "Review request", goal: "Goal", note: "Event", objection: "Stop disputed" }[entry.kind] || entry.kind;
+}
+
+// Role + recorded model name distinguish separate instances of the same model.
+function contributorBadge(role, data = {}) {
+  const loop = loopState.loop;
+  const badge = document.createElement("span");
+  badge.className = `goal-contributor contributor-${role}`;
+  const tag = document.createElement("span");
+  tag.className = "goal-contributor-role";
+  let name;
+  if (role === "manager") {
+    tag.textContent = "Manager";
+    name = loop.managerLabel;
+    badge.title = loop.managerModel;
+  } else if (role === "critic") {
+    tag.textContent = `Critic ${data.index + 1}`;
+    name = data.label;
+    badge.dataset.critic = String(data.index);
+    badge.title = data.model;
+  } else if (role === "generator") {
+    tag.textContent = data.source || "Image";
+    name = data.generatorLabel || data.label;
+  } else {
+    tag.textContent = role === "user" ? "Goal" : "System";
+    name = role === "user" ? loop.createdBy : "Loop";
   }
-  if (entry.kind === "design" && refused) return "first design — provider refused";
-  if (entry.kind === "design" && entry.error && !parsed) return "first design — reply rejected";
-  if (entry.kind === "critique-request" || entry.kind === "critique") {
-    const c = entry.critic || {};
-    const who = `Critic ${(c.index || 0) + 1} (${c.label || c.key || "?"})`;
-    if (entry.kind === "critique-request") return `critique request — ${who}`;
-    if (c.providerStop) return `${who} — provider refused`;
-    if (entry.error && !c.parsed) return `${who} — reply rejected`;
-    return `independent critique — ${who}`;
-  }
-  return KindLabels[entry.kind] || entry.kind;
+  const label = document.createElement("strong");
+  label.textContent = name;
+  badge.append(tag, " ", label);
+  return badge;
+}
+
+function entryContributor(entry) {
+  if (entry.critic) return contributorBadge("critic", entry.critic);
+  if (entry.render) return contributorBadge("generator", entry.render);
+  if (entry.manager || entry.to === "manager") return contributorBadge("manager");
+  return contributorBadge(entry.from);
 }
 
 // Protocol 6: a critic's message (goal + this turn's images) and its reply.
@@ -944,7 +941,7 @@ function critiqueBody(entry) {
     body.appendChild(labeled("overall verdict", textBlock(parsed.overall)));
   }
   if (data.providerReasoning) {
-    body.appendChild(detailsBlock(`provider thinking / reasoning summary (${data.providerReasoning.length.toLocaleString()} chars)`, textBlock(data.providerReasoning), false));
+    body.appendChild(detailsBlock("Provider reasoning", textBlock(data.providerReasoning), false));
   }
   const usage = document.createElement("div");
   usage.className = "goal-usage";
@@ -1105,11 +1102,12 @@ function previousRenderedPrompt(beforeIndex) {
 // The prompt rendered in this same turn (the review compares the manager's
 // next design against what was just rendered). With two renders per turn,
 // variant selects which one; null matches a single-render turn.
-function renderedPromptOfTurn(turn, beforeIndex, variant) {
+function renderedPromptOfTurn(turn, beforeIndex, variant, source) {
   if (!loopState) return null;
   for (let i = beforeIndex - 1; i >= 0; i--) {
     const e = loopState.entries[i];
-    if (e.kind === "render-request" && e.turn === turn && (variant === undefined || variantOf(e) === variant)) {
+    if (e.kind === "render-request" && e.turn === turn && (variant === undefined || variantOf(e) === variant)
+      && (source === undefined || sourceOf(e) === source)) {
       const v = variantOf(e);
       return { text: e.text, label: v ? `turn ${turn} ${v} prompt` : `turn ${turn} prompt` };
     }
@@ -1127,8 +1125,8 @@ function lineageBasePrompt(entry) {
   for (let i = entry.index - 1; i >= 0; i--) {
     const e = loopState.entries[i];
     if ((e.kind === "review" || e.kind === "design") && e.manager && e.manager.parsed && !e.error) {
-      const from = e.manager.parsed.continueFrom;
-      return from ? renderedPromptOfTurn(e.turn, entry.index, from) : null;
+      const from = continueFromOf(e.manager.parsed);
+      return from ? renderedPromptOfTurn(e.turn, entry.index, from.variant, from.source) : null;
     }
   }
   return null;
@@ -1137,12 +1135,7 @@ function lineageBasePrompt(entry) {
 // A fresh prompt is a from-scratch re-attempt: diffing it against anything
 // would only show noise, so it is shown plain with that statement.
 function freshPromptBlock(label, text) {
-  const box = labeled(label, textBlock(text, "goal-prompt goal-prompt-fresh"));
-  const note = document.createElement("div");
-  note.className = "goal-diff-summary";
-  note.textContent = "from scratch — new composition and style, not compared to earlier prompts";
-  box.appendChild(note);
-  return box;
+  return labeled(label, textBlock(text, "goal-prompt goal-prompt-fresh"));
 }
 
 function turnSection(turn) {
@@ -1154,15 +1147,25 @@ function turnSection(turn) {
     section.dataset.turn = String(turn);
     const heading = document.createElement("h3");
     heading.className = "goal-turn-heading";
-    heading.textContent = turn === 0 ? "Start" : `Turn ${turn}`;
-    section.appendChild(heading);
+    heading.textContent = turn === 0 ? "Goal record" : `Turn ${turn}`;
+    if (turn > 0) section.appendChild(heading);
+    const images = document.createElement("div");
+    images.className = "goal-turn-images";
+    const scores = document.createElement("div");
+    scores.className = "goal-turn-scores";
+    const contributions = document.createElement("div");
+    contributions.className = "goal-contributions";
+    const log = detailsBlock(turn === 0 ? "Original goal & fork controls" : "Requests & events", document.createElement("div"), false);
+    log.classList.add("goal-turn-log");
+    log.lastElementChild.className = "goal-turn-events";
+    section.append(images, scores, contributions, log);
     container.appendChild(section);
   }
   return section;
 }
 
 function appendEntryElement(entry) {
-  turnSection(entry.turn).appendChild(buildEntryElement(entry));
+  entryContainer(entry).appendChild(buildEntryElement(entry));
   if (entry.kind === "review" && !entry.error && entry.manager && entry.manager.parsed) {
     // The turn's render results show their score and the chosen-lineage
     // mark, both of which this review decides.
@@ -1187,15 +1190,107 @@ function appendEntryElement(entry) {
 function replaceEntryElement(entry) {
   const existing = el("goal-turns").querySelector(`.goal-entry[data-index="${entry.index}"]`);
   const fresh = buildEntryElement(entry);
-  if (existing) existing.replaceWith(fresh);
-  else turnSection(entry.turn).appendChild(fresh);
+  if (existing) {
+    if (existing.tagName === "DETAILS") fresh.open = existing.open;
+    const oldDetails = Array.from(existing.querySelectorAll("details"));
+    Array.from(fresh.querySelectorAll("details")).forEach((d, i) => { d.open = oldDetails[i]?.open || false; });
+    existing.replaceWith(fresh);
+  }
+  else entryContainer(entry).appendChild(fresh);
 }
 
-function party(name) {
-  const span = document.createElement("span");
-  span.className = `goal-party party-${name}`;
-  span.textContent = PartyLabels[name] || name;
-  return span;
+function entryContainer(entry) {
+  const section = turnSection(entry.turn);
+  if (entry.kind === "render-result") return section.querySelector(".goal-turn-images");
+  if (["design", "review", "critique", "objection"].includes(entry.kind)) return section.querySelector(".goal-contributions");
+  return section.querySelector(".goal-turn-events");
+}
+
+function revealEntry(index) {
+  const node = el("goal-turns").querySelector(`.goal-entry[data-index="${index}"]`);
+  if (!node) return;
+  for (let parent = node; parent && parent !== el("goal-turns"); parent = parent.parentElement) {
+    if (parent.tagName === "DETAILS") parent.open = true;
+  }
+  node.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function refreshTurnComparison(turn) {
+  const section = turnSection(turn);
+  const entries = loopState.entries.filter((e) => e.turn === turn);
+  for (const e of entries.filter((e) => e.kind === "critique" && e.error)) {
+    const acceptedLater = entries.some((next) => next.index > e.index && next.kind === "critique"
+      && next.critic?.index === e.critic?.index && next.critic?.parsed && !next.error);
+    if (acceptedLater) {
+      const node = section.querySelector(`.goal-entry[data-index="${e.index}"]`);
+      section.querySelector(".goal-turn-events").appendChild(node);
+    }
+  }
+  const events = section.querySelector(".goal-turn-events");
+  // Keep the exact entry order inside the request/event disclosure.
+  Array.from(events.children).sort((a, b) => Number(a.dataset.index) - Number(b.dataset.index)).forEach((e) => events.appendChild(e));
+  const failures = events.querySelectorAll(".kind-critique.has-error, .kind-design.has-error, .kind-review.has-error").length;
+  section.querySelector(".goal-turn-log > summary").textContent = (turn === 0 ? "Original goal & fork controls" : "Requests & events")
+    + ` (${events.childElementCount}${failures ? ` · ${failures} failed replies` : ""})`;
+  const results = entries.filter((e) => e.kind === "render-result").sort((a, b) =>
+    (sourceOf(a) || "").localeCompare(sourceOf(b) || "")
+    || (variantOf(a) === "fresh") - (variantOf(b) === "fresh") || a.index - b.index);
+  const imageGrid = section.querySelector(".goal-turn-images");
+  for (const result of results) imageGrid.appendChild(imageGrid.querySelector(`[data-index="${result.index}"]`));
+  const container = section.querySelector(".goal-turn-scores");
+  container.textContent = "";
+  if (!results.length) return;
+  const table = document.createElement("table");
+  table.className = "goal-score-table";
+  const caption = document.createElement("caption");
+  caption.textContent = "Scores / 10 · select a score to read the feedback";
+  table.appendChild(caption);
+  const header = table.createTHead().insertRow();
+  const corner = document.createElement("th");
+  corner.scope = "col";
+  corner.textContent = "Contributor";
+  header.appendChild(corner);
+  for (const result of results) {
+    const th = document.createElement("th");
+    th.scope = "col";
+    th.textContent = [sourceOf(result), VariantLabels[variantOf(result)] || "Image"].filter(Boolean).join(" · ");
+    th.title = result.render.generatorLabel;
+    header.appendChild(th);
+  }
+  const rows = table.createTBody();
+  const contributors = [{ role: "manager" }, ...(loopState.loop.critics || []).map((data) => ({ role: "critic", data }))];
+  for (const c of contributors) {
+    const row = rows.insertRow();
+    const label = document.createElement("th");
+    label.scope = "row";
+    label.appendChild(contributorBadge(c.role, c.data));
+    row.appendChild(label);
+    // Use the last reply for this exact contributor. Failed attempts have no score.
+    const reply = entries.findLast((e) => c.role === "manager"
+      ? e.kind === "review"
+      : e.kind === "critique" && e.critic?.index === c.data.index);
+    const scores = reply && !reply.error ? (c.role === "manager"
+      ? evaluationsOf(reply.manager?.parsed)
+      : (reply.critic?.parsed?.critiques || []).map((x) => ({ ...x, evaluation: x }))) : [];
+    for (const result of results) {
+      const cell = row.insertCell();
+      const hit = scores.find((x) => sameRender(x, variantOf(result), sourceOf(result)));
+      if (hit) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "goal-score-link";
+        button.textContent = formatScore(hit.evaluation.score);
+        button.setAttribute("aria-label", `${label.textContent}: ${cell.cellIndex > 0 ? header.cells[cell.cellIndex].textContent : ""}, ${formatScore(hit.evaluation.score)} out of 10`);
+        button.title = `${hit.evaluation.goalMet ? "Goal met" : "Goal not met"}: ${hit.evaluation.assessment}`;
+        button.addEventListener("click", () => revealEntry(reply.index));
+        cell.appendChild(button);
+      } else {
+        cell.textContent = reply?.error ? "Failed" : "—";
+        cell.title = reply?.error || "No accepted score yet";
+      }
+    }
+  }
+  container.appendChild(table);
 }
 
 function textBlock(text, cls) {
@@ -1319,7 +1414,7 @@ function loopViewerItems() {
     const r = entry.render;
     const variant = variantOf(entry);
     const source = sourceOf(entry);
-    const request = renderedPromptOfTurn(entry.turn, entry.index, variant === null ? undefined : variant);
+    const request = renderedPromptOfTurn(entry.turn, entry.index, variant, source);
     const reviewed = reviewOfRender(entry);
     const review = reviewed ? reviewed.parsed : null;
     const evaluation = reviewed ? reviewed.evaluation : null;
@@ -1477,7 +1572,7 @@ function managerBody(entry) {
         h.textContent = heading + (chosen ? " — continue from this one" : "");
         evalText.appendChild(h);
       }
-      evalText.appendChild(labeled("assessment of the rendered image", textBlock(evaluation.assessment)));
+      evalText.appendChild(labeled("assessment", textBlock(evaluation.assessment)));
       if (evaluation.problems && evaluation.problems.length) {
         evalText.appendChild(labeled("problems", listBlock(evaluation.problems, "problems")));
       }
@@ -1516,7 +1611,7 @@ function managerBody(entry) {
       if (!hasEvaluations(parsed)) {
         body.appendChild(labeled(pair ? "refine prompt to render (primary design)" : "prompt to render", textBlock(parsed.prompt, "goal-prompt")));
       } else if (pair) {
-        const base = from ? renderedPromptOfTurn(entry.turn, entry.index, from.variant) : null;
+        const base = from ? renderedPromptOfTurn(entry.turn, entry.index, from.variant, from.source) : null;
         body.appendChild(promptWithDiff(`next refine prompt (builds on the turn ${entry.turn} ${from ? renderName(from.variant, from.source, "") : ""} render)`, parsed.prompt, base));
       } else {
         body.appendChild(promptWithDiff("next prompt to render", parsed.prompt, renderedPromptOfTurn(entry.turn, entry.index)));
@@ -1531,10 +1626,10 @@ function managerBody(entry) {
     if (parsed.freshDesignNotes) {
       body.appendChild(labeled("fresh design notes", textBlock(parsed.freshDesignNotes)));
     }
-    body.appendChild(detailsBlock(`manager reasoning (${parsed.reasoning.length.toLocaleString()} chars)`, textBlock(parsed.reasoning), true));
+    body.appendChild(detailsBlock("Rationale", textBlock(parsed.reasoning), true));
   }
   if (data.providerReasoning) {
-    body.appendChild(detailsBlock(`provider thinking / reasoning summary (${data.providerReasoning.length.toLocaleString()} chars)`, textBlock(data.providerReasoning), false));
+    body.appendChild(detailsBlock("Provider reasoning", textBlock(data.providerReasoning), false));
   }
   const usage = document.createElement("div");
   usage.className = "goal-usage";
@@ -1610,27 +1705,18 @@ function reviewOfRender(entry) {
 
 function renderResultBody(entry) {
   const body = document.createElement("div");
+  body.className = "goal-render-body";
   const r = entry.render || {};
   const variant = variantOf(entry);
   const source = sourceOf(entry);
-  if (variant) {
-    const badge = document.createElement("div");
-    badge.className = `goal-variant-badge variant-${variant}`;
-    badge.textContent = variant === "fresh" ? "FRESH — from-scratch re-attempt" : "REFINE — continues the chosen lineage";
-    if (source) {
-      const tag = document.createElement("span");
-      tag.className = "goal-source-tag";
-      tag.textContent = `source ${source} · ${r.generatorLabel}`;
-      badge.appendChild(tag);
-    }
-    const chosen = chosenRenderOfTurn(entry.turn, entry.index);
-    if (sameRender(chosen, variant, source)) {
-      const mark = document.createElement("span");
-      mark.className = "goal-chosen-mark";
-      mark.textContent = "manager continues from this one";
-      badge.appendChild(mark);
-    }
-    body.appendChild(badge);
+  const loop = loopState.loop;
+  const isBest = entry.turn === loop.bestTurn && (loop.bestVariant || null) === variant && (loop.bestSource || null) === source;
+  const continues = sameRender(chosenRenderOfTurn(entry.turn, entry.index), variant, source);
+  if (isBest || continues) {
+    const mark = document.createElement("span");
+    mark.className = "goal-chosen-mark";
+    mark.textContent = [isBest ? `Best · ${formatScore(loop.bestScore)}/10` : "", continues ? "Continues here" : ""].filter(Boolean).join(" · ");
+    body.appendChild(mark);
   }
   if (r.ok) {
     const row = document.createElement("div");
@@ -1651,15 +1737,18 @@ function renderResultBody(entry) {
       box.append(v, l);
       facts.appendChild(box);
     };
-    const reviewed = reviewOfRender(entry);
-    if (reviewed) fact("manager score", `${formatScore(reviewed.evaluation.score)}/10`);
+
     fact("pixels", r.size);
     fact("render time", formatDuration(entry.ms));
     fact("cost (estimate)", r.cost != null ? formatUsd(r.cost) : "");
-    fact(source ? `generator (source ${source})` : "generator", r.generatorLabel);
     fact("provider label", r.label);
     fact("media type", r.mediaType);
     fact("job", r.jobId);
+    const caption = document.createElement("div");
+    caption.className = "goal-image-caption";
+    caption.textContent = [r.size, r.cost != null ? formatUsd(r.cost) : ""].filter(Boolean).join(" · ");
+    row.appendChild(caption);
+    facts.classList.add("goal-image-details");
     row.appendChild(facts);
     body.appendChild(row);
   } else {
@@ -1714,7 +1803,9 @@ function reviewRequestBody(entry) {
 }
 
 function buildEntryElement(entry) {
-  const article = document.createElement("article");
+  const isResult = entry.kind === "render-result";
+  const article = document.createElement(isResult ? "article" : "details");
+  if (!isResult) article.open = entry.kind === "objection";
   article.className = `goal-entry kind-${entry.kind}`;
   article.dataset.index = String(entry.index);
   if (entry.error && entry.kind !== "render-result") article.classList.add("has-error");
@@ -1727,14 +1818,9 @@ function buildEntryElement(entry) {
     if (sourceOf(entry)) article.dataset.source = sourceOf(entry);
   }
 
-  const head = document.createElement("div");
+  const head = document.createElement(isResult ? "div" : "summary");
   head.className = "goal-entry-head";
-  head.appendChild(party(entry.from));
-  const arrow = document.createElement("span");
-  arrow.className = "goal-arrow";
-  arrow.textContent = "→";
-  head.appendChild(arrow);
-  head.appendChild(party(entry.to));
+  head.appendChild(entryContributor(entry));
   const kind = document.createElement("span");
   kind.className = "goal-kind";
   kind.textContent = entryKindLabel(entry);
@@ -1746,40 +1832,37 @@ function buildEntryElement(entry) {
     edited.title = entry.originalText ? `original text:\n${entry.originalText}` : "";
     head.appendChild(edited);
   }
-  const when = document.createElement("span");
-  when.className = "goal-when";
-  when.textContent = formatTime(entry.at);
-  head.appendChild(when);
-  if (entry.ms) {
-    const ms = document.createElement("span");
-    ms.className = "goal-ms";
-    ms.textContent = formatDuration(entry.ms);
-    head.appendChild(ms);
+  const excerpt = entry.manager?.parsed?.reasoning || entry.critic?.parsed?.overall;
+  if (excerpt && !isResult) {
+    const preview = document.createElement("span");
+    preview.className = "goal-contribution-excerpt";
+    preview.textContent = excerpt;
+    head.appendChild(preview);
   }
-  const index = document.createElement("span");
-  index.className = "goal-entry-index";
-  index.textContent = `#${entry.index}`;
-  head.appendChild(index);
+  article.appendChild(head);
+  const meta = document.createElement("div");
+  meta.className = "goal-entry-meta";
+  meta.textContent = `${PartyLabels[entry.from] || entry.from} → ${PartyLabels[entry.to] || entry.to} · ${formatTime(entry.at)}${entry.ms ? ` · ${formatDuration(entry.ms)}` : ""} · #${entry.index}`;
+  const actionDetails = detailsBlock("Details & actions", meta, false);
   if (entry.kind !== "note") {
     const actions = document.createElement("span");
     actions.className = "goal-entry-actions";
     if (["goal", "design", "render-request", "review-request", "review"].includes(entry.kind)) {
       const edit = document.createElement("button");
       edit.type = "button";
-      edit.textContent = "edit & fork from here";
+      edit.textContent = "edit & fork";
       edit.title = "Copy this loop up to this entry, replace this entry's text, and continue as a new loop";
       edit.addEventListener("click", () => openEditor(article, entry));
       actions.appendChild(edit);
     }
     const fork = document.createElement("button");
     fork.type = "button";
-    fork.textContent = "resume from here";
+    fork.textContent = "fork here";
     fork.title = "Copy this loop up to this entry (unchanged) and continue as a new loop; later entries are left behind";
     fork.addEventListener("click", () => submitFork(entry.index, null, null, fork));
     actions.appendChild(fork);
-    head.appendChild(actions);
+    meta.appendChild(actions);
   }
-  article.appendChild(head);
 
   const body = document.createElement("div");
   body.className = "goal-entry-body";
@@ -1812,7 +1895,10 @@ function buildEntryElement(entry) {
       body.appendChild(note);
     }
   }
+  const imageDetails = body.querySelector(".goal-image-details");
+  if (imageDetails) actionDetails.appendChild(imageDetails);
   article.appendChild(body);
+  article.appendChild(actionDetails);
 
   if (entry.wireRequest || entry.wireResponse) {
     const wire = document.createElement("div");
@@ -1822,9 +1908,9 @@ function buildEntryElement(entry) {
     if (entry.wireResponse) {
       wire.appendChild(wireBlock(entry.kind === "render-result" ? "exact gen-result event recorded by the job" : "raw provider response", entry.wireResponse));
     }
-    const details = detailsBlock("everything sent and received", wire, false);
+    const details = detailsBlock("Wire data", wire, false);
     details.classList.add("goal-wire");
-    article.appendChild(details);
+    actionDetails.appendChild(details);
   }
   return article;
 }

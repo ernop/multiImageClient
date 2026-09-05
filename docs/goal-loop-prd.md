@@ -50,11 +50,11 @@ after editing the text of that message.
 | R2 | Manager stays in one long conversation | Every manager call replays the full conversation rebuilt from the loop's entries (system prompt, goal, each earlier design/review reply, each review request with its image). |
 | R3 | Manager iterates until the goal is met | System prompt instructs deliberate iteration, learning what the generator responds to, returning to earlier directions, and stopping when done or when further renders are unlikely to help. |
 | R4 | Dedicated live-updating page | `goal.html` polls the selected loop every second and appends turns as they happen. Head shows status, activity, score, best turn, spend. The header's **main page** chip and the `MultiImageClient` title both link to `./` (the composer and job feed), matching the composer's **goal loops** chip. |
-| R5 | Who sent what to whom, visibly | Each entry carries `from → to` party pills (user, manager, generator, system) plus the entry kind and timing. |
+| R5 | Identify every contribution | Each entry leads with its contributor’s full name and role. Request direction and timing remain under Details & actions. |
 | R6 | Click reveals everything sent and received | Manager entries have a `sent / returned` disclosure with the exact wire request (image bytes replaced by placeholders) and the raw provider response. Review requests show the exact text, the attached original's dimensions/MIME/bytes, and how it travelled (`transport`); each manager entry shows the exact request byte count and, per image, the conformance label inside the stored request. Embedded JSON strings in payloads are shown expanded for reading with the verbatim text beneath. |
 | R7 | Full image plus all metadata | Render results show the image, the generator's display name, returned pixel size, cost, job link, and error recovery hint when rendering failed. |
 | R8 | Full score, thinking, and next-step considerations | Review entries show the 0–10 score (large), goal-met flag, assessment, problems, keep list, the manager's reasoning, the provider-side reasoning/thinking when the provider returns it, design notes, decision, and next prompt. |
-| R9 | Vertical readable series of turns | Entries are grouped under turn headings, newest at the bottom, each turn one bordered column. |
+| R9 | Compare successive turns | Each turn shows images, a contributor score table, then expandable contributions. Requests and events remain in entry order inside a disclosure. |
 | R10 | Stop / resume / resume from here | Stop marks the loop `stopped` and cancels in-flight work at the next boundary. Resume continues from the effective tail. Fork from any entry creates a child loop that continues from that point. |
 | R11 | Edit text inside a turn, fork after modifying | Editable entries (goal, design, render request, review request, review) have an `edit + fork` control. The fork copies entries up to that point, replaces the text, drops everything derived from the old text, and runs from there. |
 | R12 | Default 6 turns, settable at initiation | `maxTurns` defaults to 6, range 1–30, set on the new-loop form; resume may grant more turns. A "turn" is one manager design cycle: one render before protocol 4, the refine + fresh pair from protocol 4. |
@@ -68,6 +68,9 @@ after editing the text of that message.
 | R20 (2026-09-04, later) | Leave the rut: two renders per turn | The user observed loops iterating on one image, each turn a small edit of the last prompt, never leaving a weak composition. Protocol 4: every turn renders a **refine** prompt (an improvement of the render the manager chose to continue from; on turn 1 the primary design) **and** a **fresh** prompt (a from-scratch re-attempt at the goal: new composition, staging, camera, medium/style, palette — a different way to convey the same point, written with what has been learned so far). The manager scores both and sets `continueFrom` to the render its next refine builds on, so the lineage can jump to the fresh image at any turn. See section 3, "Protocol version 4". |
 | R21 (2026-09-04, later) | Several generators per loop | The user asked to choose 1, 2, 4, … generators instead of exactly one, with every generator's output sent to the manager so it can learn and evaluate how each is doing; every later turn keeps all of them; the writer may choose which one to focus on; the objective stays **one image from any source that best satisfies and covers the requirements**. Protocol 5: each turn's refine and fresh prompts are rendered by every selected generator (renders per turn = 2 × generators); the manager sees each generator as a stable **source letter** (A, B, …), scores every render in an `evaluations[]` array, and names the exact render (`continueFrom: {variant, source}`) the next refine builds on; `bestSource` completes `bestTurn`/`bestVariant`. See section 3, "Protocol version 5". |
 | R22 (2026-09-04, later) | Critiques from several independent agents | The user asked to get critiques — feedback, problems, ideas, ratings of how well the image meets the requirements — from multiple agents independently, even with one main author set: e.g. Fable as the manager, plus a new clean instance of Fable, GPT, and Grok each asked what it thinks of the current image. Protocol 6: the new-loop form takes 0–6 **critics** from the manager catalog (the manager's own model allowed; the same critic twice not). After every turn's renders, each critic is called once, concurrently, as a fresh instance with a one-message conversation carrying the goal and the turn's images only; it returns a strict JSON `critiques[]` (exactly one `{variant, source, score, goalMet, assessment, problems, ideas}` per render shown) plus `overall`. The review request forwards every critique verbatim as `Critic N`, identities withheld, framed as evidence and not instructions; the manager's reply contract is unchanged. See section 3, "Protocol version 6". |
+| R23 (2026-09-05) | Reduce repetition and distinguish contributors | Show each image once in the default turn view. Pair each generator’s Refine and Fresh images. Name every contributor in score rows and contribution headers. Separate manager and critic instances of the same model by role. Keep full records expandable. |
+| R24 (2026-09-05, not implemented) | Configurable participants with separate histories | The user wants image makers, image understanders, and prompt writers with controllable instructions and context. Allow multiple participants using the same model, including two Groks with different personas. Each participant knows only its assigned context and own conversation history. |
+| R25 (2026-09-05) | Reusable visual artifacts for every group image loop | Every loop provides best/latest/all/per-generator browsing, named contributors, fullscreen viewing, compact PNG pages, and portable HTML export. |
 
 ## 3. Settled decisions
 
@@ -316,14 +319,20 @@ after editing the text of that message.
     ends with an `INDEPENDENT CRITIQUES (N)` section
     (`AppendCritiquesSection`) before the closing instruction: each critic
     as `Critic 1`, `Critic 2`, … (identities withheld, like sources) with
-    one line per render — score, goal met, assessment, problems, ideas —
-    and its overall verdict. The section states that each critic is a
+    the exact accepted reply text, including JSON formatting and score precision.
+    The section states that each critic is a
     separate instance that saw only the goal and the same images, and that
     critiques are evidence, not instructions. The version-6 system prompt
     tells the manager to look again where several critics agree on a
     defect it missed, to say in its reasoning where it disagrees and why,
     and that its evaluations and decision remain its own. The manager's
     reply contract is unchanged from version 5.
+  - **Forwarding simplification (2026-09-05).** Remove the intermediate prose formatter.
+    Forward each accepted critique entry's original `Text` under its critic number.
+    Parsing still validates the reply before forwarding.
+    The old formatter rounded scores and changed whitespace, punctuation, and array boundaries.
+    Keep parsed fields for the page, contact sheet, and acceptance checks.
+    Existing persisted review requests retain their recorded text during replay.
   - **Page and sheet.** The new-loop form has an "independent critics"
     checkbox picker over the manager catalog (none checked by default: each
     critic is one more vision call per turn) with a count line naming
@@ -463,6 +472,80 @@ after editing the text of that message.
   loop (`managerCostUsd`, flagged unknown when a provider publishes no
   price); render cost sums the jobs' estimates.
 
+
+### Contributor view (2026-09-05)
+
+The default page supports comparing images and tracing individual contributions.
+The shared page applies to every existing and future loop. No per-loop migration is required.
+The previous page repeated images in requests and repeated prompts across full-height entries.
+Generic role badges obscured the model responsible for each contribution.
+
+- Group each turn’s images by generator, with Refine beside Fresh.
+- Label images with their recorded source letter, full generator name, and variant.
+- Mark the exact best image and the image selected for continuation.
+- Show scores in one table, with a named row per manager or critic instance.
+- Keep failed or missing scores explicit. Never average different contributors’ scores.
+- Open the exact contributor’s reply when its score is selected.
+- Give each critic a stable number and color within the loop. Keep names and roles visible alongside color.
+- Distinguish the manager and critic when both use the same model.
+- Show a brief excerpt from each contribution. Expand it to read all prompts, assessments, problems, and ideas.
+- Keep completed failed critic attempts under Requests & events. Keep unresolved failures visible among contributions.
+- Keep request records, timestamps, wire data, and fork controls accessible through disclosures.
+- Collapse the creation form when selecting a loop. The New loop button reopens it.
+- Keep settings and token usage in a disclosure. Report an unknown price as unknown, without a misleading zero-dollar total.
+- Preserve disclosure state during polling when the underlying entry remains unchanged.
+- Match viewer prompts and refinement comparisons by source and variant. Different sources can have different prompts after editing and forking.
+- Keep older protocol records readable under their recorded identities.
+
+The operator’s display names do not change the identities withheld from models.
+This presentation change does not alter model calls, context sharing, or the loop’s stopping rules.
+
+### Participant direction (2026-09-05, not implemented)
+
+A model is an engine, not a participant identity.
+Two Groks can serve different roles with different instructions and independent conversation histories.
+Shared context must be an explicit input to each participant.
+A participant must not inherit another participant’s history merely because both use the same model.
+
+The outer frame includes the goal, role instructions, supplied context, and rules controlling who acts next.
+The user wants control over that frame, rather than a fixed manager-and-critics arrangement.
+Image makers receive their selected prompt and references through their supported provider interfaces.
+Text and vision participants can maintain separate conversations through persisted request history.
+
+The current protocol still has one manager and zero to six distinct critic models.
+Critics still start fresh each turn, and the current API rejects duplicate critic models.
+The contributor view does not claim to implement configurable personas or independent persistent critic histories.
+Manual turns and a configurable repeating sequence remain the proposed control modes, pending interaction design.
+
+### Reusable visual recap (2026-09-05)
+
+Every goal conversation exposes **Visual recap · browse / PNG / HTML** beside its sheet controls.
+This applies to existing and future loops without new model calls.
+The recap uses a complete snapshot from the existing loop endpoint.
+Reload the page to include subsequent turns.
+
+- Show participant badges with model names and distinct manager, critic, and generator roles.
+- Provide all images, best per generator, latest per generator, and a generator filter.
+- Define best as each generator’s highest accepted manager score, retaining every tie.
+- Define latest as both variants from each generator’s last successful turn.
+- Label missing manager reviews explicitly. Latest does not mean approved or final.
+- Preserve each contributor’s scores and comments separately. Never average them.
+- Join prompts and comments by recorded job, turn, source, and variant identities.
+- Reject incomplete or ambiguous snapshots. Failed replies never supply scores.
+- Show images through the existing shared viewer, including keyboard, wheel, and fullscreen controls.
+- Export the selected images as 1920-pixel-wide PNG pages (maximum height 1320 pixels), with at most eight images per page.
+- Use card previews for PNG composition. Label the pages as previews.
+- Export one portable HTML snapshot containing all previews, comments, prompts, and reusable selection controls.
+- Embed page assets in the HTML. Preview browsing works offline.
+- Original images retain their recorded URLs and require access to their original host.
+- Portable HTML requires external HTTPS originals. Reject private app URLs instead of exporting the secret application path.
+- Never include private app paths, authentication data, creator logins, or wire payloads in the exported snapshot.
+- Build exports on demand in the browser. Do not retain new server image caches or rerun providers.
+
+The existing large all-turns sheet remains available beside the recap.
+The recap supplies a standard artifact view, rather than a separate one-time fruit page.
+Exports do not publish a website or change access to the production application.
+
 ## 4. Manager catalog
 
 Defined once in `TextLLMs/ManagerChatClients.cs` (`ManagerCatalog`), exposed
@@ -511,6 +594,7 @@ raw provider response). Render entries carry the `gen-result` event JSON as
 
 ## 6. API
 
+- `recap.html?loop={id}` — reusable visual snapshot with PNG and portable HTML exports. Uses the existing GET endpoint.
 - `GET /api/goal-loops` — list summaries (newest first).
 - `GET /api/goal-loops/{id}?after=N` — metadata + entries from index N;
   `revision` changes mean refetch from 0.
@@ -541,8 +625,10 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   `goalLoop { id, turn, entryIndex, variant, source, manager }` lineage
   object; `app.js` renders it as the card badge.
 - `MultiImageClient/Ui/wwwroot/goal.html`, `goal.js`, `goal.css` — the page
-  (identity chip, goal-kind selector, prompt diffs, sheet controls, viewer
-  wiring).
+  (contributor roster, paired images, score comparison, expandable contributions,
+  request records, identity chip, prompt diffs, sheet controls, and viewer wiring).
+- `tools/tests/goal-recap.test.cjs` — exact joins, tied best scores, missing reviews, failed replies, and legacy identities.
+- `MultiImageClient/Ui/wwwroot/recap.html`, `recap.css`, `recap-model.js`, `recap.js` — reusable recap and browser exports.
 - `MultiImageClient/Ui/wwwroot/viewer.js`, `viewer.css` — the shared viewer
   module.
 - `MultiImageClient/promptTransformation/ImageCombiner.cs` —
@@ -609,3 +695,15 @@ from one brief. The goal loop is the depth axis: one concept, refined by a
 manager that sees its own results. The manager clients and the strict JSON
 reply pattern built here are the intended substrate for Ideation Mode's
 forced-tool-use concept cards.
+
+## Contributor-view verification (2026-09-05)
+
+- Inspected local completed loops using protocol 6 with two critics, protocol 5 with two generators, and protocol 1.
+- Verified that a score opens its exact contributor reply.
+- Verified separate labels for Gemini as manager and Gemini as critic.
+- Verified that two failed critic replies remain available after a successful retry.
+- Verified original-image loading and prompt display in the shared viewer.
+- Checked the layout at desktop width and a 390-pixel viewport.
+- Ran JavaScript syntax validation and five source-identity assertions for prompt selection and refinement comparisons.
+- The existing 76 goal-loop tests passed after the critique-forwarding change.
+- No new provider generation ran during these presentation checks.

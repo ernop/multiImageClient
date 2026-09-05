@@ -1454,15 +1454,11 @@ namespace MultiImageClient.Tests
         [Fact]
         public void ReviewRequestForwardsEveryCritiqueVerbatim()
         {
-            var one = UiGoalLoopProtocol.ParseCritiqueReply(Critique, FourShown);
-            var two = new UiGoalLoopCritiqueReply
-            {
-                Overall = "Refine A is cleanest.",
-                Critiques = FourShown.Select(k => new UiGoalLoopCritiqueItem
-                {
-                    Variant = k.Variant!, Source = k.Source!, Score = 5, Assessment = $"meh {k.Variant}/{k.Source}", Ideas = new() { "bigger fish" },
-                }).ToList(),
-            };
+            // Preserve precision, whitespace, array boundaries, and the accepted fence.
+            var one = "  ```json\n" + Critique.Replace("8.5", "8.567") + "\n```  ";
+            var two = Critique.Replace("more fish", "larger fish; fewer labels");
+            UiGoalLoopProtocol.ParseCritiqueReply(one, FourShown);
+            UiGoalLoopProtocol.ParseCritiqueReply(two, FourShown);
             var renders = FourShown.Select(k => new UiGoalLoopProtocol.UiGoalLoopTurnRender(
                 k.Variant!, new UiGoalLoopRenderData { Variant = k.Variant, Source = k.Source, Ok = true, Size = "1024x1024" },
                 "p", "p", null, new UiGoalLoopSentImage { Transport = "verbatim" }, k.Source)).ToList();
@@ -1478,9 +1474,8 @@ namespace MultiImageClient.Tests
             var c1 = text.IndexOf("Critic 1:", System.StringComparison.Ordinal);
             var c2 = text.IndexOf("Critic 2:", System.StringComparison.Ordinal);
             Assert.True(c1 > 0 && c2 > c1, "critics in index order regardless of arrival order");
-            Assert.Contains("- FRESH render, source B: 8.5/10, goal met: no. reef Problems: blurry label. Ideas: more fish.", text);
-            Assert.Contains("Overall: B's fresh reef is the strongest; fix the labels.", text);
-            Assert.Contains("meh refine/A", text);
+            Assert.Equal(one, text[(c1 + "Critic 1:\n".Length)..c2].TrimEnd('\n'));
+            Assert.Contains("Critic 2:\n" + two, text);
             // The critiques sit before the instruction that closes the request.
             Assert.True(c2 < text.IndexOf("Evaluate every render against the GOAL", System.StringComparison.Ordinal));
             // Critic identities are withheld.
