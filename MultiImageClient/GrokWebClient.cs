@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -72,6 +73,42 @@ namespace MultiImageClient
         /// "Prompt is too long (invalid_parameter)". Note this differs from the
         /// official api.x.ai limit of 4096 — that does not apply here.
         public const int MaxPromptChars = 8192;
+
+        /// Served-model surfacing (2026-08-08): this transport never pins a
+        /// model — it sends only enable_pro and grok.com picks the model
+        /// server-side, so a provider release (e.g. Imagine Image 2.0, shipped
+        /// 2026-08-07 as the new consumer Quality Mode) changes what serves us
+        /// with no code change here. Every response reports the serving model
+        /// as model_name; "imagine-x-1" is the only name this transport had
+        /// returned before that release. Any other reported name is announced
+        /// loudly once per process per distinct name so runs visibly say when
+        /// a new model has arrived. Display/telemetry only — never a gate,
+        /// never a fallback; generation results are used exactly as returned.
+        public static readonly IReadOnlyList<string> BaselineServedModelNames = new[] { "imagine-x-1" };
+
+        public static bool IsBaselineServedModel(string? modelName)
+            => !string.IsNullOrWhiteSpace(modelName)
+               && BaselineServedModelNames.Contains(modelName.Trim(), StringComparer.OrdinalIgnoreCase);
+
+        private static readonly ConcurrentDictionary<string, byte> AnnouncedServedModels =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        private static void AnnounceServedModel(string? modelName, string? mode)
+        {
+            if (string.IsNullOrWhiteSpace(modelName) || IsBaselineServedModel(modelName))
+            {
+                return;
+            }
+            if (!AnnouncedServedModels.TryAdd(modelName.Trim(), 0))
+            {
+                return;
+            }
+            Logger.Log(
+                $"==== GROK-WEB MODEL CHANGE: this generation was served by model '{modelName.Trim()}' (mode '{mode ?? "?"}'), "
+                + $"not the previously observed '{string.Join("', '", BaselineServedModelNames)}'. "
+                + "grok.com switched what serves this transport server-side "
+                + "(xAI released Imagine Image 2.0 as the consumer Quality Mode on 2026-08-07). ====");
+        }
         private static readonly TimeSpan FirstImageEventTimeout = TimeSpan.FromSeconds(60);
         private static readonly TimeSpan ImageEventInactivityTimeout = TimeSpan.FromSeconds(60);
 
@@ -523,6 +560,7 @@ namespace MultiImageClient
                         }).ToList(),
                     },
                     metadata: new { requestId, operation = "image-generation" });
+                AnnounceServedModel(modelName, mode);
                 return new GrokWebImageGenerationResult
                 {
                     Images = images,

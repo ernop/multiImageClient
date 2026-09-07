@@ -109,7 +109,11 @@ namespace MultiImageClient
                 }
 
                 _stats.GrokImageGenerationSuccessCount++;
-                Logger.Log($"\t<- Grok Web Imagine OK in {sw.ElapsedMilliseconds} ms; {result.Images.Count} image(s) model={result.ModelName ?? "?"} mode={result.Mode ?? "?"}");
+                var newModelFlag = !string.IsNullOrWhiteSpace(result.ModelName)
+                    && !GrokWebClient.IsBaselineServedModel(result.ModelName)
+                        ? "  ** NEW MODEL **"
+                        : "";
+                Logger.Log($"\t<- Grok Web Imagine OK in {sw.ElapsedMilliseconds} ms; {result.Images.Count} image(s) model={result.ModelName ?? "?"} mode={result.Mode ?? "?"}{newModelFlag}");
                 if (!string.IsNullOrWhiteSpace(result.CaptureDirectory))
                 {
                     Logger.Log($"\t   capture: {result.CaptureDirectory}");
@@ -134,6 +138,8 @@ namespace MultiImageClient
                     ImageGenerator = _apiType,
                     ImageGeneratorDescription = generator.GetGeneratorSpecPart(),
                     CreateTotalMs = sw.ElapsedMilliseconds,
+                    ServedModelName = result.ModelName,
+                    ServedModelMode = result.Mode,
                 };
             }
             catch (Exception ex)
