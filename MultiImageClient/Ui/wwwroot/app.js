@@ -110,6 +110,10 @@ let generatorEndpointConfiguration = {
 let describeConfig = { defaultInstruction: "" };
 let notificationConfig = { isDeveloper: false, maxRequestChars: 4000, returnAfterHours: 6 };
 const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
+// The OpenAI gpt-image family (gpt-image-2 and 2.5): /edits accepts every attached input
+// image; every other generator receives only the first. Mirrors the server's
+// multi-input dispatch in UiJobs.cs.
+const GptImageFamilyKeys = ["gpt2", "gpt25-sunburst", "gpt25-flare"];
 // Legacy per-browser keys are migrated into the gpt-image-2 endpoint
 // configuration so an existing explicit off-switch or custom suffix survives.
 const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
@@ -694,11 +698,11 @@ function updateGeneratorCompatibility() {
         cb.value,
         `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`);
     }
-    else if (hasImage && inputImageItems.length > 1 && cb.value !== "gpt2" && imageCapable && !isDescribe)
+    else if (hasImage && inputImageItems.length > 1 && !GptImageFamilyKeys.includes(cb.value) && imageCapable && !isDescribe)
     {
       label.title = generatorChooserTitle(
         cb.value,
-        `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (gpt-image-2 receives all)`);
+        `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (the gpt-image family receives all)`);
     }
     else if (hasImage && inputImageItems.length > 1 && isDescribe)
     {
@@ -8985,12 +8989,12 @@ function renderImageViewerGuidance(current) {
     imageViewerGuidance.hidden = false;
     imageViewerGuidance.className = "sent";
     imageViewerGuidance.textContent = `+ appended extra text for ${genLabel(key)}: ${sentText}`;
-  } else if (key === "gpt2" &&
+  } else if (GptImageFamilyKeys.includes(key) &&
       (current?.prompt?.generatorExtraTextsKnown || legacyGpt2State === "off")) {
     imageViewerGuidance.hidden = false;
     imageViewerGuidance.className = "off";
     imageViewerGuidance.textContent =
-      "gpt-image-2 extra text was blank — anti-murk guidance was not sent with this image";
+      `${genLabel(key)} extra text was blank — anti-murk guidance was not sent with this image`;
   } else {
     imageViewerGuidance.hidden = true;
     imageViewerGuidance.className = "";
@@ -10618,7 +10622,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
       const countBadge = document.createElement("span");
       countBadge.className = "job-input-count";
       countBadge.textContent = `×${resolvedInputCount}`;
-      countBadge.title = `${resolvedInputCount} input images (gpt-image-2 received all; others received the first)`;
+      countBadge.title = `${resolvedInputCount} input images (the gpt-image family received all; others received the first)`;
       thumbLink.appendChild(countBadge);
     }
     head.appendChild(thumbLink);
@@ -10958,7 +10962,7 @@ function applyJobEvent(id, card, evt) {
         const countBadge = document.createElement("span");
         countBadge.className = "job-input-count";
         countBadge.textContent = `×${evt.inputCount}`;
-        countBadge.title = `${evt.inputCount} input images (gpt-image-2 received all; others received the first)`;
+        countBadge.title = `${evt.inputCount} input images (the gpt-image family received all; others received the first)`;
         thumbLink.appendChild(countBadge);
       }
     }

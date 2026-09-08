@@ -113,6 +113,17 @@ namespace MultiImageClient
         // Distinct from GrokWebImagineEdit (direct imagine-image-edit modelName).
         GrokWebImagineChat = 47,
 
+        // OpenAI GPT-Image-2.5 (released 2026-09-08). Two models on the same
+        // Images API: gpt-image-2.5-sunburst (most capable, editing
+        // precision) and gpt-image-2.5-flare (fast everyday generation).
+        // Both support /generations and /edits, streaming partials, the
+        // gpt-image-2 size envelope, moderation auto/low, and the new
+        // quality tiers xhigh and max.
+        GptImage25Sunburst = 48,
+        GptImage25Flare = 49,
+        GptImage25SunburstEdit = 50,
+        GptImage25FlareEdit = 51,
+
         WorkflowMock = 1000,
     }
 }

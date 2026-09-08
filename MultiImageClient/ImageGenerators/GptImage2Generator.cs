@@ -13,9 +13,14 @@ using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
-    // OpenAI `gpt-image-2` — released 2026-04-21. Uses the standard
-    // Images API at /v1/images/generations. Accepts `size`, `quality`
-    // (low/medium/high/auto), `n`, and `moderation` (auto/low).
+    // OpenAI `gpt-image-2` — released 2026-04-21 — and the `gpt-image-2.5`
+    // pair released 2026-09-08 (`gpt-image-2.5-sunburst`, the most capable
+    // editing-precision model, and `gpt-image-2.5-flare`, the fast everyday
+    // model; snapshots `-2026-09-08`). All use the standard Images API at
+    // /v1/images/generations. Accepts `size`, `quality`, `n`, and
+    // `moderation` (auto/low). gpt-image-2 quality tops out at high; the
+    // 2.5 models add `xhigh` and `max` (validated per model at
+    // construction — sending xhigh/max to gpt-image-2 is a 400).
     //
     // On THIS endpoint (/generations) the `input_fidelity` parameter must
     // not be sent — gpt-image-2 always renders at high fidelity and the
@@ -36,8 +41,27 @@ namespace MultiImageClient
     // — 3824x2144 is the safe canonical near-4K.
     public class GptImage2Generator : IImageGenerator
     {
-        private const string ModelId = "gpt-image-2";
+        public const string DefaultModelId = "gpt-image-2";
+        public const string SunburstModelId = "gpt-image-2.5-sunburst";
+        public const string FlareModelId = "gpt-image-2.5-flare";
         private const string GenerationsUrl = "https://api.openai.com/v1/images/generations";
+
+        private readonly string _modelId;
+        private readonly ImageGeneratorApiType _apiType;
+        // Short model tag for filenames: "gpt-2", "gpt-25-sunburst", ...
+        private readonly string _fileTag;
+
+        // gpt-image-2 rejects the 2.5-only quality tiers with an HTTP 400,
+        // so quality pools are validated against the configured model at
+        // construction (configuration error, not a provider-call failure).
+        public static bool ModelSupportsQuality(string modelId, OpenAIGPTImageOneQuality quality)
+        {
+            if (quality is OpenAIGPTImageOneQuality.xhigh or OpenAIGPTImageOneQuality.max)
+            {
+                return modelId.StartsWith("gpt-image-2.5", StringComparison.OrdinalIgnoreCase);
+            }
+            return true;
+        }
 
         private readonly SemaphoreSlim _semaphore;
         // Typical gpt-image-2 latency is 10-60s, but OpenAI's own docs warn
@@ -75,7 +99,7 @@ namespace MultiImageClient
         private readonly bool _popUpPartials;
         private readonly Action<int, int, byte[]> _partialImageCallback;
 
-        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GptImage2;
+        public ImageGeneratorApiType ApiType => _apiType;
 
         public GptImage2Generator(string apiKey, int maxConcurrency, string size, string moderation, OpenAIGPTImageOneQuality quality, MultiClientRunStats stats, string name)
             : this(apiKey, maxConcurrency, new[] { size }, moderation, new[] { quality }, stats, name)
@@ -93,11 +117,28 @@ namespace MultiImageClient
             string partialSaveFolder = null,
             bool popUpPartials = false,
             int imageCount = 1,
-            Action<int, int, byte[]> partialImageCallback = null)
+            Action<int, int, byte[]> partialImageCallback = null,
+            string modelId = DefaultModelId,
+            ImageGeneratorApiType apiType = ImageGeneratorApiType.GptImage2)
         {
             if (sizePool == null || sizePool.Length == 0) throw new ArgumentException("sizePool must be non-empty", nameof(sizePool));
             if (qualityPool == null || qualityPool.Length == 0) throw new ArgumentException("qualityPool must be non-empty", nameof(qualityPool));
             if (imageCount < 1) throw new ArgumentException("imageCount must be >= 1", nameof(imageCount));
+            if (string.IsNullOrWhiteSpace(modelId)) throw new ArgumentException("modelId required", nameof(modelId));
+            foreach (var quality in qualityPool)
+            {
+                if (!ModelSupportsQuality(modelId, quality))
+                {
+                    throw new ArgumentException(
+                        $"quality '{quality}' is not supported by {modelId} (xhigh/max are gpt-image-2.5 only)",
+                        nameof(qualityPool));
+                }
+            }
+            _modelId = modelId;
+            _apiType = apiType;
+            _fileTag = modelId == DefaultModelId
+                ? "gpt-2"
+                : modelId.Replace("gpt-image-", "gpt-").Replace(".", "");
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             _sizePool = sizePool;
@@ -114,7 +155,7 @@ namespace MultiImageClient
         // Log tag + fallback label if an outer exception prevents us from
         // building the richer per-call label. Always leads with ModelId so
         // "gpt-image-2" is present even for named variants like "fast".
-        public string GetGeneratorSpecPart() => string.IsNullOrEmpty(_name) ? ModelId : $"{ModelId} {_name}";
+        public string GetGeneratorSpecPart() => string.IsNullOrEmpty(_name) ? _modelId : $"{_modelId} {_name}";
 
         public string GetFilenamePart(PromptDetails pd)
         {
@@ -128,7 +169,7 @@ namespace MultiImageClient
                 if (pd.RuntimeMeta.TryGetValue("quality", out var q) && !string.IsNullOrEmpty(q)) quality = q;
             }
             var modpt = string.IsNullOrEmpty(_moderation) || _moderation == "low" ? "" : $" mod{_moderation}";
-            return $"gpt-2_{_name}{modpt}{size} qual{quality}";
+            return $"{_fileTag}_{_name}{modpt}{size} qual{quality}";
         }
 
         // Token-based pricing. Until per-image averages are published this
@@ -141,11 +182,17 @@ namespace MultiImageClient
             // the ceiling of the active quality pool, scaled by `n` since we
             // always return exactly `n` images per call.
             var worst = _qualityPool.Max();
+            // xhigh/max are gpt-image-2.5 tiers with no published per-image
+            // token counts yet (token RATES match gpt-image-2; consumption
+            // differs). The values above high are reporting ceilings pending
+            // observed usage data.
             var perImage = worst switch
             {
                 OpenAIGPTImageOneQuality.low => 0.02m,
                 OpenAIGPTImageOneQuality.medium => 0.08m,
                 OpenAIGPTImageOneQuality.high => 0.25m,
+                OpenAIGPTImageOneQuality.xhigh => 0.35m,
+                OpenAIGPTImageOneQuality.max => 0.50m,
                 _ => 0.25m,
             };
             return perImage * _imageCount;
@@ -160,7 +207,7 @@ namespace MultiImageClient
             var sizept = _sizePool.Length == 1
                 ? $"size {_sizePool[0]}"
                 : $"size RANDOM({string.Join("/", _sizePool)})";
-            var parts = new List<string> { ModelId, _name, sizept, qualitypt, modpt };
+            var parts = new List<string> { _modelId, _name, sizept, qualitypt, modpt };
             if (_imageCount != 1) parts.Add($"n {_imageCount}");
             return parts;
         }
@@ -207,8 +254,8 @@ namespace MultiImageClient
             // it obvious which API produced this panel. Any per-variant `_name`
             // tag gets appended after, never substituted for the model id.
             var richLabel = string.IsNullOrEmpty(_name)
-                ? $"{ModelId}  {chosenQuality}  {arKeyword}"
-                : $"{ModelId} {_name}  {chosenQuality}  {arKeyword}";
+                ? $"{_modelId}  {chosenQuality}  {arKeyword}"
+                : $"{_modelId} {_name}  {chosenQuality}  {arKeyword}";
             var genTag = richLabel;
             object traceRequest = null;
             object traceResponse = null;
@@ -235,7 +282,7 @@ namespace MultiImageClient
 
                 var bodyDict = new Dictionary<string, object>
                 {
-                    ["model"] = ModelId,
+                    ["model"] = _modelId,
                     ["prompt"] = promptDetails.Prompt,
                     ["quality"] = chosenQuality.ToString(),
                     ["n"] = _imageCount,
@@ -291,7 +338,7 @@ namespace MultiImageClient
                             traceResponse,
                             traceStatusCode,
                             providerError,
-                            new { model = ModelId, operation = traceOperation });
+                            new { model = _modelId, operation = traceOperation });
                         traceRecorded = true;
                         string errorMessage;
                         try
@@ -310,7 +357,7 @@ namespace MultiImageClient
                             IsSuccess = false,
                             ErrorMessage = cleanedMessage,
                             PromptDetails = promptDetails,
-                            ImageGenerator = ImageGeneratorApiType.GptImage2,
+                            ImageGenerator = _apiType,
                             CreateTotalMs = sw.ElapsedMilliseconds,
                             ImageGeneratorDescription = genTag,
                         };
@@ -330,12 +377,12 @@ namespace MultiImageClient
                             if (!root.TryGetProperty("data", out var data)
                                 || data.ValueKind != JsonValueKind.Array)
                             {
-                                validationError = "gpt-image-2 response did not contain a data array";
+                                validationError = $"{_modelId} response did not contain a data array";
                             }
                             else if (data.GetArrayLength() != _imageCount)
                             {
                                 validationError =
-                                    $"gpt-image-2 returned {data.GetArrayLength()} image(s) for requested n={_imageCount}";
+                                    $"{_modelId} returned {data.GetArrayLength()} image(s) for requested n={_imageCount}";
                             }
                             else
                             {
@@ -349,7 +396,7 @@ namespace MultiImageClient
                                     if (string.IsNullOrEmpty(b64))
                                     {
                                         validationError =
-                                            $"gpt-image-2 response image {imageIndex} did not contain b64_json";
+                                            $"{_modelId} response image {imageIndex} did not contain b64_json";
                                         break;
                                     }
                                     var revisedPrompt = item.TryGetProperty("revised_prompt", out var revisedElement)
@@ -380,7 +427,7 @@ namespace MultiImageClient
                                 traceResponse,
                                 traceStatusCode,
                                 validationException,
-                                new { model = ModelId, operation = traceOperation });
+                                new { model = _modelId, operation = traceOperation });
                             traceRecorded = true;
                             Logger.Log($"    [{genTag}] {validationError} after {sw.ElapsedMilliseconds} ms");
                             return new TaskProcessResult
@@ -388,7 +435,7 @@ namespace MultiImageClient
                                 IsSuccess = false,
                                 ErrorMessage = validationError,
                                 PromptDetails = promptDetails,
-                                ImageGenerator = ImageGeneratorApiType.GptImage2,
+                                ImageGenerator = _apiType,
                                 CreateTotalMs = sw.ElapsedMilliseconds,
                                 ImageGeneratorDescription = genTag,
                             };
@@ -403,7 +450,7 @@ namespace MultiImageClient
                             traceRequest,
                             traceResponse,
                             traceStatusCode,
-                            metadata: new { model = ModelId, operation = traceOperation });
+                            metadata: new { model = _modelId, operation = traceOperation });
                         traceRecorded = true;
                         Logger.Log(
                             $"    [{genTag}] completed non-streaming n={_imageCount} "
@@ -417,7 +464,7 @@ namespace MultiImageClient
                             ErrorMessage = "",
                             PromptDetails = promptDetails,
                             ImageGeneratorDescription = genTag,
-                            ImageGenerator = ImageGeneratorApiType.GptImage2,
+                            ImageGenerator = _apiType,
                             CreateTotalMs = sw.ElapsedMilliseconds,
                         };
                     }
@@ -452,7 +499,7 @@ namespace MultiImageClient
                         catch (OperationCanceledException) when (stallCts.IsCancellationRequested)
                         {
                             throw new TimeoutException(
-                                $"gpt-image-2 SSE stream stalled: no event data for {(int)StreamStallTimeout.TotalSeconds}s "
+                                $"{_modelId} SSE stream stalled: no event data for {(int)StreamStallTimeout.TotalSeconds}s "
                                 + $"(total {sw.ElapsedMilliseconds / 1000}s, last event at {lastEventMs / 1000}s). "
                                 + "The stream is dead; the attempt failed.");
                         }
@@ -523,7 +570,7 @@ namespace MultiImageClient
                                     if (imgIdx < 0 || imgIdx >= _imageCount)
                                     {
                                         streamErrorMessage =
-                                            $"gpt-image-2 completed event had invalid image index {imgIdx} "
+                                            $"{_modelId} completed event had invalid image index {imgIdx} "
                                             + $"for requested n={_imageCount}";
                                         Logger.Log($"    [{genTag}] ERROR: {streamErrorMessage}");
                                         break;
@@ -531,7 +578,7 @@ namespace MultiImageClient
                                     if (finalImages.ContainsKey(imgIdx))
                                     {
                                         streamErrorMessage =
-                                            $"gpt-image-2 returned duplicate completed image index {imgIdx}";
+                                            $"{_modelId} returned duplicate completed image index {imgIdx}";
                                         Logger.Log($"    [{genTag}] ERROR: {streamErrorMessage}");
                                         break;
                                     }
@@ -588,7 +635,7 @@ namespace MultiImageClient
                     {
                         _stats.GptImage2RefusedCount++;
                         var msg = streamErrorMessage
-                            ?? $"gpt-image-2 returned {finalImages.Count} completed image(s) for requested n={_imageCount}";
+                            ?? $"{_modelId} returned {finalImages.Count} completed image(s) for requested n={_imageCount}";
                         var traceError = new InvalidOperationException(msg);
                         traceResponse = BuildSseTraceResponse(
                             traceEvents,
@@ -606,7 +653,7 @@ namespace MultiImageClient
                             traceResponse,
                             traceStatusCode,
                             traceError,
-                            new { model = ModelId, operation = traceOperation });
+                            new { model = _modelId, operation = traceOperation });
                         traceRecorded = true;
                         Logger.Log($"    [{genTag}] {msg} after {sw.ElapsedMilliseconds} ms");
                         return new TaskProcessResult
@@ -614,7 +661,7 @@ namespace MultiImageClient
                             IsSuccess = false,
                             ErrorMessage = msg,
                             PromptDetails = promptDetails,
-                            ImageGenerator = ImageGeneratorApiType.GptImage2,
+                            ImageGenerator = _apiType,
                             CreateTotalMs = sw.ElapsedMilliseconds,
                             ImageGeneratorDescription = genTag,
                         };
@@ -639,7 +686,7 @@ namespace MultiImageClient
                         traceRequest,
                         traceResponse,
                         traceStatusCode,
-                        metadata: new { model = ModelId, operation = traceOperation });
+                        metadata: new { model = _modelId, operation = traceOperation });
                     traceRecorded = true;
 
                     return new TaskProcessResult
@@ -650,7 +697,7 @@ namespace MultiImageClient
                         ErrorMessage = "",
                         PromptDetails = promptDetails,
                         ImageGeneratorDescription = genTag,
-                        ImageGenerator = ImageGeneratorApiType.GptImage2,
+                        ImageGenerator = _apiType,
                         CreateTotalMs = sw.ElapsedMilliseconds,
                     };
                 }
@@ -682,7 +729,7 @@ namespace MultiImageClient
                         traceResponse,
                         traceStatusCode,
                         ex,
-                        new { model = ModelId, operation = traceOperation });
+                        new { model = _modelId, operation = traceOperation });
                 }
                 Logger.Log($"    [{genTag}] EXCEPTION after {sw.ElapsedMilliseconds} ms: {ex.Message}");
                 return new TaskProcessResult
@@ -691,7 +738,7 @@ namespace MultiImageClient
                     ErrorMessage = ex.Message,
                     PromptDetails = promptDetails,
                     ImageGeneratorDescription = genTag,
-                    ImageGenerator = ImageGeneratorApiType.GptImage2,
+                    ImageGenerator = _apiType,
                     CreateTotalMs = sw.ElapsedMilliseconds,
                 };
             }

@@ -198,15 +198,15 @@
   <section id="composer">
     <div id="compose-top">
       <div id="compose-left">
-        <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse. Up to 4 images; gpt-image-2 receives all, other generators only the first.">
+        <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse. Up to 4 images; the gpt-image family (gpt-image-2 and 2.5) receives all, other generators only the first.">
           <div id="paste-hint">
             <strong>Ctrl+V</strong> to paste an image<br>
             or drop / click to browse
           </div>
           <div id="input-thumbs" hidden></div>
           <p id="multi-input-hint" hidden>
-            gpt-image-2 gets these in order — say how to use each in the prompt.
-            Other generators only receive the first.
+            The gpt-image family (2 and 2.5) gets these in order — say how to
+            use each in the prompt. Other generators only receive the first.
           </p>
           <button id="clear-image" type="button" hidden>&times; clear all</button>
           <input id="file-input" type="file" accept="image/*" hidden>
@@ -233,7 +233,7 @@
 
       <div id="compose-right">
         <textarea id="prompt" rows="8"
-          placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (gpt-image-2 sees all of them in order); without one it's plain text-to-image."></textarea>
+          placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (the gpt-image family sees all of them in order); without one it's plain text-to-image."></textarea>
         <div id="prompt-limit-notice" hidden></div>
         <div id="spelling-panel" hidden>
           <label id="spelling-enabled-control">
@@ -302,7 +302,7 @@
         <label>detail <select id="opt-detail"></select></label>
         <label>quality
           <select id="opt-quality">
-            <option>low</option><option>medium</option><option selected>high</option>
+            <option>low</option><option>medium</option><option selected>high</option><option>xhigh</option><option>max</option>
           </select>
         </label>
         <label>n <input id="opt-n" type="number" min="1" max="10" value="1"></label>

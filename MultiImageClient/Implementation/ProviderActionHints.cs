@@ -98,7 +98,9 @@ namespace MultiImageClient
 
         private static ProviderAccount? AccountFor(string generatorKey) => generatorKey switch
         {
-            UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini
+            UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt25Sunburst
+                or UiJobRunner.KeyGpt25Flare
+                or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini
                 or UiJobRunner.KeyDescribeOpenAi =>
                 new(
                     "OpenAI",

@@ -385,6 +385,8 @@ namespace MultiImageClient
                 var generators = new[]
                 {
                     new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise. Accepts up to 4 ordered input images (other selected generators only receive the first). The default output AR matches the primary attached source; explicit AR choices override it." },
+                    new { key = UiJobRunner.KeyGpt25Sunburst, label = "gpt-image-2.5 sunburst", detail = "OpenAI's most capable image model (released 2026-09-08): strongest editing precision, instruction following, and text rendering. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
+                    new { key = UiJobRunner.KeyGpt25Flare, label = "gpt-image-2.5 flare", detail = "OpenAI's fast everyday GPT Image 2.5 tier (released 2026-09-08): quicker and cheaper than sunburst with the same API surface. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
                     new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = runner.IsImageCapableForCurrentSettings(UiJobRunner.KeyGrokWeb)
                         ? "grok.com cookie session. Text-to-image uses the browser-free imagine WebSocket; attached images use browser-free x-statsig-id-signed imagine-image-edit. Auto edits inherit the source shape. Text-to-image auto requests square 1:1 because the WebSocket has no prompt-aware auto."
                         : "grok.com cookie session using the browser-free imagine WebSocket. Text-to-image only until current x-statsig-id signing material is captured; attached images are not sent. Auto requests square 1:1 because this transport has no prompt-aware auto and Grok's own default is 2:3. Side-by-side mode requests up to 4 images." },
@@ -481,7 +483,12 @@ namespace MultiImageClient
                     // warn before submit; the server truncates over-limit prompts
                     // at the provider send stage (grok-web: GrokWebClient).
                     maxPromptChars = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptChars : null,
-                    defaultExtraText = g.key == UiJobRunner.KeyGpt2
+                    // The anti-murk daylight suffix applies to the whole OpenAI
+                    // gpt-image family: 2.5 shares gpt-image-2's drift toward
+                    // dark cinematic output without it.
+                    defaultExtraText = g.key is UiJobRunner.KeyGpt2
+                        or UiJobRunner.KeyGpt25Sunburst
+                        or UiJobRunner.KeyGpt25Flare
                         ? DefaultGpt2GuidanceText
                         : "",
                     defaultNotes = "",
@@ -1383,9 +1390,9 @@ namespace MultiImageClient
                     return Results.BadRequest(new { error = $"Unknown detail tier '{detail}'. Expected standard, high, or max." });
                 }
                 var quality = NormalizeOption(form["quality"].ToString(), "high");
-                if (quality is not ("low" or "medium" or "high" or "auto"))
+                if (quality is not ("low" or "medium" or "high" or "xhigh" or "max" or "auto"))
                 {
-                    return Results.BadRequest(new { error = $"Unknown quality '{quality}'. Expected low, medium, high, or auto." });
+                    return Results.BadRequest(new { error = $"Unknown quality '{quality}'. Expected low, medium, high, xhigh, max, or auto." });
                 }
                 var moderation = NormalizeOption(form["moderation"].ToString(), "low");
                 if (moderation is not ("low" or "auto"))

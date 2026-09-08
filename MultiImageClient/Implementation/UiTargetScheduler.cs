@@ -136,7 +136,9 @@ namespace MultiImageClient
         {
             return generatorKey switch
             {
-                UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini => LaneOpenAi,
+                UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt25Sunburst
+                    or UiJobRunner.KeyGpt25Flare
+                    or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini => LaneOpenAi,
                 UiJobRunner.KeyGrokApi or UiJobRunner.KeyGrokApiPro => LaneXaiApi,
                 UiJobRunner.KeyGrokWebVideo => LaneGrokWebBrowser,
                 UiJobRunner.KeyGrokWeb => LaneGrokWebWs,

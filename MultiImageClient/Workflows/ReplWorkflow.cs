@@ -77,7 +77,7 @@ namespace MultiImageClient
         // grok-web path is workflow-level (--grok-web) and not a REPL slot.
         private static readonly string[] KnownGenerators =
             {
-                "gpt2", "grok-api", "grok-api-pro",
+                "gpt2", "gpt25-sunburst", "gpt25-flare", "grok-api", "grok-api-pro",
                 "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
                 "recraft", "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
                 "bfl-klein9-preview", "bfl-klein9", "bfl-kontext-pro", "bfl-kontext-max",
@@ -673,22 +673,48 @@ namespace MultiImageClient
         // Builders
         // ---------------------------------------------------------------
 
-        // Reconstruct the gpt-image-2 slot in _active with the current
+        // Reconstruct the active gpt-image-family slots with the current
         // session-level size / quality / moderation / n so the next dispatch
-        // picks them up. No-op if gpt2 isn't currently active.
+        // picks them up. No-op for slots that aren't currently active.
         private void RebuildGpt2IfActive()
         {
             if (_active.ContainsKey("gpt2"))
             {
                 _active["gpt2"] = BuildGpt2(_size, _quality, _moderation, _imageCount);
             }
+            foreach (var slot in new[] { "gpt25-sunburst", "gpt25-flare" })
+            {
+                if (_active.ContainsKey(slot))
+                {
+                    _active[slot] = BuildNamed(slot);
+                }
+            }
         }
 
         private IImageGenerator BuildGpt2(string size, string quality, string moderation, int imageCount)
+            => BuildGptImageFamily(
+                GptImage2Generator.DefaultModelId,
+                ImageGeneratorApiType.GptImage2,
+                size, quality, moderation, imageCount);
+
+        private IImageGenerator BuildGptImageFamily(
+            string modelId,
+            ImageGeneratorApiType apiType,
+            string size,
+            string quality,
+            string moderation,
+            int imageCount)
         {
             if (!Enum.TryParse<OpenAIGPTImageOneQuality>(quality, true, out var q))
             {
                 Console.WriteLine($"(unknown quality '{quality}', falling back to high)");
+                q = OpenAIGPTImageOneQuality.high;
+            }
+            // Option-mapping policy: xhigh/max are gpt-image-2.5-only tiers;
+            // on earlier models they map to high before the call.
+            if (!GptImage2Generator.ModelSupportsQuality(modelId, q))
+            {
+                Console.WriteLine($"(quality '{q}' is gpt-image-2.5 only; using high for {modelId})");
                 q = OpenAIGPTImageOneQuality.high;
             }
             if (imageCount < 1) imageCount = 1;
@@ -710,7 +736,9 @@ namespace MultiImageClient
                 name: "repl",
                 partialSaveFolder: _settings.ImageDownloadBaseFolder,
                 popUpPartials: false,
-                imageCount: imageCount);
+                imageCount: imageCount,
+                modelId: modelId,
+                apiType: apiType);
         }
 
         // Maps old grok spellings onto the canonical "grok-api" names so the
@@ -733,6 +761,18 @@ namespace MultiImageClient
             {
                 case "gpt2":
                     return BuildGpt2(_size, _quality, _moderation, _imageCount);
+
+                case "gpt25-sunburst":
+                    return BuildGptImageFamily(
+                        GptImage2Generator.SunburstModelId,
+                        ImageGeneratorApiType.GptImage25Sunburst,
+                        _size, _quality, _moderation, _imageCount);
+
+                case "gpt25-flare":
+                    return BuildGptImageFamily(
+                        GptImage2Generator.FlareModelId,
+                        ImageGeneratorApiType.GptImage25Flare,
+                        _size, _quality, _moderation, _imageCount);
 
                 case "grok-api":
                 case "grok": // old name
@@ -937,7 +977,7 @@ namespace MultiImageClient
             Console.WriteLine("  :size WxH                set gpt-image-2 size. Edges snap to multiples of 16, each <3840,");
             Console.WriteLine("                           total pixels 655360..8294400, aspect <=3:1, or 'auto'.");
             Console.WriteLine("                           handy canonical sizes: 1024x1024, 1024x1536, 1536x1024, 2048x2048, 2560x1440 (QHD).");
-            Console.WriteLine("  :quality low|medium|high set gpt-image-2 quality");
+            Console.WriteLine("  :quality low|medium|high|xhigh|max set gpt-image family quality (xhigh/max are gpt-image-2.5 only; earlier models use high)");
             Console.WriteLine("  :moderation auto|low     set gpt-image-2 moderation");
             Console.WriteLine("  :n N                     set gpt-image-2 images-per-call (default 1). N>10 requires confirmation.");
             Console.WriteLine("  :concurrency N           max prompts in flight (applies to subsequent dispatches)");

@@ -10,6 +10,8 @@ namespace MultiImageClient
         public static string UiDisplayName(string key) => key switch
         {
             UiJobRunner.KeyGpt2 => "gpt-image-2",
+            UiJobRunner.KeyGpt25Sunburst => "gpt-image-2.5 sunburst",
+            UiJobRunner.KeyGpt25Flare => "gpt-image-2.5 flare",
             UiJobRunner.KeyGpt1 => "gpt-image-1",
             UiJobRunner.KeyGpt1Mini => "gpt-image-1-mini",
             UiJobRunner.KeyIdeogram => "Ideogram 4.0",
@@ -62,7 +64,9 @@ namespace MultiImageClient
             var displayName = UiDisplayName(key);
             var provider = key switch
             {
-                UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini
+                UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt25Sunburst
+                    or UiJobRunner.KeyGpt25Flare
+                    or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini
                     or UiJobRunner.KeyDescribeOpenAi => "OpenAI",
                 UiJobRunner.KeyGrokApi => "xAI API · grok-imagine-image",
                 UiJobRunner.KeyGrokApiPro => "xAI API · grok-imagine-image-pro",
@@ -142,6 +146,10 @@ namespace MultiImageClient
             ImageGeneratorApiType.IdeogramV3 => "Ideogram V3",
             ImageGeneratorApiType.GptImage1Mini => "gpt-image-1-mini",
             ImageGeneratorApiType.GptImage2 => "gpt-image-2",
+            ImageGeneratorApiType.GptImage25Sunburst => "gpt-image-2.5 sunburst",
+            ImageGeneratorApiType.GptImage25Flare => "gpt-image-2.5 flare",
+            ImageGeneratorApiType.GptImage25SunburstEdit => "gpt-image-2.5 sunburst edit",
+            ImageGeneratorApiType.GptImage25FlareEdit => "gpt-image-2.5 flare edit",
             ImageGeneratorApiType.BFLFlux2Pro => "FLUX.2 Pro",
             ImageGeneratorApiType.BFLFlux2Max => "FLUX.2 Max",
             ImageGeneratorApiType.BFLFlux2Flex => "FLUX.2 Flex",
@@ -185,6 +193,8 @@ namespace MultiImageClient
         {
             ImageGeneratorApiType.GptImage1 or ImageGeneratorApiType.GptImage1Mini
                 or ImageGeneratorApiType.GptImage2 or ImageGeneratorApiType.GptImage2Edit
+                or ImageGeneratorApiType.GptImage25Sunburst or ImageGeneratorApiType.GptImage25SunburstEdit
+                or ImageGeneratorApiType.GptImage25Flare or ImageGeneratorApiType.GptImage25FlareEdit
                 or ImageGeneratorApiType.Dalle3 => "OpenAI",
             ImageGeneratorApiType.GoogleNanoBanana => "Google · gemini-3.1-flash-image",
             ImageGeneratorApiType.GoogleNanoBananaPro => "Google · gemini-3-pro-image",

@@ -2699,6 +2699,12 @@ namespace MultiImageClient
         };
 
         public const string KeyGpt2 = "gpt2";
+        // GPT Image 2.5 (released 2026-09-08): two models on the same OpenAI
+        // Images API. Sunburst is the most capable (editing precision, text);
+        // Flare is the fast everyday tier. Both share gpt-image-2's size
+        // envelope and streaming and add quality tiers xhigh and max.
+        public const string KeyGpt25Sunburst = "gpt25-sunburst";
+        public const string KeyGpt25Flare = "gpt25-flare";
         public const string KeyGpt1 = "gpt1";
         public const string KeyGpt1Mini = "gpt1-mini";
         public const string KeyIdeogram = "ideogram";
@@ -2766,6 +2772,8 @@ namespace MultiImageClient
         public static readonly string[] ImageGeneratorKeys =
         {
             KeyGpt2,
+            KeyGpt25Sunburst,
+            KeyGpt25Flare,
             KeyGpt1,
             KeyGpt1Mini,
             KeyIdeogram,
@@ -3052,6 +3060,8 @@ namespace MultiImageClient
         public static readonly string[] ImageCapableKeys =
         {
             KeyGpt2,
+            KeyGpt25Sunburst,
+            KeyGpt25Flare,
             KeyGrokApi,
             KeyGrokApiPro,
             KeyGoogle,
@@ -3100,6 +3110,11 @@ namespace MultiImageClient
         public static readonly string[] SketchCapableKeys =
         {
             KeyGpt2,
+            // GPT Image 2.5 inherits gpt-image-2's edit-source behavior;
+            // sketch-following is assumed from the same lineage pending an
+            // owner live validation pass (2026-09-08).
+            KeyGpt25Sunburst,
+            KeyGpt25Flare,
             KeyGrokWeb,
             KeyGrokWebChat,
             KeyGrokApi,
@@ -3363,7 +3378,8 @@ namespace MultiImageClient
         // (user-specified attachment policy, 2026-07-28).
         private string DescribeInputImageFunction(string key) => key switch
         {
-            KeyGpt2 or KeyGrokApi or KeyGrokApiPro => "edit source",
+            KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare
+                or KeyGrokApi or KeyGrokApiPro => "edit source",
             KeyGrokWeb when _grokWebStatsigSigner != null => "edit source",
             KeyGrokWebChat => "edit source (chat door)",
             KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
@@ -3542,7 +3558,7 @@ namespace MultiImageClient
 
         public string? DescribeAvailabilityProblem(string key) => key switch
         {
-            KeyGpt2 or KeyGpt1 or KeyGpt1Mini
+            KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare or KeyGpt1 or KeyGpt1Mini
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GptImage2, _settings),
             KeyIdeogram
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV4, _settings),
@@ -3668,21 +3684,30 @@ namespace MultiImageClient
                 Logger.Log($"[ui #{job.Id}] START ({spec.GeneratorKeys.Count} gen(s), image={imageLabel}): {job.Prompt}");
                 if (job.InputImageCount > 1)
                 {
-                    var others = spec.GeneratorKeys
-                        .Where(k => !string.Equals(k, KeyGpt2, StringComparison.OrdinalIgnoreCase))
+                    // The gpt-image family's /edits endpoint takes every attached
+                    // input; every other generator receives only the first.
+                    var multiInputKeys = new[] { KeyGpt2, KeyGpt25Sunburst, KeyGpt25Flare };
+                    var receivers = spec.GeneratorKeys
+                        .Where(k => multiInputKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
                         .ToList();
+                    var others = spec.GeneratorKeys
+                        .Where(k => !multiInputKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
+                        .ToList();
+                    var receiverText = receivers.Count > 0
+                        ? $"{string.Join(", ", receivers)} received all {job.InputImageCount}"
+                        : "no selected generator accepts multiple inputs";
                     if (others.Count > 0)
                     {
                         Logger.Log(
                             $"[ui #{job.Id}] {job.InputImageCount} input images attached; "
-                            + $"gpt-image-2 received all {job.InputImageCount}; "
+                            + $"{receiverText}; "
                             + $"other generators ({string.Join(", ", others)}) received only the first.");
                     }
                     else
                     {
                         Logger.Log(
                             $"[ui #{job.Id}] {job.InputImageCount} input images attached; "
-                            + $"gpt-image-2 received all {job.InputImageCount}.");
+                            + $"{receiverText}.");
                     }
                 }
 
@@ -4932,12 +4957,13 @@ namespace MultiImageClient
                 var suffixed = $"{copy.Prompt}\n\n{extraText.Trim()}";
                 copy.ReplacePrompt(suffixed, suffixed, TransformationType.ManualSuffixation);
             }
-            else if (key == KeyGpt2)
+            else if (key is KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare)
             {
-                // Loud on purpose: gpt-image-2 without the default
-                // anti-murk suffix reliably comes back darker, and this once went
-                // unnoticed for two days (2026-07-31 → 08-02).
-                Logger.Log($"[ui #{jobId}]   gpt-image-2 extra text is blank for this call — anti-murk guidance was not sent");
+                // Loud on purpose: OpenAI image models without the default
+                // anti-murk suffix reliably come back darker, and this once went
+                // unnoticed for two days (2026-07-31 → 08-02). GPT Image 2.5
+                // shares the lineage and the same default suffix.
+                Logger.Log($"[ui #{jobId}]   {key} extra text is blank for this call — anti-murk guidance was not sent");
             }
         }
 
@@ -5398,12 +5424,39 @@ namespace MultiImageClient
             switch (key)
             {
                 case KeyGpt2:
+                case KeyGpt25Sunburst:
+                case KeyGpt25Flare:
                     {
                         RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", key);
+                        var modelId = key switch
+                        {
+                            KeyGpt25Sunburst => GptImage2Generator.SunburstModelId,
+                            KeyGpt25Flare => GptImage2Generator.FlareModelId,
+                            _ => GptImage2Generator.DefaultModelId,
+                        };
                         if (!Enum.TryParse<OpenAIGPTImageOneQuality>(spec.Quality, true, out var quality))
                         {
                             quality = OpenAIGPTImageOneQuality.high;
                         }
+                        // Option-mapping policy (2026-07-20): unsupported option
+                        // values are mapped before the call, not failed. The
+                        // 2.5-only tiers xhigh/max become high on gpt-image-2.
+                        if (!GptImage2Generator.ModelSupportsQuality(modelId, quality))
+                        {
+                            quality = OpenAIGPTImageOneQuality.high;
+                        }
+                        var generationApiType = key switch
+                        {
+                            KeyGpt25Sunburst => ImageGeneratorApiType.GptImage25Sunburst,
+                            KeyGpt25Flare => ImageGeneratorApiType.GptImage25Flare,
+                            _ => ImageGeneratorApiType.GptImage2,
+                        };
+                        var editApiType = key switch
+                        {
+                            KeyGpt25Sunburst => ImageGeneratorApiType.GptImage25SunburstEdit,
+                            KeyGpt25Flare => ImageGeneratorApiType.GptImage25FlareEdit,
+                            _ => ImageGeneratorApiType.GptImage2Edit,
+                        };
                         var size = UiShapeMapping.Gpt2Size(
                             spec.Shape,
                             spec.Detail,
@@ -5415,7 +5468,9 @@ namespace MultiImageClient
                                 _settings.OpenAIApiKey, maxConcurrency: 2,
                                 job.InputImagePaths,
                                 size, quality, _stats, "ui",
-                                imageCount: 1);
+                                imageCount: 1,
+                                modelId: modelId,
+                                apiType: editApiType);
                         }
                         return new GptImage2Generator(
                             _settings.OpenAIApiKey, maxConcurrency: 2,
@@ -5423,6 +5478,8 @@ namespace MultiImageClient
                             moderation: spec.Moderation,
                             qualityPool: new[] { quality },
                             stats: _stats, name: "ui",
+                            modelId: modelId,
+                            apiType: generationApiType,
                             // No day-folder PartialsLive copies in UI mode
                             // (owner decision 2026-08-11): the UI persists its
                             // own durable progression snapshots per partial;

@@ -6,6 +6,8 @@ public sealed class ProviderActionHintsTests
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [UiJobRunner.KeyGpt2] = "https://platform.openai.com/settings/organization/billing/overview",
+            [UiJobRunner.KeyGpt25Sunburst] = "https://platform.openai.com/settings/organization/billing/overview",
+            [UiJobRunner.KeyGpt25Flare] = "https://platform.openai.com/settings/organization/billing/overview",
             [UiJobRunner.KeyGpt1] = "https://platform.openai.com/settings/organization/billing/overview",
             [UiJobRunner.KeyGpt1Mini] = "https://platform.openai.com/settings/organization/billing/overview",
             [UiJobRunner.KeyDescribeOpenAi] = "https://platform.openai.com/settings/organization/billing/overview",

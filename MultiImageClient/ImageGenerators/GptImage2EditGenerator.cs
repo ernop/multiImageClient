@@ -13,11 +13,14 @@ using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
-    // OpenAI gpt-image-2 image editing via POST /v1/images/edits (multipart).
-    // C# port of tools/vid2img/vid2img/generate.py. Input images are bound at
-    // construction (same pattern as GrokWebImagineEditGenerator /
-    // GrokImagineEditGenerator); the prompt arrives per-call through
-    // PromptDetails. Non-streaming: /edits does not support SSE partials.
+    // OpenAI gpt-image-2 / gpt-image-2.5 image editing via POST
+    // /v1/images/edits (multipart). C# port of tools/vid2img/vid2img/
+    // generate.py. Input images are bound at construction (same pattern as
+    // GrokWebImagineEditGenerator / GrokImagineEditGenerator); the prompt
+    // arrives per-call through PromptDetails. Non-streaming: /edits does not
+    // support SSE partials. The 2026-09-08 gpt-image-2.5 models
+    // (gpt-image-2.5-sunburst / gpt-image-2.5-flare) ride the same endpoint
+    // with the same multipart contract, adding the xhigh/max quality tiers.
     //
     // Do NOT send `input_fidelity` — gpt-image-2 rejects it on both
     // /generations and /edits (confirmed 2026-07-06,
@@ -25,7 +28,6 @@ namespace MultiImageClient
     // input_fidelity="high" are wrong for this model.
     public class GptImage2EditGenerator : IImageGenerator
     {
-        private const string ModelId = "gpt-image-2";
         private const string EditsUrl = "https://api.openai.com/v1/images/edits";
 
         private static readonly HttpClient _http = new HttpClient
@@ -44,7 +46,11 @@ namespace MultiImageClient
         private readonly int _imageCount;
         private readonly string _name;
 
-        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GptImage2Edit;
+        private readonly string _modelId;
+        private readonly ImageGeneratorApiType _apiType;
+        private readonly string _fileTag;
+
+        public ImageGeneratorApiType ApiType => _apiType;
 
         public GptImage2EditGenerator(
             string apiKey,
@@ -54,9 +60,23 @@ namespace MultiImageClient
             OpenAIGPTImageOneQuality quality,
             MultiClientRunStats stats,
             string name,
-            int imageCount = 1)
+            int imageCount = 1,
+            string modelId = GptImage2Generator.DefaultModelId,
+            ImageGeneratorApiType apiType = ImageGeneratorApiType.GptImage2Edit)
         {
             if (string.IsNullOrWhiteSpace(apiKey)) throw new ArgumentException("apiKey required", nameof(apiKey));
+            if (string.IsNullOrWhiteSpace(modelId)) throw new ArgumentException("modelId required", nameof(modelId));
+            if (!GptImage2Generator.ModelSupportsQuality(modelId, quality))
+            {
+                throw new ArgumentException(
+                    $"quality '{quality}' is not supported by {modelId} (xhigh/max are gpt-image-2.5 only)",
+                    nameof(quality));
+            }
+            _modelId = modelId;
+            _apiType = apiType;
+            _fileTag = modelId == GptImage2Generator.DefaultModelId
+                ? "gpt-2"
+                : modelId.Replace("gpt-image-", "gpt-").Replace(".", "");
             _inputImagePaths = (inputImagePaths ?? throw new ArgumentNullException(nameof(inputImagePaths)))
                 .Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
             if (_inputImagePaths.Count == 0) throw new ArgumentException("at least one input image required", nameof(inputImagePaths));
@@ -70,15 +90,15 @@ namespace MultiImageClient
             _imageCount = imageCount;
         }
 
-        public string GetFilenamePart(PromptDetails pd) => $"gpt-2-edit_{_name}{_size} qual{_quality}";
+        public string GetFilenamePart(PromptDetails pd) => $"{_fileTag}-edit_{_name}{_size} qual{_quality}";
 
-        public string GetGeneratorSpecPart() => string.IsNullOrEmpty(_name) ? $"{ModelId} edit" : $"{ModelId} edit {_name}";
+        public string GetGeneratorSpecPart() => string.IsNullOrEmpty(_name) ? $"{_modelId} edit" : $"{_modelId} edit {_name}";
 
         public List<string> GetRightParts()
         {
             var parts = new List<string>
             {
-                ModelId,
+                _modelId,
                 "edit",
                 _name,
                 $"size {_size}",
@@ -91,11 +111,15 @@ namespace MultiImageClient
 
         public decimal GetCost()
         {
+            // xhigh/max values mirror GptImage2Generator.GetCost: reporting
+            // ceilings for the 2.5-only tiers pending published token counts.
             var perImage = _quality switch
             {
                 OpenAIGPTImageOneQuality.low => 0.02m,
                 OpenAIGPTImageOneQuality.medium => 0.08m,
                 OpenAIGPTImageOneQuality.high => 0.25m,
+                OpenAIGPTImageOneQuality.xhigh => 0.35m,
+                OpenAIGPTImageOneQuality.max => 0.50m,
                 _ => 0.25m,
             };
             return perImage * _imageCount;
@@ -106,8 +130,8 @@ namespace MultiImageClient
             await _semaphore.WaitAsync();
             var sw = Stopwatch.StartNew();
             var genTag = string.IsNullOrEmpty(_name)
-                ? $"{ModelId} edit  {_quality}  {_size}"
-                : $"{ModelId} edit {_name}  {_quality}  {_size}";
+                ? $"{_modelId} edit  {_quality}  {_size}"
+                : $"{_modelId} edit {_name}  {_quality}  {_size}";
             object? traceRequest = null;
             object? traceResponse = null;
             DateTime? callStartedAtUtc = null;
@@ -126,7 +150,7 @@ namespace MultiImageClient
                 _stats.GptImage2RequestCount++;
 
                 using var form = new MultipartFormDataContent();
-                form.Add(new StringContent(ModelId), "model");
+                form.Add(new StringContent(_modelId), "model");
                 form.Add(new StringContent(promptDetails!.Prompt ?? ""), "prompt");
                 form.Add(new StringContent(_size), "size");
                 form.Add(new StringContent(_quality.ToString()), "quality");
@@ -152,7 +176,7 @@ namespace MultiImageClient
                 }
                 traceRequest = new
                 {
-                    model = ModelId,
+                    model = _modelId,
                     prompt = promptDetails.Prompt ?? "",
                     size = _size,
                     quality = _quality.ToString(),
@@ -186,7 +210,7 @@ namespace MultiImageClient
                         traceResponse,
                         traceStatusCode,
                         providerError,
-                        new { model = ModelId, operation = "edit-image" });
+                        new { model = _modelId, operation = "edit-image" });
                     traceRecorded = true;
                     _stats.GptImage2RefusedCount++;
                     string errorMessage;
@@ -237,7 +261,7 @@ namespace MultiImageClient
                         traceResponse,
                         traceStatusCode,
                         new InvalidOperationException(message),
-                        new { model = ModelId, operation = "edit-image" });
+                        new { model = _modelId, operation = "edit-image" });
                     traceRecorded = true;
                     return Fail(message, promptDetails, sw.ElapsedMilliseconds, genTag);
                 }
@@ -251,7 +275,7 @@ namespace MultiImageClient
                     traceRequest,
                     traceResponse,
                     traceStatusCode,
-                    metadata: new { model = ModelId, operation = "edit-image" });
+                    metadata: new { model = _modelId, operation = "edit-image" });
                 traceRecorded = true;
                 sw.Stop();
                 Logger.Log($"    [{genTag}] OK in {sw.ElapsedMilliseconds} ms; {images.Count} image(s)");
@@ -280,7 +304,7 @@ namespace MultiImageClient
                         traceResponse,
                         traceStatusCode,
                         ex,
-                        new { model = ModelId, operation = "edit-image" });
+                        new { model = _modelId, operation = "edit-image" });
                 }
                 Logger.Log($"    [{genTag}] EXCEPTION after {sw.ElapsedMilliseconds} ms: {ex.Message}");
                 return Fail(ex.Message, promptDetails, sw.ElapsedMilliseconds, genTag);

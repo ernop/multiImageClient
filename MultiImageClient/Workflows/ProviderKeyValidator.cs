@@ -51,6 +51,8 @@ namespace MultiImageClient
             {
                 ImageGeneratorApiType.Dalle3 or ImageGeneratorApiType.GptImage1
                     or ImageGeneratorApiType.GptImage1Mini or ImageGeneratorApiType.GptImage2
+                    or ImageGeneratorApiType.GptImage25Sunburst or ImageGeneratorApiType.GptImage25Flare
+                    or ImageGeneratorApiType.GptImage25SunburstEdit or ImageGeneratorApiType.GptImage25FlareEdit
                     => ("OpenAIApiKey", settings.OpenAIApiKey),
                 ImageGeneratorApiType.Ideogram or ImageGeneratorApiType.IdeogramV3 or ImageGeneratorApiType.IdeogramV4
                     => ("IdeogramApiKey", settings.IdeogramApiKey),

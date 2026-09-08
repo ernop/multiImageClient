@@ -179,7 +179,8 @@ namespace MultiImageClient
         /// itself. They are listed for help/validation completeness only.
         public static readonly string[] ShortNames =
             {
-                "gpt2", "grok-api", "grok-api-pro", "grok-web", "meta-web",
+                "gpt2", "gpt25-sunburst", "gpt25-flare",
+                "grok-api", "grok-api-pro", "grok-web", "meta-web",
                 "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
                 "recraft", "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
                 "bfl-klein9-preview", "bfl-klein9", "bfl-kontext-pro", "bfl-kontext-max",
@@ -193,6 +194,8 @@ namespace MultiImageClient
             switch (name.Trim().ToLowerInvariant())
             {
                 case "gpt2": return GptImage2RandomMinimalSafety();
+                case "gpt25-sunburst": case "sunburst": return GptImage25Sunburst_Square();
+                case "gpt25-flare": case "flare": return GptImage25Flare_Square();
                 case "grok-api": case "grok": return GrokImagine_Square();
                 case "grok-api-pro": case "grokpro": return GrokImaginePro_Square();
                 case "ideogram": case "ideogram-v4": return IdeogramV4_Square();
@@ -331,6 +334,30 @@ namespace MultiImageClient
                 moderation: "low",
                 qualityPool: new[] { OpenAIGPTImageOneQuality.medium },
                 stats: _stats, name: "variants", imageCount: n);
+
+        // ---------- OpenAI: gpt-image-2.5 (released 2026-09-08) ----------
+        // Two models on the same Images API surface as gpt-image-2:
+        // gpt-image-2.5-sunburst (most capable: editing precision,
+        // instruction following, text) and gpt-image-2.5-flare (fast
+        // everyday tier). Both add quality tiers xhigh and max above high.
+        // CLI defaults use high square for predictable cost.
+        private GptImage2Generator GptImage25Sunburst_Square() =>
+            new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
+                sizePool: new[] { "1024x1024" },
+                moderation: "low",
+                qualityPool: new[] { OpenAIGPTImageOneQuality.high },
+                stats: _stats, name: "",
+                modelId: GptImage2Generator.SunburstModelId,
+                apiType: ImageGeneratorApiType.GptImage25Sunburst);
+
+        private GptImage2Generator GptImage25Flare_Square() =>
+            new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
+                sizePool: new[] { "1024x1024" },
+                moderation: "low",
+                qualityPool: new[] { OpenAIGPTImageOneQuality.high },
+                stats: _stats, name: "",
+                modelId: GptImage2Generator.FlareModelId,
+                apiType: ImageGeneratorApiType.GptImage25Flare);
 
         private GptImage2Generator GptImage2HighSquare() =>
             new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
