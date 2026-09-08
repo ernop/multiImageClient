@@ -62,6 +62,7 @@ namespace MultiImageClient
     public class UiWorkflow
     {
         private const string VisibilityOverrideLogin = "ernieMultiZone";
+        private const string LocalVisibilityActor = "local-instance-owner";
 
         private static bool SupportsImageAspectOverride(
             UiJobRunner runner,
@@ -631,6 +632,7 @@ namespace MultiImageClient
                     auth = new
                     {
                         enabled = auth != null,
+                        localVisibilityManagement = auth == null,
                         user = authUser,
                         profile = currentProfile == null
                             ? null
@@ -891,7 +893,7 @@ namespace MultiImageClient
                         sourceJobId = j.SourceJobId,
                         sourceGenerator = j.SourceGenerator,
                         sourceIndex = j.SourceIndex,
-                        canHide = CanManageVisibility(j, authUser),
+                        canHide = CanManageVisibility(j, authUser, auth != null),
                         createdAtUnixMs = new DateTimeOffset(UiJobStorage.EnsureUtc(j.CreatedAt)).ToUnixTimeMilliseconds(),
                     });
                 return Results.Json(new { jobs = list });
@@ -2008,7 +2010,8 @@ namespace MultiImageClient
                     jobs,
                     visibility,
                     authUser,
-                    community.SnapshotProfiles());
+                    community.SnapshotProfiles(),
+                    auth != null);
                 var visibilitySnapshot = visibility.Snapshot();
                 var visibilityPayload = string.Equals(
                     visibilityVersion,
@@ -2261,7 +2264,7 @@ namespace MultiImageClient
                     sb.Append("{\"job\":");
                     sb.Append(SerializeJobMetadataForViewer(
                         job,
-                        CanManageVisibility(job, authUser),
+                        CanManageVisibility(job, authUser, auth != null),
                         profileSnapshot));
                     sb.Append(",\"events\":[");
                     sb.Append(string.Join(
@@ -2292,16 +2295,16 @@ namespace MultiImageClient
                 return Results.Json(new { users });
             });
 
-            // One-way destructive hiding. Authorization comes only from the
-            // authenticated account: the job's creator login, or the fixed
-            // ernieMultiZone override. Browser-supplied display names never
+            // One-way destructive hiding. Ungated local instances permit their
+            // owner to manage all jobs. Shared sites require the authenticated
+            // creator or fixed ernieMultiZone override. Display names never
             // grant this permission. Persist the visibility tombstone before
             // deleting exact local/B2 artifacts. Interrupted purges remain
             // hidden and retry during the next server startup.
             app.MapPost("/api/visibility", async (HttpRequest request) =>
             {
                 var authUser = request.HttpContext.Items["micUser"] as string ?? "";
-                if (authUser.Length == 0)
+                if (auth != null && authUser.Length == 0)
                 {
                     return Results.Json(
                         new { error = "Log in to hide and delete a prompt or image." },
@@ -2325,7 +2328,7 @@ namespace MultiImageClient
                 {
                     return Results.NotFound(new { error = "The selected job is no longer available." });
                 }
-                if (!CanManageVisibility(job, authUser))
+                if (!CanManageVisibility(job, authUser, auth != null))
                 {
                     return Results.Json(
                         new { error = "Only the authenticated creator can hide and delete this item." },
@@ -2365,6 +2368,7 @@ namespace MultiImageClient
                     }
                 }
 
+                var visibilityActor = auth == null ? LocalVisibilityActor : authUser;
                 var hiddenAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 var pendingRecord = new UiHiddenResource
                 {
@@ -2372,7 +2376,7 @@ namespace MultiImageClient
                     JobId = jobId,
                     Generator = generator,
                     ImageIndex = imageIndex,
-                    HiddenByLogin = authUser,
+                    HiddenByLogin = visibilityActor,
                     HiddenAtUnixMs = hiddenAt,
                 };
                 var tombstonePersisted = false;
@@ -2395,7 +2399,7 @@ namespace MultiImageClient
                         pendingRecord,
                         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     Logger.Log(
-                        $"UI visibility: {authUser} hid and deleted {kind}/{jobId}"
+                        $"UI visibility: {visibilityActor} hid and deleted {kind}/{jobId}"
                         + (kind == "image" ? $"/{generator}/{imageIndex}" : "")
                         + $" ({deletedArtifacts} artifact(s), {removedFavorites} favorite(s)).");
                     var snapshot = visibility.Snapshot();
@@ -2656,7 +2660,8 @@ namespace MultiImageClient
                         visibleRecords,
                         jobs,
                         ctx.Items["micUser"] as string ?? "",
-                        profileSnapshot));
+                        profileSnapshot,
+                        auth != null));
                 }
                 catch (InvalidDataException ex)
                 {
@@ -2836,12 +2841,12 @@ namespace MultiImageClient
                         : kind == "image"
                             ? BuildFavoriteImageItem(
                                 records,
-                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? ""),
+                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? "", auth != null),
                                 jobs.Get(jobId),
                                 community.SnapshotProfiles())
                             : BuildFavoritePromptItem(
                                 records,
-                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? ""),
+                                CanManageVisibility(jobs.Get(jobId), request.HttpContext.Items["micUser"] as string ?? "", auth != null),
                                 jobs.Get(jobId),
                                 community.SnapshotProfiles());
                     return Results.Json(new { favorite, kind, item });
@@ -3113,9 +3118,13 @@ namespace MultiImageClient
             }
         }
 
-        private static bool CanManageVisibility(UiJob? job, string authUser)
+        private static bool CanManageVisibility(UiJob? job, string authUser, bool authenticationEnabled)
         {
-            if (job == null || authUser.Length == 0)
+            if (job == null) return false;
+            // An explicitly ungated local instance has one owner. Never infer
+            // this mode from a missing login on an authenticated deployment.
+            if (!authenticationEnabled) return true;
+            if (authUser.Length == 0)
             {
                 return false;
             }
@@ -3173,7 +3182,8 @@ namespace MultiImageClient
             UiJobRegistry jobs,
             UiVisibilityStore visibility,
             string authUser,
-            UiProfileSnapshot profiles)
+            UiProfileSnapshot profiles,
+            bool authenticationEnabled)
         {
             var visible = new List<string>(envelopes.Count);
             foreach (var envelopeJson in envelopes)
@@ -3199,7 +3209,7 @@ namespace MultiImageClient
                         throw new InvalidDataException(
                             $"UI job-known envelope for {jobId} has no metadata.");
                     }
-                    metadata["canHide"] = CanManageVisibility(job, authUser);
+                    metadata["canHide"] = CanManageVisibility(job, authUser, authenticationEnabled);
                     metadata["originalUser"] = job.CreatedBy;
                     metadata["ownerId"] = UiCommunityStore.PublicIdentityId(job.CreatorLogin);
                     metadata["user"] = profiles.ResolveDisplay(job.CreatorLogin, job.CreatedBy);
@@ -3906,7 +3916,8 @@ namespace MultiImageClient
             List<UiFavoriteRecord> records,
             UiJobRegistry jobs,
             string authUser,
-            UiProfileSnapshot profiles)
+            UiProfileSnapshot profiles,
+            bool authenticationEnabled)
         {
             var imageItems = records
                 .Where(record => record.Kind == "image")
@@ -3915,7 +3926,7 @@ namespace MultiImageClient
                     record => record)
                 .Select(group => BuildFavoriteImageItem(
                     group.ToList(),
-                    CanManageVisibility(jobs.Get(group.Key.JobId), authUser),
+                    CanManageVisibility(jobs.Get(group.Key.JobId), authUser, authenticationEnabled),
                     jobs.Get(group.Key.JobId),
                     profiles))
                 .ToList();
@@ -3924,7 +3935,7 @@ namespace MultiImageClient
                 .GroupBy(record => record.JobId, StringComparer.Ordinal)
                 .Select(group => BuildFavoritePromptItem(
                     group.ToList(),
-                    CanManageVisibility(jobs.Get(group.Key), authUser),
+                    CanManageVisibility(jobs.Get(group.Key), authUser, authenticationEnabled),
                     jobs.Get(group.Key),
                     profiles))
                 .ToList();

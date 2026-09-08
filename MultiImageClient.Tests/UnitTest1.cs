@@ -330,31 +330,64 @@ public class RecraftVariantTests
 
 public class UiVisibilityStoreTests
 {
-    [Fact]
-    public void VisibilityAuthorizationUsesAuthenticatedCreatorAndOverrideOnly()
+    [Theory]
+    [InlineData(true, "creator-login", "creator-login", true)]
+    [InlineData(true, "creator-login", "display alias", false)]
+    [InlineData(true, "creator-login", "ernieMultiZone", true)]
+    [InlineData(true, "creator-login", "", false)]
+    [InlineData(true, "", "creator-login", false)]
+    [InlineData(true, "", "ernieMultiZone", true)]
+    [InlineData(true, "", "local-instance-owner", false)]
+    [InlineData(false, "creator-login", "", true)]
+    [InlineData(false, "", "", true)]
+    public void VisibilityAuthorizationDistinguishesLocalAndSharedInstances(
+        bool authenticationEnabled, string creatorLogin, string authUser, bool expected)
     {
         var method = typeof(UiWorkflow).GetMethod(
             "CanManageVisibility",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         Assert.NotNull(method);
-
-        var current = new UiJob
+        var job = new UiJob
         {
             Prompt = "test",
             CreatedBy = "display alias",
-            CreatorLogin = "creator-login",
+            CreatorLogin = creatorLogin,
         };
-        var legacy = new UiJob
-        {
-            Prompt = "test",
-            CreatedBy = "creator-login",
-        };
+        Assert.Equal(expected, (bool)method.Invoke(
+            null, new object?[] { job, authUser, authenticationEnabled })!);
+        Assert.False((bool)method.Invoke(
+            null, new object?[] { null, authUser, authenticationEnabled })!);
+    }
 
-        Assert.True((bool)method.Invoke(null, new object?[] { current, "creator-login" })!);
-        Assert.False((bool)method.Invoke(null, new object?[] { current, "display alias" })!);
-        Assert.True((bool)method.Invoke(null, new object?[] { current, "ernieMultiZone" })!);
-        Assert.False((bool)method.Invoke(null, new object?[] { legacy, "creator-login" })!);
-        Assert.True((bool)method.Invoke(null, new object?[] { legacy, "ernieMultiZone" })!);
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void LiveReplayUsesConfiguredVisibilityAuthorization(bool authenticationEnabled, bool expected)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "miic-visibility-replay-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var settings = new Settings { ImageDownloadBaseFolder = root };
+            var jobs = new UiJobRegistry(settings);
+            var job = new UiJob { Prompt = "test", CreatedBy = "local display name" };
+            jobs.Add(job);
+            var envelopes = jobs.ReadEnvelopes(0).Envelopes;
+            var method = typeof(UiWorkflow).GetMethod(
+                "BuildVisibleEnvelopes",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            Assert.NotNull(method);
+            var output = (List<string>)method.Invoke(null, new object?[]
+            {
+                envelopes, jobs, new UiVisibilityStore(settings), "", new UiProfileSnapshot(), authenticationEnabled,
+            })!;
+            Assert.NotEmpty(output);
+            using var parsed = System.Text.Json.JsonDocument.Parse(output[0]);
+            Assert.Equal(expected, parsed.RootElement.GetProperty("job").GetProperty("canHide").GetBoolean());
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
     }
 
     [Fact]

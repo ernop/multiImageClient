@@ -7581,7 +7581,7 @@ async function submit() {
         user: body.user || user,
         originalUser: body.originalUser || body.user || user,
         ownerId: body.ownerId || "",
-        canHide: !!authInfo.user,
+        canHide: authInfo.localVisibilityManagement === true || !!authInfo.user,
       });
   } catch (err) {
     sendError.textContent = String(err);
@@ -8030,7 +8030,7 @@ el("video-form").addEventListener("submit", async (e) => {
         user: body.user || currentUsername(),
         originalUser: body.originalUser || body.user || currentUsername(),
         ownerId: body.ownerId || "",
-        canHide: !!authInfo.user,
+        canHide: authInfo.localVisibilityManagement === true || !!authInfo.user,
       });
   } catch (err) {
     error.textContent = String(err);
