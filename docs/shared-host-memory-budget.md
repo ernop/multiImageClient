@@ -6,6 +6,15 @@ is secret and never belongs in logs or commits. `tpbeta` is only the colocated
 physical host. Routine releases update `multiimageclient-ui.service` and do
 not touch the host's neighboring sites or services.
 
+**Update 2026-09-09:** the owner selected on-demand operation for the original environment.
+Its systemd socket remains listening while the application sleeps after 15 idle minutes.
+Vibecoders remains resident. See [the environment lifecycle contract](workspaces-prd.md#original-environment-sleeps-on-demand-2026-09-09).
+Before this change, the two idle service cgroups measured approximately 79 MiB and 76 MiB respectively.
+These are observed idle values, not generation peaks or reserved memory.
+The original retains its 2048/2560 MiB limits; Vibecoders uses 1024/1536 MiB limits.
+These independent ceilings do not guarantee combined capacity during simultaneous generation.
+Sleeping the unused original removes its idle process cost without lowering provider concurrency.
+
 **Update 2026-08-05:** tpdiscord-web/reader were uninstalled and
 tpbeta.uwsgi was stopped and disabled (files retained), freeing ~1 GiB and
 making this app the box's primary tenant. Remaining neighbors are ~600 MB

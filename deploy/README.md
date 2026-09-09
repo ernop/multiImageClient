@@ -231,3 +231,15 @@ Then run `sudo systemctl enable --now multiimageclient-environment-controller.ti
 Run the controller service once and verify both public sites before reporting completion.
 Use the existing owner username and password; do not generate another owner account.
 See the [canonical global-account contract](../docs/workspaces-prd.md) for permissions, data boundaries, and capacity limits.
+
+## Original on-demand lifecycle (2026-09-09)
+
+The owner selected socket activation for the original environment; Vibecoders remains resident.
+Release the socket-aware binary, then run `python3 deploy/install-original-on-demand.py` as root on the production host.
+The installer preserves the URL and enables `multiimageclient-ui.socket` on the existing loopback port.
+The original application exits after 15 idle minutes, provided no jobs, requests, or goal loops remain active.
+The next connection wakes it. Existing passwords and stored work remain unchanged.
+Health probes do not extend the idle timeout, but probing a sleeping socket wakes the application.
+Use `systemctl is-active multiimageclient-ui.socket` to check availability without waking it.
+Routine releases stop the activation socket before stopping the original service and restore it before verification.
+Read [the lifecycle contract](../docs/workspaces-prd.md#original-environment-sleeps-on-demand-2026-09-09) before changing these units.

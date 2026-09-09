@@ -345,3 +345,37 @@ Night filter defaults to available, preserving existing preferences.
 Disabling its environment switch hides both its header button and preference controls.
 Disabled filtering never hides jobs, even when the browser retained an enabled personal preference.
 Re-enabling it restores access to the saved preference.
+
+## Original environment sleeps on demand (2026-09-09)
+
+The owner selected on-demand operation for the original environment to reduce idle RAM.
+Vibecoders remains continuously available as a resident application process.
+The original service sleeps after 15 minutes without browser requests or background work.
+An open browser that continues polling keeps its environment awake.
+Queued jobs, running jobs, contact-sheet finalization, and running goal loops prevent sleep.
+Finishing work starts a fresh idle interval. Health probes do not extend that interval.
+
+`multiimageclient-ui.socket` keeps the original loopback port 5960 open through systemd.
+An incoming connection starts `multiimageclient-ui.service` and waits for application startup.
+Kestrel accepts the exact inherited listener; there is no extra proxy process or nginx route change.
+The server validates the process ID, descriptor count, and IPv4 loopback port before using the socket.
+Missing or mismatched activation information aborts startup when sleep mode is configured.
+The original URL, passwords, memberships, stored work, and provider limits remain unchanged.
+A cold visit waits for startup. Memory limits are ceilings, not reserved allocations.
+
+`UiIdleTimeoutSeconds` defaults to zero, which keeps local and new instances resident.
+The original production setting is 900. Valid nonzero values range from 60 through 86400 seconds.
+The idle monitor checks every 15 seconds and exits normally when idle.
+The service uses `Restart=on-failure`; normal idle exit leaves the socket listening without an application process.
+The request gate prevents new accepted work after the shutdown decision.
+A request racing with shutdown receives HTTP 503 with Retry-After: 1, rather than starting work during shutdown.
+
+Release the socket-aware application before running `deploy/install-original-on-demand.py` as root.
+The installer checks original identity and unfinished work, backs up settings, and enables only the original activation socket.
+It disables the original service's independent boot start. The socket starts at boot instead.
+Routine releases stop the original activation socket before replacing and restarting its application.
+They never kill an unidentified port owner. After release checks, the original sleeps normally again.
+Vibecoders remains enabled at boot and has no idle timeout.
+
+Tests: `UiIdleLifetimeTests` verifies request races, health probes, and background-work inhibition.
+`tools/test-ui-socket-activation.py` verifies Linux inherited-listener startup, clean idle exit, and reuse by a fresh process.

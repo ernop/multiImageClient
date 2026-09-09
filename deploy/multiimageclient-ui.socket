@@ -1,0 +1,10 @@
+[Unit]
+Description=Wake the original MultiImageClient environment on a visit
+
+[Socket]
+ListenStream=127.0.0.1:5960
+Accept=no
+Service=multiimageclient-ui.service
+
+[Install]
+WantedBy=sockets.target

@@ -174,6 +174,9 @@ namespace MultiImageClient
         /// queues. New submissions receive HTTP 503 when this bound is full.
         public int UiMaxPendingJobs { get; set; } = 64;
 
+        // Zero keeps the UI resident. Nonzero requires a systemd activation socket.
+        public int UiIdleTimeoutSeconds { get; set; } = 0;
+
         /// Optional per-provider/account concurrency overrides. Known lane
         /// names: openai, xai-api, grok-web-ws, grok-web-browser, meta-web,
         /// google, bfl, krea, ideogram, recraft, comfyui. Missing entries use the

@@ -11,6 +11,14 @@ The private `--ui` site at `multiimageclient.alpha.fuseki.net` is a
 server software, not a local one-shot CLI. `tpbeta` names the machine, not the
 product deployment target.
 
+## Original environment lifecycle (2026-09-09)
+
+The owner selected on-demand operation for the original environment; Vibecoders stays resident.
+Use its systemd activation socket and a 15-minute idle timeout, preserving the original route and data.
+Never sleep while accepted requests, queued/running jobs, finalization, or goal loops remain active.
+All bounded-memory rules below still apply while either process runs.
+See [docs/workspaces-prd.md](../../docs/workspaces-prd.md) for installation and release behavior.
+
 ## Rules
 
 - **Disk is source of truth** for images, job events, history, and card thumbs. Process RAM is a working set + bounded caches only.

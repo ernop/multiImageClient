@@ -73,6 +73,11 @@ fi
 # Wedged-under-memory processes often ignore SIGTERM. systemctl kill -s SIGKILL
 # also sometimes prints "failed to send signal SIGKILL to auxiliary processes:
 # Invalid argument" even when the main PID dies — ignore that and kill by PID.
+socket_active=false
+if systemctl is-active --quiet multiimageclient-ui.socket; then
+    socket_active=true
+    systemctl stop multiimageclient-ui.socket
+fi
 old_pid=$(systemctl show -p MainPID --value multiimageclient-ui 2>/dev/null || true)
 systemctl stop multiimageclient-ui 2>/dev/null || true
 if [[ -n ${old_pid:-} && $old_pid != 0 ]] && kill -0 "$old_pid" 2>/dev/null; then
@@ -81,10 +86,12 @@ if [[ -n ${old_pid:-} && $old_pid != 0 ]] && kill -0 "$old_pid" 2>/dev/null; the
 fi
 # Catch anything still bound to the port.
 if ss -lntp 2>/dev/null | grep -q ':5960'; then
-    fuser -k 5960/tcp 2>/dev/null || true
-    sleep 1
+    die "port 5960 still has a listener after stopping the selected service and socket"
 fi
 systemctl reset-failed multiimageclient-ui 2>/dev/null || true
+if [[ $socket_active == true ]]; then
+    systemctl start multiimageclient-ui.socket
+fi
 systemctl start multiimageclient-ui
 sleep 2
 systemctl is-active multiimageclient-ui >/dev/null \

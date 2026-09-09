@@ -198,9 +198,28 @@ namespace MultiImageClient
             builder.Logging.AddConsole();
             builder.Logging.SetMinimumLevel(LogLevel.Warning);
             var url = $"http://127.0.0.1:{options.UiPort}";
-            builder.WebHost.UseUrls(url);
+            if (settings.UiIdleTimeoutSeconds != 0 && (settings.UiIdleTimeoutSeconds is < 60 or > 86400))
+                throw new InvalidOperationException("UiIdleTimeoutSeconds must be zero or between 60 and 86400.");
+            if (UiIdleLifetime.UseSystemdSocket(options.UiPort, settings.UiIdleTimeoutSeconds > 0))
+                builder.WebHost.ConfigureKestrel(server => server.ListenHandle(3));
+            else
+                builder.WebHost.UseUrls(url);
 
             var app = builder.Build();
+            var idleLifetime = settings.UiIdleTimeoutSeconds == 0 ? null
+                : new UiIdleLifetime(TimeSpan.FromSeconds(settings.UiIdleTimeoutSeconds));
+            if (idleLifetime != null)
+                app.Use(async (ctx, next) =>
+                {
+                    if (!idleLifetime.TryEnter())
+                    {
+                        ctx.Response.StatusCode = 503;
+                        ctx.Response.Headers.RetryAfter = "1";
+                        return;
+                    }
+                    try { await next(ctx); }
+                    finally { idleLifetime.Exit(ctx.Request.Path != "/healthz"); }
+                });
             var environments = string.IsNullOrWhiteSpace(settings.UiEnvironmentRegistryPath) ? null : new UiEnvironmentRegistry(settings.UiEnvironmentRegistryPath);
             if (environments != null) environments.Get(settings.UiEnvironmentId);
             // Browser-window state is disposable. Every process instance gets
@@ -599,6 +618,7 @@ namespace MultiImageClient
 
                 return Results.Json(new
                 {
+                    socketActivationSupported = true,
                     generators,
                     standardGeneratorGroups = standardGeneratorGroups.Select(group => new
                     {
@@ -3105,7 +3125,13 @@ namespace MultiImageClient
             using var thumbExpiryCts = new CancellationTokenSource();
             var thumbExpiryLoop = Task.Run(
                 () => UiThumbExpiry.RunLoopAsync(settings, thumbExpiryCts.Token));
+            using var idleMonitorCts = new CancellationTokenSource();
+            var idleMonitor = idleLifetime?.MonitorAsync(
+                () => activeJobs.Values.Any(job => !job.IsCompleted) || runner.PendingJobCount > 0 || goalLoopRunner.RunningCount > 0,
+                app.Lifetime.StopApplication, idleMonitorCts.Token);
             await app.RunAsync();
+            idleMonitorCts.Cancel();
+            if (idleMonitor != null) await idleMonitor;
             thumbExpiryCts.Cancel();
 
             var remaining = activeJobs.Values.ToArray();
