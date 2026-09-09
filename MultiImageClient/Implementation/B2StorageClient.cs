@@ -53,15 +53,16 @@ namespace MultiImageClient
         /// Fetches one hosted object back by its exact recorded key (anonymous
         /// public GET). Throws on any non-success status — a missing hosted
         /// object is a hard error, never silently substituted.
-        public async Task<byte[]> DownloadBytesAsync(string objectKey, CancellationToken cancellationToken)
+        public async Task<byte[]> DownloadBytesAsync(string objectKey, CancellationToken cancellationToken, long maxBytes = int.MaxValue)
         {
             var url = DownloadUrlFor(objectKey);
-            using var response = await _http.GetAsync(url, cancellationToken);
+            using var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 throw new InvalidOperationException(
                     $"B2 download of '{objectKey}' failed: HTTP {(int)response.StatusCode}");
             }
+            await response.Content.LoadIntoBufferAsync(maxBytes, cancellationToken);
             return await response.Content.ReadAsByteArrayAsync(cancellationToken);
         }
 

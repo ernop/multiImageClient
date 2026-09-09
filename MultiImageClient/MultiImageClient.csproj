@@ -42,6 +42,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\FableBot\FableBot.csproj" />
     <ProjectReference Include="..\BFLApi\BFLAPIClient.csproj" />
     <ProjectReference Include="..\IdeogramAPI\IdeogramAPIClient.csproj" />
     <ProjectReference Include="..\ImageGenerationClasses\ImageGenerationClasses.csproj">

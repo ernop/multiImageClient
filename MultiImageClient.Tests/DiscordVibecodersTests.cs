@@ -1,5 +1,10 @@
 using System;
 using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 using MultiImageClient;
 
@@ -10,16 +15,35 @@ namespace MultiImageClient.Tests
     public sealed class DiscordVibecodersTests
     {
         [Fact]
-        public void ShareUrlUsesExactJobIdentity()
+        public async Task PostingNeverIncludesPrivateSiteOrLoginLinks()
         {
-            var url = DiscordVibecoders.BuildShareUrl(
-                "https://host.example/instance-path/",
-                "abc123def456",
-                "gpt2",
-                2);
-            Assert.Equal(
-                "https://host.example/instance-path?job=abc123def456&gen=gpt2&n=2",
-                url);
+            var settings = new Settings {
+                DiscordVibecodersWebhookUrl = "https://discord.com/api/webhooks/123/tokenvalue",
+                UiPublicBaseUrl = "https://private.example/secret-path",
+            };
+            var handler = new CaptureHandler();
+            using var http = new HttpClient(handler);
+            using var media = new MemoryStream(new byte[] { 1, 2, 3 });
+            await new DiscordVibecodersClient(settings, http).SendAsync(
+                "alice", media, "image/png", "image.png", CancellationToken.None);
+            Assert.DoesNotContain("private.example", handler.Body);
+            Assert.DoesNotContain("secret-path", handler.Body);
+            Assert.DoesNotContain("\"content\"", handler.Body);
+            Assert.DoesNotContain("\"embeds\"", handler.Body);
+            Assert.Contains("files[0]", handler.Body);
+            Assert.Contains("\"allowed_mentions\":{\"parse\":[]}", handler.Body);
+            settings.UiPublicBaseUrl = "";
+            Assert.True(DiscordVibecoders.IsConfigured(settings));
+        }
+
+        private sealed class CaptureHandler : HttpMessageHandler
+        {
+            public string Body { get; private set; } = "";
+            protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            {
+                Body = Encoding.UTF8.GetString(await request.Content!.ReadAsByteArrayAsync(ct));
+                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            }
         }
 
         [Fact]

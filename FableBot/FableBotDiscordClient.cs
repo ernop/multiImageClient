@@ -161,8 +161,9 @@ namespace FableBot
         };
 
         private readonly string _token;
+        private readonly HttpClient _http;
 
-        public FableBotDiscordClient(string botToken)
+        public FableBotDiscordClient(string botToken, HttpClient? httpClient = null)
         {
             if (!FableBotDiscord.TryNormalizeBotToken(botToken, out var token))
             {
@@ -170,6 +171,7 @@ namespace FableBot
                     "FableBotDiscordBotToken is not a usable bot token (blank, too short, or contains whitespace).");
             }
             _token = token;
+            _http = httpClient ?? Http;
         }
 
         public async Task<FableBotIdentity> GetBotIdentityAsync(CancellationToken cancellationToken)
@@ -187,6 +189,8 @@ namespace FableBot
             using var document = await GetJsonAsync($"/channels/{channelId}", cancellationToken);
             var root = document.RootElement;
             var id = RequiredString(root, "id", $"GET /channels/{channelId}");
+            if (id != channelId.ToString(CultureInfo.InvariantCulture))
+                throw new InvalidOperationException("Discord returned a different channel identity.");
             if (!root.TryGetProperty("type", out var typeElement)
                 || typeElement.ValueKind != JsonValueKind.Number)
             {
@@ -239,7 +243,7 @@ namespace FableBot
 
             using var request = BuildRequest(HttpMethod.Post, $"/channels/{channelId}/messages");
             request.Content = form;
-            using var response = await Http.SendAsync(request, cancellationToken);
+            using var response = await _http.SendAsync(request, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
@@ -252,6 +256,19 @@ namespace FableBot
                 document.RootElement, "id", $"POST /channels/{channelId}/messages");
             var returnedChannelId = RequiredString(
                 document.RootElement, "channel_id", $"POST /channels/{channelId}/messages");
+            if (returnedChannelId != channelId.ToString(CultureInfo.InvariantCulture))
+                throw new InvalidOperationException("Discord returned a different message channel identity.");
+            if (!document.RootElement.TryGetProperty("attachments", out var returnedAttachments)
+                || returnedAttachments.ValueKind != JsonValueKind.Array
+                || returnedAttachments.GetArrayLength() != attachments.Count)
+                throw new InvalidOperationException("Discord did not confirm every attachment.");
+            for (var i = 0; i < attachments.Count; i++)
+            {
+                var received = returnedAttachments[i];
+                if (!received.TryGetProperty("size", out var size) || !size.TryGetInt64(out var length)
+                    || length != attachments[i].Bytes.LongLength)
+                    throw new InvalidOperationException("Discord returned an unexpected attachment size.");
+            }
             return new FableBotPostedMessage(messageId, returnedChannelId, guildIdForLink);
         }
 
@@ -259,7 +276,7 @@ namespace FableBot
             string path, CancellationToken cancellationToken)
         {
             using var request = BuildRequest(HttpMethod.Get, path);
-            using var response = await Http.SendAsync(request, cancellationToken);
+            using var response = await _http.SendAsync(request, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (!response.IsSuccessStatusCode)
             {

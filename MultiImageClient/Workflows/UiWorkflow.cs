@@ -57,9 +57,9 @@ namespace MultiImageClient
     ///   POST /api/visibility                   creator-only prompt/image hiding plus artifact deletion
     ///   GET  /api/jobs/{id}/location           live vs archive-day home for a share link
     ///   GET  /api/discord/vibecoders           identities already sent to #vibecoders
-    ///   POST /api/discord/vibecoders           send one image/video once; message is the site link
+    ///   POST /api/discord/vibecoders           send one image/video once; attach the original without private links
     ///   POST /api/auth/login|logout            shared-site access gate (only when UiAuthFilePath is set)
-    public class UiWorkflow
+    public partial class UiWorkflow
     {
         private const string VisibilityOverrideLogin = "ernieMultiZone";
         private const string LocalVisibilityActor = "local-instance-owner";
@@ -669,6 +669,11 @@ namespace MultiImageClient
                         isDeveloper = IsDeveloperLogin(ctx.Items["micUser"] as string ?? ""),
                         maxRequestChars = UiCommunityStore.MaxRequestChars,
                         returnAfterHours = UiCommunityStore.ReturnAfter.TotalHours,
+                    },
+                    fableBot = new
+                    {
+                        available = FableBot.FableBotDiscord.TryNormalizeBotToken(settings.FableBotDiscordBotToken, out _)
+                            && FableBot.FableBotDiscord.TryNormalizeChannelId(settings.FableBotDiscordChannelId, out _),
                     },
                     vibecoders = new
                     {
@@ -2466,6 +2471,8 @@ namespace MultiImageClient
                 return Results.Json(new { day, live });
             });
 
+            MapFableBot(app, settings, auth, jobs, visibility, runner);
+
             app.MapGet("/api/discord/vibecoders", (string? version, HttpContext ctx) =>
             {
                 ctx.Response.Headers.CacheControl = "no-store";
@@ -2535,13 +2542,6 @@ namespace MultiImageClient
                     return Results.NotFound(new { error = mediaError });
                 }
 
-                if (!DiscordVibecoders.TryNormalizePublicBaseUrl(settings.UiPublicBaseUrl, out var publicBase))
-                {
-                    return Results.Json(
-                        new { error = "The share link is not configured on this instance." },
-                        statusCode: 500);
-                }
-
                 var sender = authUser.Length > 0 ? authUser : "local";
                 var claim = new UiDiscordVibecodersSend
                 {
@@ -2562,12 +2562,9 @@ namespace MultiImageClient
                 Stream? upload = null;
                 try
                 {
-                    var shareUrl = DiscordVibecoders.BuildShareUrl(
-                        publicBase, jobId, generator, imageIndex);
                     string contentType = media.ContentType;
                     string fileName = generator + "-" + imageIndex
                         + DiscordVibecoders.FileExtension(media.ContentType);
-                    string? embedImageUrl = null;
                     var attach = false;
 
                     if (job.TryGetImagePath(generator, imageIndex, out var path, out contentType)
@@ -2585,7 +2582,8 @@ namespace MultiImageClient
                     else
                     {
                         var hosted = await runner.TryGetImageBytesIncludingHostedAsync(
-                            job, generator, imageIndex);
+                            job, generator, imageIndex, DiscordVibecoders.MaxAttachmentBytes,
+                            request.HttpContext.RequestAborted);
                         if (hosted != null
                             && hosted.Value.Bytes.Length > 0
                             && hosted.Value.Bytes.Length <= DiscordVibecoders.MaxAttachmentBytes)
@@ -2598,21 +2596,17 @@ namespace MultiImageClient
                         }
                     }
 
-                    if (!attach
-                        && media.Kind == "image"
-                        && media.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    if (!attach)
                     {
-                        embedImageUrl = media.Url;
+                        throw new InvalidOperationException("The original is unavailable or exceeds the 10 MiB attachment limit.");
                     }
 
                     var client = new DiscordVibecodersClient(settings);
                     await client.SendAsync(
-                        shareUrl,
                         sender,
                         attach ? upload! : Stream.Null,
                         contentType,
                         fileName,
-                        embedImageUrl,
                         request.HttpContext.RequestAborted);
                     Logger.Log(
                         $"UI vibecoders: {sender} sent {media.Kind}/{jobId}/{generator}/{imageIndex}.");

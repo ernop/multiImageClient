@@ -16,8 +16,7 @@ namespace MultiImageClient
 
         public static bool IsConfigured(Settings settings)
         {
-            return TryNormalizeWebhookUrl(settings.DiscordVibecodersWebhookUrl, out _)
-                && TryNormalizePublicBaseUrl(settings.UiPublicBaseUrl, out _);
+            return TryNormalizeWebhookUrl(settings.DiscordVibecodersWebhookUrl, out _);
         }
 
         public static bool TryNormalizeWebhookUrl(string? raw, out string url)
@@ -53,24 +52,6 @@ namespace MultiImageClient
             return true;
         }
 
-        public static string BuildShareUrl(string publicBaseUrl, string jobId, string generator, int imageIndex)
-        {
-            if (!TryNormalizePublicBaseUrl(publicBaseUrl, out var baseUrl))
-            {
-                throw new InvalidOperationException("UiPublicBaseUrl is not a usable https site URL.");
-            }
-            if (string.IsNullOrWhiteSpace(jobId)
-                || string.IsNullOrWhiteSpace(generator)
-                || imageIndex < 0)
-            {
-                throw new InvalidOperationException("Share URL is missing exact job or result identity.");
-            }
-            return baseUrl
-                + "?job=" + Uri.EscapeDataString(jobId)
-                + "&gen=" + Uri.EscapeDataString(generator)
-                + "&n=" + imageIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
-
         public static string FileExtension(string contentType)
         {
             return contentType.ToLowerInvariant() switch
@@ -95,29 +76,29 @@ namespace MultiImageClient
         };
 
         private readonly string _webhookUrl;
+        private readonly HttpClient _http;
 
-        public DiscordVibecodersClient(Settings settings)
+        public DiscordVibecodersClient(Settings settings, HttpClient? httpClient = null)
         {
             if (!DiscordVibecoders.TryNormalizeWebhookUrl(settings.DiscordVibecodersWebhookUrl, out var url))
             {
                 throw new InvalidOperationException("Discord vibecoders webhook is not configured.");
             }
             _webhookUrl = url;
+            _http = httpClient ?? Http;
         }
 
         public async Task SendAsync(
-            string shareUrl,
             string senderName,
             Stream media,
             string contentType,
             string fileName,
-            string? embedImageUrl,
             CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(shareUrl)
-                || !shareUrl.StartsWith("https://", StringComparison.Ordinal))
+            if (media == Stream.Null || !media.CanRead || !media.CanSeek
+                || media.Length - media.Position <= 0 || media.Length - media.Position > DiscordVibecoders.MaxAttachmentBytes)
             {
-                throw new InvalidOperationException("Discord message is missing the site share URL.");
+                throw new InvalidOperationException("Discord requires an original attachment of at most 10 MiB.");
             }
 
             var username = string.IsNullOrWhiteSpace(senderName) ? "miic" : senderName.Trim();
@@ -129,12 +110,8 @@ namespace MultiImageClient
             using var form = new MultipartFormDataContent();
             var payload = new
             {
-                content = shareUrl,
                 username,
                 allowed_mentions = new { parse = Array.Empty<string>() },
-                embeds = string.IsNullOrWhiteSpace(embedImageUrl)
-                    ? null
-                    : new[] { new { image = new { url = embedImageUrl } } },
             };
             form.Add(
                 new StringContent(
@@ -155,7 +132,7 @@ namespace MultiImageClient
                 form.Add(file, "files[0]", fileName);
             }
 
-            using var response = await Http.PostAsync(_webhookUrl, form, cancellationToken);
+            using var response = await _http.PostAsync(_webhookUrl, form, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 throw new InvalidOperationException(

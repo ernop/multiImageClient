@@ -161,6 +161,10 @@ let hiddenPromptJobIds = new Set();
 let hiddenImageKeys = new Set();
 let visibilityMutation = null;
 let vibecodersAvailable = false;
+let fableBotAvailable = false;
+let fableBotSelection = "";
+let fableBotRenderVersion = 0;
+let fableBotSending = false;
 let vibecodersServerVersion = "";
 let vibecodersSentKeys = new Set();
 let vibecodersMutation = null;
@@ -304,6 +308,11 @@ const imageViewerFavorite = el("image-viewer-favorite");
 const imageViewerVideo = el("image-viewer-video");
 const imageViewerHide = el("image-viewer-hide");
 const imageViewerVibecoders = el("image-viewer-vibecoders");
+const imageViewerFableBot = document.createElement("button");
+imageViewerFableBot.type = "button";
+imageViewerFableBot.hidden = true;
+imageViewerFableBot.textContent = "send to Discord";
+imageViewerVibecoders.after(imageViewerFableBot);
 const imageViewerStatus = el("image-viewer-status");
 const imageViewerPreload = el("image-viewer-preload");
 const favoritesGallery = el("favorites-gallery");
@@ -499,6 +508,7 @@ async function loadConfig() {
     cfg.generatorEndpointConfiguration || generatorEndpointConfiguration;
   videoGeneration = cfg.videoGeneration || videoGeneration;
   vibecodersAvailable = !!(cfg.vibecoders && cfg.vibecoders.available);
+  fableBotAvailable = !!cfg.fableBot?.available;
   claudeAdvice = cfg.claudeAdvice || claudeAdvice;
   applyClaudeAdviceAvailability();
   promptRewrites.configure(cfg.promptRewrites || []);
@@ -7237,6 +7247,7 @@ function vibecodersIdentity(jobId, generator, imageIndex) {
 }
 
 function renderImageViewerVibecoders(item) {
+  renderImageViewerFableBot(item);
   const allowed = vibecodersAvailable && !!item && item.kind !== "text";
   imageViewerVibecoders.hidden = !allowed;
   if (!allowed) {
@@ -7351,6 +7362,84 @@ async function sendCurrentViewerToVibecoders() {
   await sendToVibecoders(
     current.item.jobId, current.item.generator, current.item.imageIndex);
 }
+
+function renderImageViewerFableBot(item) {
+  const allowed = fableBotAvailable && !!item && item.kind !== "text";
+  imageViewerFableBot.hidden = !allowed;
+  if (!allowed) {
+    fableBotRenderVersion++;
+    fableBotSelection = "";
+    imageViewerFableBot.disabled = true;
+    imageViewerFableBot.textContent = "send to Discord";
+    imageViewerFableBot.title = "";
+    return;
+  }
+  const key = JSON.stringify([item.jobId, item.generator, item.imageIndex]);
+  if (fableBotSelection === key) return;
+  fableBotSelection = key;
+  const version = ++fableBotRenderVersion;
+  imageViewerFableBot.disabled = true;
+  imageViewerFableBot.textContent = "checking Discord send…";
+  imageViewerFableBot.title = "";
+  const query = new URLSearchParams({ jobId: item.jobId, generator: item.generator, imageIndex: item.imageIndex });
+  fetch(apiUrl(`api/discord/fablebot?${query}`)).then(async response => {
+    if (!response.ok) throw new Error("Could not check the Discord send status.");
+    const body = await response.json();
+    if (fableBotSelection !== key || fableBotRenderVersion !== version) return;
+    paintFableBotState(body);
+  }).catch(error => {
+    if (fableBotSelection !== key || fableBotRenderVersion !== version) return;
+    imageViewerFableBot.textContent = "Discord status unavailable";
+    imageViewerFableBot.title = String(error);
+  });
+}
+
+function paintFableBotState(body) {
+  imageViewerFableBot.disabled = fableBotSending || body.state !== "ready";
+  imageViewerFableBot.textContent = body.state === "sent" ? "sent to Discord"
+    : body.state === "pending" ? "check delivery in Discord" : "send to Discord";
+  imageViewerFableBot.title = body.error || (body.state === "pending"
+    ? "Delivery is unconfirmed. Check the configured Discord channel."
+    : "Post this original through FableBot to the configured Discord channel.");
+}
+
+imageViewerFableBot.addEventListener("click", async () => {
+  const current = locateImageViewerState(getImageViewerPrompts());
+  if (!current || fableBotSending || imageViewerFableBot.disabled) return;
+  const item = current.item;
+  const key = JSON.stringify([item.jobId, item.generator, item.imageIndex]);
+  if (key !== fableBotSelection) return;
+  fableBotSending = true;
+  imageViewerFableBot.disabled = true;
+  imageViewerFableBot.textContent = "sending to Discord…";
+  const form = new FormData();
+  form.set("jobId", item.jobId);
+  form.set("generator", item.generator);
+  form.set("imageIndex", String(item.imageIndex));
+  try {
+    const response = await fetch(apiUrl("api/discord/fablebot"), {
+      method: "POST", headers: { "X-MIC-FableBot": "1" }, body: form,
+    });
+    const body = await response.json();
+    fableBotSending = false;
+    if (fableBotSelection === key) {
+      paintFableBotState(body);
+      if (!response.ok && body.state !== "pending") {
+        imageViewerFableBot.textContent = "Discord send failed";
+        imageViewerFableBot.disabled = true;
+      }
+    }
+  } catch (error) {
+    fableBotSending = false;
+    if (fableBotSelection === key) paintFableBotState({ state: "pending", error: "Delivery is unconfirmed. Check Discord." });
+  } finally {
+    if (fableBotSelection !== key) {
+      fableBotSelection = "";
+      const selected = locateImageViewerState(getImageViewerPrompts());
+      renderImageViewerFableBot(selected?.item);
+    }
+  }
+});
 
 async function hideCurrentViewerImage() {
   const current = locateImageViewerState(getImageViewerPrompts());

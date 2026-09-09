@@ -4299,10 +4299,23 @@ namespace MultiImageClient
         /// exact identity, never a guess. Returns null when the image is
         /// neither locally readable nor verifiably hosted.
         public async Task<(byte[] Bytes, string ContentType)?> TryGetImageBytesIncludingHostedAsync(
-            UiJob job, string gen, int index)
+            UiJob job, string gen, int index, long maxBytes = int.MaxValue,
+            CancellationToken cancellationToken = default)
         {
+            if (maxBytes < int.MaxValue && job.TryGetImagePath(gen, index, out var path, out var localType)
+                && File.Exists(path))
+            {
+                await using var file = File.OpenRead(path);
+                if (file.Length == 0 || file.Length > maxBytes)
+                    throw new InvalidOperationException("The original exceeds the attachment limit or is empty.");
+                var localBytes = new byte[checked((int)file.Length)];
+                await file.ReadExactlyAsync(localBytes, cancellationToken);
+                return (localBytes, localType);
+            }
             if (job.TryGetImage(gen, index, out var bytes, out var contentType))
             {
+                if (bytes.LongLength > maxBytes)
+                    throw new InvalidOperationException("The original exceeds the attachment limit.");
                 return (bytes, contentType);
             }
             if (_b2 == null)
@@ -4318,7 +4331,7 @@ namespace MultiImageClient
             {
                 return null;
             }
-            var downloaded = await _b2.DownloadBytesAsync(info.CdnKey, CancellationToken.None);
+            var downloaded = await _b2.DownloadBytesAsync(info.CdnKey, cancellationToken, maxBytes);
             var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(downloaded));
             if (!string.Equals(sha, info.ContentSha256, StringComparison.OrdinalIgnoreCase))
             {
