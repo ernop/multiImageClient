@@ -49,6 +49,9 @@ namespace MultiImageClient
         private DateTime _loadedWriteTimeUtc = DateTime.MinValue;
         private DateTime _lastStatUtc = DateTime.MinValue;
         private AuthFile _current;
+        public UiLoginLinks? LoginLinks { get; private set; }
+        public string SessionCookieName { get; private set; } = CookieName;
+        public string SessionCookiePath { get; private set; } = "/";
 
         // Per-IP failed-login throttle: after MaxFailures failures inside the
         // window, further attempts from that IP get rejected until it expires.
@@ -80,7 +83,15 @@ namespace MultiImageClient
                     $"UiAuthFilePath is set but the file does not exist: {full}");
             }
             var parsed = ParseAndValidate(File.ReadAllText(full), full);
-            return new UiAuth(full, parsed, File.GetLastWriteTimeUtc(full));
+            var auth = new UiAuth(full, parsed, File.GetLastWriteTimeUtc(full));
+            if (settings.UiEnvironmentId.Length > 0 && settings.UiEnvironmentRegistryPath.Length == 0)
+            {
+                auth.SessionCookieName = CookieName + "_" + settings.UiEnvironmentId;
+                auth.SessionCookiePath = new Uri(settings.UiPublicBaseUrl).AbsolutePath.TrimEnd('/') + "/";
+            }
+            if (!string.IsNullOrWhiteSpace(settings.UiLoginLinksFilePath))
+                auth.LoginLinks = new UiLoginLinks(settings.UiLoginLinksFilePath);
+            return auth;
         }
 
         private static AuthFile ParseAndValidate(string json, string pathForErrors)
@@ -273,6 +284,8 @@ namespace MultiImageClient
             var passwordMatches = account != null
                 ? VerifyPassword(password, account.Salt, account.Digest)
                 : VerifyPassword(password, DummyPasswordHash);
+            if (account == null && LoginLinks != null && LoginLinks.TryPassword(username, password, file.Secret, out cookieValue))
+            { _failures.TryRemove(clientIp, out _); error = ""; return true; }
             if (account == null || !passwordMatches)
             {
                 RecordFailure(clientIp);
@@ -293,6 +306,15 @@ namespace MultiImageClient
             if (string.IsNullOrEmpty(cookieValue))
             {
                 return false;
+            }
+            if (cookieValue.StartsWith("link:", StringComparison.Ordinal))
+            {
+                var current = CurrentFile();
+                if (current.Accounts.Count == 0 || LoginLinks == null) return false;
+                if (!LoginLinks.TryValidateCookie(cookieValue, current.Secret, out username)) return false;
+                if (username == UiLoginLinks.OwnerLogin && !current.Accounts.Any(a => a.Username == UiLoginLinks.OwnerLogin))
+                { username = ""; return false; }
+                return true;
             }
             var split = cookieValue.LastIndexOf('.');
             if (split <= 0 || split == cookieValue.Length - 1)
@@ -317,6 +339,26 @@ namespace MultiImageClient
             return true;
         }
 
+        public bool TryLoginLink(string token, string clientIp, out string cookie, out UiLoginLinks.Account? account, out string error)
+        {
+            cookie = "";
+            account = null;
+            error = "This login link is invalid or revoked.";
+            if (IsThrottled(clientIp)) { error = "Too many failed attempts; wait a few minutes."; return false; }
+            var file = CurrentFile();
+            if (file.Accounts.Count == 0 || LoginLinks == null
+                || !LoginLinks.TryExchange(token, file.Secret, out cookie, out account)
+                || (account!.Login == UiLoginLinks.OwnerLogin && !file.Accounts.Any(a => a.Username == UiLoginLinks.OwnerLogin)))
+            {
+                cookie = ""; account = null;
+                RecordFailure(clientIp);
+                return false;
+            }
+            _failures.TryRemove(clientIp, out _);
+            error = "";
+            return true;
+        }
+
         private static string ComputeMac(string secret, string username, string passwordHash)
         {
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
@@ -324,7 +366,14 @@ namespace MultiImageClient
             return Convert.ToBase64String(mac).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         }
 
-        private static bool VerifyPassword(string password, string passwordHash)
+        internal static string NewPasswordHash(string password)
+        {
+            var salt = RandomNumberGenerator.GetBytes(Pbkdf2SaltBytes);
+            var digest = Rfc2898DeriveBytes.Pbkdf2(password, salt, Pbkdf2Iterations, HashAlgorithmName.SHA256, Pbkdf2HashBytes);
+            return $"pbkdf2-sha256${Pbkdf2Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(digest)}";
+        }
+
+        internal static bool VerifyPassword(string password, string passwordHash)
         {
             if (!TryParsePasswordHash(passwordHash, out var salt, out var digest, out _))
             {

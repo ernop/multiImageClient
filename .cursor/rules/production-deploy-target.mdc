@@ -33,3 +33,22 @@ alwaysApply: true
   ad hoc host-wide update.
 - Never print or disclose the site's secret path, credentials, cookies, or
   provider keys.
+
+## Explicit additional environments
+
+The owner authorized separate environments on this same hostname on 2026-09-08.
+Use `deploy/create-environment.py` for an explicitly selected new environment.
+Read `docs/workspaces-prd.md` before provisioning or updating one.
+Keep the existing service, route, accounts, and data intact.
+An ordinary master release still updates only `multiimageclient-ui.service`.
+Additional environments require explicit target selection and independent resource budgets.
+
+## Global administration contract (2026-09-09)
+
+Use exactly two account levels: admin and normal. The existing ernieMultiZone account is the sole global admin.
+Preserve its existing password when enabling the environment controller.
+Preserve the original private route and all stored work.
+Additional environments can use owner-selected public URL names; never treat the original private route as public.
+Enforce membership and feature switches on API requests, not only in the frontend.
+Normal members may see shared environment activity, but never raw application logs or global administration.
+Install the privileged reconciler as root-owned code outside application-writable directories.

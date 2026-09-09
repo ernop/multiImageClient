@@ -1,7 +1,7 @@
 # Separate workspaces and personal login links
 
 Date: 2026-09-08, America/Los_Angeles.
-Status: requirements recorded; architecture proposed; implementation pending.
+Status: global-account implementation tested locally; production installation pending.
 
 A workspace is one isolated tenant, also called an image-making studio.
 The current production site is the first tenant.
@@ -13,11 +13,11 @@ The new idea is a second tenant with its own membership and history.
 |---|---|---|
 | R1 | Preserve the existing group. | Keep Ernie, Austin, Victor, their accounts, history, images, and user configurations working in the existing environment. |
 | R2 | Add another tenant. | Start the new environment with separate accounts, membership, prompts, images, history, and user configurations. |
-| R3 | Let the owner access both. | Give the owner access to both groups without merging their history. |
+| R3 | Let the owner access both. | Use the existing owner account across both groups without merging their history. |
 | R4 | Send personal login links. | Opening a recipient's link selects their workspace, sets their username, and signs them in. |
 | R5 | Treat possession as identity. | Anyone holding the link can act as its assigned person. |
 | R6 | Require no credential explanation. | The recipient only needs to click their personal link. |
-| R7 | Start with entirely new accounts and data. | Do not copy or share existing accounts, history, images, or personal configurations into the new environment. |
+| R7 | Start with entirely new accounts and data. | Share global identity only; keep history, images, and personal configurations separate. |
 
 These requirements came from the owner during the review.
 The link grants the account's actual permissions; it does not merely select a display name.
@@ -25,10 +25,10 @@ The intended recipient instruction is: "Click this link to log in."
 
 The owner clarified that the new environment starts independently of the existing group's data.
 Ernie can send personal login links to bring other people into that new environment.
-Ernie's access to both environments does not merge their accounts or personal configurations.
+Ernie uses one global account. His personal configurations remain scoped to each environment.
 The existing environment continues working at its current address.
 Sharing application code does not imply sharing user data.
-Provider credentials and infrastructure configuration remain separate implementation decisions.
+Provider API credentials can be copied into independent settings. Consumer sessions require explicit provisioning opt-in.
 
 The repository search found no earlier workspace design document.
 Available recent task summaries did not establish a prior agreement.
@@ -117,137 +117,191 @@ The host reported 3915 MiB total memory and no swap.
 The filesystem reported approximately 3.8 GiB available, with 96% used.
 These are point-in-time observations, not capacity guarantees.
 
-## Architecture comparison
+## Settled design — 2026-09-09
 
-| Approach | Benefit | Required work |
-|---|---|---|
-| Separate application instances | Existing single-store code naturally separates each group's data. | Separate services, ports, accounts, configurations, storage roots, and deployment targets. |
-| Workspaces inside one process | Shares scheduling and supports one authenticated workspace selector. | Explicit membership checks and workspace scoping across every data surface. |
-| Frontend user filters | Small interface change. | Does not provide the required separation; reject this approach. |
+The owner replaced the independent-owner-account proposal with one global account system.
+There are exactly two permission levels: admin and normal.
+The existing `ernieMultiZone` account is the sole global administrator.
+Its existing password and cookie signing secret remain unchanged.
+No separate environment administrator role exists.
+Normal accounts require explicit environment membership assigned by the owner.
+A normal account can belong to multiple environments without merging their data.
 
-Recommendation for the first additional group: use a separate application instance.
-This reduces the number of existing history and authorization paths that must change together.
-Use the same source project, with explicit releases for each instance.
-Give the owner an account in each instance.
-Personal login links can provide direct entry to either instance.
-Cross-instance single sign-on is not established by this proposal.
+The first additional environment is **Vibecoders AI Generation**.
+Its chosen URL name is `vibecoders-ai-generation`.
+The display name supplies the browser page title and appears in the site header.
+The administrator can edit display names, membership, default providers, and feature switches.
+The administrator can choose and change additional environments' URL names.
+The original private URL remains fixed and must never be printed or committed.
 
-A distinct hostname would separate browser storage and host-only cookies.
-The exact hostname remains undecided.
-Different paths on the same hostname share `localStorage`.
-Both current instances would also write a `mic_auth` cookie at `/`.
-Therefore, merely adding another nginx path would cause browser-state collisions.
-See [MDN Web Storage](https://developer.mozilla.org/en-US/docs/Web/API/Web_Storage_API)
-and [MDN Set-Cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie).
+| Level | Access |
+|---|---|
+| Admin | Every environment, global configuration, membership, account creation, activity summaries, and application logs. |
+| Normal | Assigned environments, shared images/history/activity, enabled generation features, and personal preferences. |
 
-Do not copy the existing service's full resource allowance into a second service without combined load measurements.
-Two processes also have independent provider schedulers.
-Shared provider credentials would require a combined account-level concurrency budget.
-Separate credentials and billing remain undecided.
+Normal members cannot access server configuration, raw application logs, administration endpoints, or unassigned environments.
+The former browser-only settings button is labelled preferences in managed environments.
+Everyone in an environment can see its shared activity.
+No public registration or member-controlled invitations exist.
+Only the owner creates accounts and distributes their personal links.
 
-### Requirements for either architecture
+## Data and authentication boundaries
 
-Separate jobs, event polling, archives, input libraries, media routes, goal loops, recaps, and source-image reuse.
-Separate profiles, favorites, requests, prompt rewrite history, preferences, deletion state, and user-visible logs.
-Preserve exact workspace ownership for every resource lookup and mutation.
-Do not infer membership from `CreatedBy`, a display name, or a browser filter.
-Treat owner access as explicit authorization.
+Each environment uses a separate application process, Linux account, data root, community database, and generation archive.
+The new environment imports no old jobs, images, profiles, favorites, prompt histories, or personal configurations.
+Shared authentication is the explicit exception to the earlier entirely-separate-accounts requirement.
+Authentication proves identity. Each request separately checks membership in the receiving environment.
+The owner has global access through the existing authenticated account identity.
+Display names cannot grant administrator access.
 
-For a shared process, authorize the resource within its workspace before returning content.
-Microsoft describes this distinction in [resource-based authorization](https://learn.microsoft.com/en-us/aspnet/core/security/authorization/resource-based?view=aspnetcore-10.0).
-The global `Logger.ReadBuffered` feed needs special attention because it currently includes events across the process.
-The static generation archive also prevents simply constructing several independently configured application contexts.
+Managed instances share one canonical password-account file and one reusable-link account file.
+These files represent the same global identities, not independent per-environment accounts.
+New normal accounts support both an automatically generated password and a reusable personal link.
+Passwords use PBKDF2-SHA256. Personal links store only SHA-256 token digests.
+The owner receives new credentials once. Later link retrieval requires replacement.
+Existing legacy accounts retain their existing password hashes.
 
-Existing B2 originals use public, unguessable links under the owner's established sharing policy.
-Anyone who receives an original image link can retrieve its bytes outside application login.
-Separate workspace membership does not revoke previously shared original-image URLs.
-Retain this distinction when describing privacy; see [B2 hosting](b2-image-hosting-plan.md).
-Stricter private media delivery remains a separate decision.
+Managed instances use the existing root-path `mic_auth` cookie.
+A login therefore works across assigned environments without another credential prompt.
+Opening another person's link intentionally changes the global browser identity.
+Requests from stale tabs carry the previous session marker and are rejected before mutation.
+Environment membership removal takes effect on the next request, including an existing session.
+Revoking a new account invalidates both its password access and personal-link sessions across environments.
+Replacing its link invalidates previous link sessions; its existing password remains valid.
+Removing all memberships blocks an existing password account from all normal environments.
+The sole owner account cannot be revoked or demoted through account-management controls.
 
-## Proposed personal-link implementation
+New environments scope browser storage by environment ID and login.
+The original environment retains its existing browser-storage keys and preferences.
+Same-hostname paths are not independent browser security origins.
+Separate server stores and membership checks provide the application data boundary.
 
-This section proposes technical details; it does not claim implementation or owner approval of every detail.
+Provider credentials can be reused through a provider-only configuration copy.
+Default provider selections remain independently configurable for each environment.
+Existing personal choices are not overwritten when defaults change.
+B2 original images retain the established public capability-URL policy.
+A person holding a direct original-image URL can retrieve it independently of application membership.
+No old image URLs or image indexes are copied to the new environment.
 
-1. Create a random personal token using 32 cryptographically random bytes.
-2. Bind its digest to the exact account and permitted workspace.
-3. Put the token after `#` in a dedicated login landing URL.
-4. Read it in the browser and remove it from the address bar immediately.
-5. Submit it to a dedicated login endpoint in a POST body.
-6. Validate the token and its current account membership.
-7. Issue a secure, HttpOnly session cookie.
-8. Load the assigned workspace and the account's stored display name.
+## Feature switches and activity summaries
 
-The reusable link remains valid until replaced or revoked under this proposal.
-Do not add email verification, password entry, or a one-use requirement to the recipient flow.
-The server must not accept a token paired with a different submitted username.
-An invalid link must never open a default account or workspace.
+Each environment has switches for goal loops, video generation, and prompt rewriting.
+Disabled controls disappear from the page.
+The server also rejects corresponding direct API requests and goal/recap page routes.
+Disabling a feature does not delete existing work or cancel an already accepted provider request.
+Complete or stop active goal loops before disabling their controls.
 
-Store only a token digest in the authentication database or file.
-Generate a new token when the owner requests a replacement.
-Provide owner controls to issue, replace, and revoke personal links.
-Provide the complete link for copying at issuance.
-Do not send messages automatically; the owner distributes the link.
-Replacement should invalidate sessions derived from the replaced link.
-Account removal should invalidate every authentication method for that account.
+The administration page lists every registered environment and its current membership.
+It displays recorded first login, last login, last activity, and submitted-job counts per member.
+Login tracking starts with this release. Earlier login timestamps remain unknown.
+Activity records page visits and successful authenticated mutations, with at most one routine write per minute per account.
+Submitted-job counts use the existing lightweight history index without loading image bytes or full job graphs.
+Counts include failed submissions; they do not claim a count of successful images.
+Unattributed legacy work is not assigned to a guessed account.
+The activity record is bounded to 501 identities and a 1 MiB file.
 
-The token endpoint needs request-body redaction and the existing login throttle pattern.
-The landing page needs no third-party scripts or assets.
-Use `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
-URL fragments do not enter the initial HTTP request, as documented by [MDN](https://developer.mozilla.org/en-US/docs/Web/URI/Reference/Fragment).
-The later token exchange still transmits the secret and must never log it.
+## Owner workflow
 
-Opening another person's link intentionally selects that person's identity.
-Tabs sharing that session must reload their identity-dependent presentation before further actions.
-Preserve the existing owner's password login while adding this new method.
+1. Log in with the existing `ernieMultiZone` username and existing password.
+2. Open **administration** from the header.
+3. Select **Open environment** to enter a listed environment.
+4. Edit an environment's name, features, default providers, or membership and save it.
+5. Enter a person's name under **Create a normal account**.
+6. Select their environment and create the account.
+7. Copy the returned personal login link and send it yourself.
 
-## Review findings and rollout prerequisites
+The recipient only needs to click their link.
+Anyone holding it can act as that account, as explicitly requested.
+The link selects its destination environment and initializes the assigned display name.
+The fragment token is removed immediately, then exchanged through a POST request.
+The landing page uses no external assets, does not cache, and sends no referrer.
 
-| Finding | Consequence | Follow-up |
-|---|---|---|
-| Production has no workspace membership model. | Adding accounts grants access to the existing shared history. | Establish instance isolation or implement full workspace authorization first. |
-| Authentication changed during review. | Old browser sessions no longer authenticate. | Use the preserved password; diagnose browser behavior if login still fails. |
-| Disk availability is close to the 3 GiB reserve. | New local inputs and metadata can consume the remaining allowance. | Measure storage growth before adding workload. |
-| The update helper executes a script in the deploy user's checkout. | Its fixed sudo path does not itself restrict the script's privileged actions. | Review the deploy-user trust boundary before extending deployment access. |
-| The installer can invoke the update helper during its smoke check. | Installing the helper can also deploy staged code. | Do not treat helper installation as a read-only check. |
-| The update script's HTTP probe does not enforce a successful status. | A completed script alone does not prove the application is usable. | Retain independent health, login, and public-route verification. |
-| Local restart uses a broad process-name match. | Several local instances could all stop together. | Scope restart controls before testing multiple local instances. |
-| Some security documentation describes obsolete deletion behavior. | It understates the effect of creator deletion. | Reconcile it with the later destructive deletion contract in the B2 document. |
-| AGENTS.md still says no test project exists. | The instruction conflicts with `MultiImageClient.Tests` in the solution. | Update the general test guidance in a documentation maintenance change. |
+Use **New link** to replace a normal account's link.
+Use **Revoke account** to revoke that new account across environments without deleting its history.
+Edit membership checkboxes to grant or remove access to an individual environment.
+Use **Create an environment** to request another named environment.
+Provisioning status appears in the dashboard; capacity failures remain visible instead of selecting another destination.
 
-The review covered architecture, deployment scripts, data boundaries, authentication, and relevant feature documentation.
-It was not an exhaustive line-by-line audit of every provider or utility.
-No paid generation calls ran.
-The JavaScript syntax check passed.
-The Windows test command could not resolve Anthropic.SDK 4.1.1.
-Its generated package manifest referenced `/home/ernie/.nuget/packages/`.
-A normal restore returned success but retained that Linux path.
-Therefore, this review does not claim a passing .NET test suite.
+## Production controller
 
-Before rollout, test two workspaces with owner, member, revoked-link, and unrelated-member identities.
-Test guessed resource IDs, direct media URLs, polling, logs, exports, and concurrent tabs.
-Test simultaneous generation against the combined memory and provider budgets.
-Verify existing users and old history before and after deployment.
-Keep the original service and data unchanged when provisioning a separate instance.
+`deploy/environment-controller.py` is installed as root-owned code outside the writable server checkout.
+Its one-time `--initialize` operation preserves existing password hashes and the original private route.
+It creates the global account registry and seeds the requested Vibecoders environment.
+It backs up the original settings before selecting the shared authentication paths.
+The existing application's systemd drop-in permits writes only to the new control-state directory.
+A root-owned controller service reconciles requested environments through fixed, validated provisioning operations.
+Application processes do not receive arbitrary sudo access.
 
-## Remaining decisions
+| Path | Purpose |
+|---|---|
+| `/var/lib/multiimageclient-control/auth.json` | Canonical existing password accounts; root-owned and group-readable. |
+| `/var/lib/multiimageclient-control/state/links.json` | New global accounts, hashed passwords, and reusable-link digests. |
+| `/var/lib/multiimageclient-control/state/registry.json` | Environment names, URL names, memberships, defaults, and features. |
+| `/var/lib/multiimageclient-control/provisioning.json` | Root-written provisioning results. |
+| `/usr/local/lib/multiimageclient-control/` | Root-owned controller scripts and settings template. |
+| `/etc/multiimageclient-env-<id>/` | One environment's independent settings and deployment manifest. |
+| `/var/lib/multiimageclient-env-<id>/` | One environment's independent stored work. |
+| `/opt/multiimageclient-env-<id>/` | One environment's published application. |
 
-- Select separate instances or workspaces within one process.
-- Choose the new group's name and members.
-- Choose its hostname if using a separate instance.
-- Decide whether provider credentials and spending remain shared.
-- Decide whether public original-image links remain suitable for the new group.
-- Decide whether owner access needs one shared login or direct personal links to each instance.
-- Decide per-tenant policy: allowed endpoints, describe/video/sketch, spend and rate caps, moderation, and max output size.
+Only the original controller application writes registry/account state.
+Additional application accounts receive read access through the `mic-auth` group.
+The shared root directory is root-owned. Its writable state directory is separate from root-written status and authentication files.
+The reconciler accepts bounded JSON, fixed path roots, validated identifiers, and validated single-segment URL names.
+It never accepts a supplied shell command or arbitrary service path.
 
-## Implementation file map
+Initial additional-instance limits are 384 MiB MemoryHigh, 512 MiB MemoryMax, and one provider request.
+The current host permits one additional instance until its capacity budget is increased.
+The UI can record further requests, but the controller reports insufficient capacity rather than starting more processes.
+Installation requires at least 4 GiB free disk, preserving the existing application's 3 GiB reserve.
+During preparation, disposable test/Web build directories were removed. Production histories and images were not removed.
 
-- `Implementation/UiAuth.cs`: personal tokens, account binding, and session revocation.
-- `Workflows/UiWorkflow.cs`: token exchange and authenticated identity initialization.
-- `Ui/wwwroot/`: login landing page and owner link controls.
-- `Implementation/UiCommunity.cs`: account display names and any owner management data.
-- `deploy/`: explicit instance configuration, service units, and release targets if selected.
-- `MultiImageClient.Tests/`: token and authorization tests.
-- Browser tests: automatic entry, identity changes, and isolated browser storage.
-- `AGENTS.md`: links and requirements summary.
+Installation adds an include to the existing named nginx TLS server and reloads nginx after validation.
+Both sites-enabled and sites-available layouts are supported because the live enabled file is a regular file.
+It never restarts neighboring services or changes the original private location.
+The original application receives its code through the normal release helper.
+Additional-instance updates use `create-environment.py update --id <id> --publish <verified-publish>`.
+An update verifies the selected service and loopback health and retains the previous binary for recovery.
 
-No workspace or personal-link runtime code was added during this review.
+## API and implementation map
+
+| Surface | Contract |
+|---|---|
+| `POST api/auth/login` | One username/password identity across assigned environments. |
+| `POST api/auth/link` | Reusable-token login with destination membership validation. |
+| `GET api/control/state` | Admin-only environment, membership, account, and provisioning list. |
+| `POST api/control/environment` | Admin-only configuration and membership update. |
+| `POST api/control/environment?create=true` | Request an environment; reject an existing identity. |
+| `POST api/control/accounts` | Create a normal account and return credentials once. |
+| `POST api/control/accounts/{id}/replace` | Replace the account's reusable link. |
+| `POST api/control/accounts/{id}/revoke` | Revoke a new account globally. |
+| `GET api/admin/summary` | Admin-only login/activity records and generation-submission summaries. |
+| `GET environment.js` | Current title, role, feature visibility, browser-storage scope, and session marker. |
+
+Management mutations require the exact owner identity and the `X-Mic-Manage` header.
+The application does not enable cross-origin administrative requests.
+Unknown environments, malformed stores, duplicate routes, and unavailable identities fail closed.
+
+Implementation files:
+
+- `UiEnvironmentRegistry.cs`: bounded environment policy and membership storage.
+- `UiLoginLinks.cs` and `UiAuth.cs`: shared identities, credentials, link rotation, and revocation.
+- `UiAccountActivity.cs`: durable login and activity observations.
+- `UiGlobalAdminEndpoints.cs` and `UiEnvironmentEndpoints.cs`: administration and login APIs.
+- `UiWorkflow.cs`: membership, feature enforcement, and activity integration.
+- `UiJobs.cs`: account summaries from lightweight history entries.
+- `admin.html`, `admin.js`, and `environment-storage.js`: owner controls, branding, and browser identity handling.
+- `create-environment.py` and `environment-controller.py`: explicit provisioning and root-owned reconciliation.
+- `UiEnvironmentRegistryTests.cs`, `UiLoginLinksTests.cs`, and `test_create_environment.py`: unit and provisioning tests.
+- `tools/test-global-environments.cjs`: two-server browser tests for global identity, membership, features, and activity.
+
+The earlier `people.html` and isolated-cookie mode remain available for independently configured standalone instances.
+They are not the selected production architecture.
+
+## Validation and deployment status
+
+The .NET suite passed with 319 tests during implementation.
+The two-server Chrome check passed for global owner login, normal membership, shared activity, and private administrative routes.
+It also verified editable titles, disabled feature APIs, persistent login records, and password/link identity.
+The three Python preparation tests passed.
+No paid provider calls were made during these checks.
+Production installation and both public-site checks remain pending.

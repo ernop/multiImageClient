@@ -280,7 +280,7 @@ async function init() {
     $("site-loops").href = new URL("goal.html", siteHome).href;
     const host = new URL(siteHome).hostname.toLowerCase();
     const online = host === "fuseki.net" || host.endsWith(".fuseki.net");
-    $("environment-name").textContent = online ? "-alpha.fuseki.net" : "-local";
+    $("environment-name").textContent = !embedded && window.MicEnvironment ? " · " + window.MicEnvironment.name : online ? "-alpha.fuseki.net" : "-local";
     document.querySelector("header").classList.add(online ? "environment-online" : "environment-local");
   } else {
     $("site-home").hidden = $("site-loops").hidden = true;

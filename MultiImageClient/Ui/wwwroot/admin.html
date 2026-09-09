@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><script src="environment.js"></script><title>Environment administration</title>
+<link rel="stylesheet" href="style.css"><style>
+main{max-width:1100px;margin:90px auto 30px;padding:0 20px}section{background:white;border:1px solid #ccc;border-radius:8px;padding:20px;margin:20px 0}
+label{display:block;margin:10px 0}input,select,button{padding:8px;max-width:100%;box-sizing:border-box}input[type=text]{width:360px}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;border-bottom:1px solid #ddd}.table{overflow:auto}
+.features{display:flex;gap:20px;flex-wrap:wrap}.secret{width:100%!important}button{margin:4px}.muted{color:#666}[hidden]{display:none!important}
+</style></head><body><header><h1>Administration<span id="environment-name"></span></h1><a href="./">main page</a></header>
+<main><h2>Environments</h2><p id="status" role="status">Loading…</p><button id="refresh">Refresh activity</button>
+<div id="environments"></div>
+<section><h3>Create an environment</h3><form id="create"><label>Display name <input name="name" required maxlength="80"></label>
+<label>URL name <input name="slug" required pattern="[a-z][a-z0-9-]{0,23}" maxlength="24"></label>
+<p>Use lowercase letters, numbers, and hyphens. Provisioning runs after you save.</p><button>Create environment</button></form></section>
+<section><h3>Create a normal account</h3><form id="person"><label>Name <input name="name" required maxlength="32"></label>
+<label>Environment <select name="environment" id="person-environment"></select></label><button>Create account and login link</button></form>
+<div id="issued" hidden><p>Copy the personal link. Anyone possessing it can act as this account.</p><input id="link" class="secret" readonly aria-label="Personal login link"><button id="copy">Copy link</button>
+<p id="credentials"></p><p>These credentials are shown once. Replacing a link ends its previous sessions.</p></div></section>
+</main><script src="admin.js"></script></body></html>

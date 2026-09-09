@@ -128,6 +128,13 @@ namespace MultiImageClient
         /// it produced. The server never writes this file.
         public string UiAuthFilePath { get; set; } = "";
 
+        // Blank preserves the existing installation's cookies and browser storage.
+        public string UiEnvironmentId { get; set; } = "";
+        public string UiEnvironmentRegistryPath { get; set; } = "";
+        public bool UiEnvironmentController { get; set; } = false;
+        public string UiEnvironmentName { get; set; } = "";
+        public string UiLoginLinksFilePath { get; set; } = "";
+
         /// SQLite storage for shared-site activity notifications and user
         /// requests to the developer. Blank uses
         /// ImageDownloadBaseFolder/ui-community.sqlite3.
@@ -137,7 +144,7 @@ namespace MultiImageClient
         // (the default) hides the button. Posts attach originals without site or login URLs.
         public string DiscordVibecodersWebhookUrl { get; set; } = "";
 
-        // Optional public origin plus path prefix. Never include this private address in Discord posts.
+        // Public origin plus path prefix for this environment's login and share links.
         // Example: https://host.example/instance-path  (no trailing slash).
         public string UiPublicBaseUrl { get; set; } = "";
 
@@ -352,6 +359,9 @@ namespace MultiImageClient
             ImageDownloadBaseFolder = ExpandPath(ImageDownloadBaseFolder);
             LogFilePath = ExpandPath(LogFilePath);
             GenerationArchiveDbPath = ExpandPath(GenerationArchiveDbPath);
+            UiAuthFilePath = ExpandPath(UiAuthFilePath);
+            UiLoginLinksFilePath = ExpandPath(UiLoginLinksFilePath);
+            UiEnvironmentRegistryPath = ExpandPath(UiEnvironmentRegistryPath);
             FlatImageMirrorPath = ExpandPath(FlatImageMirrorPath);
             TypedPromptsAppendFile = ExpandPath(TypedPromptsAppendFile);
             LoadPromptsFrom = ExpandPath(LoadPromptsFrom);
@@ -379,6 +389,19 @@ namespace MultiImageClient
         /// individual API keys, etc.) live in the generator that needs them.
         public void Validate()
         {
+            if (!string.IsNullOrEmpty(UiEnvironmentId))
+            {
+                if (!System.Text.RegularExpressions.Regex.IsMatch(UiEnvironmentId, @"\A[a-z][a-z0-9-]{0,31}\z")
+                    || string.IsNullOrWhiteSpace(UiAuthFilePath)
+                    || string.IsNullOrWhiteSpace(UiEnvironmentName) || UiEnvironmentName.Length > 80
+                    || !Uri.TryCreate(UiPublicBaseUrl, UriKind.Absolute, out var environmentUrl)
+                    || environmentUrl.Scheme != "https" || environmentUrl.UserInfo.Length != 0
+                    || environmentUrl.Query.Length != 0 || environmentUrl.Fragment.Length != 0
+                    || !System.Text.RegularExpressions.Regex.IsMatch(environmentUrl.AbsolutePath, @"\A/[A-Za-z0-9_-]+/?\z"))
+                    throw new InvalidOperationException("An environment needs an ID, name, authentication file, and HTTPS URL with one path segment.");
+            }
+            if (!string.IsNullOrWhiteSpace(UiLoginLinksFilePath) && string.IsNullOrWhiteSpace(UiEnvironmentId))
+                throw new InvalidOperationException("Personal login links require an explicit UiEnvironmentId.");
             if (string.IsNullOrWhiteSpace(LogFilePath))
             {
                 throw new InvalidOperationException(

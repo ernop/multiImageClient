@@ -212,3 +212,22 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
 - On colocated hosts, the free-space guard rejects new image/video jobs before
   reading uploads once the configured reserve is reached. Active jobs are
   still allowed to finish; reserve several GiB above their plausible output.
+
+## Additional isolated environments
+
+See [the environment setup guide](../docs/workspaces-prd.md#operator-setup-and-recipient-flow).
+Use `create-environment.py` to prepare, install, or update an explicitly selected additional instance.
+It creates another private path under the existing hostname.
+It preserves the original service and its data.
+Routine releases above continue targeting only `multiimageclient-ui.service`.
+
+
+### Global administration bootstrap (2026-09-09)
+
+Run `sudo bash deploy/install-environment-controller.sh` on the production host after updating its checkout.
+The script preserves existing account hashes and prepares the selected Vibecoders environment.
+Release the original application through `deploy/agent-redeploy.sh`.
+Then run `sudo systemctl enable --now multiimageclient-environment-controller.timer`.
+Run the controller service once and verify both public sites before reporting completion.
+Use the existing owner username and password; do not generate another owner account.
+See the [canonical global-account contract](../docs/workspaces-prd.md) for permissions, data boundaries, and capacity limits.

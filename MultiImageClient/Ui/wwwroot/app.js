@@ -6424,6 +6424,8 @@ usernameInput.addEventListener("change", () => {
 
 function applyAuthState() {
   logoutBtn.hidden = !authInfo.enabled;
+  el("people-link").hidden = !authInfo.canManagePeople;
+  if (window.MicEnvironment) el("environment-name").textContent = " · " + window.MicEnvironment.name;
   if (authInfo.enabled && authInfo.user) {
     const serverName = authInfo.profile?.displayName || "";
     if (serverName) {

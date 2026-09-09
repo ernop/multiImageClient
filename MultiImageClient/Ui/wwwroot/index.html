@@ -6,6 +6,7 @@
 <!-- The shared site lives behind a secret URL path; never leak it through
      the Referer header of outbound links (error-hint links, new tabs). -->
 <meta name="referrer" content="no-referrer">
+<script src="environment.js"></script>
 <title>MultiImageClient</title>
 <link rel="stylesheet" href="style.css?v=20260905-shared-chooser">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260813-mcphee-3-10-0">
@@ -23,6 +24,7 @@
   <button id="activity-toggle" type="button" aria-expanded="false" aria-controls="activity-panel"
     title="Open the floating activity center">activity</button>
   <button id="logout" type="button" hidden title="Log out of this shared site on this browser">log out</button>
+  <a id="people-link" href="people.html" hidden>people</a>
 </header>
 
 <!-- Shared-site people bar: who you create as, and whose work is shown.

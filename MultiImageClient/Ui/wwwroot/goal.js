@@ -19,7 +19,7 @@ function applyEnvironmentBranding() {
   const hostname = location.hostname.toLowerCase().replace(/\.$/, "");
   const isOnline = hostname === "fuseki.net" || hostname.endsWith(".fuseki.net");
   const header = document.querySelector("header");
-  el("environment-name").textContent = isOnline ? "-alpha.fuseki.net" : "-local";
+  el("environment-name").textContent = window.MicEnvironment ? " · " + window.MicEnvironment.name : isOnline ? "-alpha.fuseki.net" : "-local";
   header.classList.toggle("environment-online", isOnline);
   header.classList.toggle("environment-local", !isOnline);
 }

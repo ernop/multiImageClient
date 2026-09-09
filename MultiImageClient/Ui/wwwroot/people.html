@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><script src="environment.js"></script>
+<title>People · MultiImageClient</title><link rel="stylesheet" href="style.css">
+<style>
+main{max-width:850px;margin:24px auto;padding:0 20px}section{margin:28px 0;padding:20px;background:#fff;border:1px solid #d8d2c4;border-radius:8px}
+label{display:block;margin:8px 0}input[type=text]{padding:8px;max-width:100%;box-sizing:border-box}button{margin:4px;padding:7px 12px}
+.person{display:flex;align-items:center;flex-wrap:wrap;gap:8px;border-bottom:1px solid #ddd;padding:10px 0}.person span{flex:1;min-width:130px}
+#link{width:100%}#provider-defaults{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}[hidden]{display:none!important}
+</style></head><body>
+<header><h1>MultiImageClient<span id="environment-name"></span></h1><a href="./">main page</a></header>
+<main><h2>People</h2><p id="status" role="status">Loading…</p>
+<div id="management" hidden>
+<section><h3>Add a person</h3><form id="add-person"><label for="name">Name</label>
+<input id="name" type="text" maxlength="32" required autocomplete="off"><button>Add person</button></form>
+<div id="issued" hidden><p>Send this personal login link. Anyone holding it can act as this person.</p>
+<input id="link" type="text" readonly aria-label="Personal login link"><button id="copy" type="button">Copy link</button>
+<p>Copy it now. Replacing it creates a new link and invalidates the previous link and its sessions.</p></div></section>
+<section><h3>Accounts</h3><div id="accounts"></div></section>
+<section><h3>Default providers</h3><p>New personal configurations start with these providers. Existing personal choices stay unchanged.</p>
+<form id="defaults"><div id="provider-defaults"></div><button>Save defaults</button></form></section>
+</div></main><script src="people.js"></script></body></html>

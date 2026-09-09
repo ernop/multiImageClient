@@ -1738,6 +1738,12 @@ namespace MultiImageClient
             get { lock (_indexLock) return _index.Count; }
         }
 
+        public object AccountGenerationSummary()
+        {
+            lock (_indexLock) return _index.Where(j => j.CreatorLogin.Length > 0).GroupBy(j => j.CreatorLogin)
+                .Select(g => new { login = g.Key, jobsSubmitted = g.Count(), lastGeneration = g.Max(j => j.CreatedAt) }).ToList();
+        }
+
         public int EnvelopeCount
         {
             get { lock (_envelopeLock) return _envelopes.Count; }

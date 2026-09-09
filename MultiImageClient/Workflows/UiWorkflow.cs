@@ -57,7 +57,7 @@ namespace MultiImageClient
     ///   POST /api/visibility                   creator-only prompt/image hiding plus artifact deletion
     ///   GET  /api/jobs/{id}/location           live vs archive-day home for a share link
     ///   GET  /api/discord/vibecoders           identities already sent to #vibecoders
-    ///   POST /api/discord/vibecoders           send one image/video once; attach the original without private links
+    ///   POST /api/discord/vibecoders           send one original attachment without private site links
     ///   POST /api/auth/login|logout            shared-site access gate (only when UiAuthFilePath is set)
     public partial class UiWorkflow
     {
@@ -137,6 +137,8 @@ namespace MultiImageClient
             }
             var activeJobs = new ConcurrentDictionary<string, Task>();
             await using var runner = new UiJobRunner(settings, stats, options);
+            if (auth?.LoginLinks?.Defaults()?.Any(key => !UiJobRunner.IsConfigurableEndpointKey(key)) == true)
+                throw new InvalidDataException("The environment has an unknown default provider key.");
             await PurgePendingHiddenArtifactsAsync(
                 jobs,
                 favorites,
@@ -199,12 +201,15 @@ namespace MultiImageClient
             builder.WebHost.UseUrls(url);
 
             var app = builder.Build();
+            var environments = string.IsNullOrWhiteSpace(settings.UiEnvironmentRegistryPath) ? null : new UiEnvironmentRegistry(settings.UiEnvironmentRegistryPath);
+            if (environments != null) environments.Get(settings.UiEnvironmentId);
             // Browser-window state is disposable. Every process instance gets
             // a new token; stale and pre-token clients receive 401 from the
             // always-running job poll, whose established response is a full
             // page reload. Durable jobs, prompts, media, and history stay on
             // disk and hydrate again after that reload.
             var clientInstanceId = Guid.NewGuid().ToString("N");
+            var accountActivity = auth == null ? null : new UiAccountActivity(settings.ImageDownloadBaseFolder);
 
             // ---- access gate (shared deployments only) ----
             // Runs before static files and every endpoint. Unauthenticated
@@ -217,7 +222,9 @@ namespace MultiImageClient
                 app.Use(async (ctx, next) =>
                 {
                     var path = ctx.Request.Path.Value ?? "/";
-                    if ((path == "/api/auth/login" && HttpMethods.IsPost(ctx.Request.Method))
+                    if (((path == "/api/auth/login" || path == "/api/auth/logout") && HttpMethods.IsPost(ctx.Request.Method))
+                        || (auth.LoginLinks != null && path == "/api/auth/link" && HttpMethods.IsPost(ctx.Request.Method))
+                        || (auth.LoginLinks != null && path == "/enter.html" && HttpMethods.IsGet(ctx.Request.Method))
                         || (path == "/healthz" && HttpMethods.IsGet(ctx.Request.Method)))
                     {
                         await next();
@@ -228,10 +235,48 @@ namespace MultiImageClient
                         await next();
                         return;
                     }
-                    if (auth.TryValidateCookie(ctx.Request.Cookies[UiAuth.CookieName], out var user))
+                    if (auth.TryValidateCookie(ctx.Request.Cookies[auth.SessionCookieName], out var user))
                     {
                         ctx.Items["micUser"] = user;
+                        var admin = user == UiLoginLinks.OwnerLogin;
+                        if (environments != null && !environments.CanEnter(settings.UiEnvironmentId, user))
+                        {
+                            ctx.Response.StatusCode = 403;
+                            ctx.Response.Headers.CacheControl = "no-store";
+                            if (path.StartsWith("/api/", StringComparison.OrdinalIgnoreCase))
+                                await ctx.Response.WriteAsJsonAsync(new { error = "Your account does not have access to this environment." });
+                            else
+                            {
+                                ctx.Response.ContentType = "text/html; charset=utf-8";
+                                await ctx.Response.WriteAsync("<h1>Environment access</h1><p>Your account does not have access to this environment.</p><button onclick=\"fetch('api/auth/logout',{method:'POST'}).then(()=>location.reload())\">Switch account</button>");
+                            }
+                            return;
+                        }
+                        var policy = environments?.Get(settings.UiEnvironmentId);
+                        if ((!admin && (path.StartsWith("/api/admin/", StringComparison.OrdinalIgnoreCase)
+                                || path.StartsWith("/api/control/", StringComparison.OrdinalIgnoreCase)
+                                || path.StartsWith("/api/people", StringComparison.OrdinalIgnoreCase)
+                                || path.StartsWith("/api/environment/", StringComparison.OrdinalIgnoreCase)
+                                || path.StartsWith("/api/logs/", StringComparison.OrdinalIgnoreCase)
+                                || path is "/people.html" or "/admin.html"))
+                            || (policy != null && ((!policy.GoalLoops && (path.StartsWith("/api/goal-loops", StringComparison.OrdinalIgnoreCase) || path is "/goal.html" or "/recap.html"))
+                                || (!policy.Video && path.StartsWith("/api/video-jobs", StringComparison.OrdinalIgnoreCase))
+                                || (!policy.PromptRewrite && path.StartsWith("/api/prompt/advice", StringComparison.OrdinalIgnoreCase)))))
+                        {
+                            ctx.Response.StatusCode = 403;
+                            await ctx.Response.WriteAsJsonAsync(new { error = "This feature is not available for this account or environment." });
+                            return;
+                        }
+                        if (settings.UiEnvironmentId.Length > 0 && ctx.Request.Headers.TryGetValue("X-Mic-Identity", out var identity)
+                            && identity != UiEnvironmentEndpoints.Identity(ctx, auth))
+                        {
+                            ctx.Response.StatusCode = 401;
+                            await ctx.Response.WriteAsJsonAsync(new { error = "Account changed; reload this page." });
+                            return;
+                        }
+                        if (path == "/" || path == "/index.html") accountActivity?.Record(user);
                         await next();
+                        if (ctx.Response.StatusCode < 300 && HttpMethods.IsPost(ctx.Request.Method)) accountActivity?.Record(user);
                         return;
                     }
                     if (path.StartsWith("/api/", StringComparison.Ordinal))
@@ -261,21 +306,22 @@ namespace MultiImageClient
                         Logger.Log($"UI auth: failed login for '{username}' from {ClientIpForThrottle(ctx)}.");
                         return Results.Json(new { error }, statusCode: 401);
                     }
-                    ctx.Response.Cookies.Append(UiAuth.CookieName, cookieValue, new CookieOptions
+                    ctx.Response.Cookies.Append(auth.SessionCookieName, cookieValue, new CookieOptions
                     {
                         HttpOnly = true,
                         SameSite = SameSiteMode.Lax,
                         Secure = IsEffectivelyHttps(ctx),
                         MaxAge = TimeSpan.FromDays(3650),
-                        Path = "/",
+                        Path = auth.SessionCookiePath,
                     });
+                    accountActivity?.Record(username, true);
                     Logger.Log($"UI auth: '{username}' logged in from {ClientIpForThrottle(ctx)}.");
                     return Results.Json(new { ok = true, username });
                 });
 
                 app.MapPost("/api/auth/logout", (HttpContext ctx) =>
                 {
-                    ctx.Response.Cookies.Delete(UiAuth.CookieName, new CookieOptions { Path = "/" });
+                    ctx.Response.Cookies.Delete(auth.SessionCookieName, new CookieOptions { Path = auth.SessionCookiePath });
                     return Results.Json(new { ok = true });
                 });
             }
@@ -283,6 +329,14 @@ namespace MultiImageClient
             // Intentionally content-free and authentication-independent. The
             // in-process guard calls this through a raw loopback socket to prove
             // that Kestrel, routing, and middleware can still complete work.
+            UiEnvironmentEndpoints.Map(app, settings, auth, community, runner, wwwroot, environments, accountActivity);
+
+            app.MapGet("/api/admin/summary", (HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                if ((ctx.Items["micUser"] as string) != UiLoginLinks.OwnerLogin) return Results.StatusCode(403);
+                return Results.Json(new { accounts = accountActivity?.Snapshot(), generations = jobs.AccountGenerationSummary() });
+            });
             app.MapGet("/healthz", (HttpContext ctx) =>
             {
                 ctx.Response.Headers.CacheControl = "no-store";
@@ -317,6 +371,7 @@ namespace MultiImageClient
                 var currentProfile = profileSnapshot.Profiles.FirstOrDefault(profile =>
                     string.Equals(profile.Login, authUser, StringComparison.OrdinalIgnoreCase));
                 var generatorPreferences = community.GetGeneratorPreferences(authUser);
+                var environmentDefaults = environments?.Get(settings.UiEnvironmentId).DefaultGenerators ?? auth?.LoginLinks?.Defaults();
                 // Standard groups belong to the endpoint catalog rather than
                 // any user's persisted chooser preferences. Each endpoint
                 // below advertises its memberships; every environment and
@@ -508,7 +563,7 @@ namespace MultiImageClient
                     defaultNotes = "",
                     // Default-on set for new windows: gpt-image-2, Recraft V4.1,
                     // grok-web pro, Ideogram 4.0, FLUX.2 Pro Preview, Nano Banana 2.
-                    defaultOn = g.key is UiJobRunner.KeyGpt2
+                    defaultOn = environmentDefaults != null ? environmentDefaults.Contains(g.key) : g.key is UiJobRunner.KeyGpt2
                         or UiJobRunner.KeyRecraft
                         or UiJobRunner.KeyGrokWeb
                         or UiJobRunner.KeyIdeogram
@@ -656,6 +711,8 @@ namespace MultiImageClient
                         enabled = auth != null,
                         localVisibilityManagement = auth == null,
                         user = authUser,
+                        canManagePeople = auth?.LoginLinks != null && authUser == UiLoginLinks.OwnerLogin,
+                        role = authUser == UiLoginLinks.OwnerLogin ? "admin" : "normal",
                         profile = currentProfile == null
                             ? null
                             : new
