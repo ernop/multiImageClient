@@ -66,6 +66,8 @@ public class UiShapeMappingTests
     [InlineData(400, 300, "4:3")]
     [InlineData(300, 400, "3:4")]
     [InlineData(1600, 900, "16:9")]
+    [InlineData(2100, 900, "21:9")]
+    [InlineData(2500, 1000, "5:2")]
     public void GrokAutoUsesClosestSupportedInputAspect(
         int width,
         int height,
@@ -207,6 +209,106 @@ public class UiShapeMappingTests
             GptImage2Generator.SizeMaxAspectRatio);
         var actual = (double)actualWidth / actualHeight;
         Assert.InRange(Math.Abs(Math.Log(actual / expected)), 0, tolerance);
+    }
+}
+
+public class GrokImagine2Tests
+{
+    [Theory]
+    [InlineData("low", "low")]
+    [InlineData("medium", "medium")]
+    [InlineData("auto", "auto")]
+    [InlineData("high", "medium")]
+    [InlineData("xhigh", "medium")]
+    [InlineData("max", "medium")]
+    public void CompatibilityQualityMapsToSupported20Tier(string requested, string expected)
+    {
+        Assert.Equal(
+            expected,
+            GrokImagineGenerator.NormalizeQuality(
+                ImageGeneratorApiType.GrokImaginePro,
+                requested));
+    }
+
+    [Fact]
+    public void LegacyModelRejectsUnsupportedQuality()
+    {
+        Assert.Throws<ArgumentException>(
+            () => GrokImagineGenerator.NormalizeQuality(
+                ImageGeneratorApiType.GrokImagine,
+                "high"));
+    }
+
+    [Fact]
+    public void CompatibilityGeneratorUsesExact20ModelAndCurrentPrice()
+    {
+        var generator = new GrokImagineGenerator(
+            "unused",
+            1,
+            ImageGeneratorApiType.GrokImaginePro,
+            new MultiClientRunStats(),
+            quality: "medium");
+
+        Assert.Contains(XAIGrokAPIClient.XAIGrokClient.ModelGrokImagine2, generator.GetRightParts());
+        Assert.Equal(0.06m, generator.GetCost());
+    }
+
+    [Theory]
+    [InlineData("low", "1k", "0.04")]
+    [InlineData("low", "2k", "0.06")]
+    [InlineData("auto", "1k", "0.04")]
+    [InlineData("auto", "2k", "0.06")]
+    [InlineData("medium", "1k", "0.06")]
+    [InlineData("medium", "2k", "0.08")]
+    public void CostUsesAuthenticatedQualityResolutionMatrix(
+        string quality,
+        string resolution,
+        string expected)
+    {
+        var generator = new GrokImagineGenerator(
+            "unused",
+            1,
+            ImageGeneratorApiType.GrokImaginePro,
+            new MultiClientRunStats(),
+            quality: quality,
+            resolution: resolution);
+
+        Assert.Equal(
+            decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture),
+            generator.GetCost());
+    }
+
+    [Fact]
+    public void EditRequestSerializesQualityAndFiveReferences()
+    {
+        var request = new XAIGrokAPIClient.XAIGrokEditRequest
+        {
+            Model = XAIGrokAPIClient.XAIGrokClient.ModelGrokImagine2,
+            Prompt = "combine",
+            Quality = "auto",
+            Images = Enumerable.Range(0, 5)
+                .Select(index => XAIGrokAPIClient.XAIGrokImageInput.FromUrl($"https://example.test/{index}.png"))
+                .ToList(),
+        };
+
+        var json = Newtonsoft.Json.JsonConvert.SerializeObject(
+            request,
+            new Newtonsoft.Json.JsonSerializerSettings
+            {
+                NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore,
+            });
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+
+        Assert.Equal("grok-imagine-image-2.0", document.RootElement.GetProperty("model").GetString());
+        Assert.Equal("auto", document.RootElement.GetProperty("quality").GetString());
+        Assert.Equal(5, document.RootElement.GetProperty("images").GetArrayLength());
+        Assert.False(document.RootElement.TryGetProperty("image", out _));
+    }
+
+    [Fact]
+    public void ComposerAcceptsFiveInputsForGrok20()
+    {
+        Assert.Equal(5, UiJobRunner.MaxInputImages);
     }
 }
 
@@ -367,7 +469,11 @@ public class UiVisibilityStoreTests
         var root = Path.Combine(Path.GetTempPath(), "miic-visibility-replay-" + Guid.NewGuid().ToString("N"));
         try
         {
-            var settings = new Settings { ImageDownloadBaseFolder = root };
+            var settings = new Settings
+            {
+                ImageDownloadBaseFolder = root,
+                EnableGenerationArchive = false,
+            };
             var jobs = new UiJobRegistry(settings);
             var job = new UiJob { Prompt = "test", CreatedBy = "local display name" };
             jobs.Add(job);
@@ -452,7 +558,11 @@ public class UiVisibilityStoreTests
             "multi-image-client-deletion-" + Guid.NewGuid().ToString("N"));
         try
         {
-            var settings = new Settings { ImageDownloadBaseFolder = root };
+            var settings = new Settings
+            {
+                ImageDownloadBaseFolder = root,
+                EnableGenerationArchive = false,
+            };
             var registry = new UiJobRegistry(settings);
             var job = new UiJob
             {
@@ -669,6 +779,7 @@ public class GrokWebVideoAvailabilityTests
         {
             ImageDownloadBaseFolder = root,
             LogFilePath = Path.Combine(root, "test.log"),
+            EnableGenerationArchive = false,
             GrokWebCookiePath = cookiePath,
             GrokWebStatsigVerificationKey = Convert.ToBase64String(new byte[48]),
             GrokWebStatsigAnimationKey = "0a",

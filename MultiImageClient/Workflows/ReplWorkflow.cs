@@ -781,7 +781,7 @@ namespace MultiImageClient
                     RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", "grok-api");
                     return new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                         ImageGeneratorApiType.GrokImagine, _stats, "repl",
-                        aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
+                        aspectRatio: "1:1", quality: "", resolution: "2k", settings: _settings);
 
                 case "grok-api-pro":
                 case "grokpro": // old name
@@ -789,7 +789,7 @@ namespace MultiImageClient
                     RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", "grok-api-pro");
                     return new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                         ImageGeneratorApiType.GrokImaginePro, _stats, "repl",
-                        aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings);
+                        aspectRatio: "1:1", quality: "medium", resolution: "2k", settings: _settings);
 
                 // "dalle3" removed: OpenAI retired dall-e-3 on 2026-05-12.
 

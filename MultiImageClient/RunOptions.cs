@@ -125,8 +125,8 @@ namespace MultiImageClient
         /// compose one combined grid image and pop it open.
         public bool GrokApiShowcase { get; set; }
 
-        /// Pair with --grok-api-showcase to route through grok-imagine-image-pro
-        /// at 2k resolution instead of the standard grok-imagine-image at 1k.
+        /// Pair with --grok-api-showcase to route through grok-imagine-image-2.0
+        /// at medium quality and 2k instead of legacy grok-imagine-image.
         public bool GrokApiPro { get; set; }
 
         /// If true, run AllProvidersShowcaseWorkflow: take ONE prompt and
@@ -580,11 +580,11 @@ namespace MultiImageClient
             Console.WriteLine($"  --gens csv            Pair with --showcase to pick generators by short name: {string.Join(' ', GeneratorGroups.ShortNames)}. Without --gens the standard batch set runs. grok-web honors the --grok-web-* flags; meta-web honors the --meta-web-* flags.");
             Console.WriteLine("Grok naming: grok-api = official api.x.ai key version (public/GDPR ruleset); grok-web = consumer grok.com cookie-session version (web-app ruleset).");
             Console.WriteLine("  --grok-api-showcase   One-shot: take the first --limit prompts from the active prompt source (--prompt or PromptFiles), fire them at grok-api in parallel, and compose a single combined grid image (pops open only with --open-images). Default --limit for this mode is 10.");
-            Console.WriteLine("  --grok-api-pro        Pair with --grok-api-showcase to route through grok-imagine-image-pro at 2k resolution ($0.07/img, 30 rpm) instead of grok-imagine-image at 1k ($0.02/img, 300 rpm).");
+            Console.WriteLine("  --grok-api-pro        Compatibility flag for grok-imagine-image-2.0 at medium quality and 2k ($0.08/img), instead of legacy grok-imagine-image ($0.02/img).");
             Console.WriteLine("  --all-providers       One-shot: fire ONE prompt (--prompt or first PromptFiles line) at current image endpoints (gpt-image-2, gpt-image-1, gpt-image-1-mini, Ideogram 4.0, flux-2-pro-preview, Recraft V4.1, Grok Imagine, Nano Banana Pro) and compose a single contact-sheet grid (pops open only with --open-images). Keyless providers show as error cells.");
             Console.WriteLine("  --with-video          Pair with --all-providers to also dispatch a Grok Imagine VIDEO (6s, 480p) for the same prompt; the mp4 is saved in the day folder's Video\\ subfolder. Videos are not composited into the PNG sheet.");
             Console.WriteLine("  --grok-api-video-test One-shot: exercise all three grok-api video modes with one prompt (--prompt or first PromptFiles line) — text-to-video, grok-image-to-video, and extend-video (3s, 480p each). Clips are saved, stored durably at xAI, and ledgered.");
-            Console.WriteLine("  --grok-api-edit       One-shot: edit --input-image via grok-api using --prompt as edit instructions. Saves the result and a one-cell contact sheet. Pair with --grok-api-pro for grok-imagine-image-pro.");
+            Console.WriteLine("  --grok-api-edit       One-shot: edit --input-image via grok-api using --prompt as edit instructions. Pair with --grok-api-pro for grok-imagine-image-2.0.");
             Console.WriteLine("  --grok-api-edit-aspect-ratio AR  Optional output aspect ratio for --grok-api-edit (e.g. 1:1, 16:9). Default: inherit source image AR.");
             Console.WriteLine("  --grok-web            Batch prompts through consumer grok.com session endpoints (browser cookies, not api.x.ai). Uses --prompt-file or PromptFiles.");
             Console.WriteLine("  --grok-web-pro        Use the web app's Pro/quality image tier. THIS IS THE DEFAULT; the flag exists to state it explicitly (alias: --grok-web-quality).");

@@ -15,9 +15,11 @@ namespace MultiImageClient
     /// Imagine family). Uses our hand-rolled XAIGrokClient so every wire
     /// parameter is explicit — no OpenAI SDK indirection.
     ///
-    /// Supports both `grok-imagine-image` ($0.02/img) and
-    /// `grok-imagine-image-pro` ($0.07/img), selected at construction time via
-    /// ImageGeneratorApiType.GrokImagine / GrokImaginePro.
+    /// Supports legacy `grok-imagine-image` ($0.02/img) and current
+    /// `grok-imagine-image-2.0` (quality/resolution priced), selected via
+    /// ImageGeneratorApiType.GrokImagine / GrokImaginePro. The latter enum
+    /// value preserves stored endpoint identity; it no longer sends the
+    /// retiring `grok-imagine-image-pro` alias.
     public class GrokImagineGenerator : IImageGenerator
     {
         private readonly SemaphoreSlim _semaphore;
@@ -41,7 +43,7 @@ namespace MultiImageClient
         /// apiType         — GrokImagine or GrokImaginePro.
         /// aspectRatio     — one of the xAI-documented AR strings ("1:1", "3:4",
         ///                    "4:3", "16:9", etc.), or "auto" to let xAI pick.
-        /// quality         — "low" | "medium" | "high".
+        /// quality         — 2.0 only: "low" | "medium" | "auto".
         /// resolution      — "1k" | "2k".
         /// responseFormat  — "url" (default) or "b64_json". "url" is fine for
         ///                    batch runs since we download immediately.
@@ -55,7 +57,7 @@ namespace MultiImageClient
             MultiClientRunStats stats,
             string name = "",
             string aspectRatio = "1:1",
-            string quality = "high",
+            string quality = "",
             string resolution = "1k",
             string responseFormat = "url",
             Settings? settings = null,
@@ -71,7 +73,7 @@ namespace MultiImageClient
             }
             _apiType = apiType;
             _model = apiType == ImageGeneratorApiType.GrokImaginePro
-                ? XAIGrokClient.ModelGrokImaginePro
+                ? XAIGrokClient.ModelGrokImagine2
                 : XAIGrokClient.ModelGrokImagine;
 
             _client = new XAIGrokClient(apiKey, baseUrl: baseUrl);
@@ -80,18 +82,17 @@ namespace MultiImageClient
             _stats = stats;
             _name = name ?? string.Empty;
             _aspectRatio = aspectRatio;
-            _quality = quality;
+            _quality = NormalizeQuality(apiType, quality);
             _resolution = resolution;
             _responseFormat = responseFormat;
             _baseUrl = _client.BaseUrl;
             _imageCount = Math.Clamp(imageCount, 1, 10);
         }
 
-        /// Short human-readable tier label used in the combined-grid panel
-        /// header ("xAI Grok Imagine" vs "xAI Grok Imagine Pro").
+        /// Short human-readable model label used in combined-grid panels.
         private string TierLabel => _apiType == ImageGeneratorApiType.GrokImaginePro
-            ? "xAI Grok Imagine Pro"
-            : "xAI Grok Imagine";
+            ? "xAI Grok Imagine 2.0"
+            : "xAI Grok Imagine 1.0";
 
         /// Very rough pixel-dimensions estimate for a given resolution+AR,
         /// using the xAI convention that "1k"/"2k" sets the longer edge to
@@ -137,7 +138,7 @@ namespace MultiImageClient
 
         public string GetFilenamePart(PromptDetails pd)
         {
-            var shortModel = _apiType == ImageGeneratorApiType.GrokImaginePro ? "grok-pro" : "grok";
+            var shortModel = _apiType == ImageGeneratorApiType.GrokImaginePro ? "grok-2" : "grok-1";
             var arLabel = string.IsNullOrWhiteSpace(_aspectRatio) ? "auto" : _aspectRatio.Replace(':', 'x');
             var qLabel = string.IsNullOrWhiteSpace(_quality) ? "q" : $"q{_quality}";
             var resLabel = string.IsNullOrWhiteSpace(_resolution) ? "" : $"_{_resolution}";
@@ -180,8 +181,47 @@ namespace MultiImageClient
             return line;
         }
 
-        // https://docs.x.ai/developers/models — flat per-image pricing.
-        public decimal GetCost() => (_apiType == ImageGeneratorApiType.GrokImaginePro ? 0.07m : 0.02m) * _imageCount;
+        public decimal GetCost()
+        {
+            if (_apiType == ImageGeneratorApiType.GrokImagine)
+            {
+                return 0.02m * _imageCount;
+            }
+            // Authenticated /v1/image-generation-models metadata, 2026-09-08:
+            // low 1k/2k = $0.04/$0.06; medium 1k/2k = $0.06/$0.08.
+            // Generation auto currently serves low.
+            var medium = _quality == "medium";
+            var twoK = _resolution.Equals("2k", StringComparison.OrdinalIgnoreCase);
+            return (0.04m + (medium ? 0.02m : 0m) + (twoK ? 0.02m : 0m)) * _imageCount;
+        }
+
+        public static string NormalizeQuality(ImageGeneratorApiType apiType, string? quality)
+        {
+            var normalized = (quality ?? string.Empty).Trim().ToLowerInvariant();
+            if (apiType == ImageGeneratorApiType.GrokImagine)
+            {
+                if (normalized.Length != 0)
+                {
+                    throw new ArgumentException(
+                        "grok-imagine-image 1.0 does not accept quality.",
+                        nameof(quality));
+                }
+                return string.Empty;
+            }
+            if (apiType != ImageGeneratorApiType.GrokImaginePro)
+            {
+                throw new ArgumentOutOfRangeException(nameof(apiType), apiType, "Unknown Grok image API type.");
+            }
+            return normalized switch
+            {
+                "low" or "medium" or "auto" => normalized,
+                "" => "auto",
+                "high" or "xhigh" or "max" => "medium",
+                _ => throw new ArgumentException(
+                    $"Unknown Grok Imagine 2.0 quality '{quality}'.",
+                    nameof(quality)),
+            };
+        }
 
         public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {

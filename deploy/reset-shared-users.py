@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import grp
+import importlib.util
 import json
 import os
 import pathlib
@@ -37,20 +38,28 @@ auth_path = pathlib.Path("/etc/multiimageclient/ui-auth.json")
 credentials_path = pathlib.Path(owner_entry.pw_dir) / "multiimageclient-credentials.txt"
 
 current_auth = json.loads(auth_path.read_text())
-if not current_auth.get("enabled"):
-    fail("existing auth file is not enabled")
+if current_auth.get("version") != 2 or current_auth.get("enabled") is not True:
+    fail("existing auth file must be version 2 with enabled=true")
 
 credential_lines = credentials_path.read_text().splitlines()
 if not credential_lines or not credential_lines[0].startswith("URL="):
     fail("credentials file has no URL line")
 url_line = credential_lines[0]
 
+migrate_path = pathlib.Path(__file__).with_name("migrate-ui-auth-v1-to-v2.py")
+spec = importlib.util.spec_from_file_location("migrate_ui_auth_v1_to_v2", migrate_path)
+if spec is None or spec.loader is None:
+    fail(f"cannot load {migrate_path}")
+migrate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(migrate)
+
 passwords = {username: secrets.token_hex(16) for username in usernames}
 replacement_auth = {
+    "version": 2,
     "enabled": True,
     "secret": secrets.token_hex(32),
     "accounts": [
-        {"username": username, "password": passwords[username]}
+        {"username": username, "passwordHash": migrate.hash_password(passwords[username])}
         for username in usernames
     ],
 }

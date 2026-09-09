@@ -48,7 +48,7 @@ namespace MultiImageClient
             UiJobRunner.KeyGrokWebChat => "grok-web chat",
             UiJobRunner.KeyGrokWebVideo => "grok-web video",
             UiJobRunner.KeyGrokApi => "grok-api",
-            UiJobRunner.KeyGrokApiPro => "grok-api pro",
+            UiJobRunner.KeyGrokApiPro => "grok-api 2.0",
             UiJobRunner.KeyMetaWeb => "Meta AI Muse Image (meta-web)",
             UiJobRunner.KeyDescribeIdeogram => "Ideogram describe",
             UiJobRunner.KeyDescribeOpenAi => $"OpenAI describe ({OpenAIVisionDescriber.DefaultModel})",
@@ -69,7 +69,7 @@ namespace MultiImageClient
                     or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini
                     or UiJobRunner.KeyDescribeOpenAi => "OpenAI",
                 UiJobRunner.KeyGrokApi => "xAI API · grok-imagine-image",
-                UiJobRunner.KeyGrokApiPro => "xAI API · grok-imagine-image-pro",
+                UiJobRunner.KeyGrokApiPro => "xAI API · grok-imagine-image-2.0",
                 UiJobRunner.KeyGrokWeb or UiJobRunner.KeyGrokWebChat
                     or UiJobRunner.KeyGrokWebVideo => "xAI via grok.com",
                 UiJobRunner.KeyDescribeGrok => "xAI API",
@@ -159,8 +159,8 @@ namespace MultiImageClient
             ImageGeneratorApiType.BFLFluxKontextMax => "FLUX.1 Kontext Max",
             ImageGeneratorApiType.RecraftV4 => "Recraft V4",
             ImageGeneratorApiType.RecraftV4Pro => "Recraft V4 Pro",
-            ImageGeneratorApiType.GrokImagine => "Grok Imagine",
-            ImageGeneratorApiType.GrokImaginePro => "Grok Imagine Pro",
+            ImageGeneratorApiType.GrokImagine => "Grok Imagine 1.0",
+            ImageGeneratorApiType.GrokImaginePro => "Grok Imagine 2.0",
             ImageGeneratorApiType.GrokImagineVideo => "Grok Imagine Video",
             ImageGeneratorApiType.IdeogramV4 => "Ideogram 4.0",
             ImageGeneratorApiType.RecraftV41 => "Recraft V4.1",

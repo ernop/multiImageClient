@@ -139,7 +139,7 @@ namespace MultiImageClient
         private static string NormalizeProviderFilter(string token) => token switch
         {
             "grok-api" => "grok",
-            "grok-api-pro" => "grok-imagine-image-pro",
+            "grok-api-pro" => "grok-imagine-image-2.0",
             _ => token,
         };
 
@@ -158,7 +158,10 @@ namespace MultiImageClient
                 .Select(s => s.ToLowerInvariant())
                 .ToHashSet();
 
-            if ((filters.Contains("grok-imagine-image-pro") || filters.Contains("grok-pro") || filters.Contains("grok-api-pro"))
+            if ((filters.Contains("grok-imagine-image-2.0")
+                    || filters.Contains("grok-imagine-image-pro")
+                    || filters.Contains("grok-pro")
+                    || filters.Contains("grok-api-pro"))
                 && generators.All(g => g.ApiType != ImageGeneratorApiType.GrokImaginePro))
             {
                 generators.Add(groups.GrokImaginePro_Square());

@@ -13,24 +13,36 @@ namespace MultiImageClient
     /// Optional username/password gate for shared --ui deployments.
     ///
     /// Configured by Settings.UiAuthFilePath pointing at a JSON file:
-    ///   { "enabled": true,
+    ///   { "version": 2,
+    ///     "enabled": true,
     ///     "secret": "long random string",
-    ///     "accounts": [ { "username": "alice", "password": "..." } ] }
+    ///     "accounts": [ { "username": "alice",
+    ///                     "passwordHash": "pbkdf2-sha256$600000$salt$hash" } ] }
     ///
-    /// Design: login exchanges a correct username/password for a cookie token
-    ///   username + "." + Base64Url(HMACSHA256(secret, username + "\n" + password)).
+    /// Design: login verifies the submitted password against the stored
+    /// PBKDF2 hash, then issues a cookie token
+    ///   username + "." + Base64Url(HMACSHA256(secret, username + "\n" + passwordHash)).
     /// The token is stateless and lives in the browser indefinitely, but every
     /// request re-derives the expected HMAC from the CURRENT file contents, so
     /// the owner invalidates any browser instantly by removing the account,
-    /// changing its password, or rotating the secret. The server never writes
-    /// the auth file.
+    /// replacing its hash, or rotating the secret. The server never writes
+    /// the auth file and never stores a plaintext password.
     ///
-    /// Fail-closed rules: a configured-but-missing/malformed file, a missing
-    /// secret, or an empty account list is a hard startup error — never
-    /// silently open. Blank UiAuthFilePath means auth is off (local use).
+    /// Fail-closed rules: a configured-but-missing/malformed file, a version-1
+    /// plaintext file, enabled=false, a missing secret, or an empty account
+    /// list is a hard startup error — never silently open. Blank
+    /// UiAuthFilePath means auth is off (local use).
     public sealed class UiAuth
     {
         public const string CookieName = "mic_auth";
+        public const int AuthFileVersion = 2;
+        public const int MinSecretChars = 32;
+        public const int Pbkdf2Iterations = 600_000;
+        public const int Pbkdf2SaltBytes = 16;
+        public const int Pbkdf2HashBytes = 32;
+        public const string PasswordHashPrefix = "pbkdf2-sha256";
+
+        private static readonly string DummyPasswordHash = BuildDummyPasswordHash();
 
         private readonly string _filePath;
         private readonly object _reloadLock = new();
@@ -68,62 +80,124 @@ namespace MultiImageClient
                     $"UiAuthFilePath is set but the file does not exist: {full}");
             }
             var parsed = ParseAndValidate(File.ReadAllText(full), full);
-            if (!parsed.Enabled)
-            {
-                Logger.Log($"UI auth: {full} has enabled=false; the UI is running OPEN.");
-                return null;
-            }
             return new UiAuth(full, parsed, File.GetLastWriteTimeUtc(full));
         }
 
         private static AuthFile ParseAndValidate(string json, string pathForErrors)
         {
-            AuthFile? parsed;
+            byte[] utf8;
             try
             {
-                parsed = JsonSerializer.Deserialize<AuthFile>(json, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true,
-                });
+                utf8 = Encoding.UTF8.GetBytes(json);
+                RejectDuplicatePropertyNames(utf8);
             }
             catch (JsonException ex)
             {
-                throw new InvalidOperationException($"UI auth file {pathForErrors} is not valid JSON: {ex.Message}");
+                throw new InvalidOperationException(
+                    $"UI auth file {pathForErrors} is not valid JSON: {ex.Message}");
             }
-            if (parsed == null)
+
+            JsonDocument document;
+            try
             {
-                throw new InvalidOperationException($"UI auth file {pathForErrors} parsed to nothing.");
+                document = JsonDocument.Parse(utf8);
             }
-            if (parsed.Enabled)
+            catch (JsonException ex)
             {
-                if (string.IsNullOrWhiteSpace(parsed.Secret) || parsed.Secret.Trim().Length < 16)
+                throw new InvalidOperationException(
+                    $"UI auth file {pathForErrors} is not valid JSON: {ex.Message}");
+            }
+
+            using (document)
+            {
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
                 {
                     throw new InvalidOperationException(
-                        $"UI auth file {pathForErrors} needs a \"secret\" of at least 16 characters "
+                        $"UI auth file {pathForErrors} root must be an object.");
+                }
+
+                var root = document.RootElement;
+                RequireExactObjectKeys(root, pathForErrors, "root", "version", "enabled", "secret", "accounts");
+
+                if (!TryGetInt32(root, "version", out var version) || version != AuthFileVersion)
+                {
+                    throw new InvalidOperationException(
+                        $"UI auth file {pathForErrors} must be version {AuthFileVersion} with PBKDF2 password hashes; "
+                        + "plaintext version-1 files are rejected. Run deploy/migrate-ui-auth-v1-to-v2.py.");
+                }
+
+                if (root.GetProperty("enabled").ValueKind != JsonValueKind.True)
+                {
+                    throw new InvalidOperationException(
+                        $"UI auth file {pathForErrors} must have enabled=true. "
+                        + "Blank UiAuthFilePath is the only way to run the UI open; enabled=false is rejected.");
+                }
+
+                var secret = RequireNonEmptyString(root, "secret", pathForErrors);
+                if (secret.Length < MinSecretChars)
+                {
+                    throw new InvalidOperationException(
+                        $"UI auth file {pathForErrors} needs a \"secret\" of at least {MinSecretChars} characters "
                         + "(generate a long random string once and keep it stable; rotating it logs everyone out).");
                 }
-                if (parsed.Accounts == null || parsed.Accounts.Count == 0)
-                {
-                    throw new InvalidOperationException($"UI auth file {pathForErrors} has enabled=true but no accounts.");
-                }
-                foreach (var account in parsed.Accounts)
-                {
-                    if (string.IsNullOrWhiteSpace(account.Username) || string.IsNullOrWhiteSpace(account.Password))
-                    {
-                        throw new InvalidOperationException(
-                            $"UI auth file {pathForErrors} has an account with a blank username or password.");
-                    }
-                }
-                var duplicate = parsed.Accounts
-                    .GroupBy(a => a.Username.Trim(), StringComparer.OrdinalIgnoreCase)
-                    .FirstOrDefault(g => g.Count() > 1);
-                if (duplicate != null)
+
+                var accountsElement = root.GetProperty("accounts");
+                if (accountsElement.ValueKind != JsonValueKind.Array || accountsElement.GetArrayLength() == 0)
                 {
                     throw new InvalidOperationException(
-                        $"UI auth file {pathForErrors} lists username '{duplicate.Key}' more than once.");
+                        $"UI auth file {pathForErrors} has enabled=true but no accounts.");
                 }
+
+                var accounts = new List<AuthAccount>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var index = 0;
+                foreach (var accountElement in accountsElement.EnumerateArray())
+                {
+                    if (accountElement.ValueKind != JsonValueKind.Object)
+                    {
+                        throw new InvalidOperationException(
+                            $"UI auth file {pathForErrors} account {index} must be an object.");
+                    }
+                    RequireExactObjectKeys(
+                        accountElement,
+                        pathForErrors,
+                        $"account {index}",
+                        "username",
+                        "passwordHash");
+                    var username = RequireNonEmptyString(accountElement, "username", pathForErrors);
+                    if (username.Length > 128 || username.Any(ch => char.IsControl(ch)))
+                    {
+                        throw new InvalidOperationException(
+                            $"UI auth file {pathForErrors} account {index} has an invalid username.");
+                    }
+                    if (!seen.Add(username))
+                    {
+                        throw new InvalidOperationException(
+                            $"UI auth file {pathForErrors} lists username '{username}' more than once.");
+                    }
+                    var passwordHash = RequireNonEmptyString(accountElement, "passwordHash", pathForErrors);
+                    if (!TryParsePasswordHash(passwordHash, out var salt, out var digest, out var hashError))
+                    {
+                        throw new InvalidOperationException(
+                            $"UI auth file {pathForErrors} account '{username}' passwordHash is invalid: {hashError}");
+                    }
+                    accounts.Add(new AuthAccount
+                    {
+                        Username = username,
+                        PasswordHash = passwordHash,
+                        Salt = salt,
+                        Digest = digest,
+                    });
+                    index++;
+                }
+
+                return new AuthFile
+                {
+                    Enabled = true,
+                    Secret = secret,
+                    Accounts = accounts,
+                };
             }
-            return parsed;
         }
 
         // Re-read the auth file when its timestamp changes so account edits
@@ -173,14 +247,15 @@ namespace MultiImageClient
             }
         }
 
-        /// enabled=false edited in at runtime turns the gate off (owner's
-        /// explicit choice); a broken file keeps it on with zero valid tokens.
-        public bool IsEnforced => CurrentFile().Enabled;
+        /// A constructed UiAuth means the gate is on. Broken or rejected files
+        /// stay enforced with zero valid tokens. Blank UiAuthFilePath is the
+        /// only open mode.
+        public bool IsEnforced => true;
 
         public IReadOnlyList<string> ListAccountNames()
         {
             return CurrentFile().Accounts
-                .Select(account => account.Username.Trim())
+                .Select(account => account.Username)
                 .ToList();
         }
 
@@ -194,15 +269,18 @@ namespace MultiImageClient
             }
             var file = CurrentFile();
             var account = file.Accounts.FirstOrDefault(
-                a => string.Equals(a.Username.Trim(), username.Trim(), StringComparison.OrdinalIgnoreCase));
-            if (account == null || !FixedTimeEquals(account.Password, password))
+                a => string.Equals(a.Username, username.Trim(), StringComparison.OrdinalIgnoreCase));
+            var passwordMatches = account != null
+                ? VerifyPassword(password, account.Salt, account.Digest)
+                : VerifyPassword(password, DummyPasswordHash);
+            if (account == null || !passwordMatches)
             {
                 RecordFailure(clientIp);
                 error = "Wrong username or password.";
                 return false;
             }
             _failures.TryRemove(clientIp, out _);
-            cookieValue = $"{account.Username.Trim()}.{ComputeMac(file.Secret, account.Username.Trim(), account.Password)}";
+            cookieValue = $"{account.Username}.{ComputeMac(file.Secret, account.Username, account.PasswordHash)}";
             error = "";
             return true;
         }
@@ -225,25 +303,163 @@ namespace MultiImageClient
             var mac = cookieValue[(split + 1)..];
             var file = CurrentFile();
             var account = file.Accounts.FirstOrDefault(
-                a => string.Equals(a.Username.Trim(), user, StringComparison.Ordinal));
+                a => string.Equals(a.Username, user, StringComparison.Ordinal));
             if (account == null)
             {
                 return false;
             }
-            var expected = ComputeMac(file.Secret, account.Username.Trim(), account.Password);
+            var expected = ComputeMac(file.Secret, account.Username, account.PasswordHash);
             if (!FixedTimeEquals(expected, mac))
             {
                 return false;
             }
-            username = account.Username.Trim();
+            username = account.Username;
             return true;
         }
 
-        private static string ComputeMac(string secret, string username, string password)
+        private static string ComputeMac(string secret, string username, string passwordHash)
         {
-            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret.Trim()));
-            var mac = hmac.ComputeHash(Encoding.UTF8.GetBytes(username + "\n" + password));
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+            var mac = hmac.ComputeHash(Encoding.UTF8.GetBytes(username + "\n" + passwordHash));
             return Convert.ToBase64String(mac).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+
+        private static bool VerifyPassword(string password, string passwordHash)
+        {
+            if (!TryParsePasswordHash(passwordHash, out var salt, out var digest, out _))
+            {
+                return false;
+            }
+            return VerifyPassword(password, salt, digest);
+        }
+
+        private static bool VerifyPassword(string password, byte[] salt, byte[] digest)
+        {
+            var candidate = Rfc2898DeriveBytes.Pbkdf2(
+                password,
+                salt,
+                Pbkdf2Iterations,
+                HashAlgorithmName.SHA256,
+                Pbkdf2HashBytes);
+            return CryptographicOperations.FixedTimeEquals(candidate, digest);
+        }
+
+        private static bool TryParsePasswordHash(
+            string passwordHash,
+            out byte[] salt,
+            out byte[] digest,
+            out string error)
+        {
+            salt = Array.Empty<byte>();
+            digest = Array.Empty<byte>();
+            error = "";
+            var parts = passwordHash.Split('$');
+            if (parts.Length != 4
+                || parts[0] != PasswordHashPrefix
+                || parts[1] != Pbkdf2Iterations.ToString()
+                || parts[2].Length == 0
+                || parts[3].Length == 0)
+            {
+                error = $"must be {PasswordHashPrefix}${Pbkdf2Iterations}$<salt>$<hash> with exact iteration count.";
+                return false;
+            }
+            try
+            {
+                salt = Convert.FromBase64String(parts[2]);
+                digest = Convert.FromBase64String(parts[3]);
+            }
+            catch (FormatException)
+            {
+                error = "salt and hash must be Base64.";
+                return false;
+            }
+            if (salt.Length != Pbkdf2SaltBytes || digest.Length != Pbkdf2HashBytes)
+            {
+                error = $"salt must be {Pbkdf2SaltBytes} bytes and hash {Pbkdf2HashBytes} bytes.";
+                return false;
+            }
+            return true;
+        }
+
+        private static void RejectDuplicatePropertyNames(byte[] utf8)
+        {
+            var reader = new Utf8JsonReader(utf8);
+            var stack = new Stack<HashSet<string>>();
+            while (reader.Read())
+            {
+                switch (reader.TokenType)
+                {
+                    case JsonTokenType.StartObject:
+                        stack.Push(new HashSet<string>(StringComparer.Ordinal));
+                        break;
+                    case JsonTokenType.EndObject:
+                        stack.Pop();
+                        break;
+                    case JsonTokenType.PropertyName:
+                        var name = reader.GetString() ?? "";
+                        if (!stack.Peek().Add(name))
+                        {
+                            throw new JsonException($"duplicate field '{name}'");
+                        }
+                        break;
+                }
+            }
+        }
+
+        private static void RequireExactObjectKeys(
+            JsonElement element,
+            string pathForErrors,
+            string context,
+            params string[] expected)
+        {
+            var actual = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in element.EnumerateObject())
+            {
+                actual.Add(property.Name);
+            }
+            if (!actual.SetEquals(expected))
+            {
+                throw new InvalidOperationException(
+                    $"UI auth file {pathForErrors} {context} fields must be exactly [{string.Join(", ", expected)}]; "
+                    + $"found [{string.Join(", ", actual.OrderBy(name => name, StringComparer.Ordinal))}].");
+            }
+        }
+
+        private static string RequireNonEmptyString(JsonElement parent, string name, string pathForErrors)
+        {
+            var element = parent.GetProperty(name);
+            if (element.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidOperationException(
+                    $"UI auth file {pathForErrors} \"{name}\" must be a string.");
+            }
+            var value = element.GetString()?.Trim() ?? "";
+            if (value.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"UI auth file {pathForErrors} \"{name}\" is blank.");
+            }
+            return value;
+        }
+
+        private static bool TryGetInt32(JsonElement parent, string name, out int value)
+        {
+            value = 0;
+            var element = parent.GetProperty(name);
+            if (element.ValueKind != JsonValueKind.Number || !element.TryGetInt32(out value))
+            {
+                return false;
+            }
+            return true;
+        }
+
+        private static string BuildDummyPasswordHash()
+        {
+            var salt = new byte[Pbkdf2SaltBytes];
+            var digest = new byte[Pbkdf2HashBytes];
+            return $"{PasswordHashPrefix}${Pbkdf2Iterations}$"
+                + Convert.ToBase64String(salt) + "$"
+                + Convert.ToBase64String(digest);
         }
 
         private static bool FixedTimeEquals(string a, string b)
@@ -251,7 +467,7 @@ namespace MultiImageClient
             var ba = Encoding.UTF8.GetBytes(a);
             var bb = Encoding.UTF8.GetBytes(b);
             // FixedTimeEquals requires equal lengths; comparing lengths leaks
-            // nothing useful here (password lengths are not secret-grade).
+            // nothing useful here (MAC encodings are not secret-grade).
             return ba.Length == bb.Length && CryptographicOperations.FixedTimeEquals(ba, bb);
         }
 
@@ -297,8 +513,10 @@ namespace MultiImageClient
 
         private sealed class AuthAccount
         {
-            public string Username { get; set; } = "";
-            public string Password { get; set; } = "";
+            public string Username { get; init; } = "";
+            public string PasswordHash { get; init; } = "";
+            public byte[] Salt { get; init; } = Array.Empty<byte>();
+            public byte[] Digest { get; init; } = Array.Empty<byte>();
         }
     }
 }

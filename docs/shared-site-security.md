@@ -75,11 +75,14 @@ compromised friend account = a hostile user with complete member powers.
    `ProtectSystem=strict`, unprivileged user) so even successful code
    execution lands in a low-privilege, mostly read-only jail rather than
    root.
-2. **Auth-file leak.** `ui-auth.json` holds plaintext passwords and the HMAC
-   secret; anyone who reads it mints valid cookies for every account. It
-   lives with settings.json (same sensitivity as your API keys), `chmod 600`,
-   never in git. Friends' passwords should be unique to this site (they're
-   pasted once, so hand out random strings).
+2. **Auth-file leak.** `ui-auth.json` holds PBKDF2 password hashes and the
+   HMAC secret. A reader of the file can still mint cookies if they also
+   capture a live `mic_auth` cookie, and they can attempt offline cracking of
+   the hashes; they cannot read the original passphrases. It lives with
+   settings.json (same sensitivity as your API keys), `chmod 600` or `0640`,
+   never in git. Friends' passphrases should be unique to this site (they're
+   pasted once, so hand out random strings). Version-1 plaintext files are
+   rejected at startup.
 3. **Secret-path leak.** The nginx path hides the site from scanners, not
    from anyone a friend shares the URL with. Browser history, pasted links,
    and screenshots leak it; the in-app `no-referrer` policy stops the Referer
@@ -100,8 +103,8 @@ compromised friend account = a hostile user with complete member powers.
 
 | Situation | Action |
 |---|---|
-| Friend's account misbehaving | Remove/repassword their entry in `ui-auth.json` (takes effect ≤1 s, no restart) |
-| Everything on fire | `enabled: false` won't lock it (that opens the gate!) — instead remove all accounts, or stop the systemd unit |
+| Friend's account misbehaving | Remove their account or replace their `passwordHash` in `ui-auth.json` (takes effect ≤1 s, no restart) |
+| Everything on fire | Stop the systemd unit. `enabled: false` is rejected (fail closed), not an open switch; blank `UiAuthFilePath` is the only open mode |
 | Secret path leaked | Change the path segment in nginx config, reload nginx, re-share |
-| Suspect stolen HMAC secret / auth file | Rotate `secret` (logs everyone out), rotate all passwords, check server for other compromise |
+| Suspect stolen HMAC secret / auth file | Rotate `secret` (logs everyone out), replace every `passwordHash`, check server for other compromise |
 | Disk filled by flood | Delete offending `saves/<day>` + `UiHistory/<jobId>` folders; restart unit |

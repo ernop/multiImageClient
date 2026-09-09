@@ -144,14 +144,27 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
    reserve. `/etc/multiimageclient/settings.json` is the source of truth for
    live app-level caps.
 2. **Auth file**: copy `ui-auth.example.json` to
-   `/etc/multiimageclient/ui-auth.json`, set a
-   long random `secret` (`openssl rand -hex 24`), add one account per friend.
-   Make both config files `root:multiimageclient` mode `0640`; never commit
-   either one.
-   - **Invalidate someone**: delete their account line, or change their
-     password. Their saved browser cookie dies within ~1 second (the file is
-     re-read on change). No restart needed.
+   `/etc/multiimageclient/ui-auth.json`. The file is version 2: `enabled` must
+   be `true`, `secret` must be at least 32 characters
+   (`openssl rand -hex 24`), and each account stores a PBKDF2-SHA256 hash
+   rather than a password. Generate a hash with
+   `python3 deploy/migrate-ui-auth-v1-to-v2.py --emit-hash 'passphrase'`.
+   The example file's hashes are for `example-passphrase-not-for-production`
+   and `another-example-passphrase-not-for-production`; replace them. A
+   version-1 plaintext file is a hard startup error. Stop
+   `multiimageclient-ui` before migrating an existing production file: the
+   old binary cannot read version 2, and the new binary rejects version 1.
+   Then run
+   `python3 deploy/migrate-ui-auth-v1-to-v2.py /etc/multiimageclient/ui-auth.json`
+   (keeps `ui-auth.json.pre-hash-v1` until you verify login, then delete that
+   plaintext backup), deploy the new binary, and start the unit. Existing
+   cookies die at migration; everyone logs in again. Make both config files
+   `root:multiimageclient` mode `0640`; never commit either one.
+   - **Invalidate someone**: delete their account line, or replace their
+     `passwordHash`. Their saved browser cookie dies within ~1 second (the
+     file is re-read on change). No restart needed.
    - Blank `UiAuthFilePath` = auth off (local development unchanged).
+     `enabled: false` is rejected, not an open mode.
 3. **systemd**: create the unprivileged `multiimageclient` system user, then
    install `multiimageclient-ui.service`. It confines writes to
    `/var/lib/multiimageclient`, caps memory/CPU/I/O, and gives the process no

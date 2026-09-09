@@ -41,9 +41,10 @@ namespace MultiImageClient
                 settings,
                 options.InputImagePath,
                 pro: options.GrokApiPro,
-                aspectRatio: options.GrokApiEditAspectRatio);
+                aspectRatio: options.GrokApiEditAspectRatio,
+                quality: options.GrokApiPro ? "medium" : "");
 
-            var modelLabel = options.GrokApiPro ? "grok-imagine-image-pro" : "grok-imagine-image";
+            var modelLabel = options.GrokApiPro ? "grok-imagine-image-2.0" : "grok-imagine-image";
             var arLabel = string.IsNullOrWhiteSpace(options.GrokApiEditAspectRatio)
                 ? "source aspect ratio"
                 : options.GrokApiEditAspectRatio;

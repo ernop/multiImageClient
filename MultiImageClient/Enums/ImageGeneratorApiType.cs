@@ -34,9 +34,9 @@ namespace MultiImageClient
         RecraftV4 = 20,
         RecraftV4Pro = 21,
 
-        // xAI Grok Imagine (launched 2026-01-28). Two tiers:
-        //   GrokImagine     -> grok-imagine-image        ($0.02/image, 300 rpm)
-        //   GrokImaginePro  -> grok-imagine-image-pro    ($0.07/image,  30 rpm)
+        // xAI Grok Imagine. Stable enum values preserve stored identities:
+        //   GrokImagine     -> grok-imagine-image        (legacy 1.0)
+        //   GrokImaginePro  -> grok-imagine-image-2.0    (current model)
         GrokImagine = 22,
         GrokImaginePro = 23,
 

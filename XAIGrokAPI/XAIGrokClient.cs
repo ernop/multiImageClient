@@ -28,9 +28,9 @@ namespace XAIGrokAPIClient
     ///   * we return the raw response shape including usage.cost_in_usd_ticks
     ///     so callers can track actual spend.
     ///
-    /// Models supported (2026-04):
-    ///   grok-imagine-image       — $0.02/image, 300 rpm
-    ///   grok-imagine-image-pro   — $0.07/image, 30 rpm
+    /// Models supported (2026-09):
+    ///   grok-imagine-image       — legacy 1.0, $0.02/image
+    ///   grok-imagine-image-2.0   — current model, $0.04/image
     ///   grok-imagine-video       — async text/image -> video (mp4), 1-15s
     ///
     /// Docs: https://docs.x.ai/developers/model-capabilities/images/generation
@@ -41,6 +41,9 @@ namespace XAIGrokAPIClient
     {
         public const string DefaultBaseUrl = "https://api.x.ai/v1";
         public const string ModelGrokImagine = "grok-imagine-image";
+        public const string ModelGrokImagine2 = "grok-imagine-image-2.0";
+        // Retained only for archive parsing and explicit migration diagnostics.
+        // This alias redirects through the retiring quality model after 2026-11-02.
         public const string ModelGrokImaginePro = "grok-imagine-image-pro";
         public const string ModelGrokImagineVideo = "grok-imagine-video";
 
@@ -429,7 +432,7 @@ namespace XAIGrokAPIClient
         [JsonProperty("aspect_ratio")]
         public string? AspectRatio { get; set; }
 
-        /// "low" | "medium" | "high"
+        /// grok-imagine-image-2.0 only: "low" | "medium" | "auto".
         [JsonProperty("quality")]
         public string? Quality { get; set; }
 
@@ -472,6 +475,10 @@ namespace XAIGrokAPIClient
 
         [JsonProperty("aspect_ratio")]
         public string? AspectRatio { get; set; }
+
+        /// grok-imagine-image-2.0 only: "low" | "medium" | "auto".
+        [JsonProperty("quality")]
+        public string? Quality { get; set; }
 
         [JsonProperty("response_format")]
         public string? ResponseFormat { get; set; }

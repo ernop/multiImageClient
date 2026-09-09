@@ -2244,6 +2244,8 @@ namespace MultiImageClient
             ("4:3", 4, 3),
             ("9:16", 9, 16),
             ("16:9", 16, 9),
+            ("21:9", 21, 9),
+            ("5:2", 5, 2),
         };
 
         private static readonly (string Name, int Width, int Height)[] GoogleAspects =
@@ -2682,7 +2684,7 @@ namespace MultiImageClient
         // Composer + /api/jobs accept at most this many ordered input images.
         // gpt-image-2 /edits allows up to 16; four is enough for the A+B(+…)
         // gesture without turning the paste zone into a contact sheet.
-        public const int MaxInputImages = 4;
+        public const int MaxInputImages = 5;
         public const int SketchComposerStateVersion = 2;
         public const int SketchComposerStateVersionMin = 1;
         public const int SketchComposerMeaningCount = 8;
@@ -5466,7 +5468,7 @@ namespace MultiImageClient
                         {
                             return new GptImage2EditGenerator(
                                 _settings.OpenAIApiKey, maxConcurrency: 2,
-                                job.InputImagePaths,
+                                job.InputImagePaths.Take(4).ToArray(),
                                 size, quality, _stats, "ui",
                                 imageCount: 1,
                                 modelId: modelId,
@@ -5550,14 +5552,18 @@ namespace MultiImageClient
                         {
                             return new GrokImagineEditGenerator(
                                 _settings.XAIGrokApiKey, maxConcurrency: 1, _stats, _settings,
-                                inputImage: job.InputImagePath, pro: pro, aspectRatio: mappedAr);
+                                inputImage: job.InputImagePath,
+                                pro: pro,
+                                aspectRatio: mappedAr,
+                                quality: pro ? spec.Quality : "",
+                                inputImages: pro ? job.InputImagePaths : new[] { job.InputImagePath });
                         }
                         return new GrokImagineGenerator(
                             _settings.XAIGrokApiKey, 1,
                             pro ? ImageGeneratorApiType.GrokImaginePro : ImageGeneratorApiType.GrokImagine,
                             _stats, "ui",
                             aspectRatio: mappedAr == "" ? "auto" : mappedAr,
-                            quality: "high",
+                            quality: pro ? spec.Quality : "",
                             resolution: UiShapeMapping.GrokResolution(spec.Detail),
                             settings: _settings,
                             imageCount: 1);

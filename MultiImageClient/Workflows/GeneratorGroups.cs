@@ -99,7 +99,7 @@ namespace MultiImageClient
                 // RecraftV4ProRealisticPortrait(),
                 // RecraftAnyStyle(),           // legacy V3
                 // xAI Grok Imagine (launched 2026-01-28). Pro is 3.5x the price
-                // (~$0.07 vs $0.02) and rate-limited to 30 rpm vs 300 rpm, so
+                // ($0.08 for medium 2k vs $0.02), so
                 // we default to the cheap tier here and keep Pro as a toggle.
                 GrokImagine_Square(),
                 // GrokImaginePro_Square(),
@@ -668,49 +668,45 @@ namespace MultiImageClient
 
         // ---------- xAI Grok Imagine ----------
         //
-        // Two tiers, same REST endpoint:
-        //   grok-imagine-image       $0.02/image, 300 rpm
-        //   grok-imagine-image-pro   $0.07/image,  30 rpm
+        // Two models, same REST endpoint:
+        //   grok-imagine-image       legacy 1.0, $0.02/image
+        //   grok-imagine-image-2.0   current model, $0.04-$0.08/image
         //
         // aspect_ratio accepts the xAI-documented set ("1:1", "3:4", "4:3",
         // "16:9", "9:16", "2:3", "3:2", "9:19.5", "19.5:9", "9:20", "20:9",
-        // "1:2", "2:1", "auto"). quality is low|medium|high; resolution is
-        // 1k|2k. All other knobs (size, style) are explicitly unsupported by
-        // the xAI API and we do not send them.
+        // "1:2", "2:1", "21:9", "5:2", "auto"). The 2.0 model accepts
+        // low|medium|auto quality. The 1.0 model accepts no quality field.
 
-        // Standard-tier Grok Imagine defaults to the maximum quality and
-        // resolution this tier supports (high + 2k). Per xAI's pricing page
-        // resolution doesn't affect per-image price on the standard tier
-        // ($0.02 flat), so 2k is a free upgrade over 1k.
+        // The legacy model receives no unsupported quality field.
         public GrokImagineGenerator GrokImagine_Square() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "",
-                aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
+                aspectRatio: "1:1", quality: "", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         public GrokImagineGenerator GrokImagine1k_Square() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "1k",
-                aspectRatio: "1:1", quality: "high", resolution: "1k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
+                aspectRatio: "1:1", quality: "", resolution: "1k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         public GrokImagineGenerator GrokImagine_Wide() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "",
-                aspectRatio: "16:9", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
+                aspectRatio: "16:9", quality: "", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         public GrokImagineGenerator GrokImagine_Portrait() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImagine, _stats, "",
-                aspectRatio: "3:4", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
+                aspectRatio: "3:4", quality: "", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         public GrokImagineGenerator GrokImaginePro_Square() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImaginePro, _stats, "",
-                aspectRatio: "1:1", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
+                aspectRatio: "1:1", quality: "medium", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         public GrokImagineGenerator GrokImaginePro_Portrait() =>
             new GrokImagineGenerator(_settings.XAIGrokApiKey, _concurrency,
                 ImageGeneratorApiType.GrokImaginePro, _stats, "",
-                aspectRatio: "3:4", quality: "high", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
+                aspectRatio: "3:4", quality: "medium", resolution: "2k", settings: _settings, baseUrl: _settings.XAIBaseUrl);
 
         // ---------- xAI Grok Imagine VIDEO ----------
         //

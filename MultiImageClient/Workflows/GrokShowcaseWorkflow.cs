@@ -19,9 +19,9 @@ namespace MultiImageClient
     /// BatchWorkflow) — no prompts are hardcoded here.
     public class GrokShowcaseWorkflow
     {
-        /// <param name="pro">If true, routes through grok-imagine-image-pro
-        ///   ($0.07/img, 30 rpm) at 2k resolution. Otherwise uses
-        ///   grok-imagine-image ($0.02/img, 300 rpm) at 1k.</param>
+        /// <param name="pro">If true, routes through grok-imagine-image-2.0
+        ///   ($0.08/img) at medium quality and 2k resolution. Otherwise uses
+        ///   legacy grok-imagine-image ($0.02/img) at 2k.</param>
         /// <param name="limit">Max number of prompts from <paramref name="promptSource"/>
         ///   to run. Defaults to 10, which fits comfortably in the combined
         ///   grid and costs $0.20 on the cheap tier.</param>
@@ -62,12 +62,12 @@ namespace MultiImageClient
                 stats,
                 name: "",
                 aspectRatio: "1:1",
-                quality: "high",
+                quality: pro ? "medium" : "",
                 resolution: "2k",
                 settings: settings,
                 baseUrl: settings.XAIBaseUrl);
 
-            var modelLabel = pro ? "grok-imagine-image-pro" : "grok-imagine-image";
+            var modelLabel = pro ? "grok-imagine-image-2.0" : "grok-imagine-image";
             Logger.Log($"Grok API showcase: firing {prompts.Count} prompts at {modelLabel} (concurrency={concurrency}).");
 
             return await GeneratorContactSheetRunner.RunOneGeneratorAsync(

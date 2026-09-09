@@ -1,8 +1,15 @@
 {
+  "version": 2,
   "enabled": true,
-  "secret": "GENERATE-A-LONG-RANDOM-STRING-AND-KEEP-IT-STABLE (rotating it logs everyone out)",
+  "secret": "GENERATE-A-LONG-RANDOM-STRING-AT-LEAST-32-CHARS-AND-KEEP-IT-STABLE",
   "accounts": [
-    { "username": "you", "password": "a-long-passphrase-you-hand-out" },
-    { "username": "friend1", "password": "another-long-passphrase" }
+    {
+      "username": "you",
+      "passwordHash": "pbkdf2-sha256$600000$TbXgGpznyy9zdZR1b1SQyA==$dErfmtO1TQtggVd+OU0jPDX5AFxWVd4n2EDN8xYDj4Q="
+    },
+    {
+      "username": "friend1",
+      "passwordHash": "pbkdf2-sha256$600000$PyeSapscv6/lcjuZSddgIQ==$F3gTa/sAVsWNQEmgQ47vSwLnUyXQm65VajbzSHfE0Fg="
+    }
   ]
 }

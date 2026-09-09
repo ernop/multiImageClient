@@ -25,9 +25,10 @@ publish_staging="$owner_home/multiimageclient-publish-staging"
 source_settings="$repo/MultiImageClient/settings.json"
 template_nginx="$repo/deploy/nginx-multiimageclient.conf"
 template_service="$repo/deploy/multiimageclient-ui.service"
+hash_passwords="$repo/deploy/migrate-ui-auth-v1-to-v2.py"
 
 for required in "$publish_staging/MultiImageClient.dll" "$source_settings" \
-    "$template_nginx" "$template_service"; do
+    "$template_nginx" "$template_service" "$hash_passwords"; do
     [[ -e $required ]] || die "required staged file is missing: $required"
 done
 
@@ -126,19 +127,24 @@ install -o root -g multiimageclient -m 0640 \
     "$settings_tmp" /etc/multiimageclient/settings.json
 rm -f "$settings_tmp"
 
+hash_admin=$(python3 "$hash_passwords" --emit-hash "$admin_password")
+hash_a=$(python3 "$hash_passwords" --emit-hash "$a_password")
+hash_b=$(python3 "$hash_passwords" --emit-hash "$b_password")
+[[ -n $hash_admin && -n $hash_a && -n $hash_b ]] || die "password hashing failed"
 auth_tmp=$(mktemp)
 jq -n \
     --arg secret "$auth_secret" \
-    --arg admin "$admin_password" \
-    --arg a "$a_password" \
-    --arg b "$b_password" \
+    --arg admin "$hash_admin" \
+    --arg a "$hash_a" \
+    --arg b "$hash_b" \
     '{
+       version: 2,
        enabled: true,
        secret: $secret,
        accounts: [
-         { username: "ernie", password: $admin },
-         { username: "a", password: $a },
-         { username: "b", password: $b }
+         { username: "ernie", passwordHash: $admin },
+         { username: "a", passwordHash: $a },
+         { username: "b", passwordHash: $b }
        ]
      }' >"$auth_tmp"
 install -o root -g multiimageclient -m 0640 \

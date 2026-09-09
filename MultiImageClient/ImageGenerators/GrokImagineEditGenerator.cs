@@ -19,9 +19,10 @@ namespace MultiImageClient
         private readonly HttpClient _httpClient;
         private readonly MultiClientRunStats _stats;
         private readonly Settings _settings;
-        private readonly string _inputImage;
+        private readonly IReadOnlyList<string> _inputImages;
         private readonly string _model;
         private readonly string _aspectRatio;
+        private readonly string _quality;
         private readonly string _responseFormat;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GrokImagineEdit;
@@ -34,22 +35,31 @@ namespace MultiImageClient
             string inputImage,
             bool pro = false,
             string aspectRatio = "",
-            string responseFormat = "url")
+            string responseFormat = "url",
+            string quality = "",
+            IReadOnlyList<string>? inputImages = null)
         {
             _client = new XAIGrokClient(apiKey, baseUrl: settings.XAIBaseUrl);
             _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _stats = stats;
             _settings = settings;
-            _inputImage = inputImage;
-            _model = pro ? XAIGrokClient.ModelGrokImaginePro : XAIGrokClient.ModelGrokImagine;
+            _inputImages = inputImages ?? new[] { inputImage };
+            if (_inputImages.Count is < 1 or > 5 || _inputImages.Any(string.IsNullOrWhiteSpace))
+            {
+                throw new ArgumentException("Grok edit requires one to five identified input images.", nameof(inputImages));
+            }
+            _model = pro ? XAIGrokClient.ModelGrokImagine2 : XAIGrokClient.ModelGrokImagine;
             _aspectRatio = aspectRatio ?? string.Empty;
+            _quality = GrokImagineGenerator.NormalizeQuality(
+                pro ? ImageGeneratorApiType.GrokImaginePro : ImageGeneratorApiType.GrokImagine,
+                quality);
             _responseFormat = responseFormat;
         }
 
         public string GetFilenamePart(PromptDetails pd)
         {
-            var modelPart = _model == XAIGrokClient.ModelGrokImaginePro ? "grok-edit-pro" : "grok-edit";
+            var modelPart = _model == XAIGrokClient.ModelGrokImagine2 ? "grok-2-edit" : "grok-1-edit";
             var arPart = string.IsNullOrWhiteSpace(_aspectRatio) ? "" : $"_{_aspectRatio.Replace(':', 'x')}";
             return $"{modelPart}{arPart}";
         }
@@ -64,6 +74,7 @@ namespace MultiImageClient
                 InputImageLabel(),
             };
             if (!string.IsNullOrWhiteSpace(_aspectRatio)) parts.Add($"AR {_aspectRatio}");
+            if (!string.IsNullOrWhiteSpace(_quality)) parts.Add($"quality {_quality}");
             return parts;
         }
 
@@ -71,10 +82,20 @@ namespace MultiImageClient
         {
             var line = $"xAI Grok Imagine Edit  {_model}";
             if (!string.IsNullOrWhiteSpace(_aspectRatio)) line += $"  AR {_aspectRatio}";
+            if (!string.IsNullOrWhiteSpace(_quality)) line += $"  q:{_quality}";
             return line;
         }
 
-        public decimal GetCost() => _model == XAIGrokClient.ModelGrokImaginePro ? 0.07m : 0.02m;
+        public decimal GetCost()
+        {
+            if (_model != XAIGrokClient.ModelGrokImagine2)
+            {
+                return 0.02m;
+            }
+            // Edit auto currently serves medium. The UI does not send edit
+            // resolution, so xAI uses 1k: low=$0.04, medium=$0.06.
+            return _quality == "low" ? 0.04m : 0.06m;
+        }
 
         public async Task<TaskProcessResult> ProcessPromptAsync(IImageGenerator generator, PromptDetails promptDetails)
         {
@@ -84,19 +105,25 @@ namespace MultiImageClient
             {
                 _stats.GrokImageGenerationRequestCount++;
                 var prompt = promptDetails.Prompt ?? string.Empty;
-                var imageInput = await BuildImageInputAsync(_inputImage);
+                var imageInputs = new List<XAIGrokImageInput>(_inputImages.Count);
+                foreach (var inputImage in _inputImages)
+                {
+                    imageInputs.Add(await BuildImageInputAsync(inputImage));
+                }
 
                 var req = new XAIGrokEditRequest
                 {
                     Prompt = prompt,
                     Model = _model,
-                    Image = imageInput,
+                    Image = imageInputs.Count == 1 ? imageInputs[0] : null,
+                    Images = imageInputs.Count > 1 ? imageInputs : null,
                     AspectRatio = string.IsNullOrWhiteSpace(_aspectRatio) ? null : _aspectRatio,
+                    Quality = string.IsNullOrWhiteSpace(_quality) ? null : _quality,
                     ResponseFormat = string.IsNullOrWhiteSpace(_responseFormat) ? null : _responseFormat,
                     N = 1,
                 };
 
-                Logger.Log($"\t-> Grok Edit [{_model}] input={InputImageLabel()} AR={(_aspectRatio == "" ? "source" : _aspectRatio)}: {prompt}");
+                Logger.Log($"\t-> Grok Edit [{_model}] input={InputImageLabel()} AR={(_aspectRatio == "" ? "source" : _aspectRatio)} q={(_quality == "" ? "model default" : _quality)}: {prompt}");
                 var response = await _client.EditAsync(req);
                 sw.Stop();
                 LogModerationMetadata(response);
@@ -258,13 +285,18 @@ namespace MultiImageClient
 
         private string InputImageLabel()
         {
-            if (Uri.TryCreate(_inputImage, UriKind.Absolute, out var uri)
+            if (_inputImages.Count > 1)
+            {
+                return $"{_inputImages.Count} reference images";
+            }
+            var inputImage = _inputImages[0];
+            if (Uri.TryCreate(inputImage, UriKind.Absolute, out var uri)
                 && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
             {
                 return uri.Host;
             }
 
-            return Path.GetFileName(Settings.ExpandPath(_inputImage));
+            return Path.GetFileName(Settings.ExpandPath(inputImage));
         }
 
         private static string GuessImageMimeType(string path)

@@ -49,7 +49,7 @@ namespace MultiImageClient
                 && error.Contains("request rejected by anti-bot rules", StringComparison.Ordinal))
             {
                 return new Hint(
-                    "grok.com rejected automated consumer-web access — use grok-api or grok-api pro through the official api.x.ai image-edit endpoint, or use grok.com interactively",
+                    "grok.com rejected automated consumer-web access — use grok-api or grok-api 2.0 through the official api.x.ai image-edit endpoint, or use grok.com interactively",
                     "https://docs.x.ai/developers/model-capabilities/images/editing");
             }
             var billing = ContainsAny(error, BillingMarkers);

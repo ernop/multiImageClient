@@ -40,9 +40,13 @@ auth_path = pathlib.Path("/etc/multiimageclient/ui-auth.json")
 credentials_path = pathlib.Path(owner_entry.pw_dir) / "multiimageclient-credentials.txt"
 
 auth = json.loads(auth_path.read_text())
+if auth.get("version") != 2 or auth.get("enabled") is not True:
+    fail("auth file must be version 2 with enabled=true")
 accounts = auth.get("accounts")
 if not isinstance(accounts, list):
     fail("auth file has no accounts array")
+if any("password" in account for account in accounts if isinstance(account, dict)):
+    fail("auth file still has plaintext password fields; migrate to passwordHash first")
 existing = [account.get("username") for account in accounts]
 for old in mapping:
     if existing.count(old) != 1:
