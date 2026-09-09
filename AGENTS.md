@@ -1,4 +1,4 @@
-﻿# MultiImageClient - Agent Entry Point
+# MultiImageClient - Agent Entry Point
 
 Start here. Read this file and the linked documents before doing anything.
 
@@ -8,7 +8,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 
 ## Also Read
 
-- [docs/workspaces-prd.md](docs/workspaces-prd.md) — **2026-09-09:** one global account system, exactly admin/normal levels, existing `ernieMultiZone` as sole admin. Preserve the original environment and credentials. Add **Vibecoders AI Generation** at the chosen URL name `vibecoders-ai-generation`. Administration manages names, titles, membership, features, provider defaults, login links, and account activity. Separate data stores; normal members see shared environment activity, not raw logs or administration. Production installation pending.
+- [docs/workspaces-prd.md](docs/workspaces-prd.md) — **2026-09-09:** one global account system, exactly admin/normal levels, existing `ernieMultiZone` as sole admin. Preserve the original environment and credentials. Add **Vibecoders AI Generation** at the chosen URL name `vibecoders-ai-generation`. Administration manages names, titles, membership, features, provider defaults, login links, and account activity. Separate data stores; normal members see shared environment activity, not raw logs or administration. Activated in production; existing credentials and history preserved.
 
 - [.cursorrules](.cursorrules) — communication style, XML docs policy, namespace rules, constants philosophy
 - [.cursor/rules/writing-register-ste100.mdc](.cursor/rules/writing-register-ste100.mdc) — **mandatory writing register for all agent output**: no praise; Simplified Technical English ASD-STE100; max 20 words per sentence; one fact per sentence; active voice; instructions start with a verb; no undefined jargon; DataColada/Gelman rigor over textbook consensus; 3Blue1Brown/Deutsch standard for math and natural science; Scott Alexander epistemics in succinct prose

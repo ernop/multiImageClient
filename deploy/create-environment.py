@@ -170,6 +170,13 @@ def run(*args):
     require(result.returncode == 0, f"Command failed: {args[0]}. Inspect its diagnostics privately on the server.")
 
 
+def create_configuration_directory(path, group):
+    path.mkdir(mode=0o750)
+    os.chown(path, 0, group)
+    # systemd's UMask=0077 otherwise turns mkdir(0750) into 0700.
+    os.chmod(path, 0o750)
+
+
 def install(args):
     require(sys.platform == "linux" and os.geteuid() == 0, "Installation requires Linux root.")
     import pwd
@@ -218,7 +225,7 @@ def install(args):
     run("useradd", "--system", "--user-group", "--home-dir", str(data), "--shell", "/usr/sbin/nologin", account)
     if manifest.get("managed"): run("usermod", "-a", "-G", "mic-auth", account)
     user = pwd.getpwnam(account)
-    config.mkdir(mode=0o750); os.chown(config, 0, user.pw_gid)
+    create_configuration_directory(config, user.pw_gid)
     shutil.copyfile(bundle / "manifest.json", config / "manifest.json"); os.chmod(config / "manifest.json", 0o600)
     data.mkdir(mode=0o750); os.chown(data, user.pw_uid, user.pw_gid)
     for subdir in ("saves", "logs"):
@@ -280,7 +287,9 @@ WantedBy=multi-user.target
     require(ready, "The new environment failed its health check. Its public route was not installed.")
     include.write_text(locations(manifest)); os.chmod(include, 0o600)
     # Preserve the old file for exact recovery. Never print its contents or private routes.
-    backup = site.with_name(site.name + ".before-" + service)
+    backup_root = Path("/etc/nginx/multiimageclient-backups")
+    backup_root.mkdir(mode=0o700, exist_ok=True)
+    backup = backup_root / (site.name + ".before-" + service)
     require(not backup.exists(), "The nginx backup already exists.")
     shutil.copy2(site, backup)
     try:

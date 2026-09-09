@@ -1,9 +1,11 @@
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("environments", Path(__file__).with_name("create-environment.py"))
 environments = importlib.util.module_from_spec(spec)
@@ -11,6 +13,19 @@ spec.loader.exec_module(environments)
 
 
 class EnvironmentPreparationTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "Unix service permissions")
+    def test_configuration_remains_group_readable_under_service_umask(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config"
+            previous = os.umask(0o077)
+            try:
+                with patch.object(environments.os, "chown") as chown:
+                    environments.create_configuration_directory(path, 42)
+                    chown.assert_called_once_with(path, 0, 42)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o750)
+            finally:
+                os.umask(previous)
+
     def test_preparation_does_not_copy_users_data_or_personal_settings(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

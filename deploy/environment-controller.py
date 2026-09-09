@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import types
+import urllib.request
 
 ROOT = Path('/var/lib/multiimageclient-control')
 SETTINGS = Path('/etc/multiimageclient/settings.json')
@@ -111,6 +112,10 @@ def reconcile():
                     provision.install(types.SimpleNamespace(bundle=str(bundle), publish=str(PUBLISH)))
                 manifest = json.loads(manifest_path.read_text())
                 provision.require(manifest['id'] == ident and manifest.get('managed') is True, 'Environment identity mismatch.')
+                include = Path('/etc/nginx') / (service + '.locations')
+                provision.require(include.is_file(), 'Environment installation is incomplete. Its public route has not been installed.')
+                with urllib.request.urlopen(f"http://127.0.0.1:{manifest['port']}/healthz", timeout=5) as response:
+                    provision.require(response.status == 200, 'The environment failed its health check.')
                 if manifest['privatePath'] != env['slug']:
                     manifest['privatePath'] = env['slug']
                     include = Path('/etc/nginx') / (service + '.locations')

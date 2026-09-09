@@ -1,7 +1,7 @@
 # Separate workspaces and personal login links
 
 Date: 2026-09-08, America/Los_Angeles.
-Status: global-account implementation tested locally; production installation pending.
+Status: activated in production on 2026-09-09; both environments verified through the public hostname.
 
 A workspace is one isolated tenant, also called an image-making studio.
 The current production site is the first tenant.
@@ -302,6 +302,18 @@ They are not the selected production architecture.
 The .NET suite passed with 319 tests during implementation.
 The two-server Chrome check passed for global owner login, normal membership, shared activity, and private administrative routes.
 It also verified editable titles, disabled feature APIs, persistent login records, and password/link identity.
-The three Python preparation tests passed.
+Four Python tests passed on Linux, including configuration access under the controller service umask.
 No paid provider calls were made during these checks.
-Production installation and both public-site checks remain pending.
+Production activation completed on 2026-09-09.
+Both public configuration endpoints accepted the existing owner identity and reported the admin level.
+The canonical account file exactly matched the pre-migration hashes and signing secret.
+The original three accounts and 1,317 job records remained intact.
+The new environment reported zero jobs at verification.
+A normal original member retained original access and received 403 from the new environment and raw logs.
+A real administration save succeeded with the shared registry permissions.
+
+The first installation exposed a restrictive-umask issue: the configuration directory became 0700 instead of 0750.
+Provisioning now explicitly restores group traversal after directory creation.
+Nginx backups live outside sites-enabled to avoid duplicate configuration through wildcard includes.
+The controller requires the new route include and a successful loopback health check before reporting ready.
+These checks prevent an interrupted installation's early manifest from being mistaken for completed provisioning.
