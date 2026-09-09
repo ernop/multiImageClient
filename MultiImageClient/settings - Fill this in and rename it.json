@@ -38,6 +38,8 @@
   "UiCommunityDbPath": "",
   "DiscordVibecodersWebhookUrl": "",
   "UiPublicBaseUrl": "",
+  "FableBotDiscordBotToken": "",
+  "FableBotDiscordChannelId": "",
   "EnableLogging": true,
   "AnnotationSide": "right",
   "FlatImageMirrorPath": "",
