@@ -256,6 +256,7 @@ public sealed class UiCommunityTests
                 Login = "alice-login",
                 ShowImageSection = true,
                 ShowDescribeSection = false,
+                DefaultView = "only-sota",
                 HiddenGeneratorKeys = new List<string> { "gpt1", "describe-grok" },
                 DefaultSelectedKeys = new List<string> { "gpt2", "recraft" },
                 Presets = new List<UiGeneratorPresetRecord>
@@ -274,6 +275,7 @@ public sealed class UiCommunityTests
             Assert.NotNull(reopened);
             Assert.True(reopened.ShowImageSection);
             Assert.False(reopened.ShowDescribeSection);
+            Assert.Equal("only-sota", reopened.DefaultView);
             Assert.Equal(new[] { "gpt1", "describe-grok" }, reopened.HiddenGeneratorKeys);
             Assert.Equal(new[] { "gpt2", "recraft" }, reopened.DefaultSelectedKeys);
             var preset = Assert.Single(reopened.Presets);

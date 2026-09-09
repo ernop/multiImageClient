@@ -4,10 +4,10 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '../MultiImageClient/Ui/wwwroot');
 const schema = require(root + '/personal-config.js');
-const generators = Array.from({length:10}, (_,i)=>({key:'image-'+i,label:'Image Model '+i,detail:'Fixture model',kind:'image',available:true,defaultOn:i===0,standardGroupIds:['all'],imageCapable:i%2===0}));
+const generators = Array.from({length:10}, (_,i)=>({key:'image-'+i,label:'Image Model '+i,detail:'Fixture model',kind:'image',available:true,defaultOn:i===0,standardGroupIds:i<3?['all','only-sota']:['all'],imageCapable:i%2===0}));
 generators.push({key:'offline',label:'Offline Model',kind:'image',available:false,standardGroupIds:['all']}, {key:'video',label:'Video Model',kind:'video',available:true,requiresImage:true,standardGroupIds:['all']}, {key:'describe',label:'Describe Model',kind:'describe',available:true,requiresImage:true,standardGroupIds:[]});
 const initial = {showImageSection:true,showDescribeSection:true,hiddenGeneratorKeys:['image-2'],defaultSelectedKeys:['image-1'],presets:[{id:'pair',name:'Pair',generatorKeys:['image-1','image-3']}],endpointConfigurations:[]};
-const config = {clientInstanceId:"a".repeat(32),defaults:{shape:"auto",detail:"standard",quality:"high",moderation:"low",n:1},generators,standardGeneratorGroups:[{id:'all',name:'All models'}],auth:{enabled:false},generatorEndpointConfiguration:{maxExtraTextChars:16000,maxNotesChars:16000,maxConfigurationTotalChars:128000},goalLoop:{managers:[{key:'manager',label:'Manager',available:true,detail:'Fixture'}],maxGenerators:8,maxCritics:6,defaultMaxTurns:6,maxTurnsCap:30,maxGoalChars:10000,runningCount:0},shapes:[{key:'auto',label:'auto'}],details:[{key:'standard',label:'standard'}]};
+const config = {clientInstanceId:"a".repeat(32),defaults:{shape:"auto",detail:"standard",quality:"high",moderation:"low",n:1},generators,standardGeneratorGroups:[{id:'only-sota',name:'only SOTA'},{id:'all',name:'All models'}],auth:{enabled:false},generatorEndpointConfiguration:{maxExtraTextChars:16000,maxNotesChars:16000,maxConfigurationTotalChars:128000},goalLoop:{managers:[{key:'manager',label:'Manager',available:true,detail:'Fixture'}],maxGenerators:8,maxCritics:6,defaultMaxTurns:6,maxTurnsCap:30,maxGoalChars:10000,runningCount:0},shapes:[{key:'auto',label:'auto'}],details:[{key:'standard',label:'standard'}]};
 (async()=>{
  const browser = await chromium.launch({headless:true});
  try {
@@ -27,7 +27,12 @@ const config = {clientInstanceId:"a".repeat(32),defaults:{shape:"auto",detail:"s
   return route.fulfill({status:404,body:'Missing fixture route'});
  });
  await page.goto('https://chooser.test/goal.html');
- await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===10);
+ await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===3);
+ assert.equal(await page.getByRole('button',{name:'only SOTA',exact:true}).getAttribute('aria-pressed'),'true');
+ await page.getByRole('button',{name:'all models',exact:true}).click();
+ assert.equal(await page.locator('#gens-row input').count(),10);
+ await page.getByRole('button',{name:'only SOTA',exact:true}).click();
+ assert.equal(await page.locator('#gens-row input').count(),3);
  await page.evaluate(p=>MultiImagePersonalConfiguration.saveGeneratorPreferences(localStorage,p),initial);
  await page.reload();
  await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===9);
@@ -64,7 +69,7 @@ const config = {clientInstanceId:"a".repeat(32),defaults:{shape:"auto",detail:"s
  assert.deepEqual(await selected(),['image-4','image-5']);
  await page.setViewportSize({width:390,height:844});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
- await page.screenshot({path:'/tmp/goal-generator-chooser.png',fullPage:true});
+ await page.screenshot({path:require('node:os').tmpdir()+'/goal-generator-chooser.png',fullPage:true});
  // Account settings take precedence. Failed saves preserve local and active state.
  authenticated=true;
  await page.reload(); await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===9);
@@ -93,6 +98,26 @@ const config = {clientInstanceId:"a".repeat(32),defaults:{shape:"auto",detail:"s
  await page.locator('#generator-config-toggle').click();
  await page.locator('[data-generator-config-view="defaults"]').click();
  assert.equal(await page.locator('#generator-config-dialog').isVisible(),true);
+ // A fresh composer uses the same restricted view, including after attaching an image.
+ await page.evaluate(()=>localStorage.clear());
+ await page.reload();
+ await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===3);
+ await page.locator('#file-input').setInputFiles({name:'pixel.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII=','base64')});
+ assert.equal(await page.locator('#describe-section').isVisible(),false);
+ await page.locator('#gens-enable-all').click();
+ assert.equal((await selected()).length,3);
+ await page.getByRole('button',{name:'all models',exact:true}).click();
+ assert.equal(await page.locator('#describe-row input').count(),1);
+ await page.locator('#generator-config-toggle').click();
+ assert.equal(await page.locator('#generator-config-shown input').count(),13);
+ await page.locator('#generator-config-default-view').selectOption('all');
+ await page.locator('#generator-config-save').click();
+ await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===11);
+ assert.equal(await page.getByRole('button',{name:'all models',exact:true}).getAttribute('aria-pressed'),'true');
+ authenticated=true; accountPreferences={...initial,defaultView:'only-sota'};
+ await page.reload();
+ await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===2);
+ assert.deepEqual(await selected(),['image-1']);
  assert.deepEqual(errors,[]);
  console.log('Goal chooser: groups, defaults, visibility, account precedence, failed saves, cap, and mobile layout passed.');
  } finally {await browser.close();}

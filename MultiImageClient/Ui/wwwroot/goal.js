@@ -151,7 +151,7 @@ function renderGoalGeneratorPicker(checkedKeys = generatorPreferences.defaultSel
   gensRow.replaceChildren();
   for (const generator of generators) {
     if (!generator.available || generator.kind !== "image" || generator.requiresImage ||
-        generatorPreferences.hiddenGeneratorKeys.includes(generator.key)) continue;
+        generatorPreferences.hiddenGeneratorKeys.includes(generator.key) || !generatorInActiveView(generator)) continue;
     const chip = buildGenChip(generator);
     const box = chip.querySelector("input");
     box.checked = checkedKeys.includes(generator.key) && generatorPreferences.showImageSection;
@@ -169,6 +169,7 @@ async function generatorPreferencesSaved(normalized) {
   PersonalConfigurationSchema.saveGeneratorPreferences(localStorage, normalized);
   const selected = selectedGeneratorKeys();
   generatorPreferences = normalized;
+  activeGeneratorView = normalized.defaultView;
   renderGoalGeneratorPicker(selected);
 }
 initializeGeneratorControls();
@@ -246,6 +247,7 @@ async function loadConfig() {
   generatorEndpointConfiguration = config.generatorEndpointConfiguration;
   standardGeneratorGroups = normalizeStandardGeneratorGroups(config.standardGeneratorGroups);
   generatorPreferences = loadGeneratorPreferences(config);
+  activeGeneratorView = generatorPreferences.defaultView;
   renderGoalGeneratorPicker();
 
   const managers = (config.goalLoop.managers || []).filter((m) => m.available).map((m) => ({

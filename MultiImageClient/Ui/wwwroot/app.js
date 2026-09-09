@@ -508,6 +508,7 @@ async function loadConfig() {
   }
   authInfo = cfg.auth || authInfo;
   generatorPreferences = loadGeneratorPreferences(cfg);
+  activeGeneratorView = generatorPreferences.defaultView;
   migrateLegacyGpt2GuidancePreference(generatorPreferences);
   if (storedPersonalConfigurationError) {
     throw storedPersonalConfigurationError;
@@ -583,6 +584,13 @@ async function loadConfig() {
   // Media generators and describe endpoints render as separate sections; the
   // describe chips only become selectable while an image is attached
   // (updateGeneratorCompatibility enforces it, matching the server's rule).
+  renderComposerGeneratorPicker(generatorPreferences.defaultSelectedKeys);
+  persistPersonalConfigurationSnapshot();
+  removeLegacyPersonalConfigurationStorage();
+}
+
+function renderComposerGeneratorPicker(checkedKeys = allGeneratorInputs().filter((cb) => cb.checked).map((cb) => cb.value)) {
+  const selected = new Set(checkedKeys);
   gensRow.innerHTML = "";
   describeRow.innerHTML = "";
   const hiddenGeneratorKeys = new Set(generatorPreferences.hiddenGeneratorKeys);
@@ -590,16 +598,17 @@ async function loadConfig() {
     // The composer is an action surface, so omit targets that cannot be
     // selected. The preferences dialog still lists unavailable targets with
     // their configuration problem so users can manage future availability.
-    if (hiddenGeneratorKeys.has(g.key) || !g.available) continue;
-    (g.kind === "describe" ? describeRow : gensRow).appendChild(buildGenChip(g));
+    if (hiddenGeneratorKeys.has(g.key) || !g.available || !generatorInActiveView(g)) continue;
+    const chip = buildGenChip(g);
+    chip.querySelector("input").checked = selected.has(g.key);
+    chip.classList.toggle("checked", selected.has(g.key));
+    (g.kind === "describe" ? describeRow : gensRow).appendChild(chip);
   }
   renderGeneratorPresetButtons();
   applyGeneratorSectionVisibility();
   // Visibility (needs an attached image + at least one describe target) is
   // owned by updateGeneratorCompatibility, called next.
   updateGeneratorCompatibility();
-  persistPersonalConfigurationSnapshot();
-  removeLegacyPersonalConfigurationStorage();
 }
 
 function hasInputImages() {

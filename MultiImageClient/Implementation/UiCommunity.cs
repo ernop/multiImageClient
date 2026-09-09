@@ -85,6 +85,7 @@ namespace MultiImageClient
 
     public sealed class UiGeneratorPreferencesRecord
     {
+        public string DefaultView { get; init; } = "all";
         public string Login { get; init; } = "";
         public bool ShowImageSection { get; init; } = true;
         public bool ShowDescribeSection { get; init; } = true;
@@ -238,6 +239,7 @@ namespace MultiImageClient
                         ON ui_claude_prompt_exchanges(identity_key, requested_at_unix_ms DESC);
                     """;
                 command.ExecuteNonQuery();
+                EnsureColumn(connection, "ui_generator_preferences", "default_view", "TEXT NOT NULL DEFAULT 'all'");
                 EnsureColumn(
                     connection,
                     "ui_generator_preferences",
@@ -262,7 +264,7 @@ namespace MultiImageClient
                     SELECT show_image_section, show_describe_section,
                            hidden_generator_keys_json, default_selected_keys_json,
                            presets_json, endpoint_configurations_json,
-                           updated_at_unix_ms
+                           updated_at_unix_ms, default_view
                     FROM ui_generator_preferences
                     WHERE login = $login;
                     """;
@@ -288,6 +290,7 @@ namespace MultiImageClient
                                 reader.GetString(5))
                             ?? new List<UiGeneratorEndpointConfigurationRecord>(),
                         UpdatedAtUnixMs = reader.GetInt64(6),
+                        DefaultView = reader.GetString(7),
                     };
                 }
                 catch (JsonException ex)
@@ -315,11 +318,12 @@ namespace MultiImageClient
                         login, show_image_section, show_describe_section,
                         hidden_generator_keys_json, default_selected_keys_json,
                         presets_json, endpoint_configurations_json,
-                        updated_at_unix_ms)
+                        updated_at_unix_ms, default_view)
                     VALUES(
                         $login, $showImage, $showDescribe, $hidden, $selected,
-                        $presets, $endpointConfigurations, $updated)
+                        $presets, $endpointConfigurations, $updated, $defaultView)
                     ON CONFLICT(login) DO UPDATE SET
+                        default_view = excluded.default_view,
                         show_image_section = excluded.show_image_section,
                         show_describe_section = excluded.show_describe_section,
                         hidden_generator_keys_json = excluded.hidden_generator_keys_json,
@@ -329,6 +333,7 @@ namespace MultiImageClient
                         updated_at_unix_ms = excluded.updated_at_unix_ms;
                     """;
                 command.Parameters.AddWithValue("$login", login);
+                command.Parameters.AddWithValue("$defaultView", preferences.DefaultView);
                 command.Parameters.AddWithValue("$showImage", preferences.ShowImageSection ? 1 : 0);
                 command.Parameters.AddWithValue("$showDescribe", preferences.ShowDescribeSection ? 1 : 0);
                 command.Parameters.AddWithValue("$hidden", JsonSerializer.Serialize(preferences.HiddenGeneratorKeys));

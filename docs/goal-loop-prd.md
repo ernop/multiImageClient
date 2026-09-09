@@ -73,6 +73,7 @@ after editing the text of that message.
 | R25 (2026-09-05) | Reusable visual artifacts for every group image loop | Every loop provides best/latest/all/per-generator browsing, named contributors, fullscreen viewing, compact PNG pages, and portable HTML export. |
 | R26 (2026-09-05) | Usable goal selectors | Hide unavailable models. Let the user resize the left picker with pointer or keyboard. |
 | R27 (2026-09-05) | Astra critic | Offer GPT-6 Astra through the shared manager/critic catalog and existing OpenAI key. |
+| R28a (2026-09-08) | Default model view | New users start with only SOTA on both shared pickers. Other views and full configuration remain accessible. |
 | R28 (2026-09-05) | Shared generator chooser | Reuse the composer’s buttons, standard and personal groups, defaults, visibility settings, and configuration dialog. |
 
 ## 3. Settled decisions
@@ -573,12 +574,53 @@ The existing large all-turns sheet remains available beside the recap.
 The recap supplies a standard artifact view, rather than a separate one-time fruit page.
 Exports do not publish a website or change access to the production application.
 
+### Default model view (2026-09-08)
+
+New users start with the **only SOTA** view in the composer and goal setup.
+This view contains exactly six image generators:
+
+| Display name | Catalog key |
+|---|---|
+| Nano Banana 2 | `google` |
+| GPT Image 2.5 Sunburst | `gpt25-sunburst` |
+| GPT Image 2.5 Flare | `gpt25-flare` |
+| grok-web | `grok-web` |
+| grok-api 2.0 | `grok-api-pro` |
+| Ideogram V4 | `ideogram` |
+
+The owner narrowed Grok membership to grok-web and grok-api 2.0.
+The view reduces the choices that new users must inspect.
+It applies with text, attached images, and composition maps.
+Normal availability and input compatibility rules still apply.
+Describers and other models remain outside this view.
+Bulk controls act only on models in the current view.
+Changing views removes selections outside the new view.
+The **all models** button restores the configured catalog without selecting additional models.
+Standard and personal group buttons provide direct access to their models.
+Individually hidden models remain hidden until restored in configuration.
+The configuration dialog lists every generator and describer, including unavailable endpoints.
+Its default-view setting offers **only SOTA** and **all models**.
+New default selections retain only existing default-on models within the SOTA set.
+View membership does not make every displayed model default-on.
+Saved preferences without a default view retain their previous **all models** behavior.
+Existing users can select the new view or save it as their default.
+
+The API adds `only-sota` to `standardGeneratorGroups` and publishes exact memberships through `standardGroupIds`.
+Generator preferences add `defaultView`, accepting `only-sota` or `all`.
+Account storage adds `ui_generator_preferences.default_view`, with `all` for existing records.
+Browser storage and portable configuration preserve this field through the existing preferences document.
+Temporary view changes last until reload; the saved default controls fresh pages.
+Tests cover both pages, attachment behavior, account persistence, legacy preferences, and access to the complete catalog.
+
+Implementation: `generator-chooser.js`, `app.js`, `goal.js`, `style.css`, `UiWorkflow.cs`, and `UiCommunity.cs`.
+Validation: `tools/test-generator-chooser.cjs` and `UiCommunityTests`.
+
 ### Shared generator chooser (2026-09-05)
 
 The goal setup and main composer use `generator-chooser.js` for generator chips and selection controls.
 Both pages use the same standard groups from `/api/config` and the same editable personal groups.
 Both expose Enable all, Disable all, Toggle all, Default, and the configuration dialog.
-Group buttons replace the current selection with that group’s eligible, visible generators.
+Group buttons show their eligible generators and replace the current selection with those generators.
 Hidden and unavailable generators remain absent from the picker.
 Goal loops also exclude videos, describe targets, and generators requiring an input image.
 The configuration dialog retains the complete catalog so settings apply consistently across both pages.

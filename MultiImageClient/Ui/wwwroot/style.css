@@ -929,6 +929,11 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 }
 #gen-controls button:hover { color: #fff; background: var(--accent); }
 #gen-personal-presets { display: contents; }
+#gen-personal-presets button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--card);
+}
 .preference-hidden { display: none !important; }
 #generator-config-toggle { min-width: 28px; padding-inline: 6px !important; }
 

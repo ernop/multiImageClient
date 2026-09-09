@@ -2,12 +2,33 @@
 // Shared composer and goal-loop chooser. Page adapters supply catalog, preferences,
 // eligible input rows, count updates, and persistence.
 
+let activeGeneratorView = null;
+
+function generatorInActiveView(generator) {
+  if (!activeGeneratorView || activeGeneratorView === "all") return true;
+  const group = activeGeneratorView.startsWith("personal:")
+    ? generatorPreferences.presets.find((group) => group.id === activeGeneratorView.slice(9))
+    : standardGeneratorGroups.find((group) => group.id === activeGeneratorView);
+  if (!group) throw new Error("Unknown generator view " + activeGeneratorView);
+  return group.generatorKeys.includes(generator.key);
+}
+
+function changeGeneratorView(view) {
+  activeGeneratorView = view;
+  if (typeof renderGoalGeneratorPicker === "function") {
+    renderGoalGeneratorPicker(selectedGeneratorKeys());
+  } else {
+    renderComposerGeneratorPicker();
+  }
+}
+
 function defaultGeneratorPreferences() {
   return {
+    defaultView: "only-sota",
     showImageSection: true,
     showDescribeSection: true,
     hiddenGeneratorKeys: [],
-    defaultSelectedKeys: generators.filter((g) => g.defaultOn).map((g) => g.key),
+    defaultSelectedKeys: generators.filter((g) => g.defaultOn && g.standardGroupIds.includes("only-sota")).map((g) => g.key),
     presets: [],
     endpointConfigurations: [],
   };
@@ -61,6 +82,9 @@ function normalizeStandardGeneratorGroups(rawGroups) {
 }
 
 function normalizeGeneratorPreferences(raw) {
+  if (raw?.defaultView !== undefined && !["all", "only-sota"].includes(raw.defaultView)) {
+    throw new Error("generator default view is malformed");
+  }
   const known = new Set(generators.map((g) => g.key));
   const imageKeys = new Set(generators.filter((g) => g.kind !== "describe").map((g) => g.key));
   if (!raw || typeof raw !== "object") throw new Error("generator preferences are malformed");
@@ -146,6 +170,7 @@ function normalizeGeneratorPreferences(raw) {
     endpointConfigurations.push({ key: configuration.key, extraText, notes });
   }
   return {
+    defaultView: raw.defaultView ?? "all",
     showImageSection: raw.showImageSection,
     showDescribeSection: raw.showDescribeSection,
     hiddenGeneratorKeys,
@@ -275,6 +300,12 @@ function applyGeneratorPreset(preset, { includeDescribe = false } = {}) {
 function renderGeneratorPresetButtons() {
   const host = el("gen-personal-presets");
   host.replaceChildren();
+  const all = document.createElement("button");
+  all.type = "button";
+  all.textContent = "all models";
+  all.setAttribute("aria-pressed", String(activeGeneratorView === "all"));
+  all.addEventListener("click", () => changeGeneratorView("all"));
+  host.appendChild(all);
   const standardSignatures = new Set();
   const appendButton = (preset, standard) => {
     const button = document.createElement("button");
@@ -284,7 +315,12 @@ function renderGeneratorPresetButtons() {
     button.title = standard
       ? `Set the complete image-generator selection to standard group “${preset.name}”`
       : `Set the complete image-generator selection to personal group “${preset.name}”`;
-    button.addEventListener("click", () => applyGeneratorPreset(preset));
+    const view = standard ? preset.id : "personal:" + preset.id;
+    button.setAttribute("aria-pressed", String(activeGeneratorView === view));
+    button.addEventListener("click", () => {
+      changeGeneratorView(view);
+      applyGeneratorPreset(preset);
+    });
     host.appendChild(button);
   };
   const signature = (preset) =>
@@ -322,7 +358,12 @@ function initializeGeneratorConfig() {
       <button type="button" role="tab" data-generator-config-view="endpoint" aria-selected="false">per endpoint</button>
     </div>
     <section id="generator-config-shown-panel" class="generator-config-panel" role="tabpanel">
-      <p>Toggle which targets appear in your generator pickers. Hidden targets can only be restored here.</p>
+      <label>Default view <select id="generator-config-default-view">
+        <option value="only-sota">only SOTA</option>
+        <option value="all">all models</option>
+      </select></label>
+      <p>Switch views above the picker. Configure all generators and describers here.</p>
+      <p>Individually hidden targets can only be restored here.</p>
       <div class="generator-config-sections">
         <label><input id="generator-config-show-image" type="checkbox"> show image-generation section</label>
         <label><input id="generator-config-show-describe" type="checkbox"> show describe section when images are attached</label>
@@ -374,6 +415,7 @@ let generatorConfigActiveEndpointKey = null;
 
 function copyGeneratorPreferences(source) {
   return {
+    defaultView: source.defaultView,
     showImageSection: source.showImageSection,
     showDescribeSection: source.showDescribeSection,
     hiddenGeneratorKeys: [...source.hiddenGeneratorKeys],
@@ -714,6 +756,7 @@ function setGeneratorConfigView(view) {
 }
 
 function renderGeneratorConfig() {
+  el("generator-config-default-view").value = generatorConfigDraft.defaultView;
   el("generator-config-show-image").checked = generatorConfigDraft.showImageSection;
   el("generator-config-show-describe").checked = generatorConfigDraft.showDescribeSection;
   renderGeneratorConfigChoices(generatorConfigShown, "shown");
@@ -740,6 +783,9 @@ for (const button of el("generator-config-tabs").querySelectorAll("[data-generat
 el("generator-config-toggle").addEventListener("click", openGeneratorConfig);
 el("generator-config-close").addEventListener("click", () => generatorConfigDialog.close());
 el("generator-config-cancel").addEventListener("click", () => generatorConfigDialog.close());
+el("generator-config-default-view").addEventListener("change", (event) => {
+  generatorConfigDraft.defaultView = event.target.value;
+});
 el("generator-config-show-image").addEventListener("change", (event) => {
   generatorConfigDraft.showImageSection = event.target.checked;
 });
@@ -805,9 +851,10 @@ function initializeGeneratorBulkControls() {
 el("gens-enable-all").addEventListener("click", () => setAllGenerators("enable"));
 el("gens-disable-all").addEventListener("click", () => setAllGenerators("disable"));
 el("gens-toggle-all").addEventListener("click", () => setAllGenerators("toggle"));
-el("gens-default").addEventListener("click", () => applyGeneratorPreset({
-  generatorKeys: generatorPreferences.defaultSelectedKeys,
-}, { includeDescribe: true }));
+el("gens-default").addEventListener("click", () => {
+  changeGeneratorView(generatorPreferences.defaultView);
+  applyGeneratorPreset({ generatorKeys: generatorPreferences.defaultSelectedKeys }, { includeDescribe: true });
+});
 }
 
 function initializeGeneratorControls() {

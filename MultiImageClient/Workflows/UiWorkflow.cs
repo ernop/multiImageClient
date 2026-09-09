@@ -326,6 +326,20 @@ namespace MultiImageClient
                 {
                     new
                     {
+                        id = "only-sota",
+                        name = "only SOTA",
+                        generatorKeys = new[]
+                        {
+                            UiJobRunner.KeyGoogle,
+                            UiJobRunner.KeyGpt25Sunburst,
+                            UiJobRunner.KeyGpt25Flare,
+                            UiJobRunner.KeyGrokWeb,
+                            UiJobRunner.KeyGrokApiPro,
+                            UiJobRunner.KeyIdeogram,
+                        },
+                    },
+                    new
+                    {
                         id = "thinking-ones",
                         name = "Thinking ones",
                         generatorKeys = new[]
@@ -583,6 +597,7 @@ namespace MultiImageClient
                         {
                             showImageSection = generatorPreferences.ShowImageSection,
                             showDescribeSection = generatorPreferences.ShowDescribeSection,
+                            defaultView = generatorPreferences.DefaultView,
                             hiddenGeneratorKeys = generatorPreferences.HiddenGeneratorKeys,
                             defaultSelectedKeys = generatorPreferences.DefaultSelectedKeys,
                             presets = generatorPreferences.Presets.Select(preset => new
@@ -3548,6 +3563,7 @@ namespace MultiImageClient
 
         private sealed class UiGeneratorPreferencesRequest
         {
+            public string? DefaultView { get; init; }
             public bool? ShowImageSection { get; init; }
             public bool? ShowDescribeSection { get; init; }
             public List<string> HiddenGeneratorKeys { get; init; } = new();
@@ -3575,6 +3591,8 @@ namespace MultiImageClient
             UiGeneratorPreferencesRequest submitted,
             UiJobRunner runner)
         {
+            if (submitted.DefaultView != null && submitted.DefaultView != "all" && submitted.DefaultView != "only-sota")
+                throw new InvalidDataException("Generator default view must be all or only-sota.");
             if (submitted.ShowImageSection == null || submitted.ShowDescribeSection == null)
             {
                 throw new InvalidDataException(
@@ -3731,6 +3749,7 @@ namespace MultiImageClient
                 Login = login,
                 ShowImageSection = submitted.ShowImageSection.Value,
                 ShowDescribeSection = submitted.ShowDescribeSection.Value,
+                DefaultView = submitted.DefaultView ?? "all",
                 HiddenGeneratorKeys = hidden,
                 DefaultSelectedKeys = selected,
                 Presets = presets,
