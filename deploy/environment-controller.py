@@ -56,10 +56,10 @@ def initialize():
     provision.require(re.fullmatch('[a-z0-9][a-z0-9-]{0,63}', slug), 'Invalid existing private route.')
     registry = {'version': 1, 'environments': [
         {'id': 'original', 'slug': slug, 'name': 'Ernie, Austin & Victor', 'original': True,
-         'goalLoops': True, 'video': True, 'promptRewrite': True,
+         'goalLoops': True, 'video': True, 'promptRewrite': True, 'vibecodersSharing': True,
          'members': [a['username'] for a in auth['accounts'] if a['username'] != 'ernieMultiZone']},
         {'id': 'vibecoders-ai-generation', 'slug': 'vibecoders-ai-generation', 'name': 'Vibecoders AI Generation',
-         'original': False, 'goalLoops': True, 'video': True, 'promptRewrite': True,
+         'original': False, 'goalLoops': True, 'video': True, 'promptRewrite': True, 'vibecodersSharing': False,
          'members': [], 'defaultGenerators': ['gpt2', 'googlepro']}]}
     private_json(ROOT / 'state/registry.json', registry, owner.pw_uid, group.gr_gid)
     backup = SETTINGS.with_name('settings.before-global-environments.json')
@@ -104,10 +104,11 @@ def reconcile():
                     provision.require(len(installed) < 1, 'Host capacity allows one additional environment. Increase capacity before adding another.')
                     bundle = Path('/root') / ('mic-environment-' + ident)
                     if not bundle.exists():
+                        source_settings = json.loads(SETTINGS.read_text())
                         provision.prepare(types.SimpleNamespace(id=ident, name=env['name'], slug=env['slug'], managed=True,
                             settings_source=str(SETTINGS), output=str(bundle), nginx_site=str(SITE),
-                            dotnet='/home/tparkour/.dotnet/dotnet', port=5961, memory_high_mib=384,
-                            memory_max_mib=512, max_requests=1, providers=','.join(env.get('defaultGenerators') or []),
+                            dotnet='/home/tparkour/.dotnet/dotnet', port=5961, memory_high_mib=1024,
+                            memory_max_mib=1536, max_requests=source_settings.get('UiMaxConcurrentGenerators', 14), providers=','.join(env.get('defaultGenerators') or []),
                             copy_grok_session=False))
                     provision.install(types.SimpleNamespace(bundle=str(bundle), publish=str(PUBLISH)))
                 manifest = json.loads(manifest_path.read_text())

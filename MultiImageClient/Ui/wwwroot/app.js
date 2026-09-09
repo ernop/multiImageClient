@@ -250,7 +250,7 @@ function applyEnvironmentBranding() {
   const hostname = location.hostname.toLowerCase().replace(/\.$/, "");
   const isOnline = hostname === "fuseki.net" || hostname.endsWith(".fuseki.net");
   const header = document.querySelector("header");
-  el("environment-name").textContent = isOnline ? "-alpha.fuseki.net" : "-local";
+  el("environment-name").textContent = window.MicEnvironment?.name || ("MultiImageClient" + (isOnline ? "-alpha.fuseki.net" : "-local"));
   header.classList.toggle("environment-online", isOnline);
   header.classList.toggle("environment-local", !isOnline);
 }
@@ -766,8 +766,7 @@ function updateGeneratorCount() {
 
 // ---------- prompt length limits (non-blocking) ----------
 
-// Some targets hard-cap prompt length (grok-web's imagine WebSocket rejects
-// anything over 8192 chars). /api/config carries maxPromptChars per
+// Grok-web uses a finite UTF-8 byte budget. /api/config carries limits per
 // generator; an over-limit prompt still submits — the server truncates it at
 // the send-to-provider stage — this notice just says so before the fact.
 const promptLimitNotice = el("prompt-limit-notice");
@@ -779,17 +778,24 @@ function updatePromptLimitNotice() {
       const generator = generators.find((g) => g.key === cb.value);
       const extraLength = effectiveEndpointField(cb.value, "extraText").trim().length;
       const wireLength = promptLength + (promptLength && extraLength ? 2 : 0) + extraLength;
-      return { generator, wireLength };
+      const wireText = [promptBox.value.trim(), effectiveEndpointField(cb.value, "extraText").trim()]
+        .filter(Boolean).join("\n\n");
+      const wireBytes = new TextEncoder().encode(wireText).length;
+      return { generator, wireLength, wireBytes };
     })
-    .filter(({ generator, wireLength }) =>
-      generator && generator.maxPromptChars && wireLength > generator.maxPromptChars);
+    .filter(({ generator, wireLength, wireBytes }) =>
+      generator && (generator.maxPromptUtf8Bytes
+        ? wireBytes > generator.maxPromptUtf8Bytes
+        : generator.maxPromptChars && wireLength > generator.maxPromptChars));
   if (affected.length === 0) {
     promptLimitNotice.hidden = true;
     promptLimitNotice.textContent = "";
     return;
   }
-  const parts = affected.map(({ generator, wireLength }) =>
-    `${generator.label} (${wireLength.toLocaleString()} chars; max ${generator.maxPromptChars.toLocaleString()})`);
+  const parts = affected.map(({ generator, wireLength, wireBytes }) =>
+    generator.maxPromptUtf8Bytes
+      ? `${generator.label} (${wireBytes.toLocaleString()} UTF-8 bytes; max ${generator.maxPromptUtf8Bytes.toLocaleString()})`
+      : `${generator.label} (${wireLength.toLocaleString()} chars; max ${generator.maxPromptChars.toLocaleString()})`);
   promptLimitNotice.textContent =
     `Prompt plus endpoint extra text is over the limit for ${parts.join(", ")}. ` +
     `You can still generate; the combined prompt will be sent truncated to ` +
@@ -1474,7 +1480,7 @@ function getNightMatchers() {
 }
 
 function promptIsNightHidden(prompt) {
-  if (!uiSettings.nightHideEnabled || !prompt) return false;
+  if (window.MicEnvironment?.nightFilter === false || !uiSettings.nightHideEnabled || !prompt) return false;
   return getNightMatchers().some((re) => re.test(prompt));
 }
 
@@ -6385,7 +6391,6 @@ loadInspirationState();
 const usernameInput = el("username-input");
 const profileNameSave = el("profile-name-save");
 const profileNameStatus = el("profile-name-status");
-const logoutBtn = el("logout");
 usernameInput.value = storedPersonalField("creatingAs") ??
   localStorage.getItem(UsernameKey) ??
   "";
@@ -6423,9 +6428,8 @@ usernameInput.addEventListener("change", () => {
 });
 
 function applyAuthState() {
-  logoutBtn.hidden = !authInfo.enabled;
   el("people-link").hidden = !authInfo.canManagePeople;
-  if (window.MicEnvironment) el("environment-name").textContent = " · " + window.MicEnvironment.name;
+  if (window.MicEnvironment) el("environment-name").textContent = window.MicEnvironment.name;
   if (authInfo.enabled && authInfo.user) {
     const serverName = authInfo.profile?.displayName || "";
     if (serverName) {
@@ -6542,13 +6546,6 @@ profileNameSave.addEventListener("click", async () => {
   }
 });
 
-logoutBtn.addEventListener("click", async () => {
-  try {
-    await fetch(apiUrl("api/auth/logout"), { method: "POST" });
-  } finally {
-    location.reload();
-  }
-});
 
 // Person filter chips: "everyone" plus one chip per creator name seen in
 // history (seeded from /api/users, then live-accumulated from job-known
@@ -6774,13 +6771,38 @@ async function persistHiddenResource(kind, jobId, generator = "", imageIndex = -
   }
 }
 
+function deletionWaitReason(card) {
+  const liveCard = card && el(`job-${card.dataset.jobId}`);
+  const state = (liveCard || card)?.dataset.state;
+  return state && state !== "done"
+    ? "Wait for all generators and the contact sheet to finish before deleting."
+    : "";
+}
+
+function paintHidePromptButton(button, card) {
+  const waiting = deletionWaitReason(card);
+  button.disabled = !!waiting || visibilityMutation !== null;
+  button.textContent = waiting ? "delete available when job finishes" : "hide prompt + delete images";
+  button.title = waiting || "Hide this prompt and permanently delete all of its local and Backblaze B2 images";
+}
+
+function refreshJobDeletionControls(card) {
+  for (const button of card.querySelectorAll(".hide-prompt")) paintHidePromptButton(button, card);
+  if (!imageViewer.hidden) {
+    const current = locateImageViewerState(getImageViewerPrompts());
+    renderImageViewerHide(current?.item);
+  }
+}
+
 function createHidePromptButton(jobId) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "hide-prompt";
+  button.disabled = true;
   button.textContent = "hide prompt + delete images";
   button.title = "Hide this prompt and permanently delete all of its local and Backblaze B2 images";
   button.addEventListener("click", async () => {
+    if (button.disabled || visibilityMutation || deletionWaitReason(button.closest(".job"))) return;
     if (!confirm(
       "Hide this entire prompt and permanently delete all its stored images?\n\n" +
       "This deletes local and Backblaze B2 copies. It cannot revoke files that someone already copied or cached.")) return;
@@ -6792,6 +6814,7 @@ function createHidePromptButton(jobId) {
       button.disabled = false;
       button.textContent = "delete failed";
       button.title = String(error);
+      alert(error.message || String(error));
     }
   });
   return button;
@@ -7083,6 +7106,7 @@ function renderFavoritesGallery() {
     meta.append(summary, createPromptFavoriteButton(item.jobId));
     if (item.canHide) meta.appendChild(createHidePromptButton(item.jobId));
     card.appendChild(meta);
+    refreshJobDeletionControls(card);
 
     const prompt = document.createElement("div");
     prompt.className = "job-prompt";
@@ -7197,7 +7221,7 @@ function renderImageViewerFavorite(item) {
     imageViewerFavorite.textContent = "☆ favorite";
     imageViewerFavorite.title = item && item.kind === "text"
       ? "Describe-result views cannot be favorited."
-      : "Favorite this image (v)";
+      : "Favorite this image";
     return;
   }
 
@@ -7226,8 +7250,8 @@ function renderImageViewerFavorite(item) {
       ? `☆ favorite · ★ ${users.length}`
       : "☆ favorite";
   imageViewerFavorite.title = users.length > 0
-    ? `Favorited by ${users.join(", ")}. Press v to ${mine ? "remove your favorite" : "add yours"}.`
-    : "Favorite this image (v)";
+    ? `Favorited by ${users.join(", ")}.`
+    : "Favorite this image";
 }
 
 function renderImageViewerVideo(item) {
@@ -7240,8 +7264,11 @@ function renderImageViewerHide(item) {
   const card = item ? findViewerAnchor(item)?.closest(".job") : null;
   const allowed = !!item && item.kind !== "text" && card?.dataset.canHide === "true";
   imageViewerHide.hidden = !allowed;
-  imageViewerHide.disabled = !allowed || visibilityMutation !== null;
-  imageViewerHide.textContent = visibilityMutation ? "deleting…" : "hide + delete image";
+  const waiting = allowed ? deletionWaitReason(card) : "";
+  imageViewerHide.disabled = !allowed || !!waiting || visibilityMutation !== null;
+  imageViewerHide.textContent = visibilityMutation ? "deleting…"
+    : waiting ? "delete available when job finishes" : "hide + delete image";
+  imageViewerHide.title = waiting;
 }
 
 function vibecodersIdentity(jobId, generator, imageIndex) {
@@ -7447,6 +7474,7 @@ async function hideCurrentViewerImage() {
   const current = locateImageViewerState(getImageViewerPrompts());
   if (!current || current.item.kind === "text") return;
   if (findViewerAnchor(current.item)?.closest(".job")?.dataset.canHide !== "true") return;
+  if (visibilityMutation || deletionWaitReason(findViewerAnchor(current.item)?.closest(".job"))) return;
   if (!confirm(
     "Hide this image and permanently delete its stored files?\n\n" +
     "This deletes the local original, previews, its contact sheet, and any Backblaze B2 copies. " +
@@ -7459,9 +7487,9 @@ async function hideCurrentViewerImage() {
       current.item.generator,
       current.item.imageIndex);
   } catch (error) {
-    imageViewerHide.disabled = false;
-    imageViewerHide.textContent = "delete failed";
-    imageViewerHide.title = String(error);
+    const selected = locateImageViewerState(getImageViewerPrompts());
+    renderImageViewerHide(selected?.item);
+    alert(error.message || String(error));
   }
 }
 
@@ -10680,6 +10708,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
         copyWrap.prepend(createHidePromptButton(id));
       }
     }
+    refreshJobDeletionControls(existing);
     return existing;
   }
 
@@ -10850,6 +10879,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
   applyUserFilterToCard(card);
   registerUser(opts.user || "");
   (opts.container || jobsSection).prepend(card);
+  refreshJobDeletionControls(card);
   return card;
 }
 
@@ -11322,6 +11352,10 @@ function applyJobEvent(id, card, evt) {
     a.title = `saved: ${evt.path}`;
   } else if (evt.type === "job-done") {
     card.dataset.state = "done";
+    refreshJobDeletionControls(card);
+    for (const favoriteCard of favoritesGrid.querySelectorAll(".favorite-gallery-card")) {
+      if (favoriteCard.dataset.jobId === id) refreshJobDeletionControls(favoriteCard);
+    }
     card.querySelector(".job-connection").textContent = evt.interrupted
       ? "interrupted"
       : "complete";

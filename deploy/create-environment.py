@@ -53,7 +53,7 @@ def prepare(args):
     require(1 <= len(args.name.strip()) <= 80 and not any(ord(c) < 32 for c in args.name), "Invalid environment name.")
     require(1024 <= args.port <= 65535 and args.port != 5960, "Choose a separate unprivileged port, not 5960.")
     require(256 <= args.memory_high_mib < args.memory_max_mib <= 2560, "Set explicit memory limits: 256 <= high < max <= 2560 MiB.")
-    require(1 <= args.max_requests <= 4, "Use 1–4 aggregate provider requests for the new environment.")
+    require(1 <= args.max_requests <= 32, "Use 1–32 aggregate provider requests for the environment.")
     source = json.loads(Path(args.settings_source).read_text(encoding="utf-8-sig"))
     template_path = Path(__file__).resolve().parents[1] / "MultiImageClient" / "settings - Fill this in and rename it.json"
     settings = json.loads(template_path.read_text(encoding="utf-8-sig"))
@@ -84,7 +84,10 @@ def prepare(args):
         settings.update({"UiAuthFilePath": "/var/lib/multiimageclient-control/auth.json",
             "UiLoginLinksFilePath": "/var/lib/multiimageclient-control/state/links.json",
             "UiEnvironmentRegistryPath": "/var/lib/multiimageclient-control/state/registry.json",
-            "UiEnvironmentController": False})
+            "UiEnvironmentController": False,
+            "UiMaxPendingJobs": source.get("UiMaxPendingJobs", 64),
+            "UiTargetConcurrency": source.get("UiTargetConcurrency"),
+            "DiscordVibecodersWebhookUrl": source.get("DiscordVibecodersWebhookUrl", "")})
     # Only explicit consumer-session opt-in copies the cookie file into the new account's private configuration.
     cookie_source = None
     if args.copy_grok_session:

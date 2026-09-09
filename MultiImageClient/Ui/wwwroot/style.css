@@ -3353,3 +3353,5 @@ body.image-viewer-open { overflow: hidden; }
   background-color: #fffaf0;
   border-radius: 4px;
 }
+
+#getting-started { margin: 8px 16px; font-size: 14px; }

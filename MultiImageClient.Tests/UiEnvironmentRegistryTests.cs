@@ -37,6 +37,14 @@ public sealed class UiEnvironmentRegistryTests : IDisposable
         var env = registry.Get("original"); env.Slug = "changed";
         Assert.Throws<InvalidDataException>(() => registry.Save(env));
     }
+    [Fact] public void VibecodersIntegrationPreservesOriginalAndRequiresNewEnvironmentOptIn()
+    {
+        Assert.True(registry.Get("original").AllowVibecoders);
+        registry.Save(new() { Id = "studio", Slug = "studio", Name = "Studio" });
+        var env = registry.Get("studio"); Assert.False(env.AllowVibecoders);
+        env.VibecodersSharing = true; registry.Save(env); Assert.True(registry.Get("studio").AllowVibecoders);
+        env.VibecodersSharing = false; registry.Save(env); Assert.False(registry.Get("studio").AllowVibecoders);
+    }
     [Theory] [InlineData("../escape")] [InlineData("original-route")]
     public void InvalidOrDuplicateRoutesFailClosed(string slug)
     { Assert.Throws<InvalidDataException>(() => registry.Save(new() { Id = "other", Slug = slug, Name = "Other" })); }

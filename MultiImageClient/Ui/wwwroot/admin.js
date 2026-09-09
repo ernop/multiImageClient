@@ -38,6 +38,8 @@ async function load() {
     const goals = field(features, "Goal loops", "goals", env.goalLoops, "checkbox");
     const video = field(features, "Video generation", "video", env.video, "checkbox");
     const rewrite = field(features, "Prompt rewriting", "rewrite", env.promptRewrite, "checkbox"); form.append(features);
+    const night = field(features, "Night filter", "night", env.nightFilter ?? true, "checkbox");
+    const sharing = field(features, "Send to Vibecoders", "sharing", env.vibecodersSharing ?? env.original, "checkbox");
     const defaults = node("fieldset"); defaults.append(node("legend", "Default providers"));
     const selected = new Set(env.defaultGenerators ?? catalog.filter(g => g.defaultOn).map(g => g.key));
     const providers = catalog.map(g => field(defaults, g.label, g.key, selected.has(g.key), "checkbox")); form.append(defaults);
@@ -48,7 +50,7 @@ async function load() {
     form.append(node("button", "Save configuration")); section.append(form);
     form.addEventListener("submit", event => { event.preventDefault(); run(async () => {
       await api("api/control/environment", { ...env, name: name.value.trim(), slug: env.original ? env.slug : slug.value.trim(),
-        goalLoops: goals.checked, video: video.checked, promptRewrite: rewrite.checked,
+        goalLoops: goals.checked, video: video.checked, promptRewrite: rewrite.checked, vibecodersSharing: sharing.checked, nightFilter: night.checked,
         members: boxes.filter(b => b.checked).map(b => b.name), defaultGenerators: providers.filter(b => b.checked).map(b => b.name) }, true);
       $("status").textContent = "Configuration saved. URL changes take effect after provisioning finishes.";
     }); });
@@ -79,7 +81,7 @@ async function load() {
 $("create").addEventListener("submit", event => { event.preventDefault(); run(async () => {
   const form = new FormData(event.target); const slug = form.get("slug").trim();
   await api("api/control/environment?create=true", { id: slug, slug, name: form.get("name").trim(), original: false,
-    goalLoops: true, video: true, promptRewrite: true, members: [], defaultGenerators: ["gpt2", "googlepro"] }, true);
+    goalLoops: true, video: true, promptRewrite: true, vibecodersSharing: false, nightFilter: true, members: [], defaultGenerators: ["gpt2", "googlepro"] }, true);
   event.target.reset(); await load(); $("status").textContent = "Environment requested. Refresh to check its status.";
 }); });
 $("person").addEventListener("submit", event => { event.preventDefault(); run(async () => {

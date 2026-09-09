@@ -13,7 +13,7 @@
 </head>
 <body>
 <header>
-  <h1>MultiImageClient<span id="environment-name"></span></h1>
+  <h1><span id="environment-name">MultiImageClient</span></h1>
   <button id="night-toggle" type="button" aria-pressed="false"
     title="hide night mode — hide any job whose prompt contains a word from the hidden-word list (edit the list in settings)">night filter</button>
   <span id="ram-status" title="In-use process RAM (cgroup). The parenthetical limit is systemd MemoryHigh/Max, not usage.">RAM …</span>
@@ -23,20 +23,13 @@
   <button id="logs-toggle" type="button" aria-expanded="false" aria-controls="logs-panel">logs</button>
   <button id="activity-toggle" type="button" aria-expanded="false" aria-controls="activity-panel"
     title="Open the floating activity center">activity</button>
-  <button id="logout" type="button" hidden title="Log out of this shared site on this browser">log out</button>
   <a id="people-link" href="people.html" hidden>people</a>
 </header>
+<p id="getting-started">enter prompt, choose image generators, and click generate</p>
 
 <!-- Shared-site people bar: who you create as, and whose work is shown.
      Everything everyone makes is visible to everyone — that's the point. -->
 <div id="people-bar">
-  <label id="username-control" title="Every job you create is attributed to this name, visible to everyone on this site">
-    <span>creating as</span>
-    <input id="username-input" maxlength="32" autocomplete="off" spellcheck="false"
-      placeholder="choose a username">
-  </label>
-  <button id="profile-name-save" type="button" hidden>apply name to all my history</button>
-  <span id="profile-name-status" role="status"></span>
   <div id="user-filters" aria-label="Filter jobs by creator">
     <span id="user-filters-label">show</span>
     <button type="button" class="user-chip selected" data-user="*">everyone</button>
@@ -50,7 +43,6 @@
   <button id="favorites-everyone" type="button" class="favorite-user-chip"
     title="Show every image and prompt anyone has favorited">everyone's favorites</button>
   <div id="favorite-user-filters" aria-label="Show one person's favorites"></div>
-  <span id="favorites-hint">press <kbd>f</kbd> for a viewed image; use <strong>☆ prompt</strong> beside prompt text</span>
   <span id="favorites-error"></span>
 </div>
 
@@ -59,6 +51,14 @@
     <strong>Settings</strong>
     <button id="settings-close" type="button" aria-label="Close settings">&times;</button>
   </div>
+  <label id="username-control" title="Every job you create is attributed to this name, visible to everyone on this site">
+    <span>creating as</span>
+    <input id="username-input" maxlength="32" autocomplete="off" spellcheck="false"
+      placeholder="choose a username">
+  </label>
+  <button id="profile-name-save" type="button" hidden>apply name to all my history</button>
+  <span id="profile-name-status" role="status"></span>
+  <div id="night-filter-preferences">
   <label class="settings-row">
     <input id="night-hide-enabled" type="checkbox">
     <span><strong>hide night mode</strong> — hide entire jobs (prompt and result images) from this page
@@ -74,6 +74,7 @@
       <textarea id="night-words" rows="7" spellcheck="false" autocomplete="off"
         aria-label="Hidden words, one per line"></textarea>
     </div>
+  </div>
   </div>
   <label class="settings-row">
     <input id="show-costs" type="checkbox">
@@ -416,7 +417,7 @@
           title="Place-in-list indicator: current item / all items in the visible gallery"></span>
         <div id="image-viewer-actions">
           <button id="image-viewer-favorite" type="button" aria-pressed="false"
-            title="Favorite this image (v)">☆ favorite</button>
+            title="Favorite this image">☆ favorite</button>
           <button id="image-viewer-video" type="button" hidden
             title="Make Grok video from this image">make grok video</button>
           <button id="image-viewer-hide" type="button" hidden

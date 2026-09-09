@@ -185,7 +185,7 @@ No old image URLs or image indexes are copied to the new environment.
 
 ## Feature switches and activity summaries
 
-Each environment has switches for goal loops, video generation, and prompt rewriting.
+Each environment has switches for goal loops, video generation, prompt rewriting, Send to Vibecoders, and night filter.
 Disabled controls disappear from the page.
 The server also rejects corresponding direct API requests and goal/recap page routes.
 Disabling a feature does not delete existing work or cancel an already accepted provider request.
@@ -249,7 +249,11 @@ The shared root directory is root-owned. Its writable state directory is separat
 The reconciler accepts bounded JSON, fixed path roots, validated identifiers, and validated single-segment URL names.
 It never accepts a supplied shell command or arbitrary service path.
 
-Initial additional-instance limits are 384 MiB MemoryHigh, 512 MiB MemoryMax, and one provider request.
+Additional instances use 1024 MiB MemoryHigh and 1536 MiB MemoryMax.
+They copy the original provider request cap, pending capacity, and provider lane limits.
+On 2026-09-09, these are 14 aggregate requests, 64 pending jobs, and scheduler-default lane limits.
+This supersedes the initial one-request cap and 384/512 MiB memory limits.
+The original service retains its existing limits.
 The current host permits one additional instance until its capacity budget is increased.
 The UI can record further requests, but the controller reports insufficient capacity rather than starting more processes.
 Installation requires at least 4 GiB free disk, preserving the existing application's 3 GiB reserve.
@@ -317,3 +321,27 @@ Provisioning now explicitly restores group traversal after directory creation.
 Nginx backups live outside sites-enabled to avoid duplicate configuration through wildcard includes.
 The controller requires the new route include and a successful loopback health check before reporting ready.
 These checks prevent an interrupted installation's early manifest from being mistaken for completed provisioning.
+
+## Member interface and integrations (2026-09-09)
+
+The header shows only the configured environment name. The page title uses the same name.
+The composer introduction is exactly: "enter prompt, choose image generators, and click generate".
+Remove the logout button and persistent favorite shortcut instructions.
+Display-name editing lives in personal preferences, with its existing history-update action.
+Normal members do not see build information, RAM statistics, or raw logs. Admins retain these diagnostics.
+Shared activity remains available to every member.
+
+An environment selector appears when the account can access more than one environment.
+It lists only authorized environments and retains the shared login during navigation.
+Normal members receive no global administration URL in their environment configuration response.
+
+Send to Vibecoders is an environment feature switch in administration.
+The original environment keeps it enabled when no explicit value exists; new environments default to disabled.
+Managed environments reuse the existing configured webhook. No webhook credentials reach the browser.
+Disabling the switch hides the send control and rejects its API route.
+Enabling it exposes the control only when the webhook is configured. Sending still requires an explicit user action.
+
+Night filter defaults to available, preserving existing preferences.
+Disabling its environment switch hides both its header button and preference controls.
+Disabled filtering never hides jobs, even when the browser retained an enabled personal preference.
+Re-enabling it restores access to the saved preference.

@@ -21,6 +21,9 @@ namespace MultiImageClient
             public bool GoalLoops { get; set; } = true;
             public bool Video { get; set; } = true;
             public bool PromptRewrite { get; set; } = true;
+            public bool NightFilter { get; set; } = true;
+            public bool? VibecodersSharing { get; set; }
+            [JsonIgnore] public bool AllowVibecoders => VibecodersSharing ?? Original;
             public List<string> Members { get; set; } = new();
             public List<string>? DefaultGenerators { get; set; }
         }

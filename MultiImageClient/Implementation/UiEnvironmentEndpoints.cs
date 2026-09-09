@@ -27,11 +27,16 @@ namespace MultiImageClient
                 var user = ctx.Items["micUser"] as string ?? "";
                 var policy = environments?.Get(settings.UiEnvironmentId);
                 var original = environments?.Read().Environments.Single(e => e.Original);
+                var choices = environments?.Read().Environments
+                    .Where(e => user == UiLoginLinks.OwnerLogin || e.Members.Contains(user, StringComparer.Ordinal))
+                    .Select(e => new { id = e.Id, name = e.Name, url = "/" + e.Slug + "/" }).ToArray();
                 var config = JsonSerializer.Serialize(new { id = settings.UiEnvironmentId, name = policy?.Name ?? settings.UiEnvironmentName,
+                    environments = choices,
                     role = user == UiLoginLinks.OwnerLogin ? "admin" : "normal",
                     legacyStorage = policy?.Original ?? false,
-                    adminUrl = original == null ? "people.html" : "/" + original.Slug + "/admin.html",
+                    adminUrl = user != UiLoginLinks.OwnerLogin ? null : original == null ? "people.html" : "/" + original.Slug + "/admin.html",
                     goalLoops = policy?.GoalLoops ?? true, video = policy?.Video ?? true, promptRewrite = policy?.PromptRewrite ?? true,
+                    vibecodersSharing = policy?.AllowVibecoders ?? true, nightFilter = policy?.NightFilter ?? true,
                     user, identity = Identity(ctx, auth) });
                 return Results.Text("window.MicEnvironment=" + config + ";\n"
                     + File.ReadAllText(Path.Combine(wwwroot, "environment-storage.js")), "text/javascript");

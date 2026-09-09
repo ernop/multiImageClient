@@ -261,7 +261,8 @@ namespace MultiImageClient
                                 || path is "/people.html" or "/admin.html"))
                             || (policy != null && ((!policy.GoalLoops && (path.StartsWith("/api/goal-loops", StringComparison.OrdinalIgnoreCase) || path is "/goal.html" or "/recap.html"))
                                 || (!policy.Video && path.StartsWith("/api/video-jobs", StringComparison.OrdinalIgnoreCase))
-                                || (!policy.PromptRewrite && path.StartsWith("/api/prompt/advice", StringComparison.OrdinalIgnoreCase)))))
+                                || (!policy.PromptRewrite && path.StartsWith("/api/prompt/advice", StringComparison.OrdinalIgnoreCase))
+                                || (!policy.AllowVibecoders && path.StartsWith("/api/discord/vibecoders", StringComparison.OrdinalIgnoreCase)))))
                         {
                             ctx.Response.StatusCode = 403;
                             await ctx.Response.WriteAsJsonAsync(new { error = "This feature is not available for this account or environment." });
@@ -552,6 +553,7 @@ namespace MultiImageClient
                     // warn before submit; the server truncates over-limit prompts
                     // at the provider send stage (grok-web: GrokWebClient).
                     maxPromptChars = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptChars : null,
+                    maxPromptUtf8Bytes = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptUtf8Bytes : null,
                     // The anti-murk daylight suffix applies to the whole OpenAI
                     // gpt-image family: 2.5 shares gpt-image-2's drift toward
                     // dark cinematic output without it.
@@ -734,7 +736,7 @@ namespace MultiImageClient
                     },
                     vibecoders = new
                     {
-                        available = DiscordVibecoders.IsConfigured(settings),
+                        available = DiscordVibecoders.IsConfigured(settings) && (environments?.Get(settings.UiEnvironmentId).AllowVibecoders ?? true),
                     },
                 });
             });

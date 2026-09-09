@@ -72,6 +72,24 @@ namespace MultiImageClient
         /// "Prompt is too long (invalid_parameter)". Note this differs from the
         /// official api.x.ai limit of 4096 — that does not apply here.
         public const int MaxPromptChars = 8192;
+        public const int MaxPromptUtf8Bytes = 8192;
+
+        public static string TruncateImagePrompt(string prompt)
+        {
+            if (Encoding.UTF8.GetByteCount(prompt) <= MaxPromptUtf8Bytes)
+                return prompt;
+
+            var bytes = 0;
+            var length = 0;
+            foreach (var rune in prompt.EnumerateRunes())
+            {
+                if (bytes + rune.Utf8SequenceLength > MaxPromptUtf8Bytes)
+                    break;
+                bytes += rune.Utf8SequenceLength;
+                length += rune.Utf16SequenceLength;
+            }
+            return prompt[..length];
+        }
         private static readonly TimeSpan FirstImageEventTimeout = TimeSpan.FromSeconds(60);
         private static readonly TimeSpan ImageEventInactivityTimeout = TimeSpan.FromSeconds(60);
 
@@ -124,21 +142,14 @@ namespace MultiImageClient
             string? imageReferenceUrl = null,
             CancellationToken cancellationToken = default)
         {
-            // Explicit user-required product behavior (2026-07-30): prompts over
-            // the verified transport cap are truncated here, at the send-to-grok
-            // stage, instead of letting the WebSocket reject the whole job. This
-            // is a declared pre-call input transformation (the UI warns before
-            // submit), not a failure fallback. Never splits a surrogate pair.
-            if (prompt.Length > MaxPromptChars)
+            // User-required truncation (2026-09-09). Bound UTF-8 bytes too:
+            // the historical character boundary did not establish Unicode counting.
+            // Preserve complete characters and record the actual outgoing prefix.
+            var originalLength = prompt.Length;
+            prompt = TruncateImagePrompt(prompt);
+            if (prompt.Length != originalLength)
             {
-                var originalLength = prompt.Length;
-                var cut = MaxPromptChars;
-                if (char.IsHighSurrogate(prompt[cut - 1]))
-                {
-                    cut--;
-                }
-                prompt = prompt[..cut];
-                Logger.Log($"\t   Grok web prompt truncated from {originalLength} to {prompt.Length} chars (transport limit {MaxPromptChars}).");
+                Logger.Log($"\t   Grok web prompt truncated from {originalLength} to {prompt.Length} chars (UTF-8 budget {MaxPromptUtf8Bytes} bytes).");
             }
 
             using var ws = new ClientWebSocket();

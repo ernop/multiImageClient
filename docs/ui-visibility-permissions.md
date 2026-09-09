@@ -22,3 +22,30 @@ There is no undo control.
 
 Validate permission rules and event replay with `UiVisibilityStoreTests`.
 Deployment checks must read permissions without deleting user content.
+
+## Running-job deletion controls — 2026-09-09
+
+Vibecoders returned HTTP 409 for three deletion requests at 07:36:15, 07:36:19, and 07:36:28 UTC.
+The endpoint rejected deletion because the selected jobs were still running.
+No visibility records were created, and no file deletion began.
+The browser previously enabled deletion when an individual image appeared, before the entire job finished.
+It then showed "delete failed" and placed the server explanation only in a tooltip.
+
+- Disable prompt and viewer deletion when the loaded job is queued or running.
+- Show "delete available when job finishes" until every generator and contact-sheet finalization finishes.
+- Enable the controls on the job-done event, including an already-open viewer and matching favorite cards.
+- Use the loaded live job's state for favorite cards when available.
+- Preserve server validation for favorites without a loaded job and for concurrent state changes.
+- Display the returned deletion error directly, including errors after a partial purge.
+- Do not change ownership checks, artifact identities, or the server's running-job prohibition.
+
+Validate browser transitions with `node --test tools/test-visibility-controls.cjs`.
+This frontend-only correction can replace Vibecoders' exact `app.js` atomically after source comparison and backup.
+Verify the served file checksum and unchanged service start time; no process restart or content deletion is required.
+
+Applied this correction to production Vibecoders on 2026-09-09.
+The deployed candidate passed all three deletion-control tests; the local suite also passed both FableBot viewer tests.
+The authenticated public response matched the candidate's SHA-256 checksum, and the loopback health check passed.
+The service start time remained unchanged, preserving active jobs.
+The original frontend remains backed up outside the served directory.
+Concurrent unrelated frontend edits were excluded from this targeted update.
