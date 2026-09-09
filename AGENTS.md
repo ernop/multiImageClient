@@ -8,6 +8,8 @@ C# desktop app that chains together image generation steps across multiple APIs 
 
 ## Also Read
 
+- [docs/workspaces-prd.md](docs/workspaces-prd.md) — **2026-09-08, planned:** preserve the existing group's working environment. Add an environment with entirely new accounts and separate membership, history, images, and user configurations. Ernie accesses both and sends personal reusable login links. Links select the recipient's identity and environment automatically. Possession grants that identity. Runtime implementation remains pending.
+
 - [.cursorrules](.cursorrules) — communication style, XML docs policy, namespace rules, constants philosophy
 - [.cursor/rules/writing-register-ste100.mdc](.cursor/rules/writing-register-ste100.mdc) — **mandatory writing register for all agent output**: no praise; Simplified Technical English ASD-STE100; max 20 words per sentence; one fact per sentence; active voice; instructions start with a verb; no undefined jargon; DataColada/Gelman rigor over textbook consensus; 3Blue1Brown/Deutsch standard for math and natural science; Scott Alexander epistemics in succinct prose
 - [.cursor/rules/production-deploy-target.mdc](.cursor/rules/production-deploy-target.mdc) — **mandatory release identity**: this repo deploys only the private MultiImageClient production site; `tpbeta` is its shared physical host, never the product target
@@ -99,6 +101,8 @@ All projects target plain `net10.0` (retargeted from `net9.0` on 2026-08-05; `Mu
 
 ## Run Modes (CLI flags)
 See `RunOptions.cs` for the source of truth; this is the current surface:
+
+- **Planned UI workspaces and personal login links (2026-09-08):** preserve Ernie, Austin, and Victor's working environment. Start another environment with entirely new accounts and separate history, images, and user configurations. Do not copy or share the existing group's user data. Let Ernie access both and send personal login links for the new group. A recipient clicks their link to enter with their assigned username. Anyone holding that link can act as that person. See [docs/workspaces-prd.md](docs/workspaces-prd.md). Architecture remains proposed; no runtime support exists yet.
 
 **Grok naming rule (user-facing surface):** there are two ways this app can hit Grok image/video generation, and every flag/name distinguishes them: **`grok-api`** = the official `api.x.ai` API-key version (public, GDPR-suitable content ruleset) — stable key `grok-api` sends legacy, unaffected `grok-imagine-image` 1.0; stable key and compatibility flag `grok-api-pro` now display `grok-api 2.0` and send `grok-imagine-image-2.0`. See [docs/grok-imagine-2-migration.md](docs/grok-imagine-2-migration.md). Flags include `--grok-api-showcase`, `--grok-api-pro`, `--grok-api-edit`, `--grok-api-edit-aspect-ratio`, `--grok-api-video-test`, `--grok-api-sync`, and `--grok-api-export`. **`grok-web`** = the consumer `grok.com` cookie-session version, i.e. "me using the web app", with the American web-app content ruleset — flags `--grok-web`, `--grok-web-pro`/`--grok-web-quality` (Pro tier, the DEFAULT), `--grok-web-fast`, `--grok-web-cookies`, and `--grok-web-mode`. Internal C# type names keep the historical `Grok*` and `GrokWeb*` prefixes.
 
