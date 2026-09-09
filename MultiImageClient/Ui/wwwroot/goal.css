@@ -337,6 +337,9 @@ details.goal-entry[open] > summary::before { content: "▾"; }
 /* ---- two renders per turn (protocol 4): refine vs fresh ---- */
 .goal-entry.variant-fresh { border-left: 6px solid #7a3fb8; }
 .goal-entry.variant-refine { border-left: 6px solid var(--accent-dark); }
+.goal-entry.variant-c1 { border-left: 6px solid var(--accent-dark); }
+.goal-entry.variant-c2 { border-left: 6px solid #7a3fb8; }
+.goal-entry.variant-c3 { border-left: 6px solid #b76615; }
 .goal-entry.kind-render-result.chosen-lineage { box-shadow: 0 0 0 3px #c9a227 inset; }
 .goal-chosen-mark {
   padding: 2px 9px; border-radius: 10px;
@@ -442,3 +445,40 @@ details.goal-entry[open] > summary::before { content: "▾"; }
 #goal-sidebar-resize { align-self: stretch; cursor: col-resize; background: var(--line); border-radius: 4px; touch-action: none; }
 #goal-sidebar-resize:hover, #goal-sidebar-resize:focus-visible { background: var(--accent); outline: 2px solid var(--accent); }
 @media(max-width:980px) { #goal-sidebar-resize { display: none; } }
+/* Component evidence remains visible beside each contributor's summary. */
+.goal-component-profile { text-align: left; white-space: normal; font-size: 11px; font-weight: normal; min-width: 110px; max-width: 190px; }
+.goal-component-profile > div { margin-top: 5px; }
+.goal-components { width: 100%; border-collapse: collapse; font-size: 12px; margin: 10px 0; }
+.goal-components th, .goal-components td { text-align: left; vertical-align: top; padding: 6px; border-bottom: 1px solid var(--border, #ccd4df); }
+.goal-search-plan { margin: 12px 0; padding: 12px; border: 1px solid var(--border, #ccd4df); border-radius: 6px; }
+.goal-experiment { border-top: 1px solid var(--border, #ccd4df); padding-top: 8px; margin-top: 8px; }
+.goal-view-modes { display:flex; gap:6px; margin:10px 0; }
+#goal-turns[hidden], #goal-tree[hidden], #goal-view-modes[hidden] { display:none; }
+#goal-view-modes button[aria-pressed="true"] { border-color:var(--accent); background:var(--card); color:var(--accent); font-weight:700; }
+.goal-node-context { padding:8px 10px; border-bottom:1px solid var(--line); }
+.goal-node-title { font-weight:600; font-size:12px; }
+.goal-node-context .goal-text { font-size:12px; margin:4px 0; }
+.goal-page .goal-node-context button.goal-score-link { display:block; text-align:left; font-size:12px; padding:4px 0; }
+.goal-node-context .goal-details { margin:5px 0 0; }
+.goal-tree-viewport { overflow:auto; max-height:75vh; }
+.goal-tree-canvas { position:relative; }
+.goal-tree-turn { position:absolute; left:0; font-size:12px; }
+.goal-tree-edges { position:absolute; inset:0; pointer-events:none; }
+.goal-tree-edges path { fill:none; stroke:var(--accent); stroke-width:2; opacity:.55; }
+#goal-tree button.goal-tree-node { position:absolute; width:136px; height:210px; display:flex; flex-direction:column; gap:5px; text-align:left; padding:8px; overflow:hidden; background:var(--card); color:var(--ink); border:1px solid var(--line); border-radius:8px; }
+#goal-tree button.goal-tree-node:hover { border-color:var(--accent); }
+.goal-tree-node.is-best { outline:2px solid var(--accent); }
+#goal-tree button.goal-tree-node.action-drop { border-style:dashed; }
+.goal-tree-node.action-hold .goal-tree-state, .goal-tree-node.action-drop .goal-tree-state { opacity:.7; }
+.goal-tree-node strong { font-size:12px; line-height:1.25; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.goal-tree-identity, .goal-tree-state { font-size:11px; }
+.goal-tree-state { margin-top:auto; }
+.goal-tree-preview { height:98px; flex-shrink:0; display:flex; align-items:center; justify-content:center; width:100%; font-size:12px; }
+.goal-tree-preview img { width:100%; height:100%; object-fit:contain; }
+.goal-feedback-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:5px 8px; font-size:11px; }
+.goal-page .goal-feedback-controls button { padding:2px 7px; font-size:12px; min-width:28px; color:var(--accent-dark); background:var(--card); border:1px solid var(--line); }
+.goal-page .goal-feedback-controls button:hover:not(:disabled) { background:var(--paper); }
+.goal-feedback-controls strong { min-width:16px; text-align:center; }
+.goal-feedback-status { flex-basis:100%; font-size:10px; }
+.goal-feedback-status:empty, .goal-feedback-controls button[hidden] { display:none; }
+#goal-samples-field[hidden], #goal-candidates-field[hidden] { display:none; }

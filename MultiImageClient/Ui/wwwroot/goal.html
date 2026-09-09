@@ -41,16 +41,16 @@
           <select id="goal-kind">
             <option value="auto" selected>let the manager classify</option>
             <option value="bounded">bounded — a recognizable finished state</option>
-            <option value="open-ended">open-ended — a maximum / "as … as possible"</option>
+            <option value="open-ended">open-ended — explore and improve</option>
           </select>
-          <span class="goal-help">Open-ended goals require a tested limit before stopping. You can grant more turns when the budget runs out.</span>
+          <span id="goal-kind-help" class="goal-help"></span>
         </label>
         <div class="goal-field">
           <span class="goal-label">Image generators <span id="goal-generators-count" class="goal-generators-count"></span></span>
           <div id="generator-controls-host"></div>
           <div id="gens-row" role="group" aria-label="image generators"></div>
           <span class="goal-help">Chooser settings are shared with the main page. Endpoint extra text applies only on the main page.</span>
-          <span class="goal-help">Each generator makes two images per turn: one refinement and one fresh approach.</span>
+          <span id="goal-search-help" class="goal-help"></span>
         </div>
         <label class="goal-field">
           <span class="goal-label">Manager</span>
@@ -63,6 +63,23 @@
           <span class="goal-help">Critics judge the goal and images independently. The manager receives their feedback before choosing the next design.</span>
         </div>
         <div class="goal-options">
+          <label id="goal-samples-field" class="goal-field goal-field-small" hidden>
+            <span class="goal-label">images per prompt / source</span>
+            <select id="goal-samples">
+              <option value="0" selected>Auto: grok-web 2, others 1</option>
+              <option value="1">1</option><option value="2">2</option><option value="4">4</option>
+            </select>
+            <span class="goal-help">Up to 24 images per round. Each image receives separate feedback.</span>
+          </label>
+          <label id="goal-candidates-field" class="goal-field goal-field-small" hidden>
+            <span class="goal-label">candidate limit</span>
+            <select id="goal-max-candidates">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+            </select>
+            <span class="goal-help">The manager chooses how many to test each round.</span>
+          </label>
           <label class="goal-field goal-field-small">
             <span class="goal-label">max turns</span>
             <input id="goal-max-turns" type="number" min="1" max="30" value="6" required>
@@ -95,8 +112,9 @@
         </div>
         <details class="goal-details">
           <summary>How they cooperate</summary>
-          <p class="goal-help">The manager writes both prompts and chooses which image to develop next.</p>
-          <p class="goal-help">Critics see only the goal and images. They do not see the manager’s prompts or conversation.</p>
+          <p class="goal-help">The manager writes candidate prompts and chooses which images to develop next.</p>
+          <p class="goal-help goal-pursuit-help" hidden>Critics see the goal, shared criteria, and images. They report evidence and uncertainty for each criterion.</p>
+          <p class="goal-help goal-pursuit-help" hidden>The manager can test a component with selected sources and lower settings. Its plan records deferred requirements and restoration.</p>
           <p class="goal-help">The manager sees generator letters and critic numbers. You see each contributor’s full name.</p>
           <p class="goal-help">The same model can manage and critique through separate conversations.</p>
         </details>
@@ -118,7 +136,12 @@
     <div id="goal-empty">Select a loop on the left, or start a new one.</div>
     <div id="goal-loop" hidden>
       <div id="goal-loop-head" class="goal-panel"></div>
+      <div id="goal-view-modes" class="goal-view-modes" hidden aria-label="Loop view">
+        <button id="goal-work-mode" type="button" aria-pressed="true">Work</button>
+        <button id="goal-tree-mode" type="button" aria-pressed="false">Tree</button>
+      </div>
       <div id="goal-turns"></div>
+      <div id="goal-tree" class="goal-panel" hidden></div>
     </div>
   </section>
 </main>
@@ -127,6 +150,8 @@
 <script src="viewer.js?v=20260904-shared-viewer"></script>
 <script src="recap-model.js"></script>
 <script src="goal-sidebar.js"></script>
+<script src="goal-tree.js"></script>
+<script src="goal-feedback.js"></script>
 <script src="generator-chooser.js?v=20260905-shared"></script>
 <script src="goal.js?v=20260905-shared-chooser"></script>
 </body>

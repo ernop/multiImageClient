@@ -2194,6 +2194,8 @@ namespace MultiImageClient
         public string Quality { get; init; } = "high";
         public string Moderation { get; init; } = "low";
         public int ImageCount { get; init; } = 1;
+        // Goal-loop samples each require one exact output; other jobs retain the CLI setting.
+        public bool? GrokWebSideBySide { get; init; }
 
         /// Intent-level output geometry, mapped per generator (gpt-image-2
         /// gets an exact WxH, grok gets an aspect ratio + 1k/2k resolution).
@@ -5319,7 +5321,7 @@ namespace MultiImageClient
                 client, maxConcurrency: 1, _stats,
                 pro: _options.GrokWebPro,
                 aspectRatio: ar,
-                enableSideBySide: _options.GrokWebSideBySide,
+                enableSideBySide: spec.GrokWebSideBySide ?? _options.GrokWebSideBySide,
                 settings: _settings,
                 captureSessions: false);
         }

@@ -3,6 +3,16 @@
 (function (root) {
   function collect(loop, entries, resolve) {
     const protocol = loop.protocolVersion;
+    const latestReplies = new Map();
+    if (protocol >= 7) for (const e of entries) {
+      if (e.error) continue;
+      const who = e.kind === "review" && e.manager?.parsed ? "manager"
+        : e.kind === "critique" && e.critic?.parsed ? `critic-${e.critic.index}` : null;
+      if (who) {
+        const key = `${e.turn}/${who}`;
+        if (!latestReplies.has(key) || e.index > latestReplies.get(key).index) latestReplies.set(key, e);
+      }
+    }
     const generators = loop.generators?.length
       ? loop.generators
       : [{ key: loop.generatorKey, label: loop.generatorLabel, source: null }];
@@ -87,6 +97,7 @@
           }));
           who = `critic-${reply.critic.index}`;
         } else continue;
+        if (protocol >= 7 && latestReplies.get(`${reply.turn}/${who}`) !== reply) continue;
         const hits = rows.filter(
           (s) =>
             (s.variant || null) === item.variant &&
@@ -100,6 +111,7 @@
           entry: reply.index,
           score: ev.score,
           assessment: ev.assessment,
+          components: ev.components || null,
           problems: ev.problems || [],
           ideas: ev.ideas || [],
           keep: ev.keep || [],
@@ -116,7 +128,7 @@
       (a, b) =>
         a.turn - b.turn ||
         a.generator.localeCompare(b.generator) ||
-        Number(a.variant === "fresh") - Number(b.variant === "fresh"),
+        variantOrder(a.variant) - variantOrder(b.variant),
     );
     const cuts = { all: items.map((i) => i.id), best: [], latest: [] };
     for (const g of generators) {
@@ -136,6 +148,7 @@
             .map((i) => i.id),
         );
     }
+    if (loop.protocolVersion >= 7) cuts.best = items.filter((i) => i.best).map((i) => i.id);
     const contributions = entries
       .filter((e) => ["design", "review", "critique"].includes(e.kind))
       .map((e) => {
@@ -154,6 +167,8 @@
       goal: loop.goal,
       status: loop.status,
       statusDetail: loop.statusDetail || "",
+      protocolVersion: loop.protocolVersion || 1,
+      rubric: entries.find((e) => e.kind === "design" && !e.error)?.manager?.parsed?.rubric || [],
       participants,
       items,
       cuts,
@@ -161,5 +176,9 @@
       contributions,
     };
   }
-  root.GoalRecap = { collect, shortName: label => label.replace(/^Claude /, "").replace(/ \((?:Anthropic|OpenAI|Google|xAI)\)$/, "") };
+  function variantOrder(v) { return /^c[1-3]-s[1-4]$/.test(v) ? (Number(v[1]) - 1) * 4 + Number(v[4]) - 1
+    : ({ refine: 0, fresh: 1, c1: 0, c2: 1, c3: 2 })[v] ?? -1; }
+  function variantLabel(v) { return /^c[1-3]-s[1-4]$/.test(v) ? `Candidate ${v[1]} · sample ${v[4]}`
+    : /^c[1-3]$/.test(v) ? `Candidate ${v.slice(1)}` : v || "render"; }
+  root.GoalRecap = { collect, variantLabel, variantOrder, shortName: label => label.replace(/^Claude /, "").replace(/ \((?:Anthropic|OpenAI|Google|xAI)\)$/, "") };
 })(globalThis);

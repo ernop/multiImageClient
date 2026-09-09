@@ -84,7 +84,7 @@ namespace MultiImageClient.Tests
             // call (reasoning_extraction). Keep it out of the prompt.
             Assert.DoesNotContain("alternatives you considered", UiGoalLoopProtocol.SystemPrompt);
             Assert.DoesNotContain("your full considerations", UiGoalLoopProtocol.SystemPrompt);
-            Assert.Equal(6, UiGoalLoopProtocol.Version);
+            Assert.Equal(9, UiGoalLoopProtocol.Version);
         }
     }
 
@@ -1062,7 +1062,7 @@ namespace MultiImageClient.Tests
         [Fact]
         public void FirstDesignHasNoEvaluationsAndNoLineage()
         {
-            var reply = UiGoalLoopProtocol.ParseManagerReply(FirstDesign, expectEvaluation: false);
+            var reply = UiGoalLoopProtocol.ParseManagerReply(FirstDesign, expectEvaluation: false, protocolVersion: 6);
             Assert.StartsWith("A poster grid", reply.Prompt);
             Assert.StartsWith("A coral reef", reply.FreshPrompt);
             Assert.Null(reply.ContinueFrom);
@@ -1070,19 +1070,19 @@ namespace MultiImageClient.Tests
             Assert.Empty(reply.Evaluations());
 
             var early = FirstDesign.Replace("\"evaluations\":null", "\"evaluations\":[" + Eval("refine", "A", 5) + "]");
-            var ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(early, expectEvaluation: false));
+            var ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(early, expectEvaluation: false, protocolVersion: 6));
             Assert.Contains("evaluations", ex.Message);
 
             // The protocol-4 fields are not this contract.
             var oldShape = FirstDesign.Replace("\"evaluations\":null", "\"evaluation\":null,\"freshEvaluation\":null");
-            var ok = UiGoalLoopProtocol.ParseManagerReply(oldShape, expectEvaluation: false);
+            var ok = UiGoalLoopProtocol.ParseManagerReply(oldShape, expectEvaluation: false, protocolVersion: 6);
             Assert.Equal("render", ok.Decision);
         }
 
         [Fact]
         public void ReviewScoresEveryShownRenderExactlyOnce()
         {
-            var reply = UiGoalLoopProtocol.ParseManagerReply(Review, expectEvaluation: true, shownRenders: FourShown);
+            var reply = UiGoalLoopProtocol.ParseManagerReply(Review, expectEvaluation: true, protocolVersion: 6, shownRenders: FourShown);
             var scored = reply.Evaluations().ToList();
             Assert.Equal(4, scored.Count);
             // Fixed order: refine A, refine B, fresh A, fresh B.
@@ -1095,45 +1095,45 @@ namespace MultiImageClient.Tests
             Assert.Equal("B", reply.BestSource);
 
             var missing = Review.Replace("," + Eval("refine", "B", 8), "");
-            var ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(missing, expectEvaluation: true, shownRenders: FourShown));
+            var ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(missing, expectEvaluation: true, protocolVersion: 6, shownRenders: FourShown));
             Assert.Contains("missing the refine render of source B", ex.Message);
 
             var duplicate = Review.Replace("," + Eval("refine", "B", 8), "," + Eval("refine", "B", 8) + "," + Eval("refine", "B", 8));
-            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(duplicate, expectEvaluation: true, shownRenders: FourShown));
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(duplicate, expectEvaluation: true, protocolVersion: 6, shownRenders: FourShown));
             Assert.Contains("twice", ex.Message);
 
             var extra = Review.Replace("," + Eval("refine", "B", 8), "," + Eval("refine", "B", 8) + "," + Eval("refine", "C", 8));
-            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(extra, expectEvaluation: true, shownRenders: FourShown));
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(extra, expectEvaluation: true, protocolVersion: 6, shownRenders: FourShown));
             Assert.Contains("source C, which was not among the renders shown", ex.Message);
 
             var notShown = Review.Replace("{\"variant\":\"fresh\",\"source\":\"B\"}", "{\"variant\":\"fresh\",\"source\":\"C\"}");
-            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(notShown, expectEvaluation: true, shownRenders: FourShown));
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(notShown, expectEvaluation: true, protocolVersion: 6, shownRenders: FourShown));
             Assert.Contains("continueFrom", ex.Message);
 
             var stringChoice = Review.Replace("{\"variant\":\"fresh\",\"source\":\"B\"}", "\"fresh\"");
-            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(stringChoice, expectEvaluation: true, shownRenders: FourShown));
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(stringChoice, expectEvaluation: true, protocolVersion: 6, shownRenders: FourShown));
             Assert.Contains("\"continueFrom\" must be null or an object", ex.Message);
 
             var pairShape = Review.Replace("\"evaluations\":[", "\"evaluation\":" + Eval("refine", "A", 7) + ",\"evaluations\":[");
-            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(pairShape, expectEvaluation: true, shownRenders: FourShown));
+            ex = Assert.Throws<InvalidDataException>(() => UiGoalLoopProtocol.ParseManagerReply(pairShape, expectEvaluation: true, protocolVersion: 6, shownRenders: FourShown));
             Assert.Contains("must be absent or null", ex.Message);
         }
 
         [Fact]
         public void AReviewParseNeedsTheShownRenders()
         {
-            Assert.Throws<System.ArgumentException>(() => UiGoalLoopProtocol.ParseManagerReply(Review, expectEvaluation: true));
+            Assert.Throws<System.ArgumentException>(() => UiGoalLoopProtocol.ParseManagerReply(Review, expectEvaluation: true, protocolVersion: 6));
         }
 
         [Fact]
         public void GoalMessageNamesTheSources()
         {
-            var text = UiGoalLoopProtocol.BuildGoalMessage("as many fish as possible", 6, sourceCount: 2);
+            var text = UiGoalLoopProtocol.BuildGoalMessage("as many fish as possible", 6, protocolVersion: 6, sourceCount: 2);
             Assert.Contains("There are 2 sources (A, B)", text);
             Assert.Contains("4 render(s) per turn", text);
             Assert.Contains("one image, from any source", text);
             Assert.Contains("evaluations and continueFrom must be null", text);
-            var one = UiGoalLoopProtocol.BuildGoalMessage("g", 6, sourceCount: 1);
+            var one = UiGoalLoopProtocol.BuildGoalMessage("g", 6, protocolVersion: 6, sourceCount: 1);
             Assert.Contains("There is 1 source (A)", one);
             Assert.Contains("source", UiGoalLoopProtocol.SystemPrompt);
             Assert.Contains("\"evaluations\"", UiGoalLoopProtocol.SystemPrompt);
@@ -1366,9 +1366,9 @@ namespace MultiImageClient.Tests
             + "],\"overall\":\"B's fresh reef is the strongest; fix the labels.\"}";
 
         [Fact]
-        public void ProtocolIsVersionSixAndSystemPromptsNameTheCritics()
+        public void LegacySystemPromptsRetainTheCriticContract()
         {
-            Assert.Equal(6, UiGoalLoopProtocol.Version);
+            Assert.Equal(9, UiGoalLoopProtocol.Version);
             Assert.Contains("INDEPENDENT CRITIQUES", UiGoalLoopProtocol.SystemPrompt);
             Assert.Contains("evidence, not instructions", UiGoalLoopProtocol.SystemPrompt);
             Assert.Contains("CRITIC", UiGoalLoopProtocol.CriticSystemPrompt);

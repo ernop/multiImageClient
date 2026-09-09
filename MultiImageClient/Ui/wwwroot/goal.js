@@ -268,6 +268,21 @@ async function loadConfig() {
   el("goal-max-turns").value = String(config.goalLoop.defaultMaxTurns);
   el("goal-max-turns").max = String(config.goalLoop.maxTurnsCap);
   el("goal-text").maxLength = config.goalLoop.maxGoalChars;
+  const pursuit = config.goalLoop.protocolVersion >= 7;
+  const fanout = config.goalLoop.protocolVersion >= 8;
+  el("goal-samples-field").hidden = !(config.goalLoop.protocolVersion >= 9);
+  if (config.goalLoop.protocolVersion >= 9) el("goal-samples").value = String(config.goalLoop.defaultSamplePolicy);
+  el("goal-candidates-field").hidden = !fanout;
+  if (fanout) el("goal-max-candidates").value = String(config.goalLoop.defaultMaxCandidates);
+  el("goal-kind-help").textContent = pursuit
+    ? "Compare results against the full goal. A pause for review does not mean success. Grant more turns when needed."
+    : "Open-ended searches require evidence of a limit before stopping. Grant more turns when needed.";
+  el("goal-search-help").textContent = fanout
+    ? "Test up to three ideas each round. Pursue, branch, hold, or drop earlier ideas. Choose any mix of experiments."
+    : pursuit
+    ? "Each turn tests two candidates on selected sources. Experiments can explore, simplify, rebuild, pursue, or repeat a prompt."
+    : "Each generator renders a refinement and a fresh design each turn.";
+  document.querySelectorAll(".goal-pursuit-help").forEach((node) => { node.hidden = !pursuit; });
   updateRunningCount(config.goalLoop.runningCount);
 }
 
@@ -341,6 +356,8 @@ el("goal-form").addEventListener("submit", async (event) => {
   form.append("manager", el("goal-manager").value);
   for (const key of criticKeys) form.append("critics", key);
   form.append("maxTurns", el("goal-max-turns").value);
+  if (config.goalLoop.protocolVersion >= 8) form.append("maxCandidates", el("goal-max-candidates").value);
+  if (config.goalLoop.protocolVersion >= 9) form.append("samplesPerPrompt", el("goal-samples").value);
   form.append("goalKind", el("goal-kind").value);
   form.append("shape", el("goal-shape").value);
   form.append("detail", el("goal-detail").value);
@@ -372,6 +389,7 @@ function statusLabel(status) {
     done: "done",
     exhausted: "turn limit",
     failed: "failed",
+    plateau: "search paused",
   }[status] || status;
 }
 
@@ -431,7 +449,8 @@ function renderList() {
     turns.title = "renders completed / max turns";
     const score = document.createElement("span");
     score.className = "goal-list-score";
-    score.textContent = loop.bestScore != null ? `best ${formatScore(loop.bestScore)}` : "";
+    score.textContent = loop.bestScore != null
+      ? loop.protocolVersion >= 7 ? `selected turn ${loop.bestTurn}` : `best ${formatScore(loop.bestScore)}` : "";
     top.append(status, turns, score);
     const goal = document.createElement("div");
     goal.className = "goal-list-goal";
@@ -471,6 +490,44 @@ let selectedVersion = 0;
 let loopState = null;      // { loop, running, canControl, entries: [] }
 let loopPollTimer = null;
 let activityTimer = null;
+let treeView = false;
+let treeSignature = "";
+
+function setLoopView(tree) {
+  treeView = tree && loopState?.loop.protocolVersion >= 8;
+  el("goal-turns").hidden = treeView;
+  el("goal-tree").hidden = !treeView;
+  el("goal-work-mode").setAttribute("aria-pressed", String(!treeView));
+  el("goal-tree-mode").setAttribute("aria-pressed", String(treeView));
+  if (treeView) refreshTree();
+}
+el("goal-work-mode").addEventListener("click", () => setLoopView(false));
+el("goal-tree-mode").addEventListener("click", () => setLoopView(true));
+
+function refreshTree() {
+  el("goal-view-modes").hidden = !(loopState?.loop.protocolVersion >= 8);
+  if (loopState?.loop.protocolVersion >= 8) {
+    const best = loopState.entries.find(e => e.kind === "render-result" && e.turn === loopState.loop.bestTurn
+      && variantOf(e) === loopState.loop.bestVariant && sourceOf(e) === loopState.loop.bestSource);
+    const bestBody = best && el("goal-turns").querySelector(`.goal-entry[data-index="${best.index}"] .goal-render-body`);
+    for (const mark of el("goal-turns").querySelectorAll(".goal-render-body .goal-chosen-mark"))
+      if (mark.parentElement !== bestBody) mark.remove();
+    if (bestBody && !bestBody.querySelector(".goal-chosen-mark")) {
+      const mark = document.createElement("span"); mark.className = "goal-chosen-mark";
+      mark.textContent = "Selected best"; bestBody.prepend(mark);
+    }
+  }
+  if (!treeView) return;
+  const data = GoalTree.collect(loopState.loop, loopState.entries);
+  const signature = `${el("goal-tree").clientWidth}:${JSON.stringify(data)}`;
+  if (signature === treeSignature) return;
+  const viewport = el("goal-tree").querySelector(".goal-tree-viewport");
+  const scroll = viewport && { left: viewport.scrollLeft, top: viewport.scrollTop };
+  GoalTree.render(el("goal-tree"), data, revealEntry, apiUrl);
+  const next = el("goal-tree").querySelector(".goal-tree-viewport");
+  if (next && scroll) { next.scrollLeft = scroll.left; next.scrollTop = scroll.top; }
+  treeSignature = signature;
+}
 
 function selectLoop(id, pushHistory) {
   if (pushHistory) {
@@ -489,6 +546,10 @@ function selectLoop(id, pushHistory) {
   el("goal-loop").hidden = false;
   el("goal-loop-head").textContent = "";
   el("goal-turns").textContent = "";
+  el("goal-tree").replaceChildren();
+  treeSignature = "";
+  el("goal-view-modes").hidden = true;
+  setLoopView(false);
   renderList();
   clearTimeout(loopPollTimer);
   pollLoop();
@@ -535,6 +596,8 @@ async function pollLoop() {
     }
     for (const turn of new Set(body.entries.map((entry) => entry.turn))) refreshTurnComparison(turn);
     renderLoopHead();
+    refreshTree();
+    refreshFeedbackControls();
     if (body.total > loopState.entries.length) {
       // Cursor gap: ask again immediately from what we have.
       clearTimeout(loopPollTimer);
@@ -600,7 +663,7 @@ function renderLoopHead() {
   progress.className = "goal-progress";
   progress.textContent = `Turn ${loop.turnsRendered} / ${loop.maxTurns}`;
   if (loop.bestScore != null) {
-    progress.append(` · Best ${formatScore(loop.bestScore)}/10 · turn ${loop.bestTurn}`
+    progress.append((loop.protocolVersion >= 7 ? ` · Selected turn ${loop.bestTurn}` : ` · Best ${formatScore(loop.bestScore)}/10 · turn ${loop.bestTurn}`)
       + `${loop.bestSource ? ` · ${loop.bestSource}` : ""}${loop.bestVariant ? ` ${loop.bestVariant}` : ""}`);
   }
   head.appendChild(progress);
@@ -625,9 +688,11 @@ function renderLoopHead() {
     settings.appendChild(row);
   };
   line("Output", `${loop.shape} · ${loop.detail} · ${loop.quality} · moderation ${loop.moderation}`);
-  line("Images per turn", String(loop.rendersPerTurn));
+  line(loop.protocolVersion >= 7 ? "Maximum images per turn" : "Images per turn", String(loop.rendersPerTurn));
+  if (loop.protocolVersion >= 8) line("Candidate limit", String(loop.maxCandidates));
+  if (loop.protocolVersion >= 9) line("Images per prompt / source", loop.samplesPerPrompt === 0 ? "grok-web: 2; others: 1" : String(loop.samplesPerPrompt));
   line("Goal kind", loop.effectiveGoalKind || loop.goalKind || "not classified");
-  line("Last refine score", formatScore(loop.lastScore));
+  line(loop.protocolVersion >= 7 ? "Last compatibility score" : "Last refine score", formatScore(loop.lastScore));
   line("Manager model", loop.managerModel);
   const cost = (value, known) => known ? formatUsd(value) : (value > 0 ? `${formatUsd(value)} + unpriced calls` : "price unknown");
   line("Manager cost", `${cost(loop.managerCostUsd, loop.managerCostKnown)} · ${loop.managerInputTokens.toLocaleString()} input / ${loop.managerOutputTokens.toLocaleString()} output tokens`);
@@ -665,7 +730,7 @@ function renderLoopHead() {
       : "Only the loop's creator can stop it";
     stop.addEventListener("click", () => controlLoop("stop", null, stop));
     controls.appendChild(stop);
-  } else if (loop.status !== "done") {
+  } else if (loop.status !== "done" || hasUnseenFeedback()) {
     const turnsInput = document.createElement("input");
     turnsInput.type = "number";
     turnsInput.min = "1";
@@ -677,7 +742,7 @@ function renderLoopHead() {
     turnsLabel.append("max turns ", turnsInput);
     const resume = document.createElement("button");
     resume.type = "button";
-    resume.textContent = loop.status === "exhausted" ? "resume with more turns" : "resume";
+    resume.textContent = hasUnseenFeedback() ? "resume with your feedback" : loop.status === "exhausted" ? "resume with more turns" : "resume";
     resume.disabled = !canControl;
     resume.title = canControl
       ? "Continue from the last recorded entry (re-asks the manager or re-renders the interrupted step)"
@@ -802,6 +867,74 @@ async function controlLoop(action, params, button) {
 const PartyLabels = { user: "you", manager: "manager", generator: "image generator", system: "loop", critic: "critic" };
 const VariantLabels = { refine: "Refine", fresh: "Fresh" };
 
+function variantLabel(variant) {
+  if (/^c[1-3]-s[1-4]$/.test(variant)) return GoalRecap.variantLabel(variant);
+  if (/^c[1-3]$/.test(variant)) return `Candidate ${variant.slice(1)}`;
+  if (loopState?.loop.protocolVersion >= 7)
+    return ({ refine: "Candidate 1", fresh: "Candidate 2" })[variant] || "Image";
+  return VariantLabels[variant] || "Image";
+}
+
+function variantOrder(variant) {
+  return GoalRecap.variantOrder(variant);
+}
+
+function feedbackControls(scope, target) {
+  if (!target || !config?.goalLoop.feedbackEnabled || !loopState.canControl) return null;
+  const row = document.createElement("div"); row.className = "goal-feedback-controls";
+  row.dataset.scope = scope; row.dataset.target = String(target.index);
+  const label = document.createElement("span"); label.textContent = `Your ${scope} points`;
+  const total = document.createElement("strong"); total.className = "goal-feedback-total";
+  total.textContent = String(GoalFeedback.total(loopState.entries, scope, target));
+  const status = document.createElement("span"); status.className = "goal-feedback-status"; status.setAttribute("aria-live", "polite");
+  const retry = document.createElement("button"); retry.type = "button"; retry.textContent = "Retry vote"; retry.hidden = true;
+  const buttons = [];
+  let pending = null;
+  const submit = async () => {
+    if (!pending) return;
+    const operation = pending, version = selectedVersion, loopId = selectedLoopId;
+    buttons.forEach(b => b.disabled = true); retry.hidden = true; status.textContent = "Saving…";
+    try {
+      const form = new FormData();
+      for (const [key, value] of Object.entries(operation)) form.append(key, String(value));
+      await fetchJson(`api/goal-loops/${encodeURIComponent(loopId)}/feedback`, { method: "POST", body: form });
+      pending = null;
+      if (version !== selectedVersion) return;
+      status.textContent = loopState.running ? "Saved for planning" : "Saved for resume";
+      await pollLoop();
+    } catch (error) {
+      if (version !== selectedVersion) return;
+      status.textContent = `Vote not confirmed: ${error.message}`; retry.hidden = false;
+    } finally {
+      buttons.forEach(b => b.disabled = !!pending);
+    }
+  };
+  for (const delta of [1, -1]) {
+    const button = document.createElement("button"); button.type = "button"; button.textContent = delta === 1 ? "+1" : "−1";
+    button.setAttribute("aria-label", `${delta === 1 ? "Add" : "Subtract"} one ${scope} point for entry ${target.index}`);
+    button.addEventListener("click", () => {
+      pending = { requestId: crypto.randomUUID(), scope, entryIndex: target.index, delta }; submit();
+    });
+    buttons.push(button);
+  }
+  retry.addEventListener("click", submit);
+  row.append(label, total, ...buttons, retry, status);
+  return row;
+}
+
+function refreshFeedbackControls() {
+  for (const row of el("goal-turns").querySelectorAll(".goal-feedback-controls")) {
+    const target = loopState.entries.find(e => e.index === Number(row.dataset.target));
+    row.querySelector(".goal-feedback-total").textContent = String(GoalFeedback.total(loopState.entries, row.dataset.scope, target));
+  }
+}
+
+function hasUnseenFeedback() {
+  const feedback = loopState?.entries.findLast(e => e.feedback);
+  const manager = loopState?.entries.findLast(e => ["design", "review"].includes(e.kind) && !e.error && e.manager?.parsed);
+  return !!feedback && feedback.index > (manager?.manager.feedbackThroughEntry ?? -1);
+}
+
 function variantOf(entry) {
   return (entry.render && entry.render.variant) || null;
 }
@@ -820,7 +953,7 @@ function generatorsSummary(loop) {
 // "refine · source B (grok-web pro)" — the render identity as the page
 // names it; the source part is absent on single-source loops.
 function renderName(variant, source, generatorLabel) {
-  const parts = [variant];
+  const parts = [variant ? variantLabel(variant) : null];
   if (source) parts.push(`source ${source}${generatorLabel ? ` (${generatorLabel})` : ""}`);
   return parts.filter(Boolean).join(" · ");
 }
@@ -867,12 +1000,13 @@ function entryKindLabel(entry) {
   if (entry.error) return "Failed";
   const parsed = entry.manager?.parsed;
   if (entry.kind === "review" && parsed) {
-    if (parsed.decision === "done") return isObjectedReview(entry) ? "Stop disputed" : "Done";
+    if (parsed.decision === "done") return isObjectedReview(entry) ? "Stop disputed" : parsed.completion?.outcome === "plateau" ? "Search paused" : "Done";
+    if (parsed.candidateDecisions) return `Plan ${parsed.plan.candidates.length} candidate${parsed.plan.candidates.length === 1 ? "" : "s"}`;
     const from = continueFromOf(parsed);
     return from ? `Continue from ${[from.source, from.variant].filter(Boolean).join(" ")}` : "Next design";
   }
-  if (entry.kind === "render-result") return VariantLabels[variantOf(entry)] || "Image";
-  if (entry.kind === "render-request") return `${VariantLabels[variantOf(entry)] || "Image"} request`;
+  if (entry.kind === "render-result") return variantLabel(variantOf(entry));
+  if (entry.kind === "render-request") return `${variantLabel(variantOf(entry))} request`;
   return { design: "Design", critique: "Feedback", "critique-request": "Critique request",
     "review-request": "Review request", goal: "Goal", note: "Event", objection: "Stop disputed" }[entry.kind] || entry.kind;
 }
@@ -956,12 +1090,15 @@ function critiqueBody(entry) {
       h.textContent = renderName(c.variant, c.source, generatorLabelOfSource(c.source) || "?") + " render";
       text.appendChild(h);
       text.appendChild(labeled("assessment", textBlock(c.assessment)));
+      if (c.components) text.appendChild(componentTable(c.components));
+      if (c.experimentAssessment) text.appendChild(labeled("Subtask result", textBlock(c.experimentAssessment)));
       if (c.problems && c.problems.length) text.appendChild(labeled("problems", listBlock(c.problems, "problems")));
       if (c.ideas && c.ideas.length) text.appendChild(labeled("ideas", listBlock(c.ideas, "keep")));
       row.appendChild(text);
       body.appendChild(row);
     }
     body.appendChild(labeled("overall verdict", textBlock(parsed.overall)));
+    if (parsed.rubricConcerns) body.appendChild(labeled("goal interpretation audit", textBlock(parsed.rubricConcerns)));
   }
   if (data.providerReasoning) {
     body.appendChild(detailsBlock("Provider reasoning", textBlock(data.providerReasoning), false));
@@ -1230,6 +1367,7 @@ function entryContainer(entry) {
 }
 
 function revealEntry(index) {
+  setLoopView(false);
   const node = el("goal-turns").querySelector(`.goal-entry[data-index="${index}"]`);
   if (!node) return;
   for (let parent = node; parent && parent !== el("goal-turns"); parent = parent.parentElement) {
@@ -1257,16 +1395,22 @@ function refreshTurnComparison(turn) {
     + ` (${events.childElementCount}${failures ? ` · ${failures} failed replies` : ""})`;
   const results = entries.filter((e) => e.kind === "render-result").sort((a, b) =>
     (sourceOf(a) || "").localeCompare(sourceOf(b) || "")
-    || (variantOf(a) === "fresh") - (variantOf(b) === "fresh") || a.index - b.index);
+    || variantOrder(variantOf(a)) - variantOrder(variantOf(b)) || a.index - b.index);
   const imageGrid = section.querySelector(".goal-turn-images");
   for (const result of results) imageGrid.appendChild(imageGrid.querySelector(`[data-index="${result.index}"]`));
   const container = section.querySelector(".goal-turn-scores");
   container.textContent = "";
-  if (!results.length) return;
+  const pursuit = loopState.loop.protocolVersion >= 7;
+  const design = loopState.entries.findLast((e) => e.manager?.parsed?.plan
+    && !e.error && (e.kind === "design" ? e.turn === turn : e.turn === turn - 1));
+  if (!results.length) {
+    if (pursuit && design) container.appendChild(compactSearchPlan(design.manager.parsed.plan));
+    return;
+  }
   const table = document.createElement("table");
   table.className = "goal-score-table";
   const caption = document.createElement("caption");
-  caption.textContent = "Scores / 10 · select a score to read the feedback";
+  caption.textContent = pursuit ? "Required outcomes met · select a result to read evidence" : "Scores / 10 · select a score to read the feedback";
   table.appendChild(caption);
   const header = table.createTHead().insertRow();
   const corner = document.createElement("th");
@@ -1276,7 +1420,7 @@ function refreshTurnComparison(turn) {
   for (const result of results) {
     const th = document.createElement("th");
     th.scope = "col";
-    th.textContent = [sourceOf(result), VariantLabels[variantOf(result)] || "Image"].filter(Boolean).join(" · ");
+    th.textContent = [sourceOf(result), variantLabel(variantOf(result))].filter(Boolean).join(" · ");
     th.title = result.render.generatorLabel;
     header.appendChild(th);
   }
@@ -1302,11 +1446,26 @@ function refreshTurnComparison(turn) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "goal-score-link";
-        button.textContent = formatScore(hit.evaluation.score);
-        button.setAttribute("aria-label", `${label.textContent}: ${cell.cellIndex > 0 ? header.cells[cell.cellIndex].textContent : ""}, ${formatScore(hit.evaluation.score)} out of 10`);
+        button.textContent = pursuit ? componentSummary(hit.evaluation) : formatScore(hit.evaluation.score);
+        button.setAttribute("aria-label", `${label.textContent}: ${cell.cellIndex > 0 ? header.cells[cell.cellIndex].textContent : ""}, ${pursuit ? componentSummary(hit.evaluation) : `${formatScore(hit.evaluation.score)} out of 10`}`);
         button.title = `${hit.evaluation.goalMet ? "Goal met" : "Goal not met"}: ${hit.evaluation.assessment}`;
         button.addEventListener("click", () => revealEntry(reply.index));
         cell.appendChild(button);
+        if (pursuit && hit.evaluation.components) {
+          const profile = document.createElement(loopState.loop.protocolVersion >= 8 ? "details" : "div");
+          profile.className = "goal-component-profile";
+          if (profile.tagName === "DETAILS") {
+            const summary = document.createElement("summary"); summary.textContent = "Components"; profile.appendChild(summary);
+          }
+          for (const component of hit.evaluation.components) {
+            const criterion = pursuitRubric().find((r) => r.id === component.criterion);
+            const line = document.createElement("div");
+            line.textContent = `${component.criterion.replace(/[_-]/g, " ")}: ${component.status}`;
+            line.title = `${criterion?.description || component.criterion}: ${component.evidence} (confidence: ${component.confidence})`;
+            profile.appendChild(line);
+          }
+          cell.appendChild(profile);
+        }
       } else {
         cell.textContent = reply?.error ? "Failed" : "—";
         cell.title = reply?.error || "No accepted score yet";
@@ -1314,6 +1473,101 @@ function refreshTurnComparison(turn) {
     }
   }
   container.appendChild(table);
+  if (pursuit && design) container.appendChild(compactSearchPlan(design.manager.parsed.plan));
+}
+
+function compactSearchPlan(plan) {
+  return loopState.loop.protocolVersion >= 8
+    ? detailsBlock(`Plan: ${plan.objective}`, searchPlanBlock(plan), false) : searchPlanBlock(plan);
+}
+
+function candidateContext(entry) {
+  const candidate = GoalTree.candidate(loopState.entries, entry.turn, variantOf(entry));
+  if (!candidate) return null;
+  const box = document.createElement("div"); box.className = "goal-node-context";
+  const title = document.createElement("div"); title.className = "goal-node-title";
+  title.textContent = `${candidate.title} · ${candidate.mode} · ${candidate.scope}`;
+  box.appendChild(title);
+  if (!candidate.parents.length) box.appendChild(textBlock("New idea"));
+  for (const parent of candidate.parents) {
+    const result = loopState.entries.find(e => e.kind === "render-result" && e.turn === parent.turn
+      && variantOf(e) === parent.variant && sourceOf(e) === parent.source && e.render.ok);
+    const link = document.createElement("button"); link.type = "button"; link.className = "goal-score-link";
+    link.textContent = `From turn ${parent.turn} · ${variantLabel(parent.variant)} · source ${parent.source}`;
+    link.title = parent.contribution;
+    if (result) link.addEventListener("click", () => revealEntry(result.index)); else link.disabled = true;
+    box.appendChild(link);
+  }
+  const actualPrompt = GoalTree.renderPrompt(loopState.entries, entry);
+  box.appendChild(detailsBlock("Prompt being tried", textBlock(actualPrompt || "Prompt record unavailable.", "goal-prompt"), false));
+  return box;
+}
+
+function pursuitRubric() {
+  return loopState?.entries.find((e) => e.kind === "design" && !e.error)?.manager?.parsed?.rubric || [];
+}
+
+function componentSummary(evaluation) {
+  const required = pursuitRubric().filter((r) => r.importance === "required");
+  const met = required.filter((r) => evaluation.components?.some((c) => c.criterion === r.id && c.status === "met"));
+  return `${met.length}/${required.length} required`;
+}
+
+function componentTable(components) {
+  const table = document.createElement("table");
+  table.className = "goal-components";
+  const head = table.createTHead().insertRow();
+  for (const title of ["Criterion", "Importance", "Status", "Visible evidence", "Confidence"]) {
+    const th = document.createElement("th"); th.scope = "col"; th.textContent = title; head.appendChild(th);
+  }
+  const body = table.createTBody();
+  for (const c of components) {
+    const r = pursuitRubric().find((r) => r.id === c.criterion);
+    const row = body.insertRow();
+    for (const value of [r?.description || c.criterion, r?.importance || "", c.status, c.evidence, c.confidence])
+      row.insertCell().textContent = value;
+  }
+  return table;
+}
+
+function searchPlanBlock(plan) {
+  const box = document.createElement("div");
+  box.className = "goal-search-plan";
+  box.appendChild(labeled("Current objective", textBlock(plan.objective)));
+  if (plan.allocationReason) box.appendChild(labeled("Why this number and mix", textBlock(plan.allocationReason)));
+  box.appendChild(labeled("Options and reasons", listBlock((plan.options || []).map((o) => `${o.description}: ${o.reason}`))));
+  for (const c of plan.candidates || []) {
+    const card = document.createElement("div");
+    card.className = "goal-experiment";
+    card.appendChild(labeled(`${variantLabel(c.variant)}${c.title ? ` · ${c.title}` : ""} · ${c.mode}`, textBlock(c.question)));
+    if (c.parents) {
+      for (const parent of c.parents) {
+        const result = loopState.entries.find(e => e.kind === "render-result" && e.turn === parent.turn
+          && variantOf(e) === parent.variant && sourceOf(e) === parent.source);
+        const link = document.createElement("button");
+        link.type = "button"; link.className = "goal-score-link";
+        link.textContent = `From turn ${parent.turn} · ${variantLabel(parent.variant)} · source ${parent.source}`;
+        if (result) link.addEventListener("click", () => revealEntry(result.index));
+        else link.disabled = true;
+        card.append(link, textBlock(parent.contribution));
+      }
+      if (!c.parents.length) card.appendChild(textBlock("New idea"));
+    }
+    card.appendChild(labeled(c.scope === "component" ? "Component study" : "Full scene",
+      textBlock([c.componentGoal, `Sources: ${c.sources?.join(", ") || "all selected"}`,
+        `Quality: ${c.quality || loopState.loop.quality}; detail: ${c.detail || loopState.loop.detail}`].filter(Boolean).join(" · "))));
+    card.appendChild(labeled("Expected evidence", textBlock(c.expected)));
+    card.appendChild(labeled("Change", listBlock(c.changes || [])));
+    card.appendChild(labeled("Hold", listBlock(c.holds || [])));
+    if (c.prompt) card.appendChild(detailsBlock("Complete candidate prompt", textBlock(c.prompt, "goal-prompt"), false));
+    if (c.deferredCriteria?.length) {
+      card.appendChild(labeled("Temporarily omitted", listBlock(c.deferredCriteria.map((id) =>
+        pursuitRubric().find((r) => r.id === id)?.description || id))));
+      card.appendChild(labeled("Restore next", textBlock(c.restoreNext)));
+    }
+    box.appendChild(card);
+  }
+  return box;
 }
 
 function textBlock(text, cls) {
@@ -1426,11 +1680,10 @@ function loopViewerItems() {
   const items = [];
   // Walk order: turn, then refine before fresh (results land on file in
   // completion order).
-  const VariantOrder = { refine: 0, fresh: 1 };
   const results = loopState.entries
     .filter((entry) => entry.kind === "render-result" && entry.render && entry.render.ok && entry.render.imageUrl)
     .sort((a, b) => a.turn - b.turn
-      || (VariantOrder[variantOf(a)] || 0) - (VariantOrder[variantOf(b)] || 0)
+      || variantOrder(variantOf(a)) - variantOrder(variantOf(b))
       || (sourceOf(a) || "").localeCompare(sourceOf(b) || "")
       || a.index - b.index);
   for (const entry of results) {
@@ -1450,7 +1703,8 @@ function loopViewerItems() {
       { label: "job", value: r.jobId },
     ];
     if (variant) {
-      meta.unshift({ label: "render", value: variant === "fresh" ? "fresh — from-scratch re-attempt" : "refine — continues the chosen lineage" });
+      meta.unshift({ label: "render", value: loopState.loop.protocolVersion >= 7 ? variantLabel(variant)
+        : variant === "fresh" ? "fresh — from-scratch re-attempt" : "refine — continues the chosen lineage" });
     }
     if (evaluation) {
       meta.push({ label: "goal met", value: evaluation.goalMet ? "yes" : "no" });
@@ -1473,7 +1727,7 @@ function loopViewerItems() {
       height: match ? Number(match[2]) : 0,
       title: `Turn ${entry.turn} of ${loopState.loop.maxTurns}${variant ? ` — ${renderName(variant, source, r.generatorLabel)} render` : ""} — loop ${loopState.loop.id}`,
       subtitle: evaluation
-        ? `${formatScore(evaluation.score)}/10 — ${evaluation.assessment}`
+        ? `${evaluation.components ? componentSummary(evaluation) : `${formatScore(evaluation.score)}/10`} — ${evaluation.assessment}`
         : "not yet reviewed by the manager",
       prompt: request ? request.text : "",
       meta,
@@ -1540,10 +1794,10 @@ function scoreBlock(evaluation) {
   box.className = "goal-score";
   const number = document.createElement("div");
   number.className = "goal-score-number";
-  number.textContent = formatScore(evaluation.score);
+  number.textContent = evaluation.components ? componentSummary(evaluation) : formatScore(evaluation.score);
   const denominator = document.createElement("span");
   denominator.className = "goal-score-denominator";
-  denominator.textContent = "/10";
+  denominator.textContent = evaluation.components ? ` · summary ${formatScore(evaluation.score)}/10` : "/10";
   number.appendChild(denominator);
   const met = document.createElement("div");
   met.className = `goal-goal-met ${evaluation.goalMet ? "met" : "not-met"}`;
@@ -1592,10 +1846,12 @@ function managerBody(entry) {
       if (heading) {
         const h = document.createElement("div");
         h.className = "goal-eval-heading";
-        h.textContent = heading + (chosen ? " — continue from this one" : "");
+        h.textContent = heading + (chosen ? parsed.rubric ? " — selected reference" : " — continue from this one" : "");
         evalText.appendChild(h);
       }
       evalText.appendChild(labeled("assessment", textBlock(evaluation.assessment)));
+      if (evaluation.components) evalText.appendChild(componentTable(evaluation.components));
+      if (evaluation.experimentAssessment) evalText.appendChild(labeled("Subtask result", textBlock(evaluation.experimentAssessment)));
       if (evaluation.problems && evaluation.problems.length) {
         evalText.appendChild(labeled("problems", listBlock(evaluation.problems, "problems")));
       }
@@ -1608,7 +1864,8 @@ function managerBody(entry) {
     for (const s of scored) {
       let heading = null;
       if (s.variant) {
-        heading = s.variant === "fresh" ? "fresh render (from scratch)" : "refine render";
+        heading = loopState.loop.protocolVersion >= 7 ? variantLabel(s.variant)
+          : s.variant === "fresh" ? "fresh render (from scratch)" : "refine render";
         if (s.source) heading += ` · source ${s.source} (${generatorLabelOfSource(s.source) || "?"})`;
       }
       body.appendChild(evaluationBlock(s.evaluation, heading, pair && sameRender(from, s.variant, s.source)));
@@ -1616,7 +1873,8 @@ function managerBody(entry) {
     const decision = document.createElement("div");
     decision.className = `goal-decision decision-${parsed.decision}`;
     decision.textContent = parsed.decision === "done"
-      ? "decision: done — stop the loop"
+      ? parsed.completion?.outcome === "plateau" ? "decision: pause for review" : "decision: achieved"
+      : parsed.candidateDecisions ? `decision: test ${parsed.plan.candidates.length} candidate${parsed.plan.candidates.length === 1 ? "" : "s"}`
       : (hasEvaluations(parsed)
         ? (pair ? `decision: render again — continue from the ${from ? renderName(from.variant, from.source, generatorLabelOfSource(from.source)) : "?"} render` : "decision: render again with a new design")
         : (pair ? (multi || (loopState && (loopState.loop.generators || []).length > 1) ? "decision: render these two first designs on every source" : "decision: render these two first designs") : "decision: render this first design"));
@@ -1627,11 +1885,31 @@ function managerBody(entry) {
       decision.appendChild(best);
     }
     body.appendChild(decision);
+    if (parsed.rubric) {
+      body.appendChild(labeled("Stable goal criteria", listBlock(parsed.rubric.map((r) =>
+        `${r.description} — ${r.importance}. Goal: “${r.basis}”`))));
+    }
+    if (parsed.findings) {
+      for (const [key, title] of [["observation", "Observed"], ["inference", "Tentative explanation"],
+        ["uncertainty", "Uncertainty"], ["criticDisagreements", "Critic disagreements"], ["nextTest", "Next useful test"]]) {
+        body.appendChild(labeled(title, textBlock(parsed.findings[key])));
+      }
+    }
+    if (parsed.candidateDecisions?.length) body.appendChild(labeled("Decisions for the reviewed ideas",
+      listBlock(parsed.candidateDecisions.map(d => `${variantLabel(d.variant)} · ${d.action}: ${d.reason}`))));
+    if (parsed.plan) body.appendChild(searchPlanBlock(parsed.plan));
+    if (parsed.completion) {
+      body.appendChild(labeled(parsed.completion.outcome === "plateau" ? "Pause for review, not success" : "Completion evidence",
+        textBlock(`${parsed.completion.rationale}\nEvidence turns: ${parsed.completion.evidenceTurns.join(", ")}`)));
+      body.appendChild(labeled("Remaining gaps", listBlock(parsed.completion.remainingGaps)));
+    }
     if (parsed.doneStatement) {
       body.appendChild(labeled("done statement", textBlock(parsed.doneStatement)));
     }
     if (parsed.prompt) {
-      if (!hasEvaluations(parsed)) {
+      if (parsed.rubric) {
+        body.appendChild(labeled("Candidate 1 prompt", textBlock(parsed.prompt, "goal-prompt")));
+      } else if (!hasEvaluations(parsed)) {
         body.appendChild(labeled(pair ? "refine prompt to render (primary design)" : "prompt to render", textBlock(parsed.prompt, "goal-prompt")));
       } else if (pair) {
         const base = from ? renderedPromptOfTurn(entry.turn, entry.index, from.variant, from.source) : null;
@@ -1641,13 +1919,14 @@ function managerBody(entry) {
       }
     }
     if (parsed.designNotes) {
-      body.appendChild(labeled(pair ? "refine design notes" : "design notes", textBlock(parsed.designNotes)));
+      body.appendChild(labeled(parsed.rubric ? "Candidate 1 notes" : pair ? "refine design notes" : "design notes", textBlock(parsed.designNotes)));
     }
     if (parsed.freshPrompt) {
-      body.appendChild(freshPromptBlock("next fresh prompt", parsed.freshPrompt));
+      body.appendChild(parsed.rubric ? labeled("Candidate 2 prompt", textBlock(parsed.freshPrompt, "goal-prompt"))
+        : freshPromptBlock("next fresh prompt", parsed.freshPrompt));
     }
     if (parsed.freshDesignNotes) {
-      body.appendChild(labeled("fresh design notes", textBlock(parsed.freshDesignNotes)));
+      body.appendChild(labeled(parsed.rubric ? "Candidate 2 notes" : "fresh design notes", textBlock(parsed.freshDesignNotes)));
     }
     body.appendChild(detailsBlock("Rationale", textBlock(parsed.reasoning), true));
   }
@@ -1670,8 +1949,12 @@ function managerBody(entry) {
 
 function renderRequestBody(entry) {
   const body = document.createElement("div");
+  const points = feedbackControls("prompt", entry);
+  if (points) body.appendChild(points);
   const variant = variantOf(entry);
-  if (variant === "fresh") {
+  if (loopState?.loop.protocolVersion >= 7) {
+    body.appendChild(labeled(`${variantLabel(variant)} prompt sent to the image generator`, textBlock(entry.text, "goal-prompt")));
+  } else if (variant === "fresh") {
     body.appendChild(freshPromptBlock("fresh prompt sent to the image generator", entry.text));
   } else {
     const base = lineageBasePrompt(entry);
@@ -1734,11 +2017,20 @@ function renderResultBody(entry) {
   const source = sourceOf(entry);
   const loop = loopState.loop;
   const isBest = entry.turn === loop.bestTurn && (loop.bestVariant || null) === variant && (loop.bestSource || null) === source;
+  const imagePoints = r.ok ? feedbackControls("image", entry) : null;
+  const promptPoints = feedbackControls("prompt", GoalFeedback.requestFor(loopState.entries, entry));
+  if (imagePoints) body.appendChild(imagePoints);
+  if (promptPoints) body.appendChild(promptPoints);
+  if (loop.protocolVersion >= 8) {
+    const context = candidateContext(entry);
+    if (context) body.appendChild(context);
+  }
   const continues = sameRender(chosenRenderOfTurn(entry.turn, entry.index), variant, source);
   if (isBest || continues) {
     const mark = document.createElement("span");
     mark.className = "goal-chosen-mark";
-    mark.textContent = [isBest ? `Best · ${formatScore(loop.bestScore)}/10` : "", continues ? "Continues here" : ""].filter(Boolean).join(" · ");
+    mark.textContent = [isBest ? loop.protocolVersion >= 7 ? "Selected best" : `Best · ${formatScore(loop.bestScore)}/10` : "",
+      continues ? loop.protocolVersion >= 7 ? "Selected reference" : "Continues here" : ""].filter(Boolean).join(" · ");
     body.appendChild(mark);
   }
   if (r.ok) {
@@ -1867,7 +2159,7 @@ function buildEntryElement(entry) {
   meta.className = "goal-entry-meta";
   meta.textContent = `${PartyLabels[entry.from] || entry.from} → ${PartyLabels[entry.to] || entry.to} · ${formatTime(entry.at)}${entry.ms ? ` · ${formatDuration(entry.ms)}` : ""} · #${entry.index}`;
   const actionDetails = detailsBlock("Details & actions", meta, false);
-  if (entry.kind !== "note") {
+  if (!["note", "feedback"].includes(entry.kind)) {
     const actions = document.createElement("span");
     actions.className = "goal-entry-actions";
     if (["goal", "design", "render-request", "review-request", "review"].includes(entry.kind)) {

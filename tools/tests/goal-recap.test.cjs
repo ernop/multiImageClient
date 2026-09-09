@@ -57,12 +57,34 @@ test("preserves ties and leaves latest unreviewed", () => {
   assert.equal(d.items[0].prompt, "Exact prompt");
   assert.equal(d.participants[1].role, "Critic 1");
 });
+
+test("pursuit preserves component evidence and the chosen tradeoff instead of scalar maximum", () => {
+  const es = structuredClone(entries);
+  es[4].manager.parsed.renderEvaluations[0].evaluation.score = 7;
+  es[4].manager.parsed.renderEvaluations[0].evaluation.components = [
+    { criterion: "warmth", status: "met", evidence: "Faces meet.", confidence: "medium" },
+  ];
+  const d = GoalRecap.collect({ ...loop, protocolVersion: 7, bestTurn: 1, bestVariant: "refine", bestSource: "A" }, es, x => x);
+  assert.deepEqual(d.cuts.best, ["2"]);
+  assert.equal(d.items[0].comments[0].components[0].evidence, "Faces meet.");
+});
 test("does not accept a failed reply as evidence", () => {
   const es = structuredClone(entries);
   es[4].error = "Malformed reply";
   const d = GoalRecap.collect(loop, es, (x) => x);
   assert.deepEqual(d.cuts.best, []);
   assert.equal(d.contributions[0].error, true);
+});
+test("resumed pursuit uses the latest accepted evaluation and retains earlier contribution records", () => {
+  const es = structuredClone(entries);
+  const resumed = structuredClone(es[4]);
+  resumed.index = 8;
+  resumed.manager.parsed.renderEvaluations[0].evaluation.assessment = "Reconsidered after operator resume.";
+  es.push(resumed);
+  const d = GoalRecap.collect({ ...loop, protocolVersion: 7 }, es, x => x);
+  assert.equal(d.items[0].comments.length, 1);
+  assert.equal(d.items[0].comments[0].assessment, "Reconsidered after operator resume.");
+  assert.equal(d.contributions.length, 2);
 });
 test("rejects ambiguous render requests and missing scores", () => {
   assert.throws(

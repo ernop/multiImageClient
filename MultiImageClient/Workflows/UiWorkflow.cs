@@ -648,6 +648,12 @@ namespace MultiImageClient
                     // kind, available, not requiring an input image).
                     goalLoop = new
                     {
+                        protocolVersion = UiGoalLoopProtocol.Version,
+                        defaultMaxCandidates = UiGoalLoopFanout.DefaultMaxCandidates,
+                        maxCandidatesCap = UiGoalLoopFanout.MaxCandidatesCap,
+                        defaultSamplePolicy = UiGoalLoopSampling.DefaultPolicy,
+                        maxImagesPerRound = UiGoalLoopSampling.MaxImagesPerRound,
+                        feedbackEnabled = true,
                         managers = ManagerCatalog.All.Select(m => new
                         {
                             m.Key,
@@ -1504,6 +1510,17 @@ namespace MultiImageClient
                     return Results.BadRequest(new { error = $"Unknown goal kind '{goalKind}'. Expected auto, bounded, or open-ended." });
                 }
 
+                var maxCandidates = UiGoalLoopFanout.DefaultMaxCandidates;
+                var maxCandidatesText = form["maxCandidates"].ToString();
+                if (!string.IsNullOrWhiteSpace(maxCandidatesText)
+                    && (!int.TryParse(maxCandidatesText, out maxCandidates) || maxCandidates < 1 || maxCandidates > UiGoalLoopFanout.MaxCandidatesCap))
+                    return Results.BadRequest(new { error = $"max candidates must be between 1 and {UiGoalLoopFanout.MaxCandidatesCap}" });
+
+                var samplePolicy = UiGoalLoopSampling.DefaultPolicy;
+                var sampleText = form["samplesPerPrompt"].ToString();
+                if (!string.IsNullOrWhiteSpace(sampleText) && (!int.TryParse(sampleText, out samplePolicy) || samplePolicy is not (0 or 1 or 2 or 4)))
+                    return Results.BadRequest(new { error = "samples per prompt must be auto (0), 1, 2, or 4" });
+
                 var loop = new UiGoalLoop
                 {
                     Goal = goal,
@@ -1518,6 +1535,8 @@ namespace MultiImageClient
                     ManagerModel = manager.Model,
                     Critics = critics.Count == 0 ? null : critics,
                     MaxTurns = maxTurns,
+                    MaxCandidates = maxCandidates,
+                    SamplesPerPrompt = samplePolicy,
                     Shape = shape,
                     Detail = detail,
                     Quality = quality,
@@ -1581,6 +1600,26 @@ namespace MultiImageClient
                 }
                 ctx.Response.Headers.CacheControl = "no-cache";
                 return Results.File(path, "image/png", fileDownloadName: null, lastModified: File.GetLastWriteTimeUtc(path), enableRangeProcessing: false);
+            });
+
+            app.MapPost("/api/goal-loops/{id}/feedback", async (string id, HttpContext ctx) =>
+            {
+                var state = goalLoops.Get(id);
+                if (state == null) return Results.NotFound(new { error = "unknown goal loop" });
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                if (!CanControlGoalLoop(state.Loop, authUser))
+                    return Results.Json(new { error = "only the loop's creator can give operator points" }, statusCode: 403);
+                if (!ctx.Request.HasFormContentType) return Results.BadRequest(new { error = "feedback requires form fields" });
+                var form = await ctx.Request.ReadFormAsync();
+                if (!int.TryParse(form["entryIndex"], out var index) || !int.TryParse(form["delta"], out var delta))
+                    return Results.BadRequest(new { error = "entryIndex and delta must be integers" });
+                try
+                {
+                    var feedback = goalLoopRunner.AddFeedback(state, form["requestId"].ToString(), form["scope"].ToString(), index, delta,
+                        authUser.Length > 0 ? authUser : state.Loop.CreatedBy);
+                    return Results.Json(new { ok = true, feedback }, UiGoalLoopJson.Options);
+                }
+                catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
             });
 
             app.MapPost("/api/goal-loops/{id}/stop", (string id, HttpContext ctx) =>

@@ -4,7 +4,328 @@ Status: **implemented 2026-09-04** in the `--ui` web app. This document is the
 durable statement of the requirement, the settled decisions, and where each
 part lives in code.
 
-## 1. What it is
+## Multiple samples and operator points — 2026-09-09
+
+Protocol 9 applies to new loops. Existing loops retain their recorded sample counts and JSON contracts.
+It retains protocol 8's branching and protocol 7's goal criteria, experiments, and completion checks.
+
+| ID | Requirement | Concrete behavior |
+|---|---|---|
+| R40 | Generate multiple samples when useful. | Default to two images per prompt from grok-web and one elsewhere. Offer explicit 1/2/4 overrides. |
+| R41 | Preserve each sample's identity. | Use candidate IDs c1/c2/c3 and sample variants such as c1-s1/c1-s2. Judge every sample separately. |
+| R42 | Accept live owner preferences. | Place +1/−1 controls beside images and prompts. Accumulate separate image and prompt points. |
+| R43 | Let late preferences affect planning. | Supply current totals to manager calls and reconsider unstarted plans when new feedback arrives. |
+
+The owner selected provider defaults: grok-web gets two images; all other selected generators get one.
+The setup stores `samplesPerPrompt`: zero for provider defaults, or one, two, or four for every selected source.
+The manager chooses candidate and source allocations; sample counts follow the operator's setting.
+Keep a maximum of twenty-four scheduled images per round. Reject larger plans with an explicit allocation error.
+This preserves the previous largest round while permitting repeated samples within that allowance.
+Sample counts multiply candidates and source assignments; three ideas on grok-web normally generate six images.
+
+Each sample runs as an independent ordinary image job through existing provider queues and concurrency limits.
+The existing UI's multi-image path also uses independent generation calls.
+Goal samples disable Grok's separate four-output side-by-side mode to preserve their single-output identity.
+Each sample must return exactly one image. Reject unexpected siblings instead of selecting the first result.
+The manager, critics, best selection, tree, recap, and resume match exact turn, sample variant, and source.
+No fixed seed, reproducibility, or generator reliability is implied by two or four samples.
+Current images plus the exact incumbent still attach at most twenty-five images.
+
+Operator feedback applies to one of two explicit target types:
+
+- Image points identify one successful image by its exact job, generator, and output index.
+- Prompt points identify exact UTF-8 prompt bytes using SHA-256 within the current loop.
+
+Identical prompts deliberately share prompt points across samples, sources, and later turns within that loop.
+Different wording creates a separate prompt target. Image points never transfer automatically to prompts, siblings, or descendants.
+Each click changes the cumulative total by +1 or −1. Repeated clicks express stronger preferences.
+Points remain separate from critic scores, criterion states, and completion requirements.
+Only the loop's controlling owner can add these preferences, following existing local and authenticated creator checks.
+
+Feedback events persist in the loop's disk history, including their actor, delta, exact target, and request UUID.
+Retrying the same UUID cannot apply a vote twice. Reusing it for another operation fails visibly.
+The UI retries an uncertain vote with its original UUID. Failed saves do not display confirmed points.
+Each loop accepts at most ten thousand feedback events. No original image bytes enter feedback storage or caches.
+Forks retain only the feedback present in their copied history; subsequent parent-loop votes do not propagate into separate forks.
+
+Each manager call receives a fixed snapshot of cumulative points and records its last included feedback entry.
+The snapshot also includes prompt text for prompt targets and exact identities for image targets.
+Critics receive no operator points and retain their independent evaluations.
+Votes arriving during a call remain available for later calls.
+Before starting an unstarted plan, the runner requests another decision if new feedback arrived after its planning snapshot.
+It does not cancel image generation already underway. The normal next review receives those votes.
+Votes on stopped or completed loops save without starting paid work; explicit resume can reconsider the latest decision.
+New feedback can reopen a completed decision on resume. Historical loop protocols retain their existing reply requirements.
+The manager must explain material feedback effects without treating preference points as evidence that required outcomes are met.
+
+The Work view exposes image and prompt controls beside each result, with prompt controls also beside request text.
+Every sample appears as its own Work image card and its own Tree node, including samples from the same prompt and source.
+Work keeps required-outcome counts visible and collapses component details to reduce each comparison row's height.
+The Work and Tree buttons sit directly below the loop header on branching loops.
+Tree nodes open the corresponding Work record. History shows each feedback change.
+The feedback target types and storage stay separate from rendering, so other surfaces can reuse the same target semantics.
+
+### Live sampling and feedback check — 2026-09-09
+
+A local puppy-and-gift loop used grok-web, Fable 5.1, and one independent Grok 4.6 critic.
+The default produced two images in each of two rounds. Work showed four cards; Tree showed four separate nodes.
+Test clicks added two points to the second first-round image and subtracted one point from its prompt.
+The sibling image retained zero image points. Both identical prompt targets displayed minus one.
+These votes arrived after the second round started. Its review recorded all three feedback events through entry fourteen.
+The manager selected the favored first-round image and explained the separate image and prompt preferences.
+It retained the second-round gaze experiment as an alternative and reported that only one sample followed that instruction.
+The selected older image relied on its accepted earlier evaluation because its pixels were outside the current visual window.
+This check verifies sample identity, display, persistence, and later feedback delivery. It does not establish calibrated image judgments.
+
+## Adaptive branches and tree view — 2026-09-09
+
+Protocol 8 introduced the behavior below. Protocol 9 supersedes its single-image source assignments as specified above.
+Existing loops and their forks retain their recorded contracts and manager instructions.
+It retains protocol 7's criteria, component studies, evidence records, resource controls, and completion rules.
+It supersedes the fixed pair and mandatory refinement/new-idea mix.
+
+| ID | Requirement | Concrete behavior |
+|---|---|---|
+| R36 | Vary the number and mix of candidates. | Choose one to three candidates within the operator's limit. Explain the allocation. |
+| R37 | Search through explicit branches. | Link each candidate to zero to three exact prior images and state each parent's contribution. |
+| R38 | Account for each reviewed idea. | Record pursue, branch, hold, or drop, with a concrete reason. Validate these actions against next-round links. |
+| R39 | Show the search structure. | Keep chronological Work as the primary view. Provide an optional Tree view with image nodes and parent connections. |
+
+The setup offers `maxCandidates` from one to three, default three.
+The manager can use fewer candidates when fewer worthwhile tests exist.
+All candidates may refine existing directions, explore independent ideas, or use any supported experiment modes.
+Unexpected strengths can inspire new directions. Weak directions can stop receiving work when no useful improvement plan exists.
+The manager can revisit earlier images, including previously held or dropped directions, when new evidence supports a concrete plan.
+Dropping a direction does not delete its images or history.
+
+Each candidate has a round-local identity `c1`, `c2`, or `c3`, a title, and a complete prompt.
+Each parent records `turn`, `variant`, `source`, and `contribution`.
+The server accepts only exact successful earlier renders. It rejects unknown, failed, duplicate, or future parent identities.
+An empty parent list means an independent idea. Multiple parents allow combining useful elements from different images.
+This structure can have multiple parents, although the interface calls the view Tree.
+Parent links describe prompt development; they do not send image pixels to the text-to-image generator.
+The existing entry controls support operator edits and forks. Selecting a tree node opens its work record.
+
+After each reviewed round, `candidateDecisions` accounts for every distinct candidate across its selected sources:
+
+- `pursue` requires exactly one next candidate linked to that idea.
+- `branch` requires at least one next candidate linked to that idea.
+- `hold` allocates no descendant in this round and preserves the idea.
+- `drop` allocates no descendant in this round and explains why further work lacks a useful plan.
+
+The selected best current candidate cannot be dropped. A completion reply has no render plan.
+The manager compares one to six stated options and explains the candidate count and mix in `plan.allocationReason`.
+Repeated prompts require `verify` mode for every repeated candidate; another distinct exploration may run alongside them.
+All scheduled results receive exact manager and critic evaluations, including the third candidate.
+
+Candidate limits count ideas, not images. Each selected source produces one image per candidate.
+Three candidates across eight sources can schedule twenty-four images in a round.
+The default ceiling increases from two to three candidates; the manager must justify spending on each candidate.
+Source subsets and reduced settings remain available. Existing provider queue and concurrency limits remain unchanged.
+Current images plus the exact earlier incumbent can attach at most twenty-five images to a manager request.
+Provider request limits still apply. A larger candidate ceiling does not guarantee transport capacity or lower costs.
+Independent worker conversations and separate subtask budgets remain planned.
+
+Work preserves the compact chronological image feed, contributor evidence, and expandable requests.
+Each image shows its candidate title, mode, scope, parent links, and expandable prompt.
+Full experiment plans remain expandable. Tree shows thumbnails, modes, latest candidate actions, and the selected best image.
+Tree connections preserve exact source identities. Missing lineage appears as an error without substituting another image.
+Displayed prompts come from exact render requests, including operator edits, rather than substituting the original candidate plan.
+The tree loads card previews and retains no original image bytes. Historical protocols have no invented tree lineage.
+Consistency claims must state their sample count. A lone success supports an observation about that image, not reliability.
+
+New files: `UiGoalLoopFanout.cs`, `GoalLoopFanoutTests.cs`, `goal-tree.js`, and `tools/tests/goal-tree.test.cjs`.
+
+### Local branch verification
+
+Loop `702016816ab7` used Fable 5.1, one Grok 4.6 critic, Sunburst low/standard, and a two-turn budget.
+The manager initially selected three independent puppy compositions.
+Two requests failed during transport; the remaining image supplied the first visual evidence.
+The critic marked failed images uncertain and did not invent visual results.
+The manager held the untested ideas, then scheduled one refinement and two independent retries.
+The refinement linked exactly to turn 1, candidate c3, source A, preserving its lighting and gift presentation.
+All three second-turn images completed. No generation was repeated during manager contract repair.
+The final review initially marked an alternative successful despite a partial required component.
+Validation rejected that contradiction. Explicit resume supplied the exact error, and the corrected review passed.
+The manager selected turn 2, candidate c1, source A, with completion outcome achieved.
+This run demonstrates scheduling, lineage, independent evaluation, and repair; it does not establish consistent judgment quality.
+One inference overstated reliability from one image despite a qualifying uncertainty statement.
+New instructions explicitly require sample counts for consistency claims and independent success checks for every evaluated image.
+Tree and Work were checked in the local browser, including the node-to-record link and exact parent label.
+Automated checks cover one, two, or three candidates, twenty-four source assignments, archived parents, invalid lineage, and interrupted rendering.
+
+## Pursuit and component experiments — 2026-09-09
+
+Protocol 7 introduced the behavior below. Protocol 8 supersedes its candidate count and lineage rules as specified above.
+Existing loops and their forks retain their recorded protocols and manager instructions.
+The later historical sections describe protocols 1–6 unless either section explicitly supersedes them.
+
+### Requirements and decisions
+
+| ID | Requirement | Concrete behavior |
+|---|---|---|
+| R29 | Preserve the actual goal. | Define 3–8 stable criteria, grounded in exact excerpts from the goal. Classify required outcomes, preferences, and context. |
+| R30 | Explore options and pursue promising directions. | Publish 2–4 options with reasons. Assign each candidate an explicit question, expected evidence, changed elements, and held elements. |
+| R31 | Simplify and rebuild. | Permit minimal core prompts and component studies. Record omitted criterion IDs and the restoration step. |
+| R32 | Expose component judgments. | Managers and critics report met/partial/missing/uncertain, visible evidence, and confidence for every criterion. |
+| R33 | Stop without false conclusions. | Distinguish achieved, plateau requiring operator review, provider failure, operator stop, and exhausted budget. |
+| R34 | Run smaller, targeted experiments. | Each candidate can select a subset of the loop's generators and lower quality/detail settings. |
+| R35 | Support long searches without accumulating every image in each request. | Attach current candidates and the exact incumbent. Retain earlier decision records and archive images on disk. |
+
+These requirements supersede R15's mandatory overshoot rule and R20's mandatory fresh redesign for protocol 7.
+They also supersede R21's requirement to render every candidate on every selected source.
+R22's critics remain independent, but now receive the stable rubric and neutral component-task descriptions.
+They still receive no prompts, predictions, manager conclusions, other critics' responses, or previous scores.
+
+The owner requested a planner that can investigate one component before combining the complete scene.
+A table study can examine perspective, placement, or palette without generating every subject and background detail.
+Successful component studies do not establish that the complete composition works.
+The manager must restore required outcomes and inspect their interactions in a full-scene render.
+
+Personal interests supply contextual inspiration unless the goal explicitly requires complete coverage.
+Qualitative goals such as warmth or beauty must not become arbitrary object-count maximization.
+The manager must preserve emotional impact and overall coherence when those qualities define the goal.
+Criteria remain unchanged across subsequent replies; an edited goal starts a new interpretation.
+The owner can inspect and edit the initial design through the existing fork controls.
+
+### Candidate plans and resource controls
+
+The two existing candidate slots retain the stored identities `refine` and `fresh` for exact history joins.
+Their modes can independently be `pursue`, `explore`, `simplify`, `rebuild`, or `verify`.
+Neither slot must change the entire style or setting.
+The interface labels these slots Candidate 1 and Candidate 2.
+Each option has separate `description` and `reason` strings.
+Configuration exposes `goalLoop.protocolVersion`; setup help follows the running server's capabilities.
+Identical prompts require `verify` in both slots, permitting repeated samples without pretending they are different designs.
+No seed control or reproducibility is promised.
+
+Each candidate records:
+
+- `scope`: `full` or `component`; component scope requires a neutral `componentGoal`.
+- `sources`: explicit source letters from the selected catalog, or null for all selected sources.
+- `quality` and `detail`: optional reductions from the operator's settings; null inherits those settings.
+- `question`, `expected`, `changes`, `holds`, `deferredCriteria`, and `restoreNext`.
+
+Quality accepts low/medium/high/xhigh/max. Detail accepts standard/high/max.
+The server rejects unknown sources, duplicate sources, and settings above the operator's chosen levels.
+Provider-specific parameter mappings remain unchanged. Some providers ignore quality or detail controls.
+Therefore, lower settings do not guarantee a particular speed, resolution, or cost.
+Results record their actual requested settings, pixel dimensions, duration, and reported cost.
+Interrupted requests preserve their recorded settings when resumed or forked.
+
+Each scheduled source produces one image per candidate.
+Protocol 7 schedules 2–16 images per complete turn, depending on source subsets.
+These studies use the existing provider queue, concurrency limits, and shared turn budget.
+Default turns remain six; the cap remains thirty.
+Protocol 7 introduces no unlimited child search or increased default spending. Protocol 8 raises the candidate ceiling as documented above.
+
+Component studies currently share the parent's manager conversation and turn budget.
+Independent nested conversations, separate subtask budgets, and automatic specialist-model selection remain planned.
+Existing configured critics supply independent evaluations now.
+
+The proposed next stage gives each component worker one question, fixed conditions, and an explicit image/time/cost allowance.
+Workers would return compared candidates, observed differences, unresolved uncertainty, and a selected result to the parent manager.
+The parent would retain the complete requirements and decide which component results merit integration.
+Specialist evaluations could separately examine requirement coverage, visual defects, and the component experiment's result.
+Candidate counts should depend on alternatives and observed variation, rather than an arbitrary larger default.
+These worker controls and specialist assignments are design directions, not implemented controls.
+
+### Visual context
+
+Before each protocol 7 manager request, select the current turn's images and one earlier incumbent image.
+The incumbent uses the manager's exact selected turn, slot, and source.
+Do not substitute another image when that identity is missing.
+The resulting visual window contains at most seventeen images, independent of completed turn count.
+Earlier accepted decision records remain in the conversation; earlier candidate pixels remain in the disk archive.
+Archived review messages explicitly state that their images are absent, except for the named incumbent when applicable.
+The manager must distinguish historical assessments from current visual inspection.
+This is a declared protocol policy, applied before transport, rather than recovery from an oversized request.
+Provider transport limits still apply to the selected window; an oversized window still fails visibly.
+
+### Evidence and judges
+
+The stable rubric distinguishes required outcomes, preferences, and contextual inspiration.
+Every manager and critic evaluation contains an exact component list matched by criterion ID.
+Each component records a categorical result, visible evidence, and low/medium/high confidence.
+Confidence is the model's stated uncertainty, not a calibrated probability.
+No average converts these categories into a success decision.
+The existing 0–10 score remains a secondary rough summary for compatibility.
+The primary page shows requirement coverage and component states beside each contributor.
+Expanded feedback shows the evidence and uncertainty for each component.
+Portable HTML recaps preserve complete component judgments; compact PNG recaps show requirement coverage and the manager's assessment.
+
+Critics additionally audit the rubric's interpretation through `rubricConcerns`.
+Each component task receives a separate `experimentAssessment` from the judges.
+The manager records observation, tentative inference, uncertainty, critic disagreements, and the next useful test separately.
+Judges must not infer prompt wording, image-edit inputs, or causal effects from a single result.
+Provider failures remain execution failures; no image means uncertain visual components and a zero compatibility score.
+The manager receives accepted critic replies verbatim, retaining disagreement instead of averaging it away.
+
+The manager selects an exact successful image using the criterion profile and stated tradeoffs.
+Protocol 7 summaries and the recap's best view follow that selection, even when another image has a higher scalar score.
+
+### Completion and compatibility
+
+A stop requires at least two distinct reviewed turns containing successful images.
+This minimum establishes comparison opportunities, not an optimum or a statistical guarantee.
+Completion records `outcome`, `evidenceTurns`, `remainingGaps`, and `rationale`.
+
+`achieved` requires an actual full-scope image at the operator's original quality/detail settings.
+Its required criteria must be met, with no deferred criteria or remaining gaps.
+Remaining gaps mean unmet requirements or material defects, not every possible improvement.
+Accepted minor tradeoffs and subjective alternatives belong in `findings.uncertainty`.
+`plateau` pauses for operator review without claiming success or proving a generator limit.
+The existing resume action asks the manager for another experiment after a plateau.
+Protocol 7 recap cards show each contributor's latest accepted evaluation of the same turn.
+Earlier accepted evaluations remain in the contribution history, including reviews superseded after a resumed plateau.
+Exhaustion retains the pending plan; granting turns executes that plan.
+An artistic goal never requires deliberate degradation or endless increases in detail.
+
+Protocol 7 is versioned; running and resumed historical loops retain their previous contracts.
+When a protocol 7 manager reply fails validation, resume includes the rejected reply and its exact contract error.
+The manager must correct the decision against the same evidence; resume does not fabricate images or silently alter requirements.
+This feedback applies only to the latest unresolved manager contract error, without automatic retry loops.
+No production release is implied by local testing.
+All additional records remain disk-backed metadata. No full-image lifetime cache is introduced.
+
+### Puppy-loop observations
+
+Baseline: `13f8d595ca72`, protocol 6, Fable 5.1 manager, Fable 5.1 and Grok 4.6 critics, three image sources.
+The first design converted emotional appeal into maximizing the number of personal interests represented by props.
+Both critics also treated omitted interests as defects.
+Turn two reached all eight interests, then requested more languages, postcards, and equations to continue increasing detail.
+Turn three requested further density despite identifying a busy table.
+This directly motivated separating requirements from context and removing mandatory quantity growth.
+Turn four acknowledged both critics' clutter warnings, then added further signs, film text, and other props.
+Turn five called one poorer sample evidence of a generator limit, despite changing several elements simultaneously.
+The run produced 36 images across six turns, with manager reviews for the first thirty images.
+The sixth review failed because 36 accumulated images exceeded the manager provider's request-body limit.
+That failure motivated R35's fixed visual window.
+
+The baseline also found concrete defects and changed preferred sources and compositions.
+Therefore, it demonstrates feedback use, alongside a mistaken objective and weak causal interpretation.
+The audit does not establish that one manager or generator is generally better than another.
+
+Implementation: `UiGoalLoopPursuit.cs`, `UiGoalLoops.cs`, `goal.js`, `goal.css`, `goal.html`, `recap.html`, `recap-model.js`, `recap.js`, and `UiWorkflow.cs`.
+Validation: `GoalLoopPursuitTests.cs`, historical `GoalLoopTests.cs`, and `tools/tests/goal-recap.test.cjs`.
+
+Local validation on 2026-09-09 passed 104 C# goal/provider-stop tests and six recap tests.
+JavaScript syntax checks and the whitespace audit also passed.
+The isolated puppy test used one Sunburst source at low quality, Fable 5.1, and a Grok 4.6 critic.
+Its first review distinguished visible features, gift clarity, composition, palette, and contextual interests.
+The manager disagreed with the critic's success claim and requested clearer gift cues plus a simpler piano scene.
+The test generated four images in approximately 18–28 seconds each.
+Accepted critic calls took approximately 85–90 seconds each, showing the need for the planned lightweight worker layer.
+One critic HTTP 520 failure required retrying the same critic against the saved images.
+A Windows metadata replacement failure also paused the test without losing its generated results.
+The completed pilot selected the simplified second-turn piano scene and retained the floral scene as a stated alternative.
+Its final manager request carried three images: two current candidates and the exact earlier incumbent.
+An initial success claim with nonempty remaining gaps failed validation; resume corrected that decision record against the saved images.
+The manager still described source reliability too strongly after sparse examples; the structured record made that overstatement visible.
+This pilot establishes workflow operation, not a general improvement in image quality or calibrated judgment.
+Port 5961 hosts this isolated local revision; active work on port 5960 prevents restarting the original local server during validation.
+
+## 1. Historical workflow (protocols 1–6)
 
 The original use case is one shot: type an image description, pick targets,
 look at the output. The goal loop is the second use case:
@@ -720,16 +1041,33 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   still accepted), `manager`, `maxTurns`, `shape`, `detail`, `quality`,
   `moderation`, `goalKind` (`auto` | `bounded` | `open-ended`), `critics`
   (repeated field or comma-separated, 0–6 distinct manager-catalog keys).
+  Protocol 8 adds optional `maxCandidates` (1–3, default 3).
+  Protocol 9 adds optional `samplesPerPrompt` (0/1/2/4, default 0: grok-web 2, others 1).
+  Configuration publishes `goalLoop.protocolVersion`, `.defaultMaxCandidates`, and `.maxCandidatesCap`.
+  It also publishes `.defaultSamplePolicy`, `.maxImagesPerRound`, and `.feedbackEnabled`.
   `/api/config.goalLoop.maxGenerators` and `.maxCritics` publish the caps.
 - `POST /api/goal-loops/{id}/sheet` — build/rebuild the all-turns sheet;
   returns `{ sheetEntryCount, sheetTurns, url }`. 409 when nothing rendered.
 - `GET /api/goal-loops/{id}/sheet` — the PNG (404 until built).
 - `POST /api/goal-loops/{id}/stop`
+- `POST /api/goal-loops/{id}/feedback` — form: `requestId` UUID, `scope` image/prompt, `entryIndex`, and `delta` +1/−1.
+  Returns the persisted feedback operation. Requires control of the loop. Does not start or resume generation.
 - `POST /api/goal-loops/{id}/resume` — optional `maxTurns`.
 - `POST /api/goal-loops/{id}/fork` — `entryIndex`, optional `text`,
   optional `maxTurns`; returns the child id.
 
 ## 7. Files
+
+- `MultiImageClient/Implementation/UiGoalLoopSampling.cs` — sample identities, source defaults, and image-budget validation.
+- `MultiImageClient/Implementation/UiGoalLoopFeedback.cs` — durable preference events, idempotency, snapshots, and planning invalidation.
+- `MultiImageClient.Tests/GoalLoopSamplingFeedbackTests.cs` — sample isolation, vote identity, replay protection, and planning timing.
+- `MultiImageClient/Ui/wwwroot/goal-feedback.js`, `tools/tests/goal-feedback.test.cjs` — exact feedback totals and sample display checks.
+
+- `MultiImageClient/Implementation/UiGoalLoopPursuit.cs` — stable rubric, component experiments, evidence, and completion validation.
+- `MultiImageClient/Implementation/UiGoalLoopFanout.cs` — variable candidate contract, exact parent links, and disposition validation.
+- `MultiImageClient.Tests/GoalLoopPursuitTests.cs`, `GoalLoopFanoutTests.cs` — experiment and branching contract coverage.
+- `MultiImageClient/Ui/wwwroot/goal-tree.js` — exact render graph and optional thumbnail tree.
+- `tools/tests/goal-tree.test.cjs` — branching, source identity, archived returns, and broken lineage checks.
 
 - `MultiImageClient/Ui/wwwroot/generator-chooser.js` — shared chips, controls, groups, validation, and configuration dialog.
 - `MultiImageClient/Ui/wwwroot/personal-config.js` — canonical chooser persistence, including first-visit browser migration.

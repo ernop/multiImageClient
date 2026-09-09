@@ -32,6 +32,12 @@ function comments(item, target) {
       node("summary", `${p.role} · ${p.label} · ${c.score}/10`),
       node("p", c.assessment),
     );
+    if (c.components) {
+      for (const part of c.components) {
+        const criterion = data.rubric?.find((r) => r.id === part.criterion);
+        box.append(node("p", `${criterion?.description || part.criterion}: ${part.status}. ${part.evidence} Confidence: ${part.confidence}.`));
+      }
+    }
     for (const field of ["problems", "ideas", "keep"])
       if (c[field].length) {
         box.append(node("strong", field));
@@ -64,7 +70,7 @@ function render() {
       btn = node("button", undefined, "image-button"),
       img = node("img");
     img.src = item.thumb;
-    img.alt = `${item.label}, turn ${item.turn}, ${item.variant || "render"}`;
+    img.alt = `${item.label}, turn ${item.turn}, ${GoalRecap.variantLabel(item.variant)}`;
     img.loading = "lazy";
     btn.append(img);
     btn.onclick = () => viewer.open(item.id);
@@ -74,11 +80,11 @@ function render() {
     const label = node("div");
     label.append(
       node("h3", item.label),
-      node("div", `Turn ${item.turn} · ${item.variant || "render"}`),
+      node("div", `Turn ${item.turn} · ${GoalRecap.variantLabel(item.variant)}`),
     );
     head.append(
       label,
-      node("span", item.score === null ? "—" : String(item.score), "score"),
+      node("span", data.protocolVersion >= 7 ? coverage(item) : item.score === null ? "—" : String(item.score), "score"),
     );
     body.append(head);
     if (item.best) body.append(node("span", "Recorded best", "tag"));
@@ -88,6 +94,13 @@ function render() {
     card.append(btn, body);
     $("grid").append(card);
   }
+}
+function coverage(item) {
+  const evaluation = item.comments.find((c) => c.who === "manager");
+  if (!evaluation?.components) return "not reviewed";
+  const required = data.rubric.filter((r) => r.importance === "required");
+  const met = required.filter((r) => evaluation.components.some((c) => c.criterion === r.id && c.status === "met"));
+  return `${met.length}/${required.length} required`;
 }
 function download(blob, name) {
   const url = URL.createObjectURL(blob);
@@ -149,7 +162,9 @@ async function png() {
     ctx.fillText(`VISUAL RECAP / ${label}`, 24, 42);
     ctx.font = "18px system-ui";
     ctx.fillText(
-      "Manager scores. All ties retained. Latest images may lack a review. Preview images, not full resolution.",
+      data.protocolVersion >= 7
+        ? "Best follows the manager's stated selection. Latest images may lack a review. Preview resolution."
+        : "Manager scores. All ties retained. Latest images may lack a review. Preview images, not full resolution.",
       24,
       76,
     );
@@ -170,7 +185,9 @@ async function png() {
       ctx.fillText(item.label, x, y + 477);
       ctx.font = "18px system-ui";
       ctx.fillText(
-        `Turn ${item.turn} / ${item.variant || "render"} / ${item.score === null ? "not reviewed" : item.score + "/10"}`,
+        data.protocolVersion >= 7
+          ? `Turn ${item.turn} / Candidate ${GoalRecap.variantOrder(item.variant) + 1} / ${coverage(item)}`
+          : `Turn ${item.turn} / ${item.variant || "render"} / ${item.score === null ? "not reviewed" : item.score + "/10"}`,
         x,
         y + 501,
       );
@@ -293,6 +310,10 @@ async function init() {
   $("stats").textContent =
     `${data.items.length} images · ${new Set(data.items.map((i) => i.turn)).size} turns · ${data.participants.filter((p) => p.role === "Image generator").length} generators`;
   $("status").textContent = `${data.status}: ${data.statusDetail}`;
+  if (data.protocolVersion >= 7) {
+    document.querySelector('[data-cut="best"]').textContent = "Manager selection";
+    $("selection-rules").textContent = "Manager selection follows the exact preferred image and stated tradeoffs. Latest shows each generator’s last successful turn.";
+  }
   for (const p of data.participants) {
     $("roster").append(person(p));
     if (p.role === "Image generator") {
@@ -321,7 +342,7 @@ async function init() {
         url: i.url,
         thumbUrl: i.thumb,
         title: i.label,
-        subtitle: `Turn ${i.turn} · ${i.variant || "render"} · ${i.score === null ? "No manager review" : i.score + "/10"}`,
+        subtitle: `Turn ${i.turn} · ${GoalRecap.variantLabel(i.variant)} · ${i.score === null ? "No manager review" : i.score + "/10"}`,
         prompt: i.prompt,
         meta: i.comments.map((c) => ({
           label: `${people.get(c.who).role} · ${people.get(c.who).label} · ${c.score}/10`,
