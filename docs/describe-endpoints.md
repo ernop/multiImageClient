@@ -46,3 +46,62 @@ Public MMMU-Pro / MMBench tables are aggregator scores. They are not a live, ide
 ## Cost ceilings
 
 `DescribeCostEstimate` is still an estimate, not a bill. After the 2026-09-03 model bump: OpenAI $0.04, Claude/Gemini/Grok/layout-map $0.03, Ideogram the published $0.01.
+
+## Describe comparison sheet (2026-09-10)
+
+Completed jobs with describe or layout results expose **describe sheet** beside their job controls.
+The control opens one PNG in a new browser tab.
+Use the browser's image-save control to retain it.
+The export also works for existing archived jobs.
+It makes no provider calls.
+
+| Requirement | Behavior |
+|---|---|
+| Input text | Show the complete recorded job prompt once at the top. This includes a recorded default instruction. |
+| Input images | Show every recorded attachment, in input order, without cropping. |
+| Correlation | Group each input with its own descriptions and layout map. Validate every returned input index. |
+| Endpoint names | Use recorded model labels, preserving historical model identity. |
+| Descriptions | Show complete returned descriptions with separate model-comment labels. Preserve paragraphs and punctuation. |
+| Extra instructions | Show recorded endpoint-specific input text beside that endpoint. |
+| Ideogram | State that its fixed instruction does not receive input text. |
+| Layout output | Place the complete rendered map beside its input. Include its existing numbered legend and summary. |
+| Readability | Use dark text, blue labels, white space, and two or three reading columns when needed. |
+| Long output | Grow the canvas without shortening text or shrinking body text below 26 pixels. |
+| Failed endpoints | Include the recorded failure, clearly labeled in red. |
+| Missing results | Reject incomplete, ambiguous, or unmatched records. Never select another job or substitute previews. |
+| Mixed jobs | Include all describe and layout results. Generated images retain their existing separate contact sheet. |
+| Hidden media | Refuse the sheet when its job contains hidden images or the whole job is hidden. |
+
+The layout image already contains its returned region labels and summary.
+The sheet uses that exact saved image, including for older jobs without a saved raw layout reply.
+Raw JSON syntax and fixed response-format instructions do not appear on the sheet.
+The existing sent/returned controls retain the recorded describe exchanges.
+
+### API and resource limits
+
+`GET /api/jobs/{id}/describe-sheet` returns `image/png` with an inline filename and `Cache-Control: no-store`.
+The route uses the existing authentication gate.
+It returns 404 for hidden or unknown jobs, 409 for running jobs, and 422 for incomplete records or oversized sheets.
+It returns 503 when image finalization is busy.
+
+Rendering shares the existing finalization limit and does not queue excess requests.
+The canvas is limited to 32 megapixels.
+Rendering decodes one source at a time at its display size.
+Hosted layout retrieval uses the recorded object identity and verifies its checksum.
+Temporary source files are deleted after rendering.
+The response streams from a temporary file, which is deleted when the response stream closes.
+No new resident image cache, durable size variant, or hosted sheet object exists.
+
+### Files and verification
+
+- `MultiImageClient/Implementation/UiDescribeSheet.cs`: exact result reader and PNG layout.
+- `MultiImageClient/Implementation/UiJobs.cs`: bounded rendering and hosted-map retrieval.
+- `MultiImageClient/Workflows/UiWorkflow.cs`: export route and visibility checks.
+- `MultiImageClient/Ui/wwwroot/app.js`, `style.css`, `index.html`: live and archive export control.
+- `MultiImageClient.Tests/DescribeSheetTests.cs`: identity, complete output, failures, multiple inputs, and rendering limits.
+
+Verification on 2026-09-10: all 388 application tests passed.
+The four export regressions also passed after the final image-alignment adjustment.
+Browser verification opened a 2400×2518 PNG from an archived job's **describe sheet** control.
+Visual inspection covered complete text, model comments, and a labeled layout-map fixture.
+The fixture's layout labels were synthetic; verification made no provider calls.

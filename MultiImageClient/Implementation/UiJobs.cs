@@ -4349,6 +4349,58 @@ namespace MultiImageClient
             return (downloaded, info.ContentType);
         }
 
+        public async Task<FileStream?> CreateDescribeSheetAsync(UiJob job, CancellationToken cancellationToken)
+        {
+            // Share the image finalization budget. Reject excess work instead of queueing exports in RAM.
+            if (!await _finalizationLimit.WaitAsync(0, cancellationToken)) return null;
+            var temporaryPaths = new List<string>();
+            string? output = null;
+            try
+            {
+                var snapshot = job.ReadFrom(0);
+                if (!snapshot.Done) throw new InvalidDataException("Wait for the job to finish before making its describe sheet.");
+                var data = UiDescribeSheet.Read(job.Prompt, job.InputImageCount, job.GeneratorKeys, snapshot.Events);
+                var maps = new Dictionary<int, string>();
+                if (data.Endpoints.Any(e => IsLayoutMapKey(e.Key) && e.Error.Length == 0))
+                {
+                    for (var i = 0; i < job.InputImageCount; i++)
+                    {
+                        if (job.TryGetImagePath(KeyLayoutMap, i, out var localPath, out _) && File.Exists(localPath))
+                        {
+                            maps.Add(i, localPath);
+                            continue;
+                        }
+                        var hosted = await TryGetImageBytesIncludingHostedAsync(
+                            job, KeyLayoutMap, i, maxBytes: 32 * 1024 * 1024, cancellationToken);
+                        if (hosted == null)
+                            throw new InvalidDataException($"The recorded layout map for input {i + 1} is unavailable.");
+                        var path = Path.GetTempFileName();
+                        temporaryPaths.Add(path);
+                        await File.WriteAllBytesAsync(path, hosted.Value.Bytes, cancellationToken);
+                        maps.Add(i, path);
+                    }
+                }
+                output = Path.GetTempFileName();
+                await UiDescribeSheet.RenderAsync(data, job.InputImagePaths, maps, output, cancellationToken);
+                var stream = new FileStream(output, FileMode.Open, FileAccess.Read, FileShare.Read,
+                    64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan | FileOptions.DeleteOnClose);
+                output = null; // The response stream now owns deletion.
+                return stream;
+            }
+            finally
+            {
+                if (output != null) temporaryPaths.Add(output);
+                foreach (var path in temporaryPaths)
+                {
+                    try { File.Delete(path); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    { Logger.Log($"[ui #{job.Id}] describe sheet temporary-file cleanup failed: {ex.Message}"); }
+                }
+                try { Configuration.Default.MemoryAllocator.ReleaseRetainedResources(); }
+                finally { _finalizationLimit.Release(); }
+            }
+        }
+
         // Hosted-thumb regeneration: expired disk thumbs are rebuilt on demand
         // from the exact recorded B2 object when the local original was
         // evicted. Single-flight per image (Lazy so a GetOrAdd race never

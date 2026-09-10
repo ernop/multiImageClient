@@ -1769,6 +1769,7 @@ a[data-viewer-image].viewer-return-pulse img {
 
 .grid-link { font-size: 12px; margin-top: 10px; }
 .grid-link a { color: var(--accent-dark); font-weight: 600; }
+.describe-sheet-link { color: var(--accent-dark); font-weight: 600; }
 
 /* ---------- generated-image viewer ---------- */
 

@@ -2177,6 +2177,39 @@ namespace MultiImageClient
                     "application/json");
             });
 
+            app.MapGet("/api/jobs/{id}/describe-sheet", async (string id, HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                var job = jobs.Get(id);
+                if (job == null || visibility.IsPromptHidden(id) || visibility.HasHiddenImages(id))
+                    return Results.NotFound();
+                if (!job.IsDone)
+                    return Results.Json(new { error = "Wait for this job to finish before making its describe sheet." }, statusCode: 409);
+                try
+                {
+                    var stream = await runner.CreateDescribeSheetAsync(job, ctx.RequestAborted);
+                    if (stream == null)
+                        return Results.Json(new { error = "Image finalization is busy. Try the describe sheet again shortly." }, statusCode: 503);
+                    // Recheck after rendering and hosted downloads; deletion must also hide this derived image.
+                    if (visibility.IsPromptHidden(id) || visibility.HasHiddenImages(id))
+                    {
+                        await stream.DisposeAsync();
+                        return Results.NotFound();
+                    }
+                    ctx.Response.Headers.ContentDisposition = "inline; filename=describe-sheet.png";
+                    return Results.File(stream, "image/png");
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 422);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Logger.Log($"[ui #{job.Id}] describe sheet failed: {ex.Message}");
+                    return Results.Json(new { error = "Could not build the complete describe sheet from its recorded images and results." }, statusCode: 500);
+                }
+            });
+
             app.MapGet("/api/jobs/{id}/images/{gen}/{n:int}", async (string id, string gen, int n, HttpContext ctx) =>
             {
                 // A miss is transient (job unknown here, or bytes not landed

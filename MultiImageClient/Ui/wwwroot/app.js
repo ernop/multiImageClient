@@ -6725,7 +6725,10 @@ function applyVisibilitySnapshot(raw) {
       }
       hasHiddenImage = true;
     }
-    if (hasHiddenImage) card.querySelector(".grid-link")?.remove();
+    if (hasHiddenImage) {
+      card.querySelector(".grid-link")?.remove();
+      card.querySelector(".describe-sheet-link")?.remove();
+    }
   }
   for (const row of document.querySelectorAll("#logs-lines .log-row[data-job-id]")) {
     if (isPromptHidden(row.dataset.jobId)) row.remove();
@@ -11352,6 +11355,19 @@ function applyJobEvent(id, card, evt) {
     a.title = `saved: ${evt.path}`;
   } else if (evt.type === "job-done") {
     card.dataset.state = "done";
+    const hasAnalysis = [...card.querySelectorAll(".cell")].some(cell =>
+      cell.dataset.gen.startsWith("describe-") || cell.dataset.gen === "layout-map");
+    const hasHiddenImages = [...hiddenImageKeys].some(key => key.startsWith(`${id}|`));
+    if (hasAnalysis && !hasHiddenImages && !card.querySelector(".describe-sheet-link")) {
+      const link = document.createElement("a");
+      link.className = "describe-sheet-link";
+      link.href = apiUrl(`api/jobs/${encodeURIComponent(id)}/describe-sheet`);
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = "describe sheet";
+      link.title = "Open one PNG with all input images, input text, descriptions, comments, and layout maps";
+      card.querySelector(".job-meta").appendChild(link);
+    }
     refreshJobDeletionControls(card);
     for (const favoriteCard of favoritesGrid.querySelectorAll(".favorite-gallery-card")) {
       if (favoriteCard.dataset.jobId === id) refreshJobDeletionControls(favoriteCard);
