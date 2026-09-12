@@ -2894,21 +2894,9 @@ namespace MultiImageClient
 
         // The only tolerated cosmetic deviation across the structured-reply
         // parsers: a markdown code fence wrapped around the JSON object,
-        // stripped deterministically.
-        private static string StripMarkdownFence(string raw)
-        {
-            var s = raw.Trim();
-            if (s.StartsWith("```", StringComparison.Ordinal))
-            {
-                var firstNewline = s.IndexOf('\n');
-                var lastFence = s.LastIndexOf("```", StringComparison.Ordinal);
-                if (firstNewline >= 0 && lastFence > firstNewline)
-                {
-                    s = s.Substring(firstNewline + 1, lastFence - firstNewline - 1).Trim();
-                }
-            }
-            return s;
-        }
+        // stripped deterministically. One implementation, shared with the
+        // goal-loop reply parsers.
+        private static string StripMarkdownFence(string raw) => UiGoalLoopProtocol.StripMarkdownFence(raw);
 
         // Strict parse of the {description, comments} reply contract. A reply
         // that is not the required JSON object, or whose description is blank,

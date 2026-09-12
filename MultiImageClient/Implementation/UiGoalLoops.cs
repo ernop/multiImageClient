@@ -412,10 +412,41 @@ namespace MultiImageClient
         // placeholders) and the raw provider response, on manager replies.
         public string? WireRequest { get; set; }
         public string? WireResponse { get; set; }
+        // API-only (never stored): set on the copy returned by the loop GET
+        // when the wire payloads were left out of the response. Carries the
+        // omitted lengths so the page can offer the on-demand fetch.
+        public UiGoalLoopWireOmitted? WireOmitted { get; set; }
 
         public UiGoalLoopEntry Clone()
             => JsonSerializer.Deserialize<UiGoalLoopEntry>(
                 JsonSerializer.Serialize(this, UiGoalLoopJson.Options), UiGoalLoopJson.Options)!;
+
+        // A copy for the loop GET without the wire payloads. On the
+        // production loop a27bc3181a45 (2026-09-12) WireRequest + WireResponse
+        // were 1.65 MB of the 3.18 MB entries payload; the page showed them
+        // only inside a closed disclosure. They are fetched per entry from
+        // /api/goal-loops/{id}/entries/{index}/wire when that disclosure opens.
+        public UiGoalLoopEntry CloneWithoutWire()
+        {
+            var copy = Clone();
+            if (copy.WireRequest != null || copy.WireResponse != null)
+            {
+                copy.WireOmitted = new UiGoalLoopWireOmitted
+                {
+                    RequestChars = copy.WireRequest?.Length ?? 0,
+                    ResponseChars = copy.WireResponse?.Length ?? 0,
+                };
+                copy.WireRequest = null;
+                copy.WireResponse = null;
+            }
+            return copy;
+        }
+    }
+
+    public sealed class UiGoalLoopWireOmitted
+    {
+        public int RequestChars { get; set; }
+        public int ResponseChars { get; set; }
     }
 
     public sealed class UiGoalLoop
@@ -1165,17 +1196,29 @@ namespace MultiImageClient
             return sb.ToString();
         }
 
+        // Removes a Markdown code fence around the reply, and nothing else.
+        // The opening and closing fences are handled independently because
+        // models emit each one alone: Opus 5 returned "{...}\n```" with no
+        // opening fence on 2026-09-12 and the reply failed as "'`' is invalid
+        // after a single JSON value". An opening fence may carry a language
+        // tag ("```json") and may or may not be followed by a newline. Text
+        // inside the fences is returned verbatim apart from outer whitespace;
+        // a fence in the middle of the reply is not touched.
         public static string StripMarkdownFence(string raw)
         {
             var s = raw.Trim();
             if (s.StartsWith("```", StringComparison.Ordinal))
             {
-                var firstNewline = s.IndexOf('\n');
-                var lastFence = s.LastIndexOf("```", StringComparison.Ordinal);
-                if (firstNewline >= 0 && lastFence > firstNewline)
+                var i = 3;
+                while (i < s.Length && char.IsLetterOrDigit(s[i]))
                 {
-                    s = s.Substring(firstNewline + 1, lastFence - firstNewline - 1).Trim();
+                    i++;
                 }
+                s = s.Substring(i).TrimStart();
+            }
+            if (s.EndsWith("```", StringComparison.Ordinal))
+            {
+                s = s.Substring(0, s.Length - 3).TrimEnd();
             }
             return s;
         }

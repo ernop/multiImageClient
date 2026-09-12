@@ -475,10 +475,17 @@ details.goal-entry[open] > summary::before { content: "▾"; }
 .goal-tree-state { margin-top:auto; }
 .goal-tree-preview { height:98px; flex-shrink:0; display:flex; align-items:center; justify-content:center; width:100%; font-size:12px; }
 .goal-tree-preview img { width:100%; height:100%; object-fit:contain; }
-.goal-feedback-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:5px 8px; font-size:11px; }
-.goal-page .goal-feedback-controls button { padding:2px 7px; font-size:12px; min-width:28px; color:var(--accent-dark); background:var(--card); border:1px solid var(--line); }
+/* Owner points: one row per card, "image [+N] +1 −1 · prompt [+N] +1 −1". */
+.goal-feedback-controls { display:flex; align-items:center; flex-wrap:wrap; gap:4px 14px; padding:2px 0; font-size:12px; }
+.goal-feedback-group { display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px; }
+.goal-feedback-label { color:var(--accent-dark); font-weight:700; }
+.goal-page .goal-feedback-controls button { padding:1px 7px; font-size:12px; min-width:28px; color:var(--accent-dark); background:var(--card); border:1px solid var(--line); }
 .goal-page .goal-feedback-controls button:hover:not(:disabled) { background:var(--paper); }
-.goal-feedback-controls strong { min-width:16px; text-align:center; }
-.goal-feedback-status { flex-basis:100%; font-size:10px; }
+.goal-feedback-total { font-size:14px; min-width:0; }
+.goal-feedback-total:empty { display:none; }
+.goal-feedback-status { flex-basis:100%; font-size:11px; }
 .goal-feedback-status:empty, .goal-feedback-controls button[hidden] { display:none; }
+.goal-loading { display:flex; align-items:center; gap:10px; padding:12px 0; font-size:15px; font-weight:700; }
+.goal-loading::before { content:""; width:14px; height:14px; border-radius:50%; border:3px solid var(--line); border-top-color:var(--accent); animation: goal-spin 0.9s linear infinite; }
+@keyframes goal-spin { to { transform: rotate(360deg); } }
 #goal-samples-field[hidden], #goal-candidates-field[hidden] { display:none; }

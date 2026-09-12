@@ -4,6 +4,76 @@ Status: **implemented 2026-09-04** in the `--ui` web app. This document is the
 durable statement of the requirement, the settled decisions, and where each
 part lives in code.
 
+## Loop reliability audit, page load, and information tiers — 2026-09-12
+
+### Audit of stored loops
+
+All stored loops were read from disk: 22 unique loops (17 local, 5 production across both environments).
+No loop reached `done`. Three reached `exhausted` (turn budget). Two were `stopped` by a server restart.
+The other 17 failed. Failure causes, by count:
+
+| Cause | Loops | Fix |
+|---|---|---|
+| Anthropic 32 MB request cap on protocol 6 loops that replay every image (12–40 images) | 4 | Protocol 7+ bounds visual context; stored v6 loops keep their contract and can only be forked earlier |
+| xAI transport failures on large bodies: `Error while copying content to a stream`, HTTP 413 `length limit exceeded`, HTTP 500 `Auth context expired` | 7 | xAI request cap set to 48 MiB (probed); oversize calls now re-encode PNG as full-resolution JPEG before sending |
+| Manager reply cut at the 16,000 output-token cap (Fable 5.1 adaptive thinking counts against `max_tokens`) | 1 | Output cap raised to 64,000 on every provider |
+| Critic reply ended in a lone Markdown fence (`{...}\n```) | 1 | Fence stripping handles opening and closing fences independently |
+| Manager refused the goal (sexual content) | 1 | Correct fail-closed behavior |
+| Manager sent a 0-character required text field | 1 | Error now names the field (2026-09-12 validation change above) |
+| Network send failure (`An error occurred while sending the request`) | 2 | Transient; resume re-asks the step |
+
+Decisions:
+
+- `ManagerChatHttp.MaxOutputTokens` = 64,000 for OpenAI, Anthropic, Gemini, and xAI.
+  Published maxima: Anthropic Claude 5 128K, OpenAI Responses 128K, Gemini 3.5 Flash 65,536.
+  xAI grok-4.6 has no published figure; 65,536 was accepted live on 2026-09-12.
+- `ManagerCatalog.XaiLimits.MaxRequestBytes` = 48 MiB. Probed from the production host with synthetic
+  bodies: 48 MiB passed the size check (failed later as `invalid_image`, as intended); 50 MiB returned
+  HTTP 413. The 81.9 MB production critique request that failed would now go out as JPEG.
+- `UiGoalLoopProtocol.StripMarkdownFence` removes an opening fence (with optional language tag, with or
+  without a newline) and a closing fence independently. A fence inside the JSON text is untouched. The
+  describe-endpoint parser in `UiJobs.cs` delegates to the same method.
+- No automatic retry was added for transient provider errors. Resume re-asks the failed step.
+
+### Loop page load
+
+Production loop `a27bc3181a45` (154 entries, 3.19 MB JSON) appeared not to load in the owner's browser.
+The server served every request with HTTP 200 and the full body. The nginx log showed three full
+`after=0` downloads within 19 seconds for one page view, then a successful `after=154` poll.
+
+Causes and fixes:
+
+- `pollLoop` had no in-flight guard. `selectLoop`, `visibilitychange`, and control actions call it directly;
+  `clearTimeout` cancels only the scheduled timer. A tab switch during the first multi-second fetch started a
+  second full fetch from `after=0`. `pollLoop` is now single-flight: a call while a fetch is in flight returns
+  the in-flight promise.
+- The page showed nothing while loading. The head now shows `loading loop… <bytes received>` and then
+  `loading loop… N of T entries` before the synchronous build of every entry element.
+- `wireRequest` + `wireResponse` were 1.65 MB of the 3.18 MB and were rendered (parsed, expanded,
+  pretty-printed) for every entry at build time although shown only inside a closed disclosure.
+  `GET /api/goal-loops/{id}` now omits them and sets `wireOmitted: {requestChars, responseChars}` on those
+  entries. `?wire=1` returns the old complete shape. `GET /api/goal-loops/{id}/entries/{index}/wire` returns
+  `{id, index, wireRequest, wireResponse}` for one exact entry. The page fetches and builds the Wire data
+  block on first open only. Measured: 3,188,237 → 1,350,494 bytes for that loop.
+- Firefox and Chromium (Playwright, local server, that loop's data) load and build all 154 entries in
+  1.1–1.4 s with no console errors.
+
+### Information tiers on the loop page
+
+Every element on a loop page belongs to one tier. Higher tiers render first, larger, and always visible;
+lower tiers render smaller, later, or behind a disclosure.
+
+| Tier | Content | Presentation |
+|---|---|---|
+| High: images | Every render, its size, the Best / Selected reference mark, the score table | Two-column image grid per turn, image first in each card, caption `WxH · $cost` (cost omitted when zero) |
+| Medium: actions and status | Owner image/prompt points, resume / stop / grant turns, edit & fork, fork here, recap and contact sheet links, loop status and current turn | One compact row under each image: `image [+N] +1 −1 · prompt [+N] +1 −1` (count blank at zero); head controls |
+| Low: details | Render time, job id, provider label, media type, loop settings per request, token/cost/request size, provider reasoning, wire payloads, request records, sent-image captions | `Details & actions` disclosure per card; `Requests & events` disclosure per turn; Wire data lazy-loaded |
+
+Removed repeated text: `Your image points` / `Your prompt points` labels (two rows per card → one row), a
+`$0.0000` caption on every free render, the model name in the usage line (the card head already names the
+contributor), `shape · detail · quality · moderation` on every render request (loop settings live in the head),
+and the generator name on failed-render meta lines (also in the head).
+
 ## Multiple samples and operator points — 2026-09-09
 
 Protocol 9 applies to new loops. Existing loops retain their recorded sample counts and JSON contracts.
@@ -1059,7 +1129,11 @@ raw provider response). Render entries carry the `gen-result` event JSON as
 - `recap.html?loop={id}` — reusable visual snapshot with PNG and portable HTML exports. Uses the existing GET endpoint.
 - `GET /api/goal-loops` — list summaries (newest first).
 - `GET /api/goal-loops/{id}?after=N` — metadata + entries from index N;
-  `revision` changes mean refetch from 0.
+  `revision` changes mean refetch from 0. Since 2026-09-12 `wireRequest` /
+  `wireResponse` are omitted and replaced by `wireOmitted {requestChars,
+  responseChars}`; `&wire=1` returns them inline.
+- `GET /api/goal-loops/{id}/entries/{index}/wire` — `{id, index, wireRequest,
+  wireResponse}` for one exact entry; 404 for an unknown loop or index.
 - `POST /api/goal-loops` — form: `user`, `goal`, `generators` (repeated
   field or comma-separated, 1–8 distinct keys; legacy single `generator`
   still accepted), `manager`, `maxTurns`, `shape`, `detail`, `quality`,
@@ -1084,6 +1158,7 @@ raw provider response). Render entries carry the `gen-result` event JSON as
 
 - `MultiImageClient/Implementation/UiGoalLoopSampling.cs` — sample identities, source defaults, and image-budget validation.
 - `MultiImageClient.Tests/GoalLoopContractTextTests.cs` — restoration-field rules and precise text validation errors.
+- `MultiImageClient.Tests/GoalLoopTransportAuditTests.cs` — fence stripping at either end, xAI 48 MiB cap and JPEG pressure, wire-omitting entry copies.
 - `MultiImageClient/Implementation/UiGoalLoopFeedback.cs` — durable preference events, idempotency, snapshots, and planning invalidation.
 - `MultiImageClient.Tests/GoalLoopSamplingFeedbackTests.cs` — sample isolation, vote identity, replay protection, and planning timing.
 - `MultiImageClient/Ui/wwwroot/goal-feedback.js`, `tools/tests/goal-feedback.test.cjs` — exact feedback totals and sample display checks.

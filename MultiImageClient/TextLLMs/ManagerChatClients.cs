@@ -201,11 +201,18 @@ namespace MultiImageClient
         // count limit, jpg/jpeg or png only. Live-verified same day: an 11 MB
         // image fails with "Response is too large to store" unless
         // store=false; the detail field has no effect on token count.
+        // Request cap probed live 2026-09-12 from the production host: an
+        // 81.9 MB critique request was rejected HTTP 413 "length limit
+        // exceeded"; synthetic bodies of 48 MiB passed the size check (failed
+        // later as invalid_image, as intended) and 50 MiB returned 413. The
+        // limit is undocumented, so the cap below is the largest verified
+        // passing size, 48 MiB.
         public static readonly ManagerImageLimits XaiLimits = new()
         {
             MaxImageRawBytes = 20L * 1024 * 1024,
+            MaxRequestBytes = 48L * 1024 * 1024,
             AcceptedMimes = ManagerImageLimits.PngJpeg,
-            Source = "xAI models page: 20 MiB/image, jpg/png only; store=false required for large images",
+            Source = "xAI models page: 20 MiB/image, jpg/png only; store=false required for large images; 48 MiB request cap probed 2026-09-12 (HTTP 413 at 50 MiB)",
         };
 
         // Model IDs verified 2026-09-04: Anthropic models overview lists
@@ -326,7 +333,15 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(15),
         };
 
-        public const int MaxOutputTokens = 16000;
+        // Output cap sent on every manager/critic call. Production loops on
+        // 2026-09-12 hit the earlier 16,000 cap on Fable 5.1 (adaptive
+        // thinking counts against max_tokens, so a long review plus the JSON
+        // reply was cut off with stop_reason "max_tokens"). Published maxima:
+        // Anthropic Claude 5 128K output; OpenAI Responses 128K
+        // max_output_tokens; Gemini 3.5 Flash 65,536 maxOutputTokens; xAI
+        // grok-4.6 accepted 65,536 live the same day. 64,000 fits every
+        // provider without a per-provider table.
+        public const int MaxOutputTokens = 64000;
 
         // Relaxed escaping keeps prompts and placeholders readable in the
         // stored copy (no \u003C for "<", no escaped non-ASCII); the body

@@ -1352,6 +1352,10 @@ namespace MultiImageClient
                 {
                     after = parsedAfter;
                 }
+                // Wire payloads (exact provider request/response copies) are
+                // omitted unless ?wire=1: they were half of a large loop's
+                // bytes and the page shows them only on demand.
+                var includeWire = ctx.Request.Query["wire"] == "1";
                 UiGoalLoop loop;
                 List<UiGoalLoopEntry> entries;
                 int total;
@@ -1361,7 +1365,7 @@ namespace MultiImageClient
                     total = state.Entries.Count;
                     entries = after >= total
                         ? new List<UiGoalLoopEntry>()
-                        : state.Entries.Skip(after).Select(e => e.Clone()).ToList();
+                        : state.Entries.Skip(after).Select(e => includeWire ? e.Clone() : e.CloneWithoutWire()).ToList();
                 }
                 ctx.Response.Headers.CacheControl = "no-store";
                 return Results.Json(new
@@ -1373,6 +1377,31 @@ namespace MultiImageClient
                     after,
                     entries,
                 }, UiGoalLoopJson.Options);
+            });
+
+            // The exact provider request (image base64 replaced by
+            // placeholders) and raw response of one entry, by exact index.
+            app.MapGet("/api/goal-loops/{id}/entries/{index:int}/wire", (string id, int index, HttpContext ctx) =>
+            {
+                var state = goalLoops.Get(id);
+                if (state == null)
+                {
+                    return Results.NotFound(new { error = "unknown goal loop" });
+                }
+                string? wireRequest;
+                string? wireResponse;
+                lock (state.Lock)
+                {
+                    if (index < 0 || index >= state.Entries.Count)
+                    {
+                        return Results.NotFound(new { error = $"loop {id} has no entry {index}" });
+                    }
+                    var entry = state.Entries[index];
+                    wireRequest = entry.WireRequest;
+                    wireResponse = entry.WireResponse;
+                }
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new { id, index, wireRequest, wireResponse }, UiGoalLoopJson.Options);
             });
 
             app.MapPost("/api/goal-loops", async (HttpRequest request) =>

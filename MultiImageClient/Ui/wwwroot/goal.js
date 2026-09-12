@@ -107,6 +107,10 @@ async function fetchJson(path, init) {
     const message = body && body.error ? body.error : `HTTP ${resp.status}`;
     throw new Error(message);
   }
+  return shortenModelNames(body);
+}
+
+function shortenModelNames(body) {
   for (const loop of [body?.loop, ...(body?.loops || [])].filter(Boolean)) {
     loop.managerLabel = GoalRecap.shortName(loop.managerLabel);
     for (const critic of loop.critics || []) critic.label = GoalRecap.shortName(critic.label);
@@ -555,6 +559,7 @@ function selectLoop(id, pushHistory) {
   el("goal-view-modes").hidden = true;
   setLoopView(false);
   renderList();
+  showLoopLoading(id, "loading loop…");
   clearTimeout(loopPollTimer);
   pollLoop();
 }
@@ -564,14 +569,99 @@ window.addEventListener("popstate", () => {
   if (id) selectLoop(id, false);
 });
 
-async function pollLoop() {
+// Progress text in the head while the first fetch of a loop is in flight.
+// A large loop (154 entries, 1.5 MB without wire payloads) takes seconds on
+// a slow link; without this the page showed nothing and looked hung.
+function showLoopLoading(id, text) {
+  if (loopState) return;
+  const head = el("goal-loop-head");
+  head.textContent = "";
+  const box = document.createElement("div");
+  box.className = "goal-loading";
+  const label = document.createElement("span");
+  label.textContent = text;
+  const idSpan = document.createElement("span");
+  idSpan.className = "goal-head-id";
+  idSpan.textContent = id;
+  box.append(label, idSpan);
+  head.appendChild(box);
+}
+
+// Reads the loop response body while counting bytes so the loading line
+// can show progress. Same auth / error handling as fetchJson.
+async function fetchLoopJson(path, onProgress) {
+  const resp = await fetch(apiUrl(path));
+  if (resp.status === 401) {
+    location.reload();
+    throw new Error("not logged in");
+  }
+  let text;
+  if (resp.body && resp.ok && onProgress) {
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+      onProgress(received);
+    }
+    const all = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      all.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    text = new TextDecoder().decode(all);
+  } else {
+    text = await resp.text();
+  }
+  let body = null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = null;
+  }
+  if (!resp.ok) {
+    throw new Error(body && body.error ? body.error : `HTTP ${resp.status}`);
+  }
+  if (body == null) throw new Error("the loop response was not JSON");
+  return shortenModelNames(body);
+}
+
+// One loop fetch in flight at a time. pollLoop is called directly from
+// selectLoop, visibilitychange, and control actions while a timer-driven
+// poll may already be waiting on the network; clearTimeout cancels only the
+// timer. Before this guard, a tab switch during the first 3 MB fetch of a
+// large loop started a second full fetch from after=0, and the production
+// access log showed three concurrent full downloads for one page view.
+let loopPollInFlight = null;
+
+function pollLoop() {
+  if (loopPollInFlight) return loopPollInFlight;
+  loopPollInFlight = pollLoopOnce().finally(() => { loopPollInFlight = null; });
+  return loopPollInFlight;
+}
+
+async function pollLoopOnce() {
   if (!selectedLoopId) return;
   const version = selectedVersion;
   const id = selectedLoopId;
   const after = loopState ? loopState.entries.length : 0;
   try {
-    const body = await fetchJson(`api/goal-loops/${encodeURIComponent(id)}?after=${after}`);
+    const body = await fetchLoopJson(`api/goal-loops/${encodeURIComponent(id)}?after=${after}`,
+      loopState ? null : (received) => {
+        if (version === selectedVersion) showLoopLoading(id, `loading loop… ${formatBytes(received)}`);
+      });
     if (version !== selectedVersion) return;
+    if (!loopState && body.entries.length > 0) {
+      showLoopLoading(id, `loading loop… ${body.entries.length} of ${body.total} entries`);
+      // Let the progress line paint before the synchronous build of every
+      // entry element begins.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (version !== selectedVersion) return;
+    }
     if (!loopState) {
       loopState = { loop: body.loop, running: body.running, canControl: body.canControl, entries: [], revision: body.loop.revision };
     }
@@ -883,13 +973,32 @@ function variantOrder(variant) {
   return GoalRecap.variantOrder(variant);
 }
 
+// Owner points as text: blank at zero so an unvoted card carries no number,
+// a signed count otherwise.
+function formatPoints(total) {
+  if (!total) return "";
+  return total > 0 ? `+${total}` : `−${-total}`;
+}
+
+// One row of point controls under an image or prompt. Each group is
+// "<scope> [+N] +1 −1"; the row is null when nothing is votable.
+function feedbackRow(...groups) {
+  const present = groups.filter(Boolean);
+  if (!present.length) return null;
+  const row = document.createElement("div");
+  row.className = "goal-feedback-controls";
+  row.append(...present);
+  return row;
+}
+
 function feedbackControls(scope, target) {
   if (!target || !config?.goalLoop.feedbackEnabled || !loopState.canControl) return null;
-  const row = document.createElement("div"); row.className = "goal-feedback-controls";
+  const row = document.createElement("span"); row.className = "goal-feedback-group";
   row.dataset.scope = scope; row.dataset.target = String(target.index);
-  const label = document.createElement("span"); label.textContent = `Your ${scope} points`;
+  row.title = `your ${scope} points for this ${scope === "image" ? "render" : "prompt"} inform the manager's later planning`;
+  const label = document.createElement("span"); label.className = "goal-feedback-label"; label.textContent = scope;
   const total = document.createElement("strong"); total.className = "goal-feedback-total";
-  total.textContent = String(GoalFeedback.total(loopState.entries, scope, target));
+  total.textContent = formatPoints(GoalFeedback.total(loopState.entries, scope, target));
   const status = document.createElement("span"); status.className = "goal-feedback-status"; status.setAttribute("aria-live", "polite");
   const retry = document.createElement("button"); retry.type = "button"; retry.textContent = "Retry vote"; retry.hidden = true;
   const buttons = [];
@@ -927,9 +1036,9 @@ function feedbackControls(scope, target) {
 }
 
 function refreshFeedbackControls() {
-  for (const row of el("goal-turns").querySelectorAll(".goal-feedback-controls")) {
+  for (const row of el("goal-turns").querySelectorAll(".goal-feedback-group")) {
     const target = loopState.entries.find(e => e.index === Number(row.dataset.target));
-    row.querySelector(".goal-feedback-total").textContent = String(GoalFeedback.total(loopState.entries, row.dataset.scope, target));
+    row.querySelector(".goal-feedback-total").textContent = formatPoints(GoalFeedback.total(loopState.entries, row.dataset.scope, target));
   }
 }
 
@@ -1107,17 +1216,7 @@ function critiqueBody(entry) {
   if (data.providerReasoning) {
     body.appendChild(detailsBlock("Provider reasoning", textBlock(data.providerReasoning), false));
   }
-  const usage = document.createElement("div");
-  usage.className = "goal-usage";
-  const parts = [];
-  if (data.model) parts.push(data.model);
-  if (data.inputTokens != null) parts.push(`${data.inputTokens.toLocaleString()} in`);
-  if (data.outputTokens != null) parts.push(`${data.outputTokens.toLocaleString()} out tokens`);
-  if (data.costUsd != null) parts.push(formatUsd(data.costUsd));
-  else if (data.inputTokens != null) parts.push("price not on file");
-  if (data.requestBytes != null) parts.push(`request ${formatBytes(data.requestBytes)}`);
-  usage.textContent = parts.join(" · ");
-  body.appendChild(usage);
+  body.appendChild(usageLine(data));
   return body;
 }
 
@@ -1937,23 +2036,29 @@ function managerBody(entry) {
   if (data.providerReasoning) {
     body.appendChild(detailsBlock("Provider reasoning", textBlock(data.providerReasoning), false));
   }
+  body.appendChild(usageLine(data));
+  return body;
+}
+
+// Token/cost/request-size line for one model call. The model name is not
+// repeated here: the card head already names the contributor.
+function usageLine(data) {
   const usage = document.createElement("div");
   usage.className = "goal-usage";
   const parts = [];
-  if (data.model) parts.push(data.model);
   if (data.inputTokens != null) parts.push(`${data.inputTokens.toLocaleString()} in`);
-  if (data.outputTokens != null) parts.push(`${data.outputTokens.toLocaleString()} out tokens`);
+  if (data.outputTokens != null) parts.push(`${data.outputTokens.toLocaleString()} out`);
   if (data.costUsd != null) parts.push(formatUsd(data.costUsd));
   else if (data.inputTokens != null) parts.push("price not on file");
-  if (data.requestBytes != null) parts.push(`request ${formatBytes(data.requestBytes)}`);
+  if (data.requestBytes != null) parts.push(formatBytes(data.requestBytes));
   usage.textContent = parts.join(" · ");
-  body.appendChild(usage);
-  return body;
+  usage.title = "input tokens · output tokens · cost · request size";
+  return usage;
 }
 
 function renderRequestBody(entry) {
   const body = document.createElement("div");
-  const points = feedbackControls("prompt", entry);
+  const points = feedbackRow(feedbackControls("prompt", entry));
   if (points) body.appendChild(points);
   const variant = variantOf(entry);
   if (loopState?.loop.protocolVersion >= 7) {
@@ -1968,15 +2073,17 @@ function renderRequestBody(entry) {
     body.appendChild(promptWithDiff(label, entry.text, base));
   }
   const r = entry.render || {};
+  // Shape/detail/quality/moderation are loop settings (head → Settings &
+  // usage) and the generator is in the card head, so the per-request line
+  // is a detail: job id, or the not-rendered state.
   const meta = document.createElement("div");
-  meta.className = "goal-usage";
+  meta.className = "goal-usage goal-image-details";
   meta.textContent = [
-    r.source ? `source ${r.source}: ${r.generatorLabel}` : r.generatorLabel,
+    r.jobId ? `job ${r.jobId}` : "not rendered yet",
     r.shape && `shape ${r.shape}`,
     r.detail && `detail ${r.detail}`,
     r.quality && `quality ${r.quality}`,
     r.moderation && `moderation ${r.moderation}`,
-    r.jobId ? `job ${r.jobId}` : "not rendered yet",
   ].filter(Boolean).join(" · ");
   body.appendChild(meta);
   return body;
@@ -2021,10 +2128,11 @@ function renderResultBody(entry) {
   const source = sourceOf(entry);
   const loop = loopState.loop;
   const isBest = entry.turn === loop.bestTurn && (loop.bestVariant || null) === variant && (loop.bestSource || null) === source;
-  const imagePoints = r.ok ? feedbackControls("image", entry) : null;
-  const promptPoints = feedbackControls("prompt", GoalFeedback.requestFor(loopState.entries, entry));
-  if (imagePoints) body.appendChild(imagePoints);
-  if (promptPoints) body.appendChild(promptPoints);
+  // Actions (owner points) sit under the image, after it; see the priority
+  // tiers in docs/goal-loop-prd.md.
+  const points = feedbackRow(
+    r.ok ? feedbackControls("image", entry) : null,
+    feedbackControls("prompt", GoalFeedback.requestFor(loopState.entries, entry)));
   if (loop.protocolVersion >= 8) {
     const context = candidateContext(entry);
     if (context) body.appendChild(context);
@@ -2063,10 +2171,13 @@ function renderResultBody(entry) {
     fact("provider label", r.label);
     fact("media type", r.mediaType);
     fact("job", r.jobId);
+    // Caption: pixels, and the cost only when there is one (a $0.0000 line
+    // on every free render was repeated noise).
     const caption = document.createElement("div");
     caption.className = "goal-image-caption";
-    caption.textContent = [r.size, r.cost != null ? formatUsd(r.cost) : ""].filter(Boolean).join(" · ");
-    row.appendChild(caption);
+    caption.textContent = [r.size, r.cost ? formatUsd(r.cost) : ""].filter(Boolean).join(" · ");
+    if (caption.textContent) row.appendChild(caption);
+    if (points) row.appendChild(points);
     facts.classList.add("goal-image-details");
     row.appendChild(facts);
     body.appendChild(row);
@@ -2090,9 +2201,12 @@ function renderResultBody(entry) {
       }
       body.appendChild(hint);
     }
+    if (points) body.appendChild(points);
+    // Generator and source are already in the card head; the timing and job
+    // id are details.
     const meta = document.createElement("div");
-    meta.className = "goal-usage";
-    meta.textContent = [source ? `source ${source}: ${r.generatorLabel}` : r.generatorLabel, formatDuration(entry.ms), r.jobId && `job ${r.jobId}`].filter(Boolean).join(" · ");
+    meta.className = "goal-usage goal-image-details";
+    meta.textContent = [formatDuration(entry.ms), r.jobId && `job ${r.jobId}`].filter(Boolean).join(" · ");
     body.appendChild(meta);
   }
   return body;
@@ -2219,16 +2333,46 @@ function buildEntryElement(entry) {
   article.appendChild(body);
   article.appendChild(actionDetails);
 
-  if (entry.wireRequest || entry.wireResponse) {
+  if (entry.wireRequest || entry.wireResponse || entry.wireOmitted) {
     const wire = document.createElement("div");
-    if (entry.wireRequest) {
-      wire.appendChild(wireBlock("exact request sent (image base64 replaced by placeholders)", entry.wireRequest));
-    }
-    if (entry.wireResponse) {
-      wire.appendChild(wireBlock(entry.kind === "render-result" ? "exact gen-result event recorded by the job" : "raw provider response", entry.wireResponse));
-    }
-    const details = detailsBlock("Wire data", wire, false);
+    const omitted = entry.wireOmitted;
+    const chars = omitted ? omitted.requestChars + omitted.responseChars : (entry.wireRequest || "").length + (entry.wireResponse || "").length;
+    const details = detailsBlock(`Wire data (${formatBytes(chars)})`, wire, false);
     details.classList.add("goal-wire");
+    const fill = (wireRequest, wireResponse) => {
+      wire.textContent = "";
+      if (wireRequest) {
+        wire.appendChild(wireBlock("exact request sent (image base64 replaced by placeholders)", wireRequest));
+      }
+      if (wireResponse) {
+        wire.appendChild(wireBlock(entry.kind === "render-result" ? "exact gen-result event recorded by the job" : "raw provider response", wireResponse));
+      }
+    };
+    // Built on first open only: parsing and pretty-printing every entry's
+    // payload up front cost seconds of main-thread time on a large loop,
+    // and (when omitted by the server) the bytes are fetched on demand.
+    let built = false;
+    details.addEventListener("toggle", async () => {
+      if (!details.open || built) return;
+      built = true;
+      if (!omitted) {
+        fill(entry.wireRequest, entry.wireResponse);
+        return;
+      }
+      const loopId = selectedLoopId;
+      wire.textContent = "loading wire data…";
+      try {
+        const body = await fetchJson(`api/goal-loops/${encodeURIComponent(loopId)}/entries/${entry.index}/wire`);
+        fill(body.wireRequest, body.wireResponse);
+      } catch (ex) {
+        built = false;
+        wire.textContent = "";
+        const err = document.createElement("div");
+        err.className = "goal-error";
+        err.textContent = `could not load wire data: ${ex.message}`;
+        wire.appendChild(err);
+      }
+    });
     actionDetails.appendChild(details);
   }
   return article;
