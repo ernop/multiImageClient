@@ -69,6 +69,25 @@ public class UiHostedRawCleanupTests : IDisposable
     }
 
     [Fact]
+    public async Task UnindexedRemnantsStayUntouchedAndStillProtectKnownInputs()
+    {
+        var source = Job("source");
+        var remnant = Job("remnant");
+        File.Delete(Path.Combine(remnant.Folder, "job.json"));
+        Directory.CreateDirectory(Path.Combine(root, "UiHistory", "empty"));
+        File.WriteAllText(Path.Combine(remnant.Folder, "images.json"), JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["input/0"] = new { Path = source.Path }
+        }));
+        var result = await UiHostedRawCleanup.SweepAsync(Settings, false, default,
+            (_, _, _) => throw new Exception("No verification should run"));
+        Assert.Equal((0, 0L, 0), result);
+        Assert.True(File.Exists(source.Path));
+        Assert.True(File.Exists(remnant.Path));
+        Assert.True(Directory.Exists(Path.Combine(root, "UiHistory", "empty")));
+    }
+
+    [Fact]
     public async Task DryRunVerifiesWithoutDeleting()
     {
         var job = Job("one");

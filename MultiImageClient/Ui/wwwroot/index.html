@@ -235,7 +235,7 @@
       </div>
 
       <div id="compose-right">
-        <textarea id="prompt" rows="8"
+        <textarea id="prompt" rows="8" data-text-draft="composer-prompt"
           placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (the gpt-image family sees all of them in order); without one it's plain text-to-image."></textarea>
         <div id="prompt-limit-notice" hidden></div>
         <div id="spelling-panel" hidden>
@@ -808,12 +808,13 @@
   </form>
 </dialog>
 
+<script src="text-drafts.js?v=20260912"></script>
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20260911-mcphee-3-11-2"></script>
 <script src="personal-config.js?v=20260905-shared-chooser"></script>
 <script src="prompt-rewrites.js"></script>
 <script src="generator-toggle.js?v=20260910"></script>
 <script src="generator-chooser.js?v=20260910-shared"></script>
-<script src="app.js?v=20260911-mcphee-3-11-2"></script>
+<script src="app.js?v=20260912-text-drafts"></script>
 </body>
 </html>

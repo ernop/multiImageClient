@@ -93,10 +93,18 @@ namespace MultiImageClient
             var settings = Settings.LoadFromFile(settingsFilePath);
             if (options.UiStorageCleanup)
             {
-                var result = await UiHostedRawCleanup.SweepAsync(settings, options.UiStorageCleanupDryRun, CancellationToken.None);
-                var thumbs = UiThumbExpiry.SweepOnce(settings, options.UiStorageCleanupDryRun);
-                Console.WriteLine($"Storage cleanup: originals={result.Files}, originalBytes={result.Bytes}, errors={result.Errors}, thumbnails={thumbs.Files}, thumbnailBytes={thumbs.Bytes}, dryRun={options.UiStorageCleanupDryRun}");
-                Environment.ExitCode = result.Errors == 0 ? 0 : 1;
+                try
+                {
+                    var result = await UiHostedRawCleanup.SweepAsync(settings, options.UiStorageCleanupDryRun, CancellationToken.None);
+                    var thumbs = UiThumbExpiry.SweepOnce(settings, options.UiStorageCleanupDryRun);
+                    Console.WriteLine($"Storage cleanup: originals={result.Files}, originalBytes={result.Bytes}, errors={result.Errors}, thumbnails={thumbs.Files}, thumbnailBytes={thumbs.Bytes}, dryRun={options.UiStorageCleanupDryRun}");
+                    Environment.ExitCode = result.Errors == 0 ? 0 : 1;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"Storage cleanup: aborted ({ex.GetType().Name}); unverified originals retained.");
+                    Environment.ExitCode = 1;
+                }
                 return;
             }
             GenerationArchive.Initialize(settings);

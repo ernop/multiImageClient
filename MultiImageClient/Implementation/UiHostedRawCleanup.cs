@@ -60,6 +60,7 @@ namespace MultiImageClient
                 try
                 {
                     var metadataPath = Path.Combine(folder, "job.json");
+                    if (!File.Exists(metadataPath)) continue; // Unindexed remnants are not completed jobs.
                     using var metadata = ReadJson(root, metadataPath);
                     if (!IsCompleted(metadata, folder)) continue;
                     var imagesPath = Path.Combine(folder, "images.json");
@@ -131,8 +132,6 @@ namespace MultiImageClient
             foreach (var folder in Directory.EnumerateDirectories(history))
             {
                 token.ThrowIfCancellationRequested();
-                using var metadata = ReadJson(root, Path.Combine(folder, "job.json"));
-                _ = IsCompleted(metadata, folder);
                 void Add(string? path)
                 {
                     if (string.IsNullOrWhiteSpace(path)) return;
@@ -140,9 +139,15 @@ namespace MultiImageClient
                     paths.Add(Path.GetFullPath(path));
                     if (paths.Count > MaxInputPaths) throw new InvalidDataException("Input-path safety index exceeds its limit.");
                 }
-                if (metadata.RootElement.TryGetProperty("InputImagePath", out var single)) Add(single.GetString());
-                if (metadata.RootElement.TryGetProperty("InputImagePaths", out var multiple) && multiple.ValueKind != JsonValueKind.Null)
-                    foreach (var path in multiple.EnumerateArray()) Add(path.GetString());
+                var metadataPath = Path.Combine(folder, "job.json");
+                if (File.Exists(metadataPath))
+                {
+                    using var metadata = ReadJson(root, metadataPath);
+                    _ = IsCompleted(metadata, folder);
+                    if (metadata.RootElement.TryGetProperty("InputImagePath", out var single)) Add(single.GetString());
+                    if (metadata.RootElement.TryGetProperty("InputImagePaths", out var multiple) && multiple.ValueKind != JsonValueKind.Null)
+                        foreach (var path in multiple.EnumerateArray()) Add(path.GetString());
+                }
                 var imagesPath = Path.Combine(folder, "images.json");
                 if (File.Exists(imagesPath))
                     foreach (var image in ReadImages(root, imagesPath))

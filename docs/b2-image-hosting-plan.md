@@ -17,6 +17,7 @@ The owner approved removing these local copies while preserving job records, inp
 | Changed or missing evidence | Retain the file and log a job-specific error. Never substitute another object. |
 | Preserve inputs | Exclude input records and every path referenced by any job's input metadata. |
 | Preserve history | Retain job metadata, event records, image identities, remote objects, and inputs. |
+| Unindexed remnants | Skip folders without job metadata. Still protect input paths in any readable image index. |
 | Path safety | Refuse paths outside the configured data root and paths traversing symbolic links. |
 | Bounded memory | Read one job index and stream one original at a time. Cap metadata files at 16 MiB and input references at 10,000. |
 | Concurrent maintenance | Serialize sweeps through an exclusive lock in the data root. Recheck completed state and image identity before deletion. |

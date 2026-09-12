@@ -350,7 +350,8 @@ el("goal-form").addEventListener("submit", async (event) => {
     return;
   }
   const form = new FormData();
-  form.append("goal", el("goal-text").value);
+  const submittedGoal = el("goal-text").value;
+  form.append("goal", submittedGoal);
   form.append("user", user);
   for (const key of generatorKeys) form.append("generators", key);
   form.append("manager", el("goal-manager").value);
@@ -367,7 +368,10 @@ el("goal-form").addEventListener("submit", async (event) => {
   button.disabled = true;
   try {
     const body = await fetchJson("api/goal-loops", { method: "POST", body: form });
-    el("goal-text").value = "";
+    if (el("goal-text").value === submittedGoal) {
+      el("goal-text").value = "";
+      el("goal-text").dispatchEvent(new Event("input", { bubbles: true }));
+    }
     await pollList();
     selectLoop(body.id, true);
   } catch (ex) {

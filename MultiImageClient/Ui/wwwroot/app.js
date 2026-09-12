@@ -6030,6 +6030,7 @@ function upsertSketchLegendInPrompt(paragraph) {
     .filter((p) => p.trim().length > 0 && !p.trimStart().startsWith(SketchLegendMarker));
   kept.push(paragraph);
   promptBox.value = kept.join("\n\n");
+  promptBox.dispatchEvent(new Event("input", { bubbles: true }));
   if (mcpheeCtl) mcpheeCtl.refresh();
   if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
   updatePromptLimitNotice();
@@ -6349,6 +6350,7 @@ function insertPromptText(text) {
   const caret = before.length + separator.length + text.length;
   promptBox.focus();
   promptBox.setSelectionRange(caret, caret);
+  promptBox.dispatchEvent(new Event("input", { bubbles: true }));
   if (mcpheeCtl) mcpheeCtl.refresh();
   if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
   updatePromptLimitNotice();
@@ -9222,6 +9224,7 @@ function renderImageViewerActiveActions(target) {
 
 function applyViewedPromptToComposer(prompt) {
   promptBox.value = prompt;
+  promptBox.dispatchEvent(new Event("input", { bubbles: true }));
   if (mcpheeCtl) mcpheeCtl.refresh();
   if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
 }
@@ -10693,6 +10696,7 @@ async function setActiveFromJob(id, card) {
 
     setImagesFromBlobs(blobs, { restoredSketch, sketchNotice });
     promptBox.value = restoredPrompt;
+    promptBox.dispatchEvent(new Event("input", { bubbles: true }));
     if (mcpheeCtl) mcpheeCtl.refresh();
     if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
     const recorded = card.dataset;

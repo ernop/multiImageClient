@@ -33,7 +33,7 @@
         </div>
         <label class="goal-field">
           <span class="goal-label">goal</span>
-          <textarea id="goal-text" rows="7" required
+          <textarea id="goal-text" rows="7" required data-text-draft="new-goal"
             placeholder="Describe the image outcome you want. The manager model writes prompts, sees each render, scores it, and iterates."></textarea>
         </label>
         <label class="goal-field">
@@ -146,6 +146,7 @@
   </section>
 </main>
 
+<script src="text-drafts.js?v=20260912"></script>
 <script src="personal-config.js?v=20260905-shared-chooser"></script>
 <script src="viewer.js?v=20260904-shared-viewer"></script>
 <script src="recap-model.js"></script>
@@ -154,6 +155,6 @@
 <script src="goal-feedback.js"></script>
 <script src="generator-toggle.js?v=20260910"></script>
 <script src="generator-chooser.js?v=20260910-shared"></script>
-<script src="goal.js?v=20260905-shared-chooser"></script>
+<script src="goal.js?v=20260912-text-drafts"></script>
 </body>
 </html>
