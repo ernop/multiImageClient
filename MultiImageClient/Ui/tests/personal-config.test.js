@@ -94,6 +94,23 @@ test("chooser saves preserve unrelated canonical fields and ignore obsolete lega
   assert.deepEqual(schema.normalize(saved, fields()), saved);
 });
 
+test("chooser saves preserve the complete spelling checker configuration", () => {
+  const original = schema.build(fields());
+  original.spelling = {
+    enabled: true, customDictionary: ["myword"], ignoredWords: ["name"], notRareWords: ["term"],
+    formality: "standard", ruleOverrides: {
+      rules: { culture: false }, params: { obscureRank: 12000 },
+      checkers: { spell2026: { enabled: false }, spell: { enabled: true, order: 0 },
+        echo: { order: 9, params: { echoWindowWords: 7 } } },
+    },
+  };
+  const storage = memoryStorage([[schema.StorageKey, JSON.stringify(original)]]);
+  schema.saveGeneratorPreferences(storage, { enabled: false });
+  const saved = schema.parseStored(storage.getItem(schema.StorageKey));
+  assert.deepEqual(saved.spelling, original.spelling);
+  assert.deepEqual(saved.generatorPreferences, { enabled: false });
+});
+
 test("first chooser save preserves legacy browser preferences in the complete document", () => {
   const storage = memoryStorage([
     ["mic_username", "Alice"],
