@@ -108,6 +108,8 @@
 .mcphee-panel {
   font-size: 13px;
   line-height: 1.5;
+  background: #fff;
+  color: #111827;
 }
 
 .mcphee-panel-header {
@@ -173,6 +175,24 @@
   width: 72px;
   font-size: 12px;
   padding: 1px 4px;
+}
+
+.mcphee-checker {
+  padding: 4px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.mcphee-checker:last-of-type {
+  border-bottom: none;
+}
+
+.mcphee-checker-order {
+  margin-left: auto;
+  width: 48px;
+}
+
+.mcphee-checker-param {
+  padding-left: 22px;
 }
 
 /* Transient "undo ignore" chip, self-removes after 3 seconds. */
@@ -316,6 +336,8 @@
   top: 12px;
   max-height: calc(100vh - 24px);
   overflow-y: auto;
+  background: #fff;
+  color: #111827;
 }
 
 /* Mode-toggle chrome above the panel in either home. */

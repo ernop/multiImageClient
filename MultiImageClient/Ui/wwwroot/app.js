@@ -1173,7 +1173,7 @@ function normalizeImportedSpelling(raw) {
     throw new Error("spelling.ruleOverrides must be an object");
   }
   const overrideKeys = Object.keys(submittedOverrides);
-  if (overrideKeys.some((key) => !["rules", "params"].includes(key))) {
+  if (overrideKeys.some((key) => !["rules", "params", "checkers"].includes(key))) {
     throw new Error("spelling.ruleOverrides contains an unknown field");
   }
   const ruleOverrides = {};
@@ -1216,6 +1216,48 @@ function normalizeImportedSpelling(raw) {
         throw new Error(`spelling.ruleOverrides.params.${key} must be an integer`);
       }
       ruleOverrides.params[key] = normalized;
+    }
+  }
+  if (submittedOverrides.checkers !== undefined) {
+    const checkers = submittedOverrides.checkers;
+    if (!checkers || typeof checkers !== "object" || Array.isArray(checkers)) {
+      throw new Error("spelling.ruleOverrides.checkers must be an object");
+    }
+    ruleOverrides.checkers = {};
+    for (const [id, settings] of Object.entries(checkers)) {
+      const label = `spelling.ruleOverrides.checkers.${id}`;
+      const spec = McPhee.checkers.find((checker) => checker.id === id);
+      if (!spec) throw new Error(`spelling.ruleOverrides.checkers contains unknown checker ${id}`);
+      if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+        throw new Error(`${label} must be an object`);
+      }
+      if (Object.keys(settings).some((key) => !["enabled", "order", "params"].includes(key))) {
+        throw new Error(`${label} contains an unknown field`);
+      }
+      const normalized = {};
+      if (settings.enabled !== undefined) {
+        normalized.enabled = requireConfigBoolean(settings.enabled, `${label}.enabled`);
+      }
+      if (settings.order !== undefined) {
+        normalized.order = requireConfigNumber(settings.order, `${label}.order`, 0, Number.MAX_SAFE_INTEGER);
+        if (!Number.isInteger(normalized.order)) throw new Error(`${label}.order must be an integer`);
+      }
+      if (settings.params !== undefined) {
+        const params = settings.params;
+        if (!params || typeof params !== "object" || Array.isArray(params)) {
+          throw new Error(`${label}.params must be an object`);
+        }
+        normalized.params = {};
+        for (const [key, value] of Object.entries(params)) {
+          if (!(spec.params || []).some((param) => param.key === key)) {
+            throw new Error(`${label}.params contains unknown parameter ${key}`);
+          }
+          const number = requireConfigNumber(value, `${label}.params.${key}`, 1, 1_000_000);
+          if (!Number.isInteger(number)) throw new Error(`${label}.params.${key} must be an integer`);
+          normalized.params[key] = number;
+        }
+      }
+      ruleOverrides.checkers[id] = normalized;
     }
   }
   return {
@@ -7956,6 +7998,8 @@ async function initMcphee() {
     mcphee = await McPhee.create({
       affUrl: "mcphee/vendor/typo/en_US.aff",
       dicUrl: "mcphee/vendor/typo/en_US.dic",
+      affUrl2026: "mcphee/vendor/typo/en_US_2026.aff",
+      dicUrl2026: "mcphee/vendor/typo/en_US_2026.dic",
       freqUrl: "mcphee/vendor/wordfreq/en-30k.txt",
       extraWords: mcpheeJargon,
       // Keep the established key so existing personal dictionaries carry
@@ -11516,12 +11560,13 @@ async function pollRamStatus() {
     if (resp.status === 401) { location.reload(); return; }
     if (!resp.ok) throw new Error(String(resp.status));
     const s = await resp.json();
-    // cgroup current = real process usage. high/max are systemd *limits*,
-    // not consumption — label them so "1.2G" is never read as "we're using 1.2G".
-    const used = s.cgroupCurrentBytes || s.workingSetBytes || 0;
     const high = s.cgroupHighBytes || 0;
     const max = s.cgroupMaxBytes || 0;
     const limit = high || max;
+    // An uncapped desktop group includes other applications. Only a capped
+    // deployment uses group usage; local mode reports this process's RAM.
+    const used = limit > 0 ? s.cgroupCurrentBytes : s.workingSetBytes;
+    if (!Number.isFinite(used) || used < 0) throw new Error("RAM measurement unavailable");
     ramStatusSamples.push(used);
     if (ramStatusSamples.length > RamStatusSampleLimit) ramStatusSamples.shift();
     const recentPeak = Math.max(...ramStatusSamples);
@@ -11546,7 +11591,8 @@ async function pollRamStatus() {
       browserBits.push(s.metaBrowserWarm ? "meta Chromium warm" : "meta Chromium idle");
     }
     node.title = [
-      `in use (cgroup) ${formatBytesShort(s.cgroupCurrentBytes || used)}`,
+      `displayed usage: ${limit > 0 ? "limited control group" : "server process"}`,
+      s.cgroupCurrentBytes != null ? `control group total ${formatBytesShort(s.cgroupCurrentBytes)}` : null,
       `working set ${formatBytesShort(s.workingSetBytes)}`,
       `process peak working set ${formatBytesShort(s.peakWorkingSetBytes)}`,
       ramStatusSamples.length > 1
@@ -11563,6 +11609,8 @@ async function pollRamStatus() {
     ].filter(Boolean).join("\n");
   } catch {
     node.textContent = "RAM ?";
+    node.title = "Server memory measurement unavailable";
+    node.classList.remove("warn");
   }
 }
 

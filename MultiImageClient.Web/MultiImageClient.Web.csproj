@@ -5,7 +5,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="SQLitePCLRaw.provider.dynamic_cdecl" Version="3.0.4" />
+    <PackageReference Include="SQLitePCLRaw.provider.dynamic_cdecl" Version="3.0.5" />
   </ItemGroup>
 
   <PropertyGroup>

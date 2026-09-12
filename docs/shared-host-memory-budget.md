@@ -146,3 +146,15 @@ custom + plain-SQL formats (hash-verified), `config.json`, `messages/`,
 `chatindex/`, `logs/`. The Discord bot token was deliberately NOT revoked.
 This freed ~515 MB RAM and ~2.8 GB disk. The memory budget was subsequently
 raised to the current 2048M/2560M values documented above.
+
+## Process identity correction (2026-09-10)
+
+Read memory limits only from the current process’s `/proc/self/cgroup` membership.
+Missing membership must not select the named production service as a substitute.
+That service can belong to another process on a development workstation.
+Incorrect limits can also trigger the local liveness guard.
+Report unavailable values when exact membership cannot be resolved.
+`/api/status` now includes the process identifier, runtime version, and UTC process start time.
+Without a group limit, the header displays the server working set instead of the shared desktop group total.
+Limited deployments continue to compare group usage with their configured limit.
+See [local-ui-server.md](local-ui-server.md) for restart behavior and validation.

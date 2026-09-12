@@ -18,6 +18,8 @@
 //   const sw = await McPhee.create({
 //     affUrl: "mcphee/vendor/typo/en_US.aff",
 //     dicUrl: "mcphee/vendor/typo/en_US.dic",
+//     affUrl2026: "mcphee/vendor/typo/en_US_2026.aff", // optional second dict
+//     dicUrl2026: "mcphee/vendor/typo/en_US_2026.dic",
 //     freqUrl: "mcphee/vendor/wordfreq/en-30k.txt", // optional; powers
 //                                                     // word-frequency rules
 //     extraWords: ["recraft", "grok"],            // project jargon, always ok
@@ -83,7 +85,7 @@
 var McPhee = (function () {
   "use strict";
 
-  var VERSION = "3.10.0";
+  var VERSION = "3.11.2";
 
   var WORD_RE = /[A-Za-z]+(?:['\u2019][A-Za-z]+)*/g;
   var TOKEN_RE = /([A-Za-z]+(?:['\u2019][A-Za-z]+)*)|( {2,})/g;
@@ -116,6 +118,58 @@ var McPhee = (function () {
       echo: false, obscureRepeat: false, culture: false,
     },
   };
+
+  // Each checker is an independent optionset: on/off, order, and its own
+  // params. Formality profiles are presets over these flags. Two spell
+  // checkers can be loaded (the original Hunspell file and the 2026 ESDB
+  // file); a word is a misspelling only if every enabled spell checker
+  // rejects it. spell2026 is omitted at runtime when that dictionary was
+  // not loaded.
+  var CHECKER_CATALOG = [
+    { id: "spell2026", kind: "spell", dictId: "y2026", rule: "misspelled",
+      label: "misspellings, 2026 dictionary (pink)",
+      profiles: { standard: true, strict: true, casual: true },
+      defaultOrder: 0, optional: true },
+    { id: "spell", kind: "spell", dictId: "primary", rule: "misspelled",
+      label: "misspellings (pink)",
+      profiles: { standard: true, strict: true, casual: true },
+      defaultOrder: 1 },
+    { id: "unknown", kind: "flag", rule: "unknown",
+      label: "unknown words (blue)",
+      profiles: { standard: true, strict: true, casual: false },
+      defaultOrder: 2 },
+    { id: "culture", kind: "flag", rule: "culture",
+      label: "lowercase nation/group names (teal)",
+      profiles: { standard: true, strict: true, casual: false },
+      defaultOrder: 3 },
+    { id: "echo", kind: "flag", rule: "echo",
+      label: "same word or phrase nearby (lavender)",
+      profiles: { standard: true, strict: true, casual: false },
+      defaultOrder: 4,
+      params: [
+        { key: "echoWindowWords", label: "echo window (words)", fallback: 50 },
+        { key: "echoCommonRank", label: "echo exempt above rank", fallback: 2000 },
+      ] },
+    { id: "obscureRepeat", kind: "flag", rule: "obscureRepeat",
+      label: "rare word reused (green)",
+      profiles: { standard: true, strict: true, casual: false },
+      defaultOrder: 5,
+      params: [
+        { key: "obscureRank", label: "obscure below rank", fallback: 10000 },
+      ] },
+    { id: "sentenceCapitalization", kind: "flag", rule: "sentenceCapitalization",
+      label: "sentence capitalization (orange)",
+      profiles: { standard: false, strict: true, casual: false },
+      defaultOrder: 6 },
+    { id: "terminalPunctuation", kind: "flag", rule: "terminalPunctuation",
+      label: "terminal punctuation",
+      profiles: { standard: false, strict: true, casual: false },
+      defaultOrder: 7 },
+    { id: "doublespace", kind: "flag", rule: "doublespace",
+      label: "extra spaces (yellow)",
+      profiles: { standard: true, strict: true, casual: true },
+      defaultOrder: 8 },
+  ];
 
   // Formality ladder shown by the panel chooser; maps display names to
   // profiles. "normal" is the historical standard behavior.
@@ -350,10 +404,14 @@ var McPhee = (function () {
 
   function Checker(dict, options, freqRank) {
     this.dict = dict;
+    this.dicts = { primary: dict };
+    if (options.dict2026) this.dicts.y2026 = options.dict2026;
     this.extraWords = new Set((options.extraWords || []).map(function (w) { return w.toLowerCase(); }));
     this.storageKey = options.customDictStorageKey || "mcphee_custom_dict";
     this.autofixMap = Object.assign({}, COMMON_TYPOS, options.autofixMap || {});
-    this.defaultRules = this.resolveRules(options);
+    this.defaultProfile = options.profile && PROFILES[options.profile] ? options.profile : "standard";
+    this.defaultRuleOverrides = options.rules || {};
+    this.defaultCheckerOverrides = options.checkers || {};
     this.suggestionCache = new Map();
     this.customWords = new Set();
     this.loadCustomDict();
@@ -486,16 +544,118 @@ var McPhee = (function () {
     };
   }
 
-  // opts may carry { profile: "strict" } and/or { rules: { unknown: false } };
-  // rules win over the profile, the profile wins over the instance default.
-  Checker.prototype.resolveRules = function (opts) {
+  // opts may carry { profile: "strict" } and/or { rules: { unknown: false } }
+  // and/or { checkers: { echo: { enabled: false, order: 3 } } }.
+  // Per-checker optionsets win over the old { rules } map; rules win over
+  // the profile; the profile wins over the instance default.
+  Checker.prototype.availableCheckers = function () {
+    var self = this;
+    return CHECKER_CATALOG.filter(function (c) {
+      if (c.optional && !self.dicts[c.dictId]) return false;
+      return true;
+    });
+  };
+
+  Checker.prototype.resolveCheckers = function (opts) {
     opts = opts || {};
-    var base = this.defaultRules || PROFILES.standard;
+    var profileName = this.defaultProfile || "standard";
     if (opts.profile) {
       if (!PROFILES[opts.profile]) throw new Error("McPhee: unknown profile '" + opts.profile + "'");
-      base = PROFILES[opts.profile];
+      profileName = opts.profile;
     }
-    return Object.assign({}, base, opts.rules || {});
+    var has2026 = !!this.dicts.y2026;
+    var overrides = Object.assign({}, this.defaultCheckerOverrides || {}, opts.checkers || {});
+    var ruleOverrides = opts.profile
+      ? (opts.rules || {})
+      : Object.assign({}, this.defaultRuleOverrides || {}, opts.rules || {});
+    var self = this;
+    return this.availableCheckers().map(function (c) {
+      var enabled = !!c.profiles[profileName];
+      if (c.id === "spell" && has2026) enabled = false;
+      if (c.rule && Object.prototype.hasOwnProperty.call(ruleOverrides, c.rule)) {
+        // Several spell checkers share the "misspelled" rule; the old-style
+        // rule override means "spelling on/off", not "every dictionary on".
+        // Off disables them all; on keeps the default dictionary choice.
+        enabled = c.kind === "spell"
+          ? enabled && !!ruleOverrides[c.rule]
+          : !!ruleOverrides[c.rule];
+      }
+      var over = overrides[c.id] || {};
+      if (typeof over.enabled === "boolean") enabled = over.enabled;
+      var order = typeof over.order === "number" ? over.order : c.defaultOrder;
+      var params = {};
+      (c.params || []).forEach(function (p) {
+        if (over.params && typeof over.params[p.key] === "number") params[p.key] = over.params[p.key];
+        else if (typeof opts[p.key] === "number") params[p.key] = opts[p.key];
+        else if (typeof self[p.key] === "number") params[p.key] = self[p.key];
+        else params[p.key] = p.fallback;
+      });
+      return {
+        id: c.id, kind: c.kind, dictId: c.dictId, rule: c.rule,
+        label: c.label, enabled: enabled, order: order, params: params,
+      };
+    }).sort(function (a, b) { return a.order - b.order || a.id.localeCompare(b.id); });
+  };
+
+  // The rule map derived from resolved checkers: "misspelled" is on when any
+  // enabled checker carries it (several spell checkers share that rule).
+  function rulesFromCheckers(checkers) {
+    var rules = { misspelled: false };
+    checkers.forEach(function (c) {
+      if (c.rule === "misspelled") {
+        rules.misspelled = rules.misspelled || c.enabled;
+      } else {
+        rules[c.rule] = c.enabled;
+      }
+    });
+    return rules;
+  }
+
+  Checker.prototype.resolveRules = function (opts) {
+    return rulesFromCheckers(this.resolveCheckers(opts));
+  };
+
+  Checker.prototype.spellDictsOf = function (checkers) {
+    var self = this;
+    var dicts = [];
+    checkers.forEach(function (c) {
+      if (c.kind === "spell" && c.enabled && self.dicts[c.dictId]) {
+        dicts.push(self.dicts[c.dictId]);
+      }
+    });
+    return dicts;
+  };
+
+  Checker.prototype.spellDictsFor = function (opts) {
+    return this.spellDictsOf(this.resolveCheckers(opts));
+  };
+
+  // The spell dictionaries of the most recent analyze() call. classify()
+  // and suggest() run in that analysis's context (the panel and localFix
+  // both analyze first); before any analysis, the instance defaults apply.
+  Checker.prototype.activeSpellDicts = function () {
+    if (this._spellDicts && this._spellDicts.length) return this._spellDicts;
+    return this.spellDictsFor({});
+  };
+
+  Checker.prototype.dictHas = function (word) {
+    var dicts = this.activeSpellDicts();
+    for (var i = 0; i < dicts.length; i++) {
+      if (dicts[i].check(word)) return true;
+    }
+    return false;
+  };
+
+  Checker.prototype.sectionRank = function (opts) {
+    var rank = {};
+    this.resolveCheckers(opts).forEach(function (c, i) {
+      var key = c.rule === "obscureRepeat" ? "obscure"
+        : c.rule === "sentenceCapitalization" ? "capitalization"
+        : c.rule === "terminalPunctuation" ? "punctuation"
+        : c.rule;
+      if (rank[key] === undefined) rank[key] = typeof c.order === "number" ? c.order : i;
+    });
+    return rank;
   };
 
   Checker.prototype.loadIgnoredWords = function () {
@@ -588,10 +748,10 @@ var McPhee = (function () {
     var normalizedApostrophe = lower.replace(/\u2019/g, "'");
     if (this.customWords.has(normalizedApostrophe) || this.extraWords.has(normalizedApostrophe)) return "ok";
     var plain = word.replace(/\u2019/g, "'");
-    if (this.dict.check(plain)) return "ok";
-    if (plain !== normalizedApostrophe && this.dict.check(normalizedApostrophe)) return "ok";
+    if (this.dictHas(plain)) return "ok";
+    if (plain !== normalizedApostrophe && this.dictHas(normalizedApostrophe)) return "ok";
     if (word !== lower) return "unknown";
-    if (this.dict.check(plain.charAt(0).toUpperCase() + plain.slice(1))) return "unknown";
+    if (this.dictHas(plain.charAt(0).toUpperCase() + plain.slice(1))) return "unknown";
     return "misspelled";
   };
 
@@ -603,9 +763,23 @@ var McPhee = (function () {
 
   Checker.prototype.suggest = function (word, limit) {
     if (word.length > MAX_SUGGEST_LENGTH) return [];
-    var key = word + "\u0000" + (limit || 3);
+    var dicts = this.activeSpellDicts();
+    var n = limit || 3;
+    var tag = dicts.map(function (d) { return d.dictionary; }).join("|");
+    var key = word + "\u0000" + n + "\u0000" + tag;
     if (!this.suggestionCache.has(key)) {
-      this.suggestionCache.set(key, this.dict.suggest(word.replace(/\u2019/g, "'"), limit || 3));
+      var plain = word.replace(/\u2019/g, "'");
+      var seen = {};
+      var out = [];
+      dicts.forEach(function (d) {
+        (d.suggest(plain, n) || []).forEach(function (s) {
+          if (!seen[s] && out.length < n) {
+            seen[s] = true;
+            out.push(s);
+          }
+        });
+      });
+      this.suggestionCache.set(key, out);
     }
     return this.suggestionCache.get(key);
   };
@@ -630,7 +804,20 @@ var McPhee = (function () {
   // inside exclusion zones (options.exclude) is invisible to every rule.
   // Only issues are returned; clean text yields [].
   Checker.prototype.analyze = function (text, opts) {
-    var rules = this.resolveRules(opts);
+    var checkers = this.resolveCheckers(opts);
+    var rules = rulesFromCheckers(checkers);
+    this._spellDicts = this.spellDictsOf(checkers);
+    // Per-call checker params apply to this run only — they flow to the
+    // detectors as arguments, never onto the instance (the instance knobs
+    // are the defaults, set by the constructor or the panel's config).
+    var params = {
+      echoWindowWords: this.echoWindowWords,
+      echoCommonRank: this.echoCommonRank,
+      obscureRank: this.obscureRank,
+    };
+    checkers.forEach(function (c) {
+      Object.keys(c.params || {}).forEach(function (k) { params[k] = c.params[k]; });
+    });
     var issues = [];
     var words = [];
     var starts = rules.sentenceCapitalization ? sentenceStartOffsets(text) : null;
@@ -670,7 +857,7 @@ var McPhee = (function () {
             expected = lower.charAt(0).toUpperCase() + lower.slice(1);
           }
           if (!expected && cls === "misspelled" && lower.length >= 3
-            && this.dict.check(lower.toUpperCase())) {
+            && this.dictHas(lower.toUpperCase())) {
             expected = lower.toUpperCase();
           }
         }
@@ -692,10 +879,10 @@ var McPhee = (function () {
     }
     if (rules.misspelled) this.attachRegionFixes(text, words, issues);
     var phraseCovered = rules.echo
-      ? this.addPhraseRepetitionIssues(text, words, excludedList, issues)
+      ? this.addPhraseRepetitionIssues(text, words, excludedList, issues, params.echoWindowWords)
       : new Set();
     if (rules.echo || rules.obscureRepeat) {
-      this.addRepetitionIssues(words, rules, issues, phraseCovered);
+      this.addRepetitionIssues(words, rules, issues, phraseCovered, params);
     }
     if (rules.terminalPunctuation) {
       var trimmed = text.replace(/\s+$/, "");
@@ -717,7 +904,7 @@ var McPhee = (function () {
   // zones, misspellings, or other active issues. More specific phrase echoes
   // claim their component words so the panel does not also report a weaker
   // single-word echo for the same occurrences.
-  Checker.prototype.addPhraseRepetitionIssues = function (text, words, excludedList, issues) {
+  Checker.prototype.addPhraseRepetitionIssues = function (text, words, excludedList, issues, echoWindowWords) {
     var covered = new Set();
     if (words.length < 4) return covered;
 
@@ -753,7 +940,7 @@ var McPhee = (function () {
     var candidates = new Map();
     for (i = 0; i < words.length; i++) {
       if (!valid[i]) continue;
-      for (var j = i + 2; j < words.length && j - i <= this.echoWindowWords; j++) {
+      for (var j = i + 2; j < words.length && j - i <= echoWindowWords; j++) {
         if (!valid[j] || norms[i] !== norms[j]) continue;
 
         // A matching token immediately to the left means this pair belongs
@@ -882,7 +1069,7 @@ var McPhee = (function () {
   //                  obscureRank; 2+ uses flag every occurrence not already
   //                  flagged as an echo. Needs the frequency list — without
   //                  it there is no notion of "obscure".
-  Checker.prototype.addRepetitionIssues = function (words, rules, issues, phraseCovered) {
+  Checker.prototype.addRepetitionIssues = function (words, rules, issues, phraseCovered, params) {
     var norms = new Array(words.length);
     for (var i = 0; i < words.length; i++) {
       var w = words[i];
@@ -900,10 +1087,10 @@ var McPhee = (function () {
         var norm = norms[i];
         if (!norm) continue;
         var rank = this.rankOf(norm);
-        if (rank !== null && rank < this.echoCommonRank) continue;
+        if (rank !== null && rank < params.echoCommonRank) continue;
         var key = pluralKey(norm);
         var prev = lastSeen.get(key);
-        if (prev !== undefined && i - prev <= this.echoWindowWords) {
+        if (prev !== undefined && i - prev <= params.echoWindowWords) {
           var distance = i - prev;
           if (!echoFlagged.has(prev)) {
             echoFlagged.add(prev);
@@ -920,7 +1107,7 @@ var McPhee = (function () {
       for (i = 0; i < words.length; i++) {
         var n2 = norms[i];
         if (!n2 || echoFlagged.has(i)) continue;
-        if (this.rankOf(n2) < this.obscureRank) continue;
+        if (this.rankOf(n2) < params.obscureRank) continue;
         var k2 = pluralKey(n2);
         if (!occurrences.has(k2)) occurrences.set(k2, []);
         occurrences.get(k2).push(i);
@@ -1143,7 +1330,8 @@ var McPhee = (function () {
   // so Ctrl+Z reverts just that change. Words with no usable guess are
   // skipped and the search continues backward.
   Checker.prototype.applyNearestBackwardFix = function (textarea, opts) {
-    var analyzeOpts = { rules: this.resolveRules(opts) };
+    var analyzeOpts = Object.assign({}, opts || {});
+    delete analyzeOpts.caret;
     var caret = textarea.selectionStart;
     var text = textarea.value;
     var issue = this.nearestMisspellingBehind(text, caret, analyzeOpts);
@@ -1192,7 +1380,7 @@ var McPhee = (function () {
     var self = this;
     var working = text;
     if (rules.misspelled) {
-      var regionFixes = this.analyze(text, { rules: rules })
+      var regionFixes = this.analyze(text, opts)
         .filter(function (i) { return i.regionFix; })
         .map(function (i) { return i.regionFix; })
         .sort(function (a, b) { return b.start - a.start; });
@@ -1298,7 +1486,7 @@ var McPhee = (function () {
   // its background becomes transparent so the marks show through.
   Checker.prototype.attach = function (textarea, opts) {
     var self = this;
-    var renderOpts = { rules: this.resolveRules(opts) };
+    var renderOpts = Object.assign({}, opts || {});
     var computed = getComputedStyle(textarea);
 
     var host = document.createElement("div");
@@ -1312,6 +1500,10 @@ var McPhee = (function () {
     // otherwise leave the backdrop wrapping text differently than the
     // textarea, drifting every mark.
     function mirrorStyles() {
+      // The textarea is made transparent so marks show through; reading its
+      // background while that class is on would copy 'transparent' onto the
+      // backdrop and the spell area would vanish. Drop the class for the
+      // read, then put it back.
       MIRRORED_STYLES.forEach(function (prop) {
         backdrop.style[prop] = computed[prop];
       });
@@ -1320,13 +1512,18 @@ var McPhee = (function () {
       // the mirrored padding/borders on top of that, wrapping the backdrop
       // ~18px wider than the textarea and drifting every mark leftward.
       backdrop.style.boxSizing = "border-box";
+      // Keep the class while reading text metrics: hosts can style its font.
+      // Remove it only for the background read.
+      var wasTransparent = textarea.classList.contains("mcphee-textarea");
+      if (wasTransparent) textarea.classList.remove("mcphee-textarea");
       backdrop.style.background = computed.backgroundColor;
+      if (wasTransparent) textarea.classList.add("mcphee-textarea");
     }
-    mirrorStyles();
 
     textarea.parentNode.insertBefore(host, textarea);
     host.appendChild(backdrop);
     host.appendChild(textarea);
+    mirrorStyles();
     textarea.classList.add("mcphee-textarea");
     // McPhee's marks replace the browser's red squiggles.
     textarea.spellcheck = false;
@@ -1400,12 +1597,16 @@ var McPhee = (function () {
     function contentHeight(el) {
       var prevHeight = el.style.height;
       var prevMinHeight = el.style.minHeight;
+      var prevFlex = el.style.flex;
       var prevScrollTop = el.scrollTop;
+      // Flex growth otherwise overrides height:0 in a stretched composer.
+      el.style.flex = "none";
       el.style.height = "0px";
       el.style.minHeight = "0px";
       var h = el.scrollHeight;
       el.style.height = prevHeight;
       el.style.minHeight = prevMinHeight;
+      el.style.flex = prevFlex;
       el.scrollTop = prevScrollTop;
       return h;
     }
@@ -1422,18 +1623,21 @@ var McPhee = (function () {
       backdrop.style.visibility = enabled && !integrityFailed ? "visible" : "hidden";
     }
 
-    // refresh() re-renders when the text changed or the in-progress word
-    // (the token containing the caret) changed; refresh(true) is a full
-    // regeneration — styles re-mirrored, geometry re-synced, marks rebuilt
-    // from scratch — the recovery path for any drift.
+    // refresh() re-renders when the text, the in-progress word, or the
+    // box size changed; refresh(true) is a full regeneration — styles
+    // re-mirrored, geometry re-synced, marks rebuilt from scratch.
     function refresh(force) {
       if (!enabled) return;
       if (force === true || integrityFailed) {
         mirrorStyles();
         lastRendered = null;
       }
+      var prevW = backdrop.style.width;
+      var prevH = backdrop.style.height;
+      syncGeometry();
+      var geomChanged = backdrop.style.width !== prevW || backdrop.style.height !== prevH;
       var wordKey = caretWordKey();
-      if (textarea.value !== lastRendered || wordKey !== lastCaretWord) {
+      if (geomChanged || textarea.value !== lastRendered || wordKey !== lastCaretWord) {
         // A render that does not COMPLETE is an integrity violation like any
         // other: the marks on screen no longer describe the buffer. The only
         // path to a visible overlay is a finished render plus a passed
@@ -1480,7 +1684,6 @@ var McPhee = (function () {
     textarea.addEventListener("input", onEvent);
     textarea.addEventListener("scroll", onEvent);
     var resizeObserver = new ResizeObserver(function () {
-      syncGeometry();
       refresh();
     });
     resizeObserver.observe(textarea);
@@ -1497,12 +1700,11 @@ var McPhee = (function () {
     document.addEventListener("selectionchange", onSelectionChange);
 
     // Control tap (no other key): naive-correct the nearest misspelling
-    // behind the caret. Left and right Control both count. Other Control
-    // chords (Ctrl+Z, Ctrl+C, …) clear the tap so they keep their native
-    // meaning; Ctrl+Z undoes the replacement because it went through the
-    // undo-preserving pipeline. IME engines (IBus on Linux) inject
-    // Process/Unidentified keydowns while Control is held; those are not
-    // a chord and must not cancel the tap.
+    // behind the caret. Other Control chords (Ctrl+Z, Ctrl+C, …) clear the
+    // tap so they keep their native meaning; Ctrl+Z undoes the replacement
+    // because it went through the undo-preserving pipeline. IME engines
+    // (IBus on Linux) inject Process/Unidentified keydowns while Control
+    // is held; those are not a chord and must not cancel the tap.
     var ctrlTapClean = false;
     function isControlKey(e) {
       return e.key === "Control" || e.code === "ControlLeft" || e.code === "ControlRight";
@@ -1526,7 +1728,11 @@ var McPhee = (function () {
       if (!wasClean || !enabled) return;
       if (!fieldFocused()) return;
       if (textarea.readOnly || textarea.disabled) return;
-      self.applyNearestBackwardFix(textarea, { rules: renderOpts.rules });
+      self.applyNearestBackwardFix(textarea, {
+        profile: renderOpts.profile,
+        rules: renderOpts.rules,
+        checkers: renderOpts.checkers,
+      });
     }
     window.addEventListener("keydown", onAnyKeyDown, true);
     window.addEventListener("keyup", onCtrlKeyUp, true);
@@ -1608,7 +1814,9 @@ var McPhee = (function () {
       hoverStop: hoverStop,
       visibleStarts: visibleStarts,
       setRules: function (o) {
-        renderOpts.rules = self.resolveRules(o);
+        if (o.profile !== undefined) renderOpts.profile = o.profile;
+        if (o.rules !== undefined) renderOpts.rules = o.rules;
+        if (o.checkers !== undefined) renderOpts.checkers = o.checkers;
         refresh(true);
       },
       setEnabled: function (on) {
@@ -1650,7 +1858,11 @@ var McPhee = (function () {
     var self = this;
     var textarea = config.textarea;
     var container = config.container;
-    var analyzeOpts = { rules: this.resolveRules(config) };
+    var analyzeOpts = {
+      profile: config.profile,
+      rules: config.rules,
+      checkers: config.checkers,
+    };
 
     container.classList.add("mcphee-panel");
 
@@ -1670,26 +1882,24 @@ var McPhee = (function () {
     var showIgnored = false;
     var confirmUnignoreAll = false;
 
-    function activeRules() {
-      return Object.assign(
-        {},
-        self.resolveRules({ profile: currentProfile, rules: config.rules }),
-        ruleOverrides.rules || {}
-      );
-    }
-
     function persistOverrides() {
       try { localStorage.setItem(overridesKey, JSON.stringify(ruleOverrides)); } catch (e) { /* private mode */ }
     }
 
     function applyRuleState() {
-      analyzeOpts.rules = activeRules();
-      var params = ruleOverrides.params || {};
+      var resolved = activeCheckers();
+      analyzeOpts.profile = currentProfile;
+      analyzeOpts.rules = Object.assign({}, config.rules, ruleOverrides.rules);
+      analyzeOpts.checkers = ruleOverrides.checkers;
+      resolved.forEach(function (c) {
+        Object.keys(c.params || {}).forEach(function (k) { self[k] = c.params[k]; });
+      });
+      var legacy = ruleOverrides.params || {};
       ["echoWindowWords", "echoCommonRank", "obscureRank"].forEach(function (p) {
-        if (typeof params[p] === "number" && params[p] > 0) self[p] = params[p];
+        if (typeof legacy[p] === "number" && legacy[p] > 0) self[p] = legacy[p];
       });
       if (config.controller && config.controller.setRules) {
-        config.controller.setRules({ rules: analyzeOpts.rules });
+        config.controller.setRules({ rules: analyzeOpts.rules, checkers: analyzeOpts.checkers });
       }
     }
 
@@ -1944,64 +2154,78 @@ var McPhee = (function () {
       return bar;
     }
 
-    // Rule config: per-rule on/off plus the repetition-detector knobs, all
-    // persisted per origin as overrides on top of the chosen formality.
-    var RULE_LABELS = {
-      misspelled: "misspellings (pink)",
-      unknown: "unknown words (blue)",
-      doublespace: "extra spaces (yellow)",
-      culture: "lowercase nation/group names (teal)",
-      echo: "same word or phrase nearby (lavender)",
-      obscureRepeat: "rare word reused (green)",
-      sentenceCapitalization: "sentence capitalization (orange)",
-      terminalPunctuation: "terminal punctuation",
-    };
-    var RULE_PARAMS = [
-      { key: "echoWindowWords", label: "echo window (words)" },
-      { key: "echoCommonRank", label: "echo exempt above rank" },
-      { key: "obscureRank", label: "obscure below rank" },
-    ];
+    function activeCheckers() {
+      return self.resolveCheckers({
+        profile: currentProfile,
+        rules: Object.assign({}, config.rules, ruleOverrides.rules),
+        checkers: ruleOverrides.checkers,
+      });
+    }
 
     function configSection() {
       var box = document.createElement("div");
       box.className = "mcphee-config";
-      var rules = activeRules();
-      Object.keys(RULE_LABELS).forEach(function (rule) {
+      activeCheckers().forEach(function (c) {
+        var block = document.createElement("div");
+        block.className = "mcphee-checker";
         var line = document.createElement("label");
         line.className = "mcphee-config-line";
         var cb = document.createElement("input");
         cb.type = "checkbox";
-        cb.checked = !!rules[rule];
+        cb.checked = !!c.enabled;
         cb.addEventListener("change", function () {
-          ruleOverrides.rules = ruleOverrides.rules || {};
-          ruleOverrides.rules[rule] = cb.checked;
+          ruleOverrides.checkers = ruleOverrides.checkers || {};
+          ruleOverrides.checkers[c.id] = Object.assign({}, ruleOverrides.checkers[c.id], { enabled: cb.checked });
           persistOverrides();
           applyRuleState();
           render();
         });
         line.appendChild(cb);
-        line.appendChild(document.createTextNode(" " + RULE_LABELS[rule]));
-        box.appendChild(line);
-      });
-      RULE_PARAMS.forEach(function (p) {
-        var line = document.createElement("label");
-        line.className = "mcphee-config-line";
-        var input = document.createElement("input");
-        input.type = "number";
-        input.min = "1";
-        input.value = self[p.key];
-        input.addEventListener("change", function () {
-          var v = parseInt(input.value, 10);
-          if (!(v > 0)) return;
-          ruleOverrides.params = ruleOverrides.params || {};
-          ruleOverrides.params[p.key] = v;
+        line.appendChild(document.createTextNode(" " + c.label));
+        var order = document.createElement("input");
+        order.type = "number";
+        order.className = "mcphee-checker-order";
+        order.min = "0";
+        order.value = String(c.order);
+        order.title = "order";
+        order.addEventListener("change", function () {
+          var v = parseInt(order.value, 10);
+          if (!(v >= 0)) return;
+          ruleOverrides.checkers = ruleOverrides.checkers || {};
+          ruleOverrides.checkers[c.id] = Object.assign({}, ruleOverrides.checkers[c.id], { order: v });
           persistOverrides();
           applyRuleState();
-          afterAction();
+          render();
         });
-        line.appendChild(input);
-        line.appendChild(document.createTextNode(" " + p.label));
-        box.appendChild(line);
+        line.appendChild(order);
+        block.appendChild(line);
+        (c.params && Object.keys(c.params) || []).forEach(function (key) {
+          var spec = (CHECKER_CATALOG.find(function (d) { return d.id === c.id; }).params || [])
+            .find(function (p) { return p.key === key; });
+          if (!spec) return;
+          var pline = document.createElement("label");
+          pline.className = "mcphee-config-line mcphee-checker-param";
+          var input = document.createElement("input");
+          input.type = "number";
+          input.min = "1";
+          input.value = c.params[key];
+          input.addEventListener("change", function () {
+            var v = parseInt(input.value, 10);
+            if (!(v > 0)) return;
+            ruleOverrides.checkers = ruleOverrides.checkers || {};
+            var prev = ruleOverrides.checkers[c.id] || {};
+            var params = Object.assign({}, prev.params);
+            params[key] = v;
+            ruleOverrides.checkers[c.id] = Object.assign({}, prev, { params: params });
+            persistOverrides();
+            applyRuleState();
+            afterAction();
+          });
+          pline.appendChild(input);
+          pline.appendChild(document.createTextNode(" " + spec.label));
+          block.appendChild(pline);
+        });
+        box.appendChild(block);
       });
       var reset = button("reset to profile defaults", "mcphee-panel-select", function () {
         ruleOverrides = {};
@@ -2168,10 +2392,10 @@ var McPhee = (function () {
       // each section. Echo and obscure are separate sections: same-colored
       // rows read as one block, so mixing lavender and green rows was
       // disorienting.
-      var SECTION_RANK = {
+      var SECTION_RANK = Object.assign({
         misspelled: 0, unknown: 1, culture: 2, echo: 3, obscure: 4,
         capitalization: 5, punctuation: 6, doublespace: 7,
-      };
+      }, self.sectionRank(analyzeOpts));
       var rows = [];
 
       wordGroups.forEach(function (group, key) {
@@ -2561,6 +2785,7 @@ var McPhee = (function () {
       controller: api.controller,
       profile: opts.profile,
       rules: opts.rules,
+      checkers: opts.checkers,
       onChange: opts.onChange,
       followViewport: opts.followViewport,
       followCaret: opts.followCaret,
@@ -2590,7 +2815,11 @@ var McPhee = (function () {
     options = options || {};
     var fields = options.fields || Array.prototype.slice.call(form.querySelectorAll("textarea"));
     var blockOn = options.blockOn || ["misspelled"];
-    var analyzeOpts = { rules: this.resolveRules(options) };
+    var analyzeOpts = {
+      profile: options.profile,
+      rules: options.rules,
+      checkers: options.checkers,
+    };
 
     function blockedFields() {
       var blocked = [];
@@ -2657,40 +2886,48 @@ var McPhee = (function () {
     if (!options || !options.affUrl || !options.dicUrl) {
       return Promise.reject(new Error("McPhee.create requires { affUrl, dicUrl }"));
     }
-    var loads = [
-      fetch(options.affUrl).then(function (r) {
-        if (!r.ok) throw new Error("McPhee: failed to load " + options.affUrl + " (HTTP " + r.status + ")");
+    function loadText(url) {
+      return fetch(url).then(function (r) {
+        if (!r.ok) throw new Error("McPhee: failed to load " + url + " (HTTP " + r.status + ")");
         return r.text();
-      }),
-      fetch(options.dicUrl).then(function (r) {
-        if (!r.ok) throw new Error("McPhee: failed to load " + options.dicUrl + " (HTTP " + r.status + ")");
-        return r.text();
-      }),
-    ];
+      });
+    }
+    var loads = [loadText(options.affUrl), loadText(options.dicUrl)];
+    var idx2026 = -1;
+    var idxFreq = -1;
+    if (options.affUrl2026 && options.dicUrl2026) {
+      idx2026 = loads.length;
+      loads.push(loadText(options.affUrl2026), loadText(options.dicUrl2026));
+    }
     if (options.freqUrl) {
       // Rank list: one word per line, most common first (line number = rank).
       // Optional — without it, single-word echo falls back to the stopword
       // list alone, phrase echo still works, and obscureRepeat stays inert. A
       // load failure degrades the same way rather than killing the
       // spellchecker.
+      idxFreq = loads.length;
       loads.push(fetch(options.freqUrl).then(function (r) {
         return r.ok ? r.text() : null;
       }).catch(function () { return null; }));
     }
     return Promise.all(loads).then(function (parts) {
       var dict = new Typo("en_US", parts[0], parts[1]);
+      var createOpts = Object.assign({}, options);
+      if (idx2026 >= 0) {
+        createOpts.dict2026 = new Typo("en_US_2026", parts[idx2026], parts[idx2026 + 1]);
+      }
       var freqRank = null;
-      if (parts[2]) {
+      if (idxFreq >= 0 && parts[idxFreq]) {
         freqRank = new Map();
-        var lines = parts[2].split(/\r?\n/);
+        var lines = parts[idxFreq].split(/\r?\n/);
         for (var i = 0; i < lines.length; i++) {
           var word = lines[i].trim();
           if (word && !freqRank.has(word)) freqRank.set(word, i + 1);
         }
       }
-      return new Checker(dict, options, freqRank);
+      return new Checker(dict, createOpts, freqRank);
     });
   }
 
-  return { create: create, version: VERSION, profiles: PROFILES };
+  return { create: create, version: VERSION, profiles: PROFILES, checkers: CHECKER_CATALOG };
 })();

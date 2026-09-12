@@ -18,6 +18,7 @@ The new idea is a second tenant with its own membership and history.
 | R5 | Treat possession as identity. | Anyone holding the link can act as its assigned person. |
 | R6 | Require no credential explanation. | The recipient only needs to click their personal link. |
 | R7 | Start with entirely new accounts and data. | Share global identity only; keep history, images, and personal configurations separate. |
+| R8 | Match repeated provider lists (2026-09-10). | Use the composer's compact provider controls and grid in environment administration. |
 
 These requirements came from the owner during the review.
 The link grants the account's actual permissions; it does not merely select a display name.
@@ -200,6 +201,30 @@ Counts include failed submissions; they do not claim a count of successful image
 Unattributed legacy work is not assigned to a guessed account.
 The activity record is bounded to 501 identities and a 1 MiB file.
 
+## Shared provider presentation (2026-09-10)
+
+Environment administration uses the same provider controls as the composer and goal setup.
+Each control places the checkbox before the catalog name and retains the image-capability icon and provider tooltip.
+Selected controls use the same border and background colors.
+All three pages share the grid's 175 px minimum columns and 7 px gaps.
+The grid adds columns when space permits and wraps on narrow screens.
+
+`generator-toggle.js` owns provider markup and checkbox feedback.
+`style.css` owns the shared controls and grid layout.
+Administration keeps its existing available-provider catalog, catalog order, environment defaults, and save contract.
+Each environment owns its selection independently of personal composer preferences.
+Only **Save configuration** persists edited defaults.
+
+Lists of the same items must reuse their existing presentation across pages.
+Keep page-specific selection and persistence separate from shared presentation.
+This prevents repeated lists from acquiring conflicting styles or unnecessary vertical spacing.
+The binding rule also appears in `AGENTS.md` under **Visual & Typography Policy**.
+
+Validation passed for the existing composer and goal-picker browser suite.
+A temporary browser fixture verified matching normal, selected, and hover styles across 36 locally available providers.
+It also verified keyboard selection, separate environment selections, save payloads, and desktop/mobile layouts.
+The fixture intercepted administration saves; it changed no live environment configuration.
+
 ## Owner workflow
 
 1. Log in with the existing `ernieMultiZone` username and existing password.
@@ -294,6 +319,7 @@ Implementation files:
 - `UiWorkflow.cs`: membership, feature enforcement, and activity integration.
 - `UiJobs.cs`: account summaries from lightweight history entries.
 - `admin.html`, `admin.js`, and `environment-storage.js`: owner controls, branding, and browser identity handling.
+- `generator-toggle.js`, `generator-chooser.js`, and `style.css`: shared provider controls and compact list layout.
 - `create-environment.py` and `environment-controller.py`: explicit provisioning and root-owned reconciliation.
 - `UiEnvironmentRegistryTests.cs`, `UiLoginLinksTests.cs`, and `test_create_environment.py`: unit and provisioning tests.
 - `tools/test-global-environments.cjs`: two-server browser tests for global identity, membership, features, and activity.

@@ -42,7 +42,13 @@ async function load() {
     const sharing = field(features, "Send to Vibecoders", "sharing", env.vibecodersSharing ?? env.original, "checkbox");
     const defaults = node("fieldset"); defaults.append(node("legend", "Default providers"));
     const selected = new Set(env.defaultGenerators ?? catalog.filter(g => g.defaultOn).map(g => g.key));
-    const providers = catalog.map(g => field(defaults, g.label, g.key, selected.has(g.key), "checkbox")); form.append(defaults);
+    const providerRow = node("div"); providerRow.className = "generator-options";
+    const providers = catalog.map(g => {
+      const toggle = createGeneratorToggle(g, { checked: selected.has(g.key) });
+      const input = toggle.querySelector("input"); input.name = g.key;
+      providerRow.append(toggle); return input;
+    });
+    defaults.append(providerRow); form.append(defaults);
     const members = node("fieldset"); members.append(node("legend", "Membership"));
     const boxes = state.accounts.filter(a => a.role !== "admin").map(account => {
       const input = field(members, account.name, account.login, env.members.includes(account.login), "checkbox"); return input;

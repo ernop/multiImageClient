@@ -29,6 +29,7 @@ tools/vid2img/sessions/
 *.txt
 !MultiImageClient/prompts.txt
 !MultiImageClient/Ui/wwwroot/mcphee/vendor/wordfreq/en-30k.txt
+!MultiImageClient/Ui/wwwroot/mcphee/vendor/typo/README_en_US_2026.txt
 !djangoManager/imageMaker/requirements.txt
 !tools/ideogram-export/requirements.txt
 !tools/vid2img/requirements.txt
@@ -45,3 +46,6 @@ tpdiscord-archive/
 
 # Generated local recap snapshots, never source artifacts.
 MultiImageClient/Ui/wwwroot/recap-snapshots/
+
+# Isolated local server releases and process state.
+/.local-ui/

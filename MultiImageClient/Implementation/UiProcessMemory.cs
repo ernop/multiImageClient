@@ -17,6 +17,9 @@ namespace MultiImageClient
             var scheduler = runner?.SchedulerSnapshot();
             return new
             {
+                processId = Environment.ProcessId,
+                runtimeVersion = Environment.Version.ToString(),
+                processStartedAtUtc = proc.StartTime.ToUniversalTime(),
                 workingSetBytes = proc.WorkingSet64,
                 peakWorkingSetBytes = proc.PeakWorkingSet64,
                 privateMemoryBytes = proc.PrivateMemorySize64,
@@ -55,17 +58,20 @@ namespace MultiImageClient
         // Prefer this process's cgroup (from /proc/self/cgroup). Never read the
         // cgroupv2 root memory.current first — on many hosts that file is the
         // whole-machine usage and the header would show ~host RAM as "ours".
-        private static string? ResolveProcessCgroupDir()
+        private static string? ResolveProcessCgroupDir(
+            string membershipFile = "/proc/self/cgroup",
+            string mountPath = "/sys/fs/cgroup")
         {
             try
             {
-                foreach (var line in File.ReadLines("/proc/self/cgroup"))
+                foreach (var line in File.ReadLines(membershipFile))
                 {
                     // cgroup v2: "0::/system.slice/multiimageclient-ui.service"
                     if (!line.StartsWith("0::", StringComparison.Ordinal)) continue;
                     var rel = line.Substring(3).Trim();
-                    if (rel.Length == 0 || rel == "/") return null;
-                    var dir = Path.Combine("/sys/fs/cgroup", rel.TrimStart('/'));
+                    if (!rel.StartsWith('/') || rel == "/"
+                        || Array.Exists(rel.Split('/'), part => part is ".." or ".")) return null;
+                    var dir = Path.Combine(mountPath, rel.TrimStart('/'));
                     if (Directory.Exists(dir)) return dir;
                 }
             }
@@ -74,8 +80,10 @@ namespace MultiImageClient
                 // Not Linux, or cgroup unreadable.
             }
 
-            var fallback = "/sys/fs/cgroup/system.slice/multiimageclient-ui.service";
-            return Directory.Exists(fallback) ? fallback : null;
+            // Missing membership is unavailable telemetry. A named production
+            // service may belong to another process; its limits must never
+            // drive this process's status or liveness guard.
+            return null;
         }
 
         private static long? ReadCgroupBytes(string? cgroupDir, string fileName)

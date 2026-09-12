@@ -2,7 +2,8 @@
 <meta name="referrer" content="no-referrer"><script src="environment.js"></script><title>Environment administration</title>
 <link rel="stylesheet" href="style.css"><style>
 main{max-width:1100px;margin:90px auto 30px;padding:0 20px}section{background:white;border:1px solid #ccc;border-radius:8px;padding:20px;margin:20px 0}
-label{display:block;margin:10px 0}input,select,button{padding:8px;max-width:100%;box-sizing:border-box}input[type=text]{width:360px}
+label:not(.gen-toggle){display:block;margin:10px 0}input:not([type=checkbox]),select,button{padding:8px;max-width:100%;box-sizing:border-box}input[type=text]{width:360px}
+fieldset{min-width:0}
 table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;border-bottom:1px solid #ddd}.table{overflow:auto}
 .features{display:flex;gap:20px;flex-wrap:wrap}.secret{width:100%!important}button{margin:4px}.muted{color:#666}[hidden]{display:none!important}
 </style></head><body><header><h1>Administration<span id="environment-name"></span></h1><a href="./">main page</a></header>
@@ -15,4 +16,4 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;bord
 <label>Environment <select name="environment" id="person-environment"></select></label><button>Create account and login link</button></form>
 <div id="issued" hidden><p>Copy the personal link. Anyone possessing it can act as this account.</p><input id="link" class="secret" readonly aria-label="Personal login link"><button id="copy">Copy link</button>
 <p id="credentials"></p><p>These credentials are shown once. Replacing a link ends its previous sessions.</p></div></section>
-</main><script src="admin.js"></script></body></html>
+</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js"></script></body></html>

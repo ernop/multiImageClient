@@ -10,11 +10,17 @@ there.
 - `mcphee.css` — overlay + mark + panel styles
 - `vendor/typo/typo.min.js` — [typo-js 1.2.1](https://github.com/cfinke/Typo.js) (Hunspell reader, Modified BSD)
 - `vendor/typo/en_US.aff`, `vendor/typo/en_US.dic` — Hunspell en_US dictionary
+  (the original vendored file)
+- `vendor/typo/en_US_2026.aff`, `vendor/typo/en_US_2026.dic` — ESDB/SCOWL
+  2026.02.25 size 60; optional second spellchecker via `affUrl2026` /
+  `dicUrl2026`
 - `vendor/wordfreq/en-30k.txt` — top 30,000 English words by frequency (one
   per line, most common first), from [Peter Norvig's Google Web Trillion Word
   Corpus counts](https://norvig.com/ngrams/); powers the repetition detectors
 - `demo.html` — feature exercise page (open via any static server)
 - `extension/` — the McPhee Guard Firefox extension (see its README)
+- `personalize-spelling-mcphee/` — Firefox add-on: McPhee on form inputs
+  you allow (highlights + suggestions sidebar; does not block submit)
 - `test/node/` — analysis-layer suites (`npm test`)
 - `test/browser/suite.py` — Playwright overlay suite (`python test/browser/suite.py`)
 
@@ -43,6 +49,8 @@ there.
 const sw = await McPhee.create({
   affUrl: "mcphee/vendor/typo/en_US.aff",
   dicUrl: "mcphee/vendor/typo/en_US.dic",
+  affUrl2026: "mcphee/vendor/typo/en_US_2026.aff", // optional second dictionary
+  dicUrl2026: "mcphee/vendor/typo/en_US_2026.dic",
   freqUrl: "mcphee/vendor/wordfreq/en-30k.txt", // optional; word-frequency rules
   extraWords: ["recraft", "grok"],          // project jargon, never flagged
   customDictStorageKey: "myapp_mcphee",     // per-user dictionary (localStorage)
@@ -91,8 +99,8 @@ ctl.setRules({ profile: "casual" });  // switch rule profile live
 ctl.setEnabled(false);    // toggle off (restores native browser spellcheck)
 ctl.detach();
 // attach() also: the word containing the caret is not marked misspelled;
-// tapping left or right Control (no other key) applies guessCorrection
-// to the nearest misspelling behind the caret (Ctrl+Z undoes it).
+// tapping Control (no other key) applies guessCorrection to the nearest
+// misspelling behind the caret (Ctrl+Z undoes it).
 
 // Live issues panel: suggestion buttons (replace-all, undo-preserving),
 // add-to-dictionary, ignore (persistent per-word mute with a 3s undo chip
@@ -103,8 +111,8 @@ ctl.detach();
 // transition; clicking anywhere on the row selects the issue's text. The header's "↻ recheck" button
 // force-regenerates the overlay and the panel. A formality chooser
 // (casual/normal/formal -> the three profiles) is always visible, persisted
-// per origin; its ⚙ config opens per-rule checkboxes and the repetition
-// knobs, also persisted per origin. With a controller the panel stays
+// per origin; its ⚙ config opens one block per checker (on/off, order,
+// that checker's params), also persisted per origin. With a controller the panel stays
 // linked to the text both ways: rows whose occurrences are all scrolled off
 // screen dim (followViewport), and the row nearest the caret is highlighted
 // and scrolled into view in the panel (followCaret) — both default on:
@@ -137,7 +145,8 @@ console.log(fix.wordChanges, fix.spaceRuns, fix.applied);
 
 // Control-tap fixer: nearest misspelling at or behind the caret, one
 // occurrence, undo-preserving. attach() already binds this to a Control
-// tap; hosts can also call it directly:
+// tap (left or right; IME Process keydowns do not cancel it); hosts can
+// also call it directly:
 sw.applyNearestBackwardFix(textarea);
 
 // ...or compute without touching the DOM:
@@ -251,11 +260,16 @@ sentences, capitalized sentence starts, terminal punctuation.
 
 Every entry point (`create`, `attach`, `attachPanel`, `analyze`, `localFix`,
 `applyFixes`, `guardForm`) accepts `{ profile }` and/or per-rule `{ rules }`
-overrides; rules win over the profile, the profile wins over the instance
-default. The panel's ⚙ config writes per-origin overrides on top of the
-chosen profile (localStorage `mcphee_rule_overrides`). Word lists
-(extraWords, personal dictionary, ignore list) apply regardless of profile —
-that layering follows cSpell's model (word lists union; settings override).
+and/or per-checker `{ checkers: { id: { enabled, order, params } } }`
+overrides. Checker optionsets win over `{ rules }`; rules win over the
+profile; the profile wins over the instance default. Two spellcheckers may
+be loaded; `misspelled` is on if any of them is enabled, and a word is a
+misspelling only if every enabled spellchecker rejects it. The panel's ⚙
+config writes per-origin overrides on top of the chosen profile
+(localStorage `mcphee_rule_overrides`). Word lists (extraWords, personal
+dictionary, ignore list) apply regardless of profile — that layering
+follows cSpell's model (word lists union; settings override).
+`McPhee.checkers` is the catalog.
 
 ## Design notes
 
@@ -305,10 +319,11 @@ that layering follows cSpell's model (word lists union; settings override).
   shares a vertical line (a fixed first column in the row's main slot).
   A region rewrite, when there is one, is offered first and applies to the
   local pair rather than replace-all of the fragment.
-- en_US.dic is ~700 KB and en-30k.txt ~250 KB; `McPhee.create` fetches and
-  parses them once per page. Load lazily if startup matters. A failed
-  frequency-list fetch degrades gracefully (echo falls back to the stopword
-  list alone, obscureRepeat goes inert) instead of killing the checker.
+- en_US.dic is ~680 KB, en_US_2026.dic ~497 KB, and en-30k.txt ~250 KB;
+  `McPhee.create` fetches and parses them once per page. Load lazily if
+  startup matters. A failed frequency-list fetch degrades gracefully (echo
+  falls back to the stopword list alone, obscureRepeat goes inert) instead
+  of killing the checker.
 
 ## Distribution
 

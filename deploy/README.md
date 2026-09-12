@@ -42,6 +42,13 @@ action, is a full local+production release unless the user excludes a step.
 6. Verify local `http://127.0.0.1:5960/healthz`, then the production
    checks listed after the redeploy command.
 
+## Local server restart
+
+The workstation launcher publishes an isolated build before stopping the verified local UI process.
+It refuses unrelated listeners and checks ownership again after publishing.
+Read [the local server contract](../docs/local-ui-server.md) for dependencies, logs, process records, and verification.
+Restart after workstation .NET upgrades, then verify `/api/config` and `/api/status` as well as `/healthz`.
+
 ## Routine production release
 
 This repository currently has no hosted `.github/workflows` pipeline. The

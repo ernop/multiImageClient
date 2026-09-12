@@ -937,7 +937,7 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 .preference-hidden { display: none !important; }
 #generator-config-toggle { min-width: 28px; padding-inline: 6px !important; }
 
-#gens-row {
+#gens-row, #describe-row, .generator-options {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
   gap: 7px;
@@ -989,11 +989,6 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
   background: var(--card); cursor: pointer;
 }
 #describe-head button:hover { border-color: var(--accent); }
-#describe-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
-  gap: 7px;
-}
 #describe-section.collapsed { gap: 0; }
 #describe-section.collapsed #describe-enable-all,
 #describe-section.collapsed #describe-disable-all,

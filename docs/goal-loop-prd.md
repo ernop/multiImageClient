@@ -938,7 +938,10 @@ Validation: `tools/test-generator-chooser.cjs` and `UiCommunityTests`.
 
 ### Shared generator chooser (2026-09-05)
 
-The goal setup and main composer use `generator-chooser.js` for generator chips and selection controls.
+The goal setup and main composer use `generator-chooser.js` for selection controls.
+Since 2026-09-10, `generator-toggle.js` supplies their provider controls and the environment administration controls.
+All three pages share compact grid styles; administration retains its separate environment defaults.
+See [workspaces-prd.md](workspaces-prd.md#shared-provider-presentation-2026-09-10).
 Both pages use the same standard groups from `/api/config` and the same editable personal groups.
 Both expose Enable all, Disable all, Toggle all, Default, and the configuration dialog.
 Group buttons show their eligible generators and replace the current selection with those generators.
@@ -1069,7 +1072,8 @@ raw provider response). Render entries carry the `gen-result` event JSON as
 - `MultiImageClient/Ui/wwwroot/goal-tree.js` — exact render graph and optional thumbnail tree.
 - `tools/tests/goal-tree.test.cjs` — branching, source identity, archived returns, and broken lineage checks.
 
-- `MultiImageClient/Ui/wwwroot/generator-chooser.js` — shared chips, controls, groups, validation, and configuration dialog.
+- `MultiImageClient/Ui/wwwroot/generator-toggle.js` — shared provider markup and checkbox feedback, including administration.
+- `MultiImageClient/Ui/wwwroot/generator-chooser.js` — selection controls, groups, validation, and configuration dialog.
 - `MultiImageClient/Ui/wwwroot/personal-config.js` — canonical chooser persistence, including first-visit browser migration.
 - `tools/test-generator-chooser.cjs` — browser checks for both pages, persistence, visibility, groups, and selection limits.
 
