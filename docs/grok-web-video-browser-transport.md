@@ -63,8 +63,26 @@ configured.
 
 Browser-free video was enabled on 2026-08-06 because it has the exact same
 signed request identity (`POST /rest/app-chat/conversations/new`) as the
-live-verified edit route. Its first end-to-end provider test is still pending;
+live-verified edit route. Its first browser-free video test passed in production on 2026-09-09;
 an HTTP rejection or missing exact-post result remains a visible hard failure.
+
+## Production signing refresh and video verification (2026-09-09)
+
+Production already exposed the video action, but its saved signing pair returned HTTP 403 during a video test.
+The source-image upload succeeded with the existing production cookie file.
+Updating only the two signing settings with the locally verified pair resolved the rejection.
+The settings update preserved credentials, permissions, and a backup of the previous configuration.
+
+A browser-free production test generated one six-second, 480p, square video using the Normal method.
+The test used a plain blue image and requested slowly moving white clouds.
+The application saved a 595,470-byte MP4 with valid file magic and reported one successful result.
+This supersedes the earlier pending browser-free video verification status.
+
+After active-work checks, only `multiimageclient-ui.service` was restarted.
+The existing activation socket remained active.
+Both loopback and the existing private public route reported video available without an error.
+The local server was also restarted and passed its health and video-availability checks.
+No additional environment or neighboring service was changed.
 
 ## Implemented transport split
 
@@ -114,6 +132,25 @@ The generation archive and raw media show that explicit ratios are honored:
 - grok-web video 2:3 request → 448×672 MP4.
 
 Repeated 2:3 output came from `auto` image jobs, where grok-web's consumer transport uses 2:3 as its native default, and from video jobs inheriting 2:3 source images. `auto` does not infer an aspect ratio from prompt wording. The UI now labels this behavior directly and the video dialog exposes an explicit aspect override.
+
+## Local signing setup repair (2026-09-09)
+
+The local WSL server lacked both signing settings, so its viewer hid the video action.
+The existing local cookie file remained valid.
+Capture now dismisses Grok's cookie notice immediately before clicking Edit.
+The click uses normal obstruction checks; a forced click previously hit the notice instead.
+A capture timeout saves a uniquely named local screenshot and reports its path.
+Capture still aborts the generation request and requires exact header reproduction before saving either setting.
+
+Local capture passed after installing Chromium's missing Ubuntu runtime libraries:
+`libnspr4`, `libnss3`, `libatk1.0-0`, `libatk-bridge2.0-0`,
+`libxcomposite1`, `libxdamage1`, and `libatspi2.0-0`.
+The verified pair was saved in the existing untracked local settings file.
+After the local restart, `/healthz` returned `ok` and `/api/config` reported video generation available without an error.
+This setup check did not generate a video.
+No credentials or signing values belong in this document.
+
+Implementation: `MultiImageClient/GrokWebBrowserClient.cs`.
 
 ## Configuration
 

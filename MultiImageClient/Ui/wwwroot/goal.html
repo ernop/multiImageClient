@@ -36,6 +36,15 @@
           <textarea id="goal-text" rows="7" required data-text-draft="new-goal"
             placeholder="Describe the image outcome you want. The manager model writes prompts, sees each render, scores it, and iterates."></textarea>
         </label>
+        <details class="goal-details goal-pursuit-help" hidden>
+          <summary>Guide the evaluation criteria</summary>
+          <p class="goal-help">Write priorities directly in your goal. These labels are optional:</p>
+          <p class="goal-help">Required: one puppy beside one gift; clear table perspective.<br>
+            Prefer: warm colors and a natural pose.<br>
+            Context only: she likes flowers; flowers need not appear.<br>
+            First study: compare three simple table compositions before adding the puppy and gift.</p>
+          <p class="goal-help">The manager derives 3–8 criteria. Each judge reports evidence and uncertainty for each criterion.</p>
+        </details>
         <label class="goal-field">
           <span class="goal-label">Stopping rule</span>
           <select id="goal-kind">

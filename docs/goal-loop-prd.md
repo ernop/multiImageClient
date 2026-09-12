@@ -9,6 +9,27 @@ part lives in code.
 Protocol 9 applies to new loops. Existing loops retain their recorded sample counts and JSON contracts.
 It retains protocol 8's branching and protocol 7's goal criteria, experiments, and completion checks.
 
+### Goal wording and restoration validation — 2026-09-12
+
+The owner can guide criterion selection directly in the goal text, using ordinary prose or optional labels.
+`Required` specifies completion conditions. `Prefer` specifies tradeoffs. `Context only` supplies inspiration without requiring its visible inclusion.
+`First study` specifies experiment order, not an additional image element or permanent completion criterion.
+The manager preserves named evaluation dimensions and their stated importance within the existing 3–8 stable criteria.
+Related details may share a criterion only when each remains explicit. The initial decision explains necessary grouping.
+Alternative suggestions must not become simultaneous requirements unless the goal asks for all alternatives.
+This remains model interpretation, not a separate deterministic label parser or a guarantee of correct classification.
+The goal editor provides an expandable example immediately below its text box.
+
+An observed protocol 9 design had three full-scope candidates with no deferred criteria and empty `restoreNext` strings.
+The old nonempty-text check rejected these valid no-restoration cases before any images were requested.
+Protocol 9 now permits `restoreNext: ""` only when `scope` is `full` and `deferredCriteria` is empty.
+Keep the field present as a string. Missing, null, whitespace-only, and oversized values still fail validation.
+Component studies and plans with deferred criteria still require an explicit restoration step.
+Protocol 7 and 8 retain their previous nonempty restoration requirements.
+Pursuit text errors identify the field and received length. The 2,000-character bound applies to explanatory fields, not the operator's goal.
+Validation never rewrites the rejected reply or substitutes a plan. Explicit resume retains the recorded reply and requests correction.
+Tests: `GoalLoopContractTextTests.cs` covers full-scene acceptance, component rejection, historical behavior, field identity, and length boundaries.
+
 | ID | Requirement | Concrete behavior |
 |---|---|---|
 | R40 | Generate multiple samples when useful. | Default to two images per prompt from grok-web and one elsewhere. Offer explicit 1/2/4 overrides. |
@@ -1062,6 +1083,7 @@ raw provider response). Render entries carry the `gen-result` event JSON as
 ## 7. Files
 
 - `MultiImageClient/Implementation/UiGoalLoopSampling.cs` — sample identities, source defaults, and image-budget validation.
+- `MultiImageClient.Tests/GoalLoopContractTextTests.cs` — restoration-field rules and precise text validation errors.
 - `MultiImageClient/Implementation/UiGoalLoopFeedback.cs` — durable preference events, idempotency, snapshots, and planning invalidation.
 - `MultiImageClient.Tests/GoalLoopSamplingFeedbackTests.cs` — sample isolation, vote identity, replay protection, and planning timing.
 - `MultiImageClient/Ui/wwwroot/goal-feedback.js`, `tools/tests/goal-feedback.test.cjs` — exact feedback totals and sample display checks.

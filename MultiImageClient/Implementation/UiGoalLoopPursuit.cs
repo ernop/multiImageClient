@@ -273,46 +273,62 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
             if (reviewing)
             {
                 reply.Findings = Read<UiGoalFindings>(root, "findings");
-                Require(reply.Findings.Observation, reply.Findings.Inference, reply.Findings.Uncertainty,
-                    reply.Findings.CriticDisagreements, reply.Findings.NextTest);
+                Require(reply.Findings.Observation, "findings.observation");
+                Require(reply.Findings.Inference, "findings.inference");
+                Require(reply.Findings.Uncertainty, "findings.uncertainty");
+                Require(reply.Findings.CriticDisagreements, "findings.criticDisagreements");
+                Require(reply.Findings.NextTest, "findings.nextTest");
+                var evaluationIndex = 0;
                 foreach (var e in reply.Evaluations())
                 {
                     ValidateComponents(e.Evaluation.Components, reply.Rubric, e.Evaluation.GoalMet);
-                    Require(e.Evaluation.ExperimentAssessment);
+                    Require(e.Evaluation.ExperimentAssessment, $"evaluations[{evaluationIndex}].experimentAssessment");
+                    evaluationIndex++;
                 }
             }
             if (reply.Decision == "render")
             {
                 reply.Plan = Read<UiGoalSearchPlan>(root, "plan");
-                Require(reply.Plan.Objective);
+                Require(reply.Plan.Objective, "plan.objective");
                 var fanout = protocolVersion >= 8;
                 if (reply.Plan.Options == null || reply.Plan.Options.Count < (fanout ? 1 : 2) || reply.Plan.Options.Count > (fanout ? 6 : 4)
                     || reply.Plan.Options.Any(o => o == null))
                     throw new JsonException(fanout ? "plan options needs 1-6 description/reason objects" : "plan options needs 2-4 description/reason objects");
-                foreach (var option in reply.Plan.Options) Require(option.Description, option.Reason);
+                for (var i = 0; i < reply.Plan.Options.Count; i++)
+                {
+                    Require(reply.Plan.Options[i].Description, $"plan.options[{i}].description");
+                    Require(reply.Plan.Options[i].Reason, $"plan.options[{i}].reason");
+                }
                 if (reply.Plan.Candidates == null || reply.Plan.Candidates.Count < (fanout ? 1 : 2)
                     || reply.Plan.Candidates.Count > (fanout ? UiGoalLoopFanout.MaxCandidatesCap : 2)
                     || reply.Plan.Candidates.Any(c => c == null))
                     throw new JsonException(fanout ? "plan needs 1-3 candidates" : "plan needs exactly two candidates");
                 if (reply.Plan.Candidates.Select(c => c.Variant).Distinct().Count() != reply.Plan.Candidates.Count)
                     throw new JsonException("candidate identifiers must be unique within the round");
-                foreach (var c in reply.Plan.Candidates)
+                for (var i = 0; i < reply.Plan.Candidates.Count; i++)
                 {
+                    var c = reply.Plan.Candidates[i];
+                    var path = $"plan.candidates[{i}]";
                     if (!UiGoalLoopVariants.IsValid(c.Variant, fanout ? 8 : protocolVersion)) throw new JsonException("unknown candidate identifier");
                     OneOf(c.Scope, "full", "component");
-                    if (c.Scope == "component") Require(c.ComponentGoal);
+                    if (c.Scope == "component") Require(c.ComponentGoal, path + ".componentGoal");
                     if (c.Quality != null) OneOf(c.Quality, "low", "medium", "high", "xhigh", "max");
                     if (c.Detail != null) OneOf(c.Detail, "standard", "high", "max");
                     if (c.Sources != null)
                     {
-                        Strings(c.Sources, 1, 8);
+                        Strings(c.Sources, 1, 8, path + ".sources");
                         if (c.Sources.Distinct().Count() != c.Sources.Count || c.Sources.Any(s => !UiGoalLoopSources.IsValid(s)))
                             throw new JsonException("candidate sources must be distinct source letters");
                     }
                     OneOf(c.Mode, "pursue", "explore", "simplify", "rebuild", "verify");
-                    Require(c.Question, c.Expected, c.RestoreNext);
-                    Strings(c.Changes, 0, 12); Strings(c.Holds, 0, 12);
-                    Strings(c.DeferredCriteria, 0, 8);
+                    Require(c.Question, path + ".question");
+                    Require(c.Expected, path + ".expected");
+                    Strings(c.Changes, 0, 12, path + ".changes");
+                    Strings(c.Holds, 0, 12, path + ".holds");
+                    Strings(c.DeferredCriteria, 0, 8, path + ".deferredCriteria");
+                    // A complete scene without deferred requirements has nothing to restore.
+                    Require(c.RestoreNext, path + ".restoreNext",
+                        allowEmpty: protocolVersion >= 9 && c.Scope == "full" && c.DeferredCriteria.Count == 0);
                     if (c.DeferredCriteria.Any(id => !reply.Rubric.Any(r => r.Id == id)))
                         throw new JsonException("deferredCriteria contains an unknown rubric id");
                 }
@@ -324,8 +340,8 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
             {
                 reply.Completion = Read<UiGoalCompletion>(root, "completion");
                 OneOf(reply.Completion.Outcome, "achieved", "plateau");
-                Require(reply.Completion.Rationale);
-                Strings(reply.Completion.RemainingGaps, 0, 12);
+                Require(reply.Completion.Rationale, "completion.rationale");
+                Strings(reply.Completion.RemainingGaps, 0, 12, "completion.remainingGaps");
                 if (reply.Completion.EvidenceTurns == null || reply.Completion.EvidenceTurns.Count < 2 || reply.Completion.EvidenceTurns.Count > 30
                     || reply.Completion.EvidenceTurns.Distinct().Count() != reply.Completion.EvidenceTurns.Count)
                     throw new JsonException("completion needs at least two distinct evidence turns");
@@ -341,11 +357,12 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
             if (components == null || components.Any(c => c == null) || components.Count != rubric.Count
                 || components.Select(c => c.Criterion).Distinct().Count() != rubric.Count)
                 throw new JsonException("components must contain each rubric criterion exactly once");
-            foreach (var c in components)
+            for (var i = 0; i < components.Count; i++)
             {
+                var c = components[i];
                 if (!rubric.Any(r => r.Id == c.Criterion)) throw new JsonException("unknown component criterion");
                 OneOf(c.Status, "met", "partial", "missing", "uncertain");
-                OneOf(c.Confidence, "low", "medium", "high"); Require(c.Evidence);
+                OneOf(c.Confidence, "low", "medium", "high"); Require(c.Evidence, $"components[{i}].evidence");
             }
             if (goalMet && rubric.Where(r => r.Importance == "required")
                 .Any(r => components.Single(c => c.Criterion == r.Id).Status != "met"))
@@ -435,27 +452,33 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
         {
             if (rubric.Any(r => r == null) || rubric.Count < 3 || rubric.Count > 8 || rubric.Select(r => r.Id).Distinct().Count() != rubric.Count)
                 throw new JsonException("rubric needs 3-8 unique criteria");
-            foreach (var r in rubric)
+            for (var i = 0; i < rubric.Count; i++)
             {
-                Require(r.Id, r.Description, r.Basis);
+                var r = rubric[i];
+                Require(r.Id, $"rubric[{i}].id");
+                Require(r.Description, $"rubric[{i}].description");
+                Require(r.Basis, $"rubric[{i}].basis");
                 OneOf(r.Importance, "required", "preference", "context");
             }
             if (!rubric.Any(r => r.Importance == "required")) throw new JsonException("rubric needs a required outcome");
         }
 
-        private static void Require(params string?[] values)
+        private static void Require(string? value, string path, bool allowEmpty = false)
         {
-            if (values.Any(v => string.IsNullOrWhiteSpace(v) || v.Length > 2000))
-                throw new JsonException("pursuit text fields must contain 1-2000 characters");
+            if (value == null) throw new JsonException($"{path} must be a string; received null");
+            if (allowEmpty && value.Length == 0) return;
+            if (string.IsNullOrWhiteSpace(value) || value.Length > 2000)
+                throw new JsonException($"{path} must contain {(allowEmpty ? 0 : 1)}-2000 characters; received {value.Length}"
+                    + (value.Length > 0 && string.IsNullOrWhiteSpace(value) ? " whitespace characters" : " characters"));
         }
         private static void OneOf(string value, params string[] choices)
         {
             if (!choices.Contains(value)) throw new JsonException($"invalid pursuit value '{value}'");
         }
-        private static void Strings(List<string>? values, int min, int max)
+        private static void Strings(List<string>? values, int min, int max, string path)
         {
-            if (values == null || values.Count < min || values.Count > max) throw new JsonException($"expected {min}-{max} items");
-            foreach (var value in values) Require(value);
+            if (values == null || values.Count < min || values.Count > max) throw new JsonException($"{path} needs {min}-{max} items");
+            for (var i = 0; i < values.Count; i++) Require(values[i], $"{path}[{i}]");
         }
     }
 }

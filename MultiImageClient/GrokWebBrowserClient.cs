@@ -411,9 +411,29 @@ namespace MultiImageClient
                     throw new GrokWebException(
                         "Grok web Edit control stayed disabled during statsig capture.");
                 }
-                await editButton.ClickAsync(new LocatorClickOptions { Force = true });
+                // The notice can cover Edit. A forced click would hit the
+                // notice instead of sending the signing request.
+                var cookieNotice = _page.GetByRole(AriaRole.Button,
+                    new PageGetByRoleOptions { Name = "Dismiss cookie notice", Exact = true });
+                if (await cookieNotice.IsVisibleAsync())
+                {
+                    await cookieNotice.ClickAsync();
+                }
+                await editButton.ClickAsync();
 
-                var header = await headerSource.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+                string header;
+                try
+                {
+                    header = await headerSource.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+                }
+                catch (TimeoutException)
+                {
+                    var screenshotPath = Path.Combine(
+                        Path.GetTempPath(), $"grok-statsig-capture-{Guid.NewGuid():N}.png");
+                    await _page.ScreenshotAsync(new PageScreenshotOptions { Path = screenshotPath, FullPage = true });
+                    throw new GrokWebException(
+                        $"Grok Edit did not send the expected signing request. Screenshot: {screenshotPath}");
+                }
                 var digestInputs = await _page.EvaluateAsync<string[]>(
                     """
                     () => Array.isArray(window.__micStatsigDigestInputs)

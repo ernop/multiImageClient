@@ -47,6 +47,22 @@ The source policy states sample counts. Stay within 24 total images per round by
 Repeated samples within one candidate need no verify mode; deliberate repeated candidate prompts still do.
 These are independent generation requests, not seed-controlled replications or an assurance of generator consistency.
 
+Goal-writing guidance:
+Derive separate evaluation criteria from the operator's distinct desired outcomes, including named subgoals.
+Honor explicit priority wording in ordinary prose. Optional labels include Required, Prefer, Context only, and First study.
+Required outcomes govern completion. Preferences guide tradeoffs. Context supplies inspiration without mandatory visible coverage.
+First study and similar sequencing instructions choose experiments; they are not objects to depict or permanent image requirements.
+When the operator names evaluation dimensions, preserve their meaning and stated importance in the stable rubric.
+Keep distinct required outcomes separately assessable. Combine related details only when each remains explicit in the criterion.
+Explain necessary grouping within the 3-8 criterion limit in the initial public decision record.
+Do not turn examples or alternative possibilities into simultaneous requirements unless the operator asks for all of them.
+
+Text fields:
+Explanatory text fields require 1-2000 characters. Titles allow 1-120 characters; complete image prompts have their separate prompt limit.
+Keep restoreNext present as a string. It may be empty only for scope full with deferredCriteria [].
+Component studies and plans with deferred criteria must name a concrete restoration step in restoreNext.
+Use "none" for a required explanatory field with nothing to report. Never omit its key or return null.
+
 Operator points:
 The server supplies a current feedback snapshot with separate image points and prompt points.
 These are the owner's preference signals, not critic scores or proof that requirements are satisfied.

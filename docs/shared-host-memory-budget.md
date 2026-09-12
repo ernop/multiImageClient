@@ -37,6 +37,23 @@ to
 (the design rule) and [deploy/README.md](../deploy/README.md) (the install
 procedure).
 
+## Grok-web image concurrency (2026-09-09)
+
+Local and original private production settings now override `UiTargetConcurrency["grok-web-ws"]` to `4`.
+This queue covers Grok-web text-to-image, direct image editing, and chat editing.
+The previous limit was one; a local snapshot showed five waiting requests behind one running request.
+Each UI attempt creates its own Grok client, so the per-generator semaphore does not serialize separate jobs.
+The application now permits four simultaneous Grok-web image targets, subject to the existing aggregate cap.
+A target requesting several images still performs its own attempts sequentially while holding its scheduler slot.
+
+The aggregate caps remain 20 locally and 14 in original production.
+Grok API remains at two; Grok-web video remains at one.
+Finalization, pending-job limits, RAM ceilings, and other provider limits remain unchanged.
+These are explicit installation settings, not a global default change or a measured xAI account limit.
+Additional environments retain their existing settings.
+Both running servers reported a limit of four after restart.
+A local snapshot showed two Grok-web image targets running together with no queued targets.
+
 ## Why limits exist at all
 
 The app was designed as a local one-shot CLI and initially behaved like one
@@ -103,7 +120,7 @@ From `deploy/multiimageclient-ui.service` and
   politeness principle applied to CPU, disk, and thread/process count.
 - **App-level caps** — verified live 2026-08-06: 1 finalizer job, 14 aggregate
   provider requests, default 64 pending jobs, 3 GiB disk reserve, and the
-  scheduler's conservative per-lane defaults (no live override object).
+  scheduler's per-lane defaults, except the four-request Grok-web image override added on 2026-09-09.
 
 Steady state observed 2026-08-04 was ~750–950 MB. That observation predates
 the raised limits but remains useful as a working-set baseline.
