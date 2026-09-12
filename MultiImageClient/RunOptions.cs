@@ -55,6 +55,9 @@ namespace MultiImageClient
         /// without writing anything anywhere.
         public bool B2BackfillDryRun { get; set; }
 
+        public bool UiStorageCleanup { get; set; }
+        public bool UiStorageCleanupDryRun { get; set; }
+
         /// If true, use the smallest/cheapest/fastest generator set
         /// (gpt-image-2 low quality, 1024x1024 square, moderation=low).
         /// Intended for iteration/smoke-testing, not production runs.
@@ -336,6 +339,13 @@ namespace MultiImageClient
                     case "--b2-backfill":
                         o.B2Backfill = true;
                         break;
+                    case "--ui-storage-cleanup":
+                        o.UiStorageCleanup = true;
+                        break;
+                    case "--ui-storage-cleanup-dry-run":
+                        o.UiStorageCleanup = true;
+                        o.UiStorageCleanupDryRun = true;
+                        break;
                     case "--b2-backfill-dry-run":
                         o.B2Backfill = true;
                         o.B2BackfillDryRun = true;
@@ -561,6 +571,7 @@ namespace MultiImageClient
             Console.WriteLine("  --input-image path  Use this image file for workflow 2 (round-trip image -> description -> images).");
             Console.WriteLine("  --backfill-dl     One-shot: mirror all images under ImageDownloadBaseFolder to C:\\dl and exit.");
             Console.WriteLine("  --b2-smoke        One-shot: verify Backblaze B2 hosting config end to end (upload/fetch/compare/404-check/delete) and exit. Requires EnableB2ImageHosting + B2* settings. See docs/b2-image-hosting-plan.md.");
+            Console.WriteLine("  --ui-storage-cleanup  Verify hosted originals before removing completed-job local copies; expire old thumbnails. --ui-storage-cleanup-dry-run verifies without deleting.");
             Console.WriteLine("  --b2-backfill     One-shot Stage 5 migration: upload pre-hosting UI history results/grids to B2, rewrite persisted event URLs, evict local raws when B2KeepLocalRawImages=false. Run with the UI server STOPPED. --b2-backfill-dry-run reports without writing.");
             Console.WriteLine("  --fast            Use cheapest/fastest generator set (gpt-image-2 low 1024x1024). Good for smoke tests.");
             Console.WriteLine("  --open-images     Pop finished images/contact-sheets open in the system default viewer. OFF by default (runs are headless and just save to disk). --quick-test enables this automatically.");

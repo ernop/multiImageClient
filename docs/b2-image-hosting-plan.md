@@ -4,6 +4,43 @@ First written 2026-08-04 targeting Bunny.net; requirements re-derived with the
 owner 2026-08-05 and the provider switched to **Backblaze B2** the same day
 (owner decision). Implementation started 2026-08-05.
 
+## Storage cleanup — owner decision, 2026-09-12
+
+Interrupted jobs can finish uploading originals before the process stops, bypassing normal local-file cleanup.
+The owner approved removing these local copies while preserving job records, inputs, and hosted originals.
+
+| Requirement | Behavior |
+|---|---|
+| Automatic cleanup | Scan completed jobs two minutes after UI startup, then every six hours. |
+| Production retention only | Run original-file cleanup only when B2 hosting is enabled and `B2KeepLocalRawImages=false`. |
+| Exact verification | Compare the local SHA-256, remote file-version ID, byte length, and streamed remote SHA-256 before deletion. |
+| Changed or missing evidence | Retain the file and log a job-specific error. Never substitute another object. |
+| Preserve inputs | Exclude input records and every path referenced by any job's input metadata. |
+| Preserve history | Retain job metadata, event records, image identities, remote objects, and inputs. |
+| Path safety | Refuse paths outside the configured data root and paths traversing symbolic links. |
+| Bounded memory | Read one job index and stream one original at a time. Cap metadata files at 16 MiB and input references at 10,000. |
+| Concurrent maintenance | Serialize sweeps through an exclusive lock in the data root. Recheck completed state and image identity before deletion. |
+| Original image routes | With hosting enabled, redirect an exact hosted original request to its recorded B2 object, even while a local copy remains. |
+| Thumbnail expiry | Delete known thumbnails older than two days, including thumbnails whose originals are gone. Preserve unknown identities. |
+| Operator command | `--ui-storage-cleanup` runs one sweep and thumbnail expiry. `--ui-storage-cleanup-dry-run` verifies without deleting. |
+
+The thumbnail decision supersedes the former rule that retained orphaned previews forever.
+The owner accepts losing those previews when their originals are already unavailable.
+Remote outages or incomplete hosting records do not authorize deleting original image files.
+Cleanup does not erase interrupted jobs or their successful outputs from history.
+
+Interrupted recovery previously recorded local image URLs even when B2 uploads existed.
+Those URLs now resolve through the exact persisted hosted identity, so cleanup does not break existing cards or loop links.
+The redirect retains the existing authentication and visibility checks.
+No second image size, provider substitution, or raw-byte memory cache is introduced.
+
+The owner also approved clearing NuGet HTTP downloads and obsolete .NET 9 build outputs on the production host.
+Preserve copied settings and check for active builds before those manual operations.
+Static media, database backups, current runtimes, and unpacked build dependencies remain outside this cleanup.
+
+Implementation: `UiHostedRawCleanup.cs`, `B2StorageClient.cs`, `UiThumbExpiry.cs`, `UiJobs.cs`, `UiWorkflow.cs`, `RunOptions.cs`, and `Program.cs`.
+Regression coverage: `UiHostedRawCleanupTests.cs` and `UiThumbExpiryTests.cs`.
+
 ## Requirements (settled with owner, 2026-08-05)
 
 The original stated goal ("stop pulling full-size PNGs through the process")
@@ -104,11 +141,9 @@ generate → save Raw to disk (unchanged)
            retention=evict (prod): raw deleted after finalization
 ```
 
-Consequences accepted with the eviction mode: the generation archive's disk
-pointers for evicted files dangle (hashes remain valid); full-res local serve
-returns 404 for evicted images (never linked — URLs are B2); and the
-upload-failure contract below MUST be hard-fail, since an unuploaded image
-would otherwise exist nowhere the UI is willing to serve from.
+The generation archive retains disk paths and hashes after local originals are evicted.
+Since 2026-09-12, original-image routes redirect to the exact recorded B2 object when hosting is enabled.
+The upload-failure contract remains fail-closed because local files do not replace failed hosted outputs.
 
 ## Access model: B2 URLs are bearer links (decided posture, 2026-08-05)
 
@@ -417,9 +452,7 @@ Inputs and SVG remain local (v1 scope).
 whenever their source is still obtainable, so `UiThumbExpiry` sweeps
 `UiHistory/{id}/thumbs/` every 6 hours and deletes thumbs older than 2 days
 whose source image is either still on local disk or recorded on B2
-(`CdnKey` + `ContentSha256`). Thumbs whose source is gone forever (pre-B2
-raws lost to old disk-pressure cleanups) are never deleted — they are the
-last remaining visual for those cards. The image route rebuilds missing
+(`CdnKey` + `ContentSha256`). The 2026-09-12 owner decision supersedes orphan preservation: known thumbnails older than two days also expire when their originals are gone. The image route rebuilds missing
 thumbs on demand; for evicted originals it streams the exact recorded B2
 object to a temp file, verifies its SHA-256, and rebuilds from the file
 stream (single-flight per image, at most 3 concurrent B2 regens).

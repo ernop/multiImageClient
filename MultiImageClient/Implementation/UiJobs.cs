@@ -4401,6 +4401,15 @@ namespace MultiImageClient
             }
         }
 
+        public string? HostedOriginalUrl(UiJob job, string gen, int index)
+        {
+            if (_b2 == null) return null;
+            var image = job.ListPersistedImages().SingleOrDefault(i => i.Key == $"{gen}/{index}");
+            if (image == null || string.IsNullOrWhiteSpace(image.CdnKey)) return null;
+            UiHostedRawCleanup.RequireHostedIdentity(image);
+            return _b2.DownloadUrlFor(image.CdnKey);
+        }
+
         // Hosted-thumb regeneration: expired disk thumbs are rebuilt on demand
         // from the exact recorded B2 object when the local original was
         // evicted. Single-flight per image (Lazy so a GetOrAdd race never

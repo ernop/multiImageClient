@@ -24,13 +24,14 @@ namespace MultiImageClient.Tests
         [InlineData("gpt2_.jpg")]
         [InlineData("gpt2_abc.jpg")]
         [InlineData("_0.jpg")]
+        [InlineData("gpt2_-1.jpg")]
         public void UnmappableThumbFileIsRejected(string fileName)
         {
             Assert.False(UiThumbExpiry.TryThumbFileToImageKey(fileName, out _));
         }
 
         [Fact]
-        public void SweepDeletesOnlyOldRegenerableThumbs()
+        public void SweepExpiresKnownOldThumbsIncludingOrphans()
         {
             var root = Path.Combine(Path.GetTempPath(), "mic-thumb-expiry-test-" + Guid.NewGuid().ToString("N"));
             var jobFolder = Path.Combine(root, "UiHistory", "job1");
@@ -70,11 +71,14 @@ namespace MultiImageClient.Tests
                     ImageDownloadBaseFolder = root,
                     EnableB2ImageHosting = true,
                 };
-                UiThumbExpiry.SweepOnce(settings);
+                Assert.Equal((3, 9L), UiThumbExpiry.SweepOnce(settings, dryRun: true));
+                Assert.True(File.Exists(oldIrreplaceable));
+                Assert.True(File.Exists(oldLocalSource));
+                Assert.Equal((3, 9L), UiThumbExpiry.SweepOnce(settings));
 
                 Assert.False(File.Exists(oldLocalSource));   // regenerable from local original
                 Assert.False(File.Exists(oldHosted));        // regenerable from B2
-                Assert.True(File.Exists(oldIrreplaceable));  // source gone forever — kept
+                Assert.False(File.Exists(oldIrreplaceable)); // owner permits orphan removal
                 Assert.True(File.Exists(oldUnknownKey));     // key not in images.json — kept
                 Assert.True(File.Exists(freshHosted));       // too young — kept
 
@@ -82,7 +86,7 @@ namespace MultiImageClient.Tests
                 var oldHostedAgain = Write("bfl_0.jpg", old);
                 settings.EnableB2ImageHosting = false;
                 UiThumbExpiry.SweepOnce(settings);
-                Assert.True(File.Exists(oldHostedAgain));
+                Assert.False(File.Exists(oldHostedAgain));
             }
             finally
             {

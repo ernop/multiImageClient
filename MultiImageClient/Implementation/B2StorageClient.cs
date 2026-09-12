@@ -50,6 +50,36 @@ namespace MultiImageClient
             return $"{_settings.B2DownloadBaseUrl}/{EscapeKeyForUrl(objectKey)}";
         }
 
+        internal async Task VerifyStoredFileAsync(UiPersistedImageInfo image, long expectedLength, CancellationToken cancellationToken)
+        {
+            UiHostedRawCleanup.RequireHostedIdentity(image);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(TimeSpan.FromMinutes(10));
+            cancellationToken = deadline.Token;
+            using var response = await _http.GetAsync(DownloadUrlFor(image.CdnKey),
+                HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Hosted cleanup verification returned HTTP {(int)response.StatusCode}.");
+            if (!response.Headers.TryGetValues("X-Bz-File-Id", out var versions)
+                || !versions.SequenceEqual(new[] { image.CdnFileId })
+                || response.Content.Headers.ContentLength != expectedLength)
+                throw new InvalidDataException("Hosted cleanup verification found a different object version or length.");
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[64 * 1024];
+            long length = 0;
+            int read;
+            while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                length += read;
+                if (length > expectedLength) throw new InvalidDataException("Hosted object exceeds the recorded local length.");
+                hash.AppendData(buffer, 0, read);
+            }
+            if (length != expectedLength || !Convert.ToHexString(hash.GetHashAndReset())
+                .Equals(image.ContentSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Hosted cleanup verification failed its byte checksum.");
+        }
+
         /// Fetches one hosted object back by its exact recorded key (anonymous
         /// public GET). Throws on any non-success status — a missing hosted
         /// object is a hard error, never silently substituted.

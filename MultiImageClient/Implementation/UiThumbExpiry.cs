@@ -8,14 +8,9 @@ using System.Threading.Tasks;
 namespace MultiImageClient
 {
     /// <summary>
-    /// Expires old disk card thumbs (UiHistory/{id}/thumbs/). Thumbs are pure
-    /// derived data ONLY when their source is still obtainable — the local
-    /// original file, or (with B2 hosting) the exact recorded hosted object,
-    /// from which the serving route rebuilds a missing thumb on demand.
-    /// Thumbs whose source is gone (pre-B2 images whose raws were deleted in
-    /// old disk-pressure cleanups) are the last remaining visual for their
-    /// cards and are never deleted. Regeneration refreshes the file's write
-    /// time, so recently viewed archive days stay warm.
+    /// Expires disk card thumbs after two days, including orphaned previews.
+    /// The owner approved removing previews without originals on 2026-09-12.
+    /// Unknown image identities remain untouched. Regeneration refreshes age.
     /// </summary>
     public static class UiThumbExpiry
     {
@@ -48,30 +43,35 @@ namespace MultiImageClient
             }
         }
 
-        public static void SweepOnce(Settings settings)
+        public static (int Files, long Bytes) SweepOnce(Settings settings, bool dryRun = false)
         {
-            var root = Path.Combine(settings.ImageDownloadBaseFolder, "UiHistory");
+            var dataRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(settings.ImageDownloadBaseFolder));
+            var root = Path.Combine(dataRoot, "UiHistory");
             if (!Directory.Exists(root))
             {
-                return;
+                return (0, 0);
             }
+            UiHostedRawCleanup.RequireContainedPath(dataRoot, root);
             var cutoff = DateTime.UtcNow - MaxThumbAge;
-            int deleted = 0, keptIrreplaceable = 0;
+            int deleted = 0, keptUnknown = 0;
             long freedBytes = 0;
 
             foreach (var jobFolder in Directory.EnumerateDirectories(root))
             {
+                if ((File.GetAttributes(jobFolder) & FileAttributes.ReparsePoint) != 0) continue;
                 var thumbsFolder = Path.Combine(jobFolder, "thumbs");
                 if (!Directory.Exists(thumbsFolder))
                 {
                     continue;
                 }
+                if ((File.GetAttributes(thumbsFolder) & FileAttributes.ReparsePoint) != 0) continue;
                 JsonDocument? images = null;
                 try
                 {
                     foreach (var thumbPath in Directory.EnumerateFiles(thumbsFolder))
                     {
                         var fileInfo = new FileInfo(thumbPath);
+                        if ((fileInfo.Attributes & FileAttributes.ReparsePoint) != 0) continue;
                         if (fileInfo.LastWriteTimeUtc >= cutoff)
                         {
                             continue;
@@ -81,16 +81,17 @@ namespace MultiImageClient
                             continue; // unknown naming — never delete what we can't map
                         }
                         images ??= LoadImagesJson(jobFolder);
-                        if (images == null
-                            || !IsRegenerable(images, imageKey, settings.EnableB2ImageHosting))
+                        if (images == null || images.RootElement.ValueKind != JsonValueKind.Object
+                            || !images.RootElement.TryGetProperty(imageKey, out var record)
+                            || record.ValueKind != JsonValueKind.Object)
                         {
-                            keptIrreplaceable++;
+                            keptUnknown++;
                             continue;
                         }
                         try
                         {
                             var size = fileInfo.Length;
-                            File.Delete(thumbPath);
+                            if (!dryRun) File.Delete(thumbPath);
                             deleted++;
                             freedBytes += size;
                         }
@@ -106,12 +107,13 @@ namespace MultiImageClient
                 }
             }
 
-            if (deleted > 0 || keptIrreplaceable > 0)
+            if (deleted > 0 || keptUnknown > 0)
             {
                 Logger.Log(
-                    $"thumb expiry: deleted {deleted} thumb(s) ({freedBytes / (1024.0 * 1024):F1} MiB) older than {MaxThumbAge.TotalDays:F0} days; "
-                    + $"kept {keptIrreplaceable} whose source is no longer obtainable.");
+                    $"thumb expiry: {(dryRun ? "candidates" : "deleted")} {deleted} thumb(s) ({freedBytes / (1024.0 * 1024):F1} MiB) older than {MaxThumbAge.TotalDays:F0} days; "
+                    + $"kept {keptUnknown} with unknown identities.");
             }
+            return (deleted, freedBytes);
         }
 
         /// "gpt2~p0_0.jpg" -> "gpt2~p0/0". The last underscore separates the
@@ -123,7 +125,7 @@ namespace MultiImageClient
             var stem = Path.GetFileNameWithoutExtension(fileName);
             var split = stem.LastIndexOf('_');
             if (split <= 0 || split == stem.Length - 1
-                || !int.TryParse(stem.Substring(split + 1), out _))
+                || !int.TryParse(stem.Substring(split + 1), out var index) || index < 0)
             {
                 return false;
             }
@@ -140,7 +142,10 @@ namespace MultiImageClient
             }
             try
             {
-                return JsonDocument.Parse(File.ReadAllText(path));
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0
+                    || new FileInfo(path).Length > 16 * 1024 * 1024) return null;
+                using var stream = File.OpenRead(path);
+                return JsonDocument.Parse(stream);
             }
             catch (Exception ex)
             {
@@ -149,26 +154,5 @@ namespace MultiImageClient
             }
         }
 
-        private static bool IsRegenerable(JsonDocument images, string imageKey, bool b2HostingEnabled)
-        {
-            if (!images.RootElement.TryGetProperty(imageKey, out var record))
-            {
-                return false;
-            }
-            var localPath = record.TryGetProperty("Path", out var pathProp)
-                ? pathProp.GetString()
-                : null;
-            if (!string.IsNullOrWhiteSpace(localPath) && File.Exists(localPath))
-            {
-                return true;
-            }
-            if (!b2HostingEnabled)
-            {
-                return false;
-            }
-            var cdnKey = record.TryGetProperty("CdnKey", out var cdnProp) ? cdnProp.GetString() : null;
-            var sha = record.TryGetProperty("ContentSha256", out var shaProp) ? shaProp.GetString() : null;
-            return !string.IsNullOrWhiteSpace(cdnKey) && !string.IsNullOrWhiteSpace(sha);
-        }
     }
 }

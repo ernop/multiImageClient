@@ -2287,6 +2287,12 @@ namespace MultiImageClient
                         bytesAreFinal = true;
                     }
                 }
+                else if (runner.HostedOriginalUrl(job, gen, n) is { } hostedUrl)
+                {
+                    // Hosted identity is authoritative, including local URLs recorded after an interrupted job.
+                    ctx.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
+                    return Results.Redirect(hostedUrl);
+                }
                 else if (job.TryGetImagePath(gen, n, out var path, out var pathType))
                 {
                     // Stream from disk — do not buffer the whole file into the
@@ -3191,12 +3197,12 @@ namespace MultiImageClient
 
             using var livenessGuard = new UiLivenessGuard(options.UiPort);
             livenessGuard.Start();
-            // Thumbs older than 2 days whose source remains obtainable (local
-            // original, or the recorded B2 object) are deleted and rebuilt on
-            // demand by the image route; irreplaceable thumbs are kept.
+            // Expire old thumbnails, including those whose originals are gone.
             using var thumbExpiryCts = new CancellationTokenSource();
             var thumbExpiryLoop = Task.Run(
                 () => UiThumbExpiry.RunLoopAsync(settings, thumbExpiryCts.Token));
+            var hostedCleanupLoop = Task.Run(
+                () => UiHostedRawCleanup.RunLoopAsync(settings, thumbExpiryCts.Token));
             using var idleMonitorCts = new CancellationTokenSource();
             var idleMonitor = idleLifetime?.MonitorAsync(
                 () => activeJobs.Values.Any(job => !job.IsCompleted) || runner.PendingJobCount > 0 || goalLoopRunner.RunningCount > 0,
@@ -3205,6 +3211,7 @@ namespace MultiImageClient
             idleMonitorCts.Cancel();
             if (idleMonitor != null) await idleMonitor;
             thumbExpiryCts.Cancel();
+            await Task.WhenAll(thumbExpiryLoop, hostedCleanupLoop);
 
             var remaining = activeJobs.Values.ToArray();
             if (remaining.Length > 0)

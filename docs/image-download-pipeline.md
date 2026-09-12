@@ -94,3 +94,10 @@ A late fetch cannot paint over a newer selection. Save-as, set-active,
 and video source always use the original, never the card thumb. The
 dimensions slot shows exact `width×height` only after the original
 paints.
+
+## Hosted originals and cache expiry — 2026-09-12
+
+Authenticated local original-image routes redirect to their exact recorded B2 object when hosting is enabled.
+This also preserves links recorded during interrupted-job recovery after local copies are cleaned.
+Known thumbnails expire after two days even when their original is unavailable, as approved by the owner.
+See [the storage cleanup contract](b2-image-hosting-plan.md#storage-cleanup--owner-decision-2026-09-12).

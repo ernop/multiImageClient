@@ -91,6 +91,14 @@ namespace MultiImageClient
             // path so the error message matches the old behavior.
             var settingsFilePath = ResolveSettingsPath();
             var settings = Settings.LoadFromFile(settingsFilePath);
+            if (options.UiStorageCleanup)
+            {
+                var result = await UiHostedRawCleanup.SweepAsync(settings, options.UiStorageCleanupDryRun, CancellationToken.None);
+                var thumbs = UiThumbExpiry.SweepOnce(settings, options.UiStorageCleanupDryRun);
+                Console.WriteLine($"Storage cleanup: originals={result.Files}, originalBytes={result.Bytes}, errors={result.Errors}, thumbnails={thumbs.Files}, thumbnailBytes={thumbs.Bytes}, dryRun={options.UiStorageCleanupDryRun}");
+                Environment.ExitCode = result.Errors == 0 ? 0 : 1;
+                return;
+            }
             GenerationArchive.Initialize(settings);
 
             if (options.GrokWebCaptureStatsig)
