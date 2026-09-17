@@ -24,9 +24,12 @@ const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><r
     });
     const page = await context.newPage();
     const errors = [];
-    page.on('pageerror', error => errors.push(error.message));
+    page.on('pageerror', error => errors.push(error.stack));
     await page.goto(base);
     await page.waitForFunction(() => generatorPreferences !== null);
+    await page.locator('#generator-config-toggle').click();
+    await page.locator('[data-generator-config-view=endpoint]').click();
+    assert.equal(await page.locator('#generator-config-endpoint-panel #global-append-text').count(), 1);
     await page.locator('#global-append-text').fill('General directives 🂡\nKeep clear spacing.');
     await page.reload();
     await page.waitForFunction(() => generatorPreferences !== null);

@@ -276,13 +276,7 @@
         <button id="prompt-history-older" type="button" disabled>older changes</button>
       </nav>
     </section>
-    <div id="global-append-control">
-      <label for="global-append-text">Append to all endpoints</label>
-      <textarea id="global-append-text" rows="2" maxlength="16000"
-        placeholder="General directives for every selected endpoint" aria-describedby="global-append-help"></textarea>
-      <small id="global-append-help">Added after endpoint extra text for image and describe jobs. Saved in this browser.</small>
-      <p id="global-append-status" role="status"></p>
-    </div>
+
     <div id="endpoint-picker">
       <div id="generator-controls-host"></div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
@@ -821,7 +815,14 @@
 <script src="personal-config.js?v=20260917-global-append"></script>
 <script src="prompt-rewrites.js"></script>
 <script src="generator-toggle.js?v=20260910"></script>
-<script src="generator-chooser.js?v=20260910-shared"></script>
+<script src="generator-chooser.js?v=20260917-global-config"></script>
+    <div id="global-append-control" hidden>
+      <label for="global-append-text">Append to all endpoints</label>
+      <textarea id="global-append-text" rows="2" maxlength="16000"
+        placeholder="General directives for every selected endpoint" aria-describedby="global-append-help"></textarea>
+      <small id="global-append-help">Saved automatically in this browser. Applies to every future image and describe job, after endpoint extra text.</small>
+      <p id="global-append-status" role="status"></p>
+    </div>
 <dialog id="public-share-dialog" aria-labelledby="public-share-title">
   <h2 id="public-share-title">Share to Discord</h2>
   <p class="share-destination"></p>

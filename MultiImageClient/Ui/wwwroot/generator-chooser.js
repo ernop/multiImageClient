@@ -364,6 +364,11 @@ function initializeGeneratorConfig() {
     </div>
   </form>
 </dialog>`);
+const globalDirectives = el("global-append-control");
+if (globalDirectives) {
+  el("generator-config-endpoint-panel").prepend(globalDirectives);
+  globalDirectives.hidden = false;
+}
 const generatorConfigDialog = el("generator-config-dialog");
 const generatorConfigForm = el("generator-config-form");
 const generatorConfigShown = el("generator-config-shown");

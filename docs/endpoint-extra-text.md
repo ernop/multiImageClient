@@ -2,7 +2,9 @@
 
 ## Decision — 2026-09-17
 
-The composer provides **Append to all endpoints** beside its prompt and endpoint controls.
+Open **Generator configuration → per endpoint → Append to all endpoints** to set persistent general directives.
+The field belongs to endpoint configuration, not the per-prompt composer.
+Existing saved text remains unchanged when this control moves.
 Use this field for general directives shared by every selected endpoint.
 An empty field adds nothing.
 
@@ -11,7 +13,7 @@ An empty field adds nothing.
 | Order | Send the base prompt, endpoint extra text, then global text. Separate nonempty sections with two newlines. |
 | Scope | Apply to composer image generation, image editing, and describe/analysis endpoints. |
 | Goal loops | Preserve manager-owned prompts. Neither composer suffix system applies to goal-loop jobs. |
-| Persistence | Save each edit in browser personal configuration, under `promptTools.globalAppendText`. Include configuration export/import. |
+| Persistence | Save each edit automatically in browser personal configuration, under `promptTools.globalAppendText`. Include configuration export/import. |
 | Limits | Limit the global field to 16,000 characters. Limit each combined suffix to 16,000 characters. |
 | Aggregate limit | Reject selected suffixes exceeding 64,000 characters in total. Count global text once per selected endpoint. |
 | Prompt limits | Include both additions in character and UTF-8 byte notices. Preserve existing provider truncation rules. |

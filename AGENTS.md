@@ -10,7 +10,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 
 - [docs/public-prompt-sharing.md](docs/public-prompt-sharing.md) — **2026-09-17:** preview and confirm public prompt subsets before Vibecoders posting. Separate public capability routes; authenticated reuse; no private address disclosure.
 
-- [docs/endpoint-extra-text.md](docs/endpoint-extra-text.md) — **2026-09-17:** composer global directives follow endpoint suffixes. Preserve limits, recorded text, and portable configuration.
+- [docs/endpoint-extra-text.md](docs/endpoint-extra-text.md) — **2026-09-17:** saved global directives live in endpoint configuration and follow endpoint suffixes. Preserve limits, recorded text, and portable configuration.
 
 - [docs/mcphee-integration.md](docs/mcphee-integration.md) — **2026-09-11:** load McPhee 3.11.2 and the 2026 dictionary everywhere; preserve per-checker personal settings.
 
@@ -113,7 +113,7 @@ All projects target plain `net10.0` (retargeted from `net9.0` on 2026-08-05; `Mu
 
 - **Public prompt sharing (2026-09-17):** `send to vibecoders` previews the attachment, compact links, destination, and public scope. Confirm before publishing and posting. Anonymous pages expose only one fixed prompt subset. See [docs/public-prompt-sharing.md](docs/public-prompt-sharing.md).
 
-- **Global composer directives (2026-09-17):** append global text after each selected endpoint's extra text. Save in browser configuration. Record combined suffixes. See [docs/endpoint-extra-text.md](docs/endpoint-extra-text.md).
+- **Global composer directives (2026-09-17):** set persistent global text in Generator configuration → per endpoint. Append it after each selected endpoint's extra text. Record combined suffixes. See [docs/endpoint-extra-text.md](docs/endpoint-extra-text.md).
 
 - **Viewer preloading (2026-09-17):** request range thumbnails, then queue all range originals immediately. Preserve in-range transfers during navigation. See [docs/image-download-pipeline.md](docs/image-download-pipeline.md).
 
