@@ -8,7 +8,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 
 ## Also Read
 
-- [docs/public-prompt-sharing.md](docs/public-prompt-sharing.md) — **2026-09-17:** preview and confirm public prompt subsets before Vibecoders posting. Use one daily thread per California date. Separate public capability routes; authenticated reuse; no private address disclosure.
+- [docs/public-prompt-sharing.md](docs/public-prompt-sharing.md) — **2026-09-17:** preview and confirm public prompt subsets before Vibecoders posting. Use one daily thread per California date, with a shared registry across the approved production instances. Separate public capability routes; authenticated reuse; no private address disclosure.
 
 - [docs/endpoint-extra-text.md](docs/endpoint-extra-text.md) — **2026-09-17:** saved global directives live in endpoint configuration and follow endpoint suffixes. Preserve limits, recorded text, and portable configuration.
 

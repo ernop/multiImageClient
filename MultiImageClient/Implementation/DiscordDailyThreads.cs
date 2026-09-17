@@ -33,6 +33,7 @@ namespace MultiImageClient
             catch (IOException) { throw new InvalidOperationException("Another image send is preparing this day's thread. Try again after it finishes."); }
             using (lease)
             {
+                SharedAccess(path + ".lock");
                 if (File.Exists(path))
                 {
                     var saved = JsonSerializer.Deserialize<DiscordDailyThreadRecord>(File.ReadAllText(path));
@@ -61,12 +62,21 @@ namespace MultiImageClient
             {
                 using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
+                    SharedAccess(temp);
                     JsonSerializer.Serialize(stream, record);
                     stream.Flush(flushToDisk: true);
                 }
                 File.Move(temp, path, overwrite: true);
             }
             finally { if (File.Exists(temp)) File.Delete(temp); }
+        }
+
+        private static void SharedAccess(string path)
+        {
+            // The provisioned setgid directory supplies the shared service group.
+            // Both services use restrictive umasks, so new registry files need explicit group access.
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite);
         }
     }
 }

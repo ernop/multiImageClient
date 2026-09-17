@@ -224,9 +224,11 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
 
 The owner authorized public prompt pages with per-post confirmation.
 Read [the public sharing contract](../docs/public-prompt-sharing.md).
-Configure the bot token and shared writable thread directory first.
-Run `deploy/install-public-sharing.py` as Linux root.
-The installer adds only the original instance's `/shared/original/` route and public base setting.
+Run `deploy/install-public-sharing.py --environment original` as Linux root.
+For the approved Vibecoders instance, run it with `--environment vibecoders-ai-generation`.
+The installer provisions their common thread directory and selected service permissions.
+Configure a valid bot token before enabling sends.
+The installer adds only the selected instance's `/shared/<environment>/` route and sharing settings.
 It backs up the existing configuration, validates nginx, and reloads nginx.
 The private route and other services remain unchanged.
 Then run the normal original-service redeploy above.

@@ -114,6 +114,8 @@ Reject forum, announcement, or non-text parent channels in this version.
 
 All instances targeting the same Discord channel must use the **same** `DiscordVibecodersThreadStorePath`.
 Provision a shared directory and group accessible to those service accounts.
+The installer uses `/var/lib/multiimageclient-discord-threads`, a shared service group, and per-service writable-directory overrides.
+Registry and lease files explicitly grant group read/write access despite restrictive service umasks.
 Add that exact directory to each selected systemd service's writable paths before enabling this feature.
 Do not copy thread records into separate instance stores.
 Records use guild/channel/date keys. File leases serialize creation across processes.
@@ -140,6 +142,11 @@ For this correction, update both original and Vibecoders app instances and inspe
 Preserve each instance's settings, accounts, history, and routes.
 Do not report public sharing operational until its public route, bot access, and shared thread directory are configured.
 Do not send live test images as part of release verification.
+The owner subsequently approved the Vibecoders service update; both instances now have the confirmation implementation.
+Browser checks exercised both deployed clients while intercepting all writes locally.
+The existing SocialAI bot credential returned HTTP 401 during read-only checks.
+The production image sender uses a working webhook credential, which cannot create ordinary text-channel threads.
+Discord permits webhook-created threads only in forum/media channels. Keep the requested text channel; obtain a valid bot credential.
 
 ## Public routing and login
 
@@ -158,11 +165,15 @@ Do not derive public links from `UiPublicBaseUrl`; that setting remains the priv
 The original production proxy maps `/shared/original/` to loopback `/public/` on port 5960.
 The hostname, TLS configuration, private prefix, and neighboring service routes remain unchanged.
 
-`deploy/install-public-sharing.py` performs this explicit routing migration for the original service only.
+`deploy/install-public-sharing.py --environment original` configures the original route.
+Use `--environment vibecoders-ai-generation` for the separately approved Vibecoders instance.
+Both instances use the same thread registry. Public media and job stores remain separate.
+Route/storage provisioning does not require a bot token and publishes no existing content.
+Actual sharing still rejects missing or invalid bot credentials.
 It preserves the existing vhost, creates private backups, checks nginx, and reloads nginx.
 It never restarts neighboring services.
 Install the route/settings and then use the normal `deploy/agent-redeploy.sh` release procedure.
-Additional environments require their own explicitly selected route and deployment.
+Only these two approved instances are accepted by the installer.
 
 Public GET routes allow only the page, listed asset slots, and reuse handoff.
 The public POST route accepts only login for that exact published share.
