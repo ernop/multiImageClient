@@ -234,17 +234,24 @@ namespace MultiImageClient
             // Runs before static files and every endpoint. Unauthenticated
             // API calls get 401 JSON; unauthenticated page loads get the
             // inline login page. Login and the content-free loopback liveness
-            // probe are the only anonymous routes. When auth is off (blank
+            // probe and scoped public shares are the only anonymous routes. When auth is off (blank
             // UiAuthFilePath) this middleware is not registered.
             if (auth != null)
             {
                 app.Use(async (ctx, next) =>
                 {
                     var path = ctx.Request.Path.Value ?? "/";
+                    if (path.StartsWith("/public/", StringComparison.Ordinal)
+                        && !UiPublicShares.IsPublicRequest(path, ctx.Request.Method))
+                    {
+                        ctx.Response.StatusCode = 404;
+                        return;
+                    }
                     if (((path == "/api/auth/login" || path == "/api/auth/logout") && HttpMethods.IsPost(ctx.Request.Method))
                         || (auth.LoginLinks != null && path == "/api/auth/link" && HttpMethods.IsPost(ctx.Request.Method))
                         || (auth.LoginLinks != null && path == "/enter.html" && HttpMethods.IsGet(ctx.Request.Method))
-                        || (path == "/healthz" && HttpMethods.IsGet(ctx.Request.Method)))
+                        || (path == "/healthz" && HttpMethods.IsGet(ctx.Request.Method))
+                        || UiPublicShares.IsPublicRequest(path, ctx.Request.Method))
                     {
                         await next();
                         return;
@@ -2678,6 +2685,7 @@ namespace MultiImageClient
                     items = snapshot.Records.Select(record => new
                     {
                         record.Kind,
+                        state = record.State,
                         jobId = record.JobId,
                         generator = record.Generator,
                         imageIndex = record.ImageIndex,
@@ -2685,147 +2693,7 @@ namespace MultiImageClient
                 });
             });
 
-            app.MapPost("/api/discord/vibecoders", async (HttpRequest request) =>
-            {
-                if (!DiscordVibecoders.IsConfigured(settings))
-                {
-                    return Results.Json(
-                        new { error = "Sending to vibecoders is not configured on this instance." },
-                        statusCode: 404);
-                }
-
-                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
-                if (auth != null && authUser.Length == 0)
-                {
-                    return Results.Json(
-                        new { error = "Log in to send to vibecoders." },
-                        statusCode: 403);
-                }
-
-                var form = await request.ReadFormAsync();
-                var jobId = form["jobId"].ToString().Trim();
-                var generator = form["generator"].ToString().Trim();
-                if (jobId.Length == 0
-                    || generator.Length == 0
-                    || !int.TryParse(form["imageIndex"].ToString(), out var imageIndex)
-                    || imageIndex < 0)
-                {
-                    return Results.BadRequest(
-                        new { error = "jobId, generator, and a non-negative imageIndex are required." });
-                }
-
-                var job = jobs.Get(jobId);
-                if (job == null || visibility.IsPromptHidden(jobId))
-                {
-                    return Results.NotFound(new { error = "The selected job is no longer available." });
-                }
-                if (visibility.IsImageHidden(jobId, generator, imageIndex))
-                {
-                    return Results.NotFound(new { error = "The selected image is hidden." });
-                }
-                if (!TryResolveSendMedia(job, generator, imageIndex, out var media, out var mediaError))
-                {
-                    return Results.NotFound(new { error = mediaError });
-                }
-
-                var sender = authUser.Length > 0 ? authUser : "local";
-                var claim = new UiDiscordVibecodersSend
-                {
-                    Kind = media.Kind,
-                    JobId = jobId,
-                    Generator = generator,
-                    ImageIndex = imageIndex,
-                    SentByLogin = sender,
-                    SentAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                };
-                if (!vibecoders.TryClaim(claim))
-                {
-                    return Results.Json(
-                        new { error = $"This {media.Kind} was already sent to vibecoders." },
-                        statusCode: 409);
-                }
-
-                Stream? upload = null;
-                try
-                {
-                    string contentType = media.ContentType;
-                    string fileName = generator + "-" + imageIndex
-                        + DiscordVibecoders.FileExtension(media.ContentType);
-                    var attach = false;
-
-                    if (job.TryGetImagePath(generator, imageIndex, out var path, out contentType)
-                        && File.Exists(path))
-                    {
-                        var length = new FileInfo(path).Length;
-                        if (length > 0 && length <= DiscordVibecoders.MaxAttachmentBytes)
-                        {
-                            upload = File.OpenRead(path);
-                            attach = true;
-                            fileName = generator + "-" + imageIndex
-                                + DiscordVibecoders.FileExtension(contentType);
-                        }
-                    }
-                    else
-                    {
-                        var hosted = await runner.TryGetImageBytesIncludingHostedAsync(
-                            job, generator, imageIndex, DiscordVibecoders.MaxAttachmentBytes,
-                            request.HttpContext.RequestAborted);
-                        if (hosted != null
-                            && hosted.Value.Bytes.Length > 0
-                            && hosted.Value.Bytes.Length <= DiscordVibecoders.MaxAttachmentBytes)
-                        {
-                            upload = new MemoryStream(hosted.Value.Bytes, writable: false);
-                            contentType = hosted.Value.ContentType;
-                            attach = true;
-                            fileName = generator + "-" + imageIndex
-                                + DiscordVibecoders.FileExtension(contentType);
-                        }
-                    }
-
-                    if (!attach)
-                    {
-                        throw new InvalidOperationException("The original is unavailable or exceeds the 10 MiB attachment limit.");
-                    }
-
-                    var client = new DiscordVibecodersClient(settings);
-                    await client.SendAsync(
-                        sender,
-                        attach ? upload! : Stream.Null,
-                        contentType,
-                        fileName,
-                        request.HttpContext.RequestAborted);
-                    Logger.Log(
-                        $"UI vibecoders: {sender} sent {media.Kind}/{jobId}/{generator}/{imageIndex}.");
-                    var snapshot = vibecoders.Snapshot();
-                    return Results.Json(new
-                    {
-                        available = true,
-                        version = snapshot.Version,
-                        item = new
-                        {
-                            media.Kind,
-                            jobId,
-                            generator,
-                            imageIndex,
-                        },
-                    });
-                }
-                catch (Exception ex) when (ex is IOException or HttpRequestException or InvalidOperationException or TaskCanceledException)
-                {
-                    vibecoders.ReleaseClaim(jobId, generator, imageIndex, sender);
-                    Logger.Log($"UI vibecoders: send failed for {jobId}/{generator}/{imageIndex}: {ex.Message}");
-                    return Results.Json(
-                        new { error = "Discord did not accept this send." },
-                        statusCode: 502);
-                }
-                finally
-                {
-                    if (upload != null)
-                    {
-                        await upload.DisposeAsync();
-                    }
-                }
-            });
+            MapPublicShares(app, settings, auth, jobs, visibility, runner, vibecoders, environments);
 
             // Shared persistent image + prompt favorites. POST takes the
             // desired boolean state instead of "toggle", so a retried request

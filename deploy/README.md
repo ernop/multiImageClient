@@ -220,6 +220,18 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
   reading uploads once the configured reserve is reached. Active jobs are
   still allowed to finish; reserve several GiB above their plausible output.
 
+## Public prompt sharing migration (2026-09-17)
+
+The owner authorized public prompt pages with per-post confirmation.
+Read [the public sharing contract](../docs/public-prompt-sharing.md).
+Run `deploy/install-public-sharing.py --server-name '<verified name>' --channel-name '<verified name>'` as Linux root.
+The installer adds only the original instance's `/shared/original/` route and three sharing settings.
+It backs up the existing configuration, validates nginx, and reloads nginx.
+The private route and other services remain unchanged.
+Then run the normal original-service redeploy above.
+Verify anonymous unknown tokens return 404 without revealing the private address.
+Do not publish existing private prompts or post test messages during release checks.
+
 ## Additional isolated environments
 
 See [the environment setup guide](../docs/workspaces-prd.md#operator-setup-and-recipient-flow).

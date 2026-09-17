@@ -167,6 +167,7 @@ let fableBotRenderVersion = 0;
 let fableBotSending = false;
 let vibecodersServerVersion = "";
 let vibecodersSentKeys = new Set();
+let vibecodersPendingKeys = new Set();
 let vibecodersMutation = null;
 let vibecodersMutationError = null;
 const ownedJobIds = new Set();
@@ -188,7 +189,7 @@ let imageViewerState = null;  // stable { jobId, generator, imageIndex } identit
 let imageViewerPaintedItem = null;
 let imageViewerRenderVersion = 0;
 let imageViewerPreloadHudScheduled = false;
-let imageViewerNeighborStartPending = null;
+const imageViewerPreviewCache = new Map();
 let imageViewerActivationVersion = 0;
 let imageViewerActivationController = null;
 let imageViewerHelpOpen = false;
@@ -770,15 +771,31 @@ function updateGeneratorCount() {
 // generator; an over-limit prompt still submits — the server truncates it at
 // the send-to-provider stage — this notice just says so before the fact.
 const promptLimitNotice = el("prompt-limit-notice");
+const globalAppendText = el("global-append-text");
+globalAppendText.value = storedPersonalField("promptTools")?.globalAppendText ?? "";
+globalAppendText.addEventListener("input", () => {
+  updatePromptLimitNotice();
+  try {
+    persistPersonalConfigurationSnapshot();
+    el("global-append-status").textContent = "";
+  } catch (error) {
+    el("global-append-status").textContent = `Could not save directives: ${error.message || error}`;
+  }
+});
+
+function combinedEndpointExtraText(key) {
+  return [effectiveEndpointField(key, "extraText").trim(), globalAppendText.value.trim()]
+    .filter(Boolean).join("\n\n");
+}
 
 function updatePromptLimitNotice() {
   const promptLength = promptBox.value.trim().length;
   const affected = [...gensRow.querySelectorAll("input:checked")]
     .map((cb) => {
       const generator = generators.find((g) => g.key === cb.value);
-      const extraLength = effectiveEndpointField(cb.value, "extraText").trim().length;
+      const extraLength = combinedEndpointExtraText(cb.value).length;
       const wireLength = promptLength + (promptLength && extraLength ? 2 : 0) + extraLength;
-      const wireText = [promptBox.value.trim(), effectiveEndpointField(cb.value, "extraText").trim()]
+      const wireText = [promptBox.value.trim(), combinedEndpointExtraText(cb.value)]
         .filter(Boolean).join("\n\n");
       const wireBytes = new TextEncoder().encode(wireText).length;
       return { generator, wireLength, wireBytes };
@@ -1012,6 +1029,7 @@ function personalConfigurationFields() {
       name: "promptTools",
       scope: "browser",
       read: () => ({
+        globalAppendText: globalAppendText.value,
         claudeAdviceInstruction:
           claudeAdviceInstruction?.value ||
           storedPersonalField("promptTools")?.claudeAdviceInstruction ||
@@ -1138,8 +1156,9 @@ function normalizeImportedPromptTools(raw) {
   const promptTools = requireConfigObject(
     raw,
     "promptTools",
-    ["claudeAdviceInstruction"]);
+    ["claudeAdviceInstruction", "globalAppendText"]);
   return {
+    globalAppendText: requireConfigString(promptTools.globalAppendText, "promptTools.globalAppendText", 16000, true),
     claudeAdviceInstruction: requireConfigString(
       promptTools.claudeAdviceInstruction,
       "promptTools.claudeAdviceInstruction",
@@ -1324,6 +1343,9 @@ function normalizeImportedVideoAudio(raw) {
 }
 
 function migratePersonalConfiguration(raw, targetVersion) {
+  if (raw?.version === 2 && targetVersion === ConfigTransferVersion) {
+    return PersonalConfigurationSchema.migrateVersion2(raw);
+  }
   if (raw?.version !== 1 || targetVersion !== ConfigTransferVersion) {
     throw new Error(
       `unsupported configuration version ${String(raw?.version)}; expected ${ConfigTransferVersion}`);
@@ -1363,6 +1385,7 @@ function migratePersonalConfiguration(raw, targetVersion) {
     ...portable,
     version: targetVersion,
     generatorPreferences: preferences,
+    promptTools: { ...raw.promptTools, globalAppendText: "" },
   };
 }
 
@@ -7339,6 +7362,12 @@ function renderImageViewerVibecoders(item) {
     imageViewerVibecoders.title = "Sending to #vibecoders";
     return;
   }
+  if (vibecodersPendingKeys.has(key)) {
+    imageViewerVibecoders.disabled = true;
+    imageViewerVibecoders.textContent = "check delivery in Discord";
+    imageViewerVibecoders.title = "The page may be public. Check Discord before sending again.";
+    return;
+  }
   if (vibecodersSentKeys.has(key)) {
     imageViewerVibecoders.disabled = true;
     imageViewerVibecoders.textContent = "sent to vibecoders";
@@ -7367,6 +7396,7 @@ async function loadVibecodersSent() {
   const body = await response.json();
   if (body.unchanged) return;
   vibecodersServerVersion = String(body.version || "");
+  vibecodersPendingKeys = new Set((body.items || []).filter(item => item.state === "pending").map(item => vibecodersIdentity(item.jobId, item.generator, item.imageIndex)));
   vibecodersSentKeys = new Set(
     (body.items || []).map((item) =>
       vibecodersIdentity(item.jobId, item.generator, item.imageIndex)));
@@ -7386,6 +7416,11 @@ function refreshVibecodersButtons() {
 function paintVibecodersButton(button) {
   const key = vibecodersIdentity(
     button.dataset.jobId, button.dataset.generator, button.dataset.imageIndex);
+  if (vibecodersPendingKeys.has(key)) {
+    button.disabled = true;
+    button.textContent = "check delivery in Discord";
+    return;
+  }
   if (vibecodersMutation === key) {
     button.disabled = true;
     button.textContent = "sending…";
@@ -7402,31 +7437,21 @@ function paintVibecodersButton(button) {
 
 async function sendToVibecoders(jobId, generator, imageIndex) {
   const key = vibecodersIdentity(jobId, generator, imageIndex);
-  if (!vibecodersAvailable || vibecodersMutation || vibecodersSentKeys.has(key)) return;
+  if (!vibecodersAvailable || vibecodersMutation || vibecodersSentKeys.has(key) || vibecodersPendingKeys.has(key)) return;
   vibecodersMutation = key;
   vibecodersMutationError = null;
   refreshVibecodersButtons();
-  const form = new FormData();
-  form.append("jobId", jobId);
-  form.append("generator", generator);
-  form.append("imageIndex", String(imageIndex));
   try {
-    const response = await fetch(apiUrl("api/discord/vibecoders"), { method: "POST", body: form });
-    if (response.status === 401) { location.reload(); return; }
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-    if (!body.item
-        || body.item.jobId !== jobId
-        || body.item.generator !== generator
-        || body.item.imageIndex !== imageIndex) {
-      throw new Error("send response identity did not match the requested result");
+    const body = await previewPublicShare({ apiUrl, jobId, generator, imageIndex });
+    if (body) {
+      vibecodersSentKeys.add(key);
+      if (body.version) vibecodersServerVersion = String(body.version);
     }
-    vibecodersSentKeys.add(key);
-    if (body.version) vibecodersServerVersion = String(body.version);
     vibecodersMutation = null;
     refreshVibecodersButtons();
   } catch (error) {
     vibecodersMutation = null;
+    if (error.state === "pending") vibecodersPendingKeys.add(key);
     vibecodersMutationError = { key, message: String(error) };
     refreshVibecodersButtons();
   }
@@ -7719,7 +7744,11 @@ async function submit() {
   const generatorExtraTexts = {};
   let generatorExtraTextChars = 0;
   for (const key of gens) {
-    const extraText = effectiveEndpointField(key, "extraText").trim();
+    const extraText = combinedEndpointExtraText(key);
+    if (extraText.length > generatorEndpointConfiguration.maxExtraTextChars) {
+      sendError.textContent = `Combined extra text for ${key} exceeds ${generatorEndpointConfiguration.maxExtraTextChars.toLocaleString()} characters`;
+      return;
+    }
     if (extraText) {
       generatorExtraTexts[key] = extraText;
       generatorExtraTextChars += extraText.length;
@@ -8731,14 +8760,6 @@ function setImageViewerAwaitingPixels(active) {
 
 let imageViewerPreviewLoadToken = 0;
 
-function startImageViewerNeighborsIfCurrentFetched(url) {
-  const pending = imageViewerNeighborStartPending;
-  if (!pending || pending.url !== url) return;
-  if (pending.version !== imageViewerRenderVersion || imageViewer.hidden) return;
-  imageViewerNeighborStartPending = null;
-  pending.start();
-}
-
 function loadImageViewerEntry(url, priority) {
   const existing = imageViewerCache.get(url);
   if (existing) {
@@ -8777,13 +8798,11 @@ function loadImageViewerEntry(url, priority) {
       }
 
       // Free the network slot before decode so neighbors can fetch while
-      // this frame's pixels land in the decoder. Neighbor fetches wait
-      // until this current original's bytes have arrived.
+      // this frame's pixels land in the decoder.
       entry.fetched = true;
       entry.acquired = false;
       releaseImageViewerPreloadSlot();
       scheduleImageViewerPreloadHud();
-      startImageViewerNeighborsIfCurrentFetched(url);
 
       entry.blobUrl = URL.createObjectURL(blob);
       entry.image = new Image();
@@ -8802,10 +8821,6 @@ function loadImageViewerEntry(url, priority) {
   })().catch((error) => {
     if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
     if (imageViewerCache.get(url) === entry) imageViewerCache.delete(url);
-    // A failed selected original must still release the neighbor runway;
-    // the pending gate's own version/hidden/url checks make this a no-op
-    // for aborted neighbors and superseded renders.
-    startImageViewerNeighborsIfCurrentFetched(url);
     scheduleImageViewerPreloadHud();
     throw error;
   });
@@ -8952,84 +8967,43 @@ function prepareImageViewerWindow(prompts, current) {
   });
   sortImageViewerPreloadWaiters();
 
-  // Keep the active fetch set aligned with the latest plan. Decoded entries do
-  // not consume network slots; choose the first six entries still needing
-  // bytes, then abort only enough lower-ranked active speculation to admit
-  // those candidates. The exact selected image therefore preempts stale work.
-  // While the selected original is still on the wire, abort neighbor fetches
-  // so they do not share the pipe. Parallel copies of six 6 MB files make
-  // the visible original slower. The 2026-08-31 "three parallel GETs" probe
-  // hit the SAME URL; that is not how the viewer loads neighbors.
-  const currentFetched = !!imageViewerCache.get(current.item.url)?.fetched;
-  const desiredActiveUrls = new Set();
-  for (const candidate of uniqueSchedule) {
-    if (!currentFetched && !immediateUrls.has(candidate.url)) continue;
-    const entry = imageViewerCache.get(candidate.url);
-    if (entry?.fetched) continue;
-    desiredActiveUrls.add(candidate.url);
-    if (desiredActiveUrls.size >= ImageViewerPreloadConcurrency) break;
+  // Request every thumb before starting originals. Keep the bounded range warm
+  // even while the selected original is downloading or navigation continues.
+  const thumbUrls = new Set();
+  for (const item of allItems) {
+    if (!wantedUrls.has(item.url)) continue;
+    const url = viewerPreviewThumbUrl(findViewerPreviewThumb(item));
+    if (!url) continue;
+    thumbUrls.add(url);
+    if (!imageViewerPreviewCache.has(url)) {
+      const preview = new Image();
+      preview.src = url;
+      imageViewerPreviewCache.set(url, preview);
+    }
   }
-  const activeEntries = [...imageViewerCache.entries()]
-    .filter(([, entry]) => entry.acquired);
-  const staleActive = activeEntries
-    .filter(([url]) => !desiredActiveUrls.has(url))
-    .sort((a, b) => b[1].priority - a[1].priority);
-  if (!currentFetched) {
-    // The selected original is still on the wire. Abort every other
-    // unfetched original — active AND queued. Aborting only active ones
-    // frees slots that releaseImageViewerPreloadSlot would hand straight
-    // to queued neighbor waiters from the previous plan, putting them on
-    // the pipe beside the selected original anyway.
-    for (const [url, entry] of [...imageViewerCache]) {
-      if (immediateUrls.has(url)) continue;
-      if (entry.fetched || entry.ready) continue;
-      discardImageViewerCacheEntry(url, entry);
-    }
-  } else {
-    const desiredNotActive = [...desiredActiveUrls]
-      .filter((url) => !imageViewerCache.get(url)?.acquired).length;
-    const freeSlots = Math.max(0, ImageViewerPreloadConcurrency - activeEntries.length);
-    let preemptionsNeeded = Math.max(0, desiredNotActive - freeSlots);
-    for (const [url, entry] of staleActive) {
-      if (preemptionsNeeded <= 0) break;
-      discardImageViewerCacheEntry(url, entry);
-      preemptionsNeeded--;
-    }
+  for (const [url, preview] of imageViewerPreviewCache) {
+    if (thumbUrls.has(url)) continue;
+    preview.removeAttribute("src");
+    imageViewerPreviewCache.delete(url);
   }
 
-  const immediateSchedule = uniqueSchedule
-    .filter((candidate) => immediateUrls.has(candidate.url));
-  const speculativeSchedule = uniqueSchedule
-    .filter((candidate) => !immediateUrls.has(candidate.url));
-  const startSchedule = (candidates) => {
-    let currentEntry = null;
-    for (const { url, priority } of candidates) {
-      const entry = loadImageViewerEntry(url, priority);
-      if (url === current.item.url) currentEntry = entry;
-      else entry.promise.catch(() => {});
-    }
-    return currentEntry;
-  };
-
-  // The selected original keeps the pipe until its bytes arrive (`fetched`).
-  // Decode does not use the network. Neighbors start after that, on every
-  // origin. Starting six full-res B2 files at once shares ~7 Mbps across
-  // them and makes the visible original slower.
-  const currentEntry = startSchedule(immediateSchedule);
-  if (!currentEntry) {
-    throw new Error("viewer preload missing the selected image");
+  // Keep in-range downloads. Preempt at most one neighbor only when the
+  // selected original needs a slot; do not restart the entire working set.
+  const selectedEntry = imageViewerCache.get(current.item.url);
+  if (!selectedEntry?.acquired && !selectedEntry?.fetched &&
+      imageViewerPreloadActive >= ImageViewerPreloadConcurrency) {
+    const victim = [...imageViewerCache.entries()]
+      .filter(([url, entry]) => !immediateUrls.has(url) && entry.acquired)
+      .sort((a, b) => b[1].priority - a[1].priority)[0];
+    if (victim) discardImageViewerCacheEntry(...victim);
   }
-  const startNeighbors = () => startSchedule(speculativeSchedule);
-  imageViewerNeighborStartPending = null;
-  if (currentEntry.ready || currentEntry.fetched) {
-    startNeighbors();
-  } else {
-    imageViewerNeighborStartPending = {
-      version: imageViewerRenderVersion,
-      url: current.item.url,
-      start: startNeighbors,
-    };
+  let currentEntry = null;
+  for (const { url, priority } of uniqueSchedule) {
+    const entry = loadImageViewerEntry(url, priority);
+    if (url === current.item.url) currentEntry = entry;
+    else entry.promise.catch(() => {});
   }
+  if (!currentEntry) throw new Error("viewer preload missing the selected image");
   return currentEntry;
 }
 
@@ -9474,7 +9448,6 @@ function paintImageViewerPreview(current) {
 // during that wait falsely associates it with the newly selected image.
 function clearImageViewerPresentation() {
   imageViewerPaintedItem = null;
-  imageViewerNeighborStartPending = null;
   hideImageViewerPreloadHud();
   setImageViewerAwaitingPixels(false);
   setImageViewerPreviewNotFinal(false);
@@ -9524,8 +9497,8 @@ async function renderImageViewer() {
 
   const version = ++imageViewerRenderVersion;
   scheduleImageViewerPreloadHud();
-  // Kick the selected original immediately. Neighbors wait until its bytes
-  // have arrived. The stage shows that item's card thumb plus chrome now.
+  // Queue the entire range now. Paint the selected item's own preview
+  // while its original downloads alongside its neighbors.
   const currentEntry = prepareImageViewerWindow(prompts, current);
 
   const paint = (entry) => {
@@ -10107,6 +10080,8 @@ function closeImageViewer() {
   recordImageViewerNavigation(0, "image");
   clearImageViewerPresentation();
   abortImageViewerInFlight();
+  for (const preview of imageViewerPreviewCache.values()) preview.removeAttribute("src");
+  imageViewerPreviewCache.clear();
   trimImageViewerReadyCache();
   const restore = imageViewerFocusBeforeOpen;
   imageViewerFocusBeforeOpen = null;
@@ -11634,6 +11609,25 @@ async function ensureArchiveDayLoaded(day) {
 
 async function openSharedJobFromUrl() {
   const params = new URLSearchParams(location.search);
+  const shareToken = params.get("shared");
+  if (shareToken) {
+    const response = await fetch(apiUrl(`api/public-shares/${encodeURIComponent(shareToken)}/reuse`));
+    if (!response.ok) throw new Error("This shared prompt is unavailable.");
+    const shared = await response.json();
+    const blobs = [];
+    for (const input of shared.inputs) {
+      const media = await fetch(apiUrl(input));
+      if (!media.ok) throw new Error("A shared input could not load.");
+      const blob = await media.blob();
+      if (!blob.type.startsWith("image/")) throw new Error("A shared input is not an image.");
+      blobs.push(blob);
+    }
+    setImagesFromBlobs(blobs);
+    applyViewedPromptToComposer(shared.prompt);
+    history.replaceState(null, "", location.pathname);
+    promptBox.focus();
+    return;
+  }
   const jobId = params.get("job");
   if (!jobId) return;
   const generator = params.get("gen") || "";

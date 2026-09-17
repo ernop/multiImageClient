@@ -19,6 +19,7 @@ namespace MultiImageClient
         public int ImageIndex { get; init; }
         public required string SentByLogin { get; init; }
         public long SentAtUnixMs { get; init; }
+        public string State { get; set; } = "sent";
     }
 
     /// Persistent one-send-per-result records for #vibecoders. Disk is the
@@ -102,6 +103,18 @@ namespace MultiImageClient
                 {
                     File.Delete(path);
                 }
+            }
+        }
+
+        public void Complete(string jobId, string generator, int imageIndex)
+        {
+            lock (_lock)
+            {
+                var key = RecordKey(jobId, generator, imageIndex);
+                var record = _records[key];
+                record.State = "sent";
+                WriteAtomically(RecordPath(key), record);
+                _revision++;
             }
         }
 

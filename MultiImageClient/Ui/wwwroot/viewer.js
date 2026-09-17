@@ -94,9 +94,10 @@
     let currentAspect = 1;
 
     // ---- preload cache: url -> entry ----
-    // entry: { status: queued|fetching|decoded|failed, blobUrl, width, height,
+    // entry: { status: queued|fetching|decoding|decoded|failed, blobUrl, width, height,
     //          controller, promise, priority, lastUsed }
     const cache = new Map();
+    const previews = new Map();
     let activeFetches = 0;
     const waiters = [];   // [{ priority, entry, resolve }]
 
@@ -105,8 +106,8 @@
         activeFetches++;
         return Promise.resolve();
       }
-      return new Promise((resolve) => {
-        waiters.push({ priority, entry, resolve });
+      return new Promise((resolve, reject) => {
+        waiters.push({ priority, entry, resolve, reject });
         waiters.sort((a, b) => a.priority - b.priority);
       });
     }
@@ -123,6 +124,8 @@
     function discard(url) {
       const entry = cache.get(url);
       if (!entry) return;
+      const queued = waiters.findIndex((waiter) => waiter.entry === entry);
+      if (queued >= 0) waiters.splice(queued, 1)[0].reject(new Error("discarded"));
       if (entry.controller) entry.controller.abort();
       if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
       cache.delete(url);
@@ -138,14 +141,19 @@
     function load(url, priority) {
       const existing = cache.get(url);
       if (existing) {
-        if (priority < existing.priority) existing.priority = priority;
+        existing.priority = priority;
+        const waiter = waiters.find((candidate) => candidate.entry === existing);
+        if (waiter) {
+          waiter.priority = priority;
+          waiters.sort((a, b) => a.priority - b.priority);
+        }
         return existing.promise;
       }
       const entry = { status: "queued", blobUrl: null, width: 0, height: 0, controller: null, promise: null, priority, lastUsed: Date.now() };
       cache.set(url, entry);
       entry.promise = (async () => {
         await takeSlot(priority, entry);
-        if (!cache.has(url)) { releaseSlot(); throw new Error("discarded"); }
+        if (cache.get(url) !== entry) { releaseSlot(); throw new Error("discarded"); }
         entry.status = "fetching";
         entry.controller = new AbortController();
         scheduleHud();
@@ -155,11 +163,13 @@
           const blob = await resp.blob();
           releaseSlot();
           entry.controller = null;
+          entry.status = "decoding";
           const blobUrl = URL.createObjectURL(blob);
+          entry.blobUrl = blobUrl;
           const probe = new Image();
           probe.src = blobUrl;
           await probe.decode();
-          if (!cache.has(url)) { URL.revokeObjectURL(blobUrl); throw new Error("discarded"); }
+          if (cache.get(url) !== entry) throw new Error("discarded");
           entry.blobUrl = blobUrl;
           entry.width = probe.naturalWidth;
           entry.height = probe.naturalHeight;
@@ -168,6 +178,7 @@
           trimDecoded();
           return entry;
         } catch (error) {
+          if (entry.blobUrl) URL.revokeObjectURL(entry.blobUrl);
           if (entry.controller) { releaseSlot(); entry.controller = null; }
           entry.status = "failed";
           entry.error = error;
@@ -184,8 +195,8 @@
       for (const [url, entry] of [...cache.entries()]) {
         if (entry.status !== "decoded") discard(url);
       }
-      waiters.length = 0;
-      activeFetches = 0;
+      for (const preview of previews.values()) preview.removeAttribute("src");
+      previews.clear();
     }
 
     // ---- items ----
@@ -200,11 +211,37 @@
     }
 
     function preloadNeighbors(index) {
+      const range = items.slice(Math.max(0, index - PreloadRadius), index + PreloadRadius + 1);
+      const wanted = new Set(range.map((item) => item.url));
+      for (const [url] of cache) {
+        if (!wanted.has(url)) discard(url);
+      }
+      const thumbs = new Set(range.map((item) => item.thumbUrl).filter(Boolean));
+      for (const [url, preview] of previews) {
+        if (thumbs.has(url)) continue;
+        preview.removeAttribute("src");
+        previews.delete(url);
+      }
+      for (const url of thumbs) {
+        if (previews.has(url)) continue;
+        const preview = new Image();
+        preview.src = resolveUrl(url);
+        previews.set(url, preview);
+      }
+      const current = load(items[index].url, 0);
+      // Admit a queued selection without restarting every in-range transfer.
+      if (cache.get(items[index].url)?.status === "queued" && activeFetches >= FetchSlots) {
+        const victim = [...cache.entries()]
+          .filter(([url, entry]) => url !== items[index].url && entry.status === "fetching")
+          .sort((a, b) => b[1].priority - a[1].priority)[0];
+        if (victim) discard(victim[0]);
+      }
       for (let d = 1; d <= PreloadRadius; d++) {
         for (const i of [index + d, index - d]) {
           if (i >= 0 && i < items.length) load(items[i].url, d);
         }
       }
+      return current;
     }
 
     // ---- painting ----
@@ -289,7 +326,7 @@
       scheduleHud();
       onChange(item, true);
       try {
-        const entry = await load(item.url, 0);
+        const entry = await preloadNeighbors(index);
         if (token !== selection) return true;
         img.src = entry.blobUrl;
         pulse.hidden = true;
@@ -305,7 +342,6 @@
         failed.textContent = `full-resolution load failed: ${error && error.message ? error.message : error}`;
         dimsEl.textContent = item.width && item.height ? `${item.width}×${item.height} — preview only` : "";
       }
-      if (token === selection) preloadNeighbors(index);
       return true;
     }
 
@@ -327,7 +363,7 @@
           tick.classList.add("void");
         } else {
           const entry = cache.get(items[i].url);
-          const status = entry ? entry.status : "none";
+          const status = entry?.status === "decoding" ? "fetching" : entry ? entry.status : "none";
           tick.classList.add(status);
           if (i === index) {
             tick.classList.add("current");

@@ -143,6 +143,10 @@ namespace MultiImageClient
         // Incoming Discord webhook for the #vibecoders send button. Blank
         // (the default) hides the button. Posts attach originals without site or login URLs.
         public string DiscordVibecodersWebhookUrl { get; set; } = "";
+        public string DiscordVibecodersServerName { get; set; } = "";
+        public string DiscordVibecodersChannelName { get; set; } = "";
+        // Separate public route, never the private UI prefix. See docs/public-prompt-sharing.md.
+        public string UiPublicShareBaseUrl { get; set; } = "";
 
         // Public origin plus path prefix for this environment's login and share links.
         // Example: https://host.example/instance-path  (no trailing slash).

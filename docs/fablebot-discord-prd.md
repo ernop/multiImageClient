@@ -1,5 +1,11 @@
 # FableBot — Discord bot posting interface
 
+**2026-09-17:** Vibecoders now uses [public prompt sharing](public-prompt-sharing.md) with an explicit HTML preview and publication confirmation.
+Its caption links only to the separate public subset route.
+Private MIC addresses and account links remain prohibited.
+The separate FableBot transport retains its attachment-only behavior below.
+The 2026-09-09 Vibecoders attachment-only decision is superseded by this confirmed-publication flow.
+
 Status: CLI implemented 2026-09-04; UI result posting implemented 2026-09-08.
 Local configuration has no bot token or channel ID. Live verification remains pending.
 
@@ -21,11 +27,13 @@ A bot account was chosen over a second incoming webhook (the existing
 - can later be extended to read, reply, and react (gateway or slash
   commands), which a webhook can never do.
 
-The existing vibecoders webhook sender (`DiscordVibecoders.cs`) sends attachments without private links
+The existing vibecoders webhook sender (`DiscordVibecoders.cs`) sends attachments with confirmed public-subset links
 and remains the `send to vibecoders` button's transport.
 The viewer now has a separate `send to Discord` button for FableBot.
 
-### Production privacy correction (2026-09-09)
+### Historical production privacy correction (2026-09-09)
+
+This section records the earlier attachment-only correction. The 2026-09-17 public-sharing contract supersedes its no-caption rule.
 
 The initial webhook activation exposed the original tenant's private MIC address in a Discord message.
 The link contained result identifiers, not a password or automatic-login token.

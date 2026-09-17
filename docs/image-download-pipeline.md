@@ -6,8 +6,8 @@ parallel system. There is no later size-variant plan.
 ## Goal
 
 Show the selected image’s own pixels as soon as a card thumb exists.
-Download each original at most once. Give the selected original the
-network until its bytes arrive. Never put original bytes on a card.
+Reuse each cached original. Start downloads across the bounded preload range
+before the user visits those images. Never put original bytes on a card.
 
 ## Two files per raster result
 
@@ -64,7 +64,7 @@ viewer (`app.js`).
 
 The goal-loop page uses the standalone module `Ui/wwwroot/viewer.js`
 (2026-09-04). It applies the same rules with its own loader: card-thumb
-preview first, atomic chrome, selected original holds the network,
+preview first, atomic chrome, selected original has queue priority,
 ±10 preload over 6 slots, late fetches guarded by selection identity.
 The two implementations are the known duplication; the intended end
 state is `app.js` on `viewer.js`. See `docs/goal-loop-prd.md`.
@@ -74,9 +74,27 @@ URL never has two in-flight GETs. Hover does not use a second
 `fetch()`. Closing the viewer aborts unfinished GETs and keeps up to
 24 decoded originals for the next open.
 
-The selected original holds the network until `fetched` (bytes in).
-Decode does not use the pipe. Neighbor originals start after that.
-Concurrency is 6.
+Request all available thumbnails in the preload range first.
+Then queue every original in that range, with the selected original first.
+Do not wait for the selected original or every thumbnail to finish before starting neighbor originals.
+Concurrency is 6. Decode releases its network slot immediately after receiving the bytes.
+
+## Preload scheduling — 2026-09-17
+
+This supersedes the exclusive selected-original network gate from 2026-08-31.
+That gate delayed neighbor downloads and repeatedly cancelled them during navigation.
+Both viewers now request originals throughout their existing preload ranges immediately.
+The composer retains its directional ordering and neighboring prompt landing points.
+The shared viewer retains its ±10 image range.
+Both retain in-range downloads across navigation and cancel work outside the range.
+When all slots are occupied, the selected original can preempt one lower-priority neighbor.
+Do not cancel every neighbor to give the selected image exclusive bandwidth.
+Thumbnail references remain bounded by the current range and clear on close.
+The shared viewer cancels queued requests without resetting counters owned by active requests.
+This prevents close/reopen races from exceeding the six-download limit.
+
+Regression coverage: `tools/test-global-append-preload.cjs` holds originals pending and checks advance downloads in both viewers.
+It also checks navigation reuse, full-range completion, and close/reopen presentation identity.
 
 ## What is not a download of the original
 

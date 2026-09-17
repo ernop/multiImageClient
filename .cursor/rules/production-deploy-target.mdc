@@ -34,6 +34,14 @@ alwaysApply: true
 - Never print or disclose the site's secret path, credentials, cookies, or
   provider keys.
 
+## Public prompt route migration (2026-09-17)
+
+The owner authorized public prompt subsets with explicit per-post confirmation.
+Use `deploy/install-public-sharing.py` to add only `/shared/original/` for the original service.
+Preserve the private prefix and never include it in Discord payloads or anonymous pages.
+Read [the sharing contract](../../docs/public-prompt-sharing.md) before changing publication or its routing.
+Ordinary authenticated routes remain private. Public sharing never grants account access.
+
 ## Explicit additional environments
 
 The owner authorized separate environments on this same hostname on 2026-09-08.

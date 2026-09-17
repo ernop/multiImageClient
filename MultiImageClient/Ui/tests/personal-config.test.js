@@ -74,6 +74,19 @@ test("stored document parsing fails closed", () => {
     /unsupported/);
 });
 
+test("version 2 migration preserves endpoint settings and declares empty global directives", () => {
+  const old = { format: schema.Format, version: 2,
+    promptTools: { claudeAdviceInstruction: "Keep my instruction" },
+    generatorPreferences: { endpointConfigurations: [{ key: "gpt2", extraText: "", notes: "Private" }] } };
+  const migrated = schema.parseStored(JSON.stringify(old));
+  assert.equal(migrated.version, schema.Version);
+  assert.deepEqual(migrated.promptTools, { claudeAdviceInstruction: "Keep my instruction", globalAppendText: "" });
+  assert.deepEqual(migrated.generatorPreferences, old.generatorPreferences);
+  assert.equal(old.version, 2);
+  assert.throws(() => schema.migrateVersion2({ ...old, promptTools: { ...old.promptTools, surprise: true } }), /invalid/);
+  assert.throws(() => schema.migrateVersion2({ ...old, promptTools: {} }), /invalid/);
+});
+
 function memoryStorage(entries = []) {
   const values = new Map(entries);
   return {

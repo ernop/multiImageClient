@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260910-describe-sheet">
+<link rel="stylesheet" href="style.css?v=20260917-public-shares">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20260911-mcphee-3-11-2">
 </head>
 <body>
@@ -276,6 +276,13 @@
         <button id="prompt-history-older" type="button" disabled>older changes</button>
       </nav>
     </section>
+    <div id="global-append-control">
+      <label for="global-append-text">Append to all endpoints</label>
+      <textarea id="global-append-text" rows="2" maxlength="16000"
+        placeholder="General directives for every selected endpoint" aria-describedby="global-append-help"></textarea>
+      <small id="global-append-help">Added after endpoint extra text for image and describe jobs. Saved in this browser.</small>
+      <p id="global-append-status" role="status"></p>
+    </div>
     <div id="endpoint-picker">
       <div id="generator-controls-host"></div>
       <div id="gens-row"><!-- generator checkboxes injected here --></div>
@@ -811,10 +818,20 @@
 <script src="text-drafts.js?v=20260912"></script>
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20260911-mcphee-3-11-2"></script>
-<script src="personal-config.js?v=20260905-shared-chooser"></script>
+<script src="personal-config.js?v=20260917-global-append"></script>
 <script src="prompt-rewrites.js"></script>
 <script src="generator-toggle.js?v=20260910"></script>
 <script src="generator-chooser.js?v=20260910-shared"></script>
-<script src="app.js?v=20260912-text-drafts"></script>
+<dialog id="public-share-dialog" aria-labelledby="public-share-title">
+  <h2 id="public-share-title">Share to Discord</h2>
+  <p class="share-destination"></p>
+  <div class="share-post"><div class="share-media"></div><p class="share-caption"></p></div>
+  <p class="share-disclosure"></p>
+  <details hidden><summary>Public page preview</summary><iframe title="Public prompt page preview" sandbox="allow-same-origin"></iframe></details>
+  <p class="share-status" role="status"></p>
+  <div class="share-actions"><button type="button" class="share-cancel">Cancel</button><button type="button" class="share-confirm" disabled>Make public &amp; send</button></div>
+</dialog>
+<script src="public-share-dialog.js?v=20260917-public-shares"></script>
+<script src="app.js?v=20260917-public-shares"></script>
 </body>
 </html>

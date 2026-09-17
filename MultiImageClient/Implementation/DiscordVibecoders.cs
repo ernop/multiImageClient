@@ -88,12 +88,30 @@ namespace MultiImageClient
             _http = httpClient ?? Http;
         }
 
+        public async Task<(string GuildId, string ChannelId)> GetDestinationAsync(CancellationToken cancellationToken)
+        {
+            if (new Uri(_webhookUrl).Query.Length != 0)
+                throw new InvalidOperationException("Public sharing requires a webhook without thread or query overrides.");
+            using var request = new HttpRequestMessage(HttpMethod.Get, _webhookUrl);
+            request.Headers.UserAgent.ParseAdd("MultiImageClient/1.0");
+            using var response = await _http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Could not verify the Discord destination.");
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var guild = json.RootElement.GetProperty("guild_id").GetString() ?? "";
+            var channel = json.RootElement.GetProperty("channel_id").GetString() ?? "";
+            if (!ulong.TryParse(guild, out var guildId) || guildId == 0 || !ulong.TryParse(channel, out var channelId) || channelId == 0)
+                throw new InvalidOperationException("Discord returned an invalid server or channel identity.");
+            return (guild, channel);
+        }
+
         public async Task SendAsync(
             string senderName,
             Stream media,
             string contentType,
             string fileName,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string? publicUrl = null,
+            string? expectedChannelId = null)
         {
             if (media == Stream.Null || !media.CanRead || !media.CanSeek
                 || media.Length - media.Position <= 0 || media.Length - media.Position > DiscordVibecoders.MaxAttachmentBytes)
@@ -111,6 +129,8 @@ namespace MultiImageClient
             var payload = new
             {
                 username,
+                content = publicUrl == null ? null : UiPublicShares.Caption(publicUrl),
+                flags = publicUrl == null ? (int?)null : 4,
                 allowed_mentions = new { parse = Array.Empty<string>() },
             };
             form.Add(
@@ -132,11 +152,19 @@ namespace MultiImageClient
                 form.Add(file, "files[0]", fileName);
             }
 
-            using var response = await _http.PostAsync(_webhookUrl, form, cancellationToken);
+            using var response = await _http.PostAsync(publicUrl == null ? _webhookUrl : _webhookUrl + "?wait=true", form, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 throw new InvalidOperationException(
                     $"Discord rejected the upload ({(int)response.StatusCode}).");
+            }
+            if (publicUrl != null)
+            {
+                using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                if (json.RootElement.GetProperty("channel_id").GetString() != expectedChannelId
+                    || json.RootElement.GetProperty("content").GetString() != UiPublicShares.Caption(publicUrl)
+                    || json.RootElement.GetProperty("attachments").GetArrayLength() != 1)
+                    throw new InvalidOperationException("Discord returned a different message identity or content.");
             }
         }
     }

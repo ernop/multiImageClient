@@ -9,7 +9,7 @@
   }
 })(typeof globalThis === "object" ? globalThis : this, function createPersonalConfigurationSchema() {
   const Format = "MultiImageClient personalized configuration";
-  const Version = 2;
+  const Version = 3;
   const StorageKey = "mic_personal_configuration_v2";
   const Scopes = new Set(["browser", "account", "hybrid"]);
 
@@ -97,11 +97,22 @@
     if (parsed.format !== Format) {
       throw new Error(`stored personal configuration format must be exactly "${Format}"`);
     }
+    if (parsed.version === 2) parsed = migrateVersion2(parsed);
     if (parsed.version !== Version) {
       throw new Error(
         `stored personal configuration version ${String(parsed.version)} is unsupported; expected ${Version}`);
     }
     return parsed;
+  }
+
+  function migrateVersion2(raw) {
+    if (raw?.format !== Format || raw?.version !== 2 ||
+        !raw.promptTools || typeof raw.promptTools !== "object" || Array.isArray(raw.promptTools) ||
+        Object.keys(raw.promptTools).length !== 1 ||
+        typeof raw.promptTools.claudeAdviceInstruction !== "string") {
+      throw new Error("invalid version 2 prompt tools");
+    }
+    return { ...raw, version: Version, promptTools: { ...raw.promptTools, globalAppendText: "" } };
   }
 
   // A first visit can start on the goal page before the composer writes its
@@ -140,6 +151,7 @@
         activityHeight: ui.activityHeight ?? null,
       },
       promptTools: {
+        globalAppendText: "",
         claudeAdviceInstruction: storage.getItem("mic_claude_advice_instruction_v1") ||
           "Fix spelling and obvious typos. Improve organization only where needed, while preserving the meaning and useful detail.",
       },
@@ -178,6 +190,7 @@
     build,
     normalize,
     parseStored,
+    migrateVersion2,
     browserFields,
     saveGeneratorPreferences,
   });
