@@ -8,7 +8,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 
 ## Also Read
 
-- [docs/public-prompt-sharing.md](docs/public-prompt-sharing.md) — **2026-09-17:** preview and confirm public prompt subsets before Vibecoders posting. Separate public capability routes; authenticated reuse; no private address disclosure.
+- [docs/public-prompt-sharing.md](docs/public-prompt-sharing.md) — **2026-09-17:** preview and confirm public prompt subsets before Vibecoders posting. Use one daily thread per California date. Separate public capability routes; authenticated reuse; no private address disclosure.
 
 - [docs/endpoint-extra-text.md](docs/endpoint-extra-text.md) — **2026-09-17:** saved global directives live in endpoint configuration and follow endpoint suffixes. Preserve limits, recorded text, and portable configuration.
 
@@ -111,7 +111,7 @@ All projects target plain `net10.0` (retargeted from `net9.0` on 2026-08-05; `Mu
 
 ## Run Modes (CLI flags)
 
-- **Public prompt sharing (2026-09-17):** `send to vibecoders` previews the attachment, compact links, destination, and public scope. Confirm before publishing and posting. Anonymous pages expose only one fixed prompt subset. See [docs/public-prompt-sharing.md](docs/public-prompt-sharing.md).
+- **Public prompt sharing (2026-09-17):** `send to vibecoders` previews the attachment, compact links, destination, and public scope. Confirm before publishing and posting inside the daily California-date thread. Anonymous pages expose only one fixed prompt subset. See [docs/public-prompt-sharing.md](docs/public-prompt-sharing.md).
 
 - **Global composer directives (2026-09-17):** set persistent global text in Generator configuration → per endpoint. Append it after each selected endpoint's extra text. Record combined suffixes. See [docs/endpoint-extra-text.md](docs/endpoint-extra-text.md).
 

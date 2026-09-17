@@ -32,6 +32,8 @@ namespace MultiImageClient
         public string ServerName { get; init; } = "";
         public string ChannelName { get; init; } = "";
         public string PublicUrl { get; init; } = "";
+        public string ThreadDay { get; init; } = "";
+        public string ThreadName { get; init; } = "";
         public UiPublicShareSnapshot Snapshot { get; init; } = new("", new(), new(), new());
         public bool Published => State is "pending" or "sent";
     }
@@ -119,7 +121,7 @@ namespace MultiImageClient
         public static string Caption(string publicUrl) =>
             $"[{LinkLabel}](<{publicUrl}>) · [{ReuseLabel}](<{publicUrl}reuse>)";
         public static string DestinationHash(Settings settings) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            settings.DiscordVibecodersWebhookUrl + "\n" + settings.DiscordVibecodersServerName + "\n" + settings.DiscordVibecodersChannelName)));
+            settings.DiscordVibecodersWebhookUrl + "\n" + settings.DiscordVibecodersBotToken + "\n" + settings.DiscordVibecodersThreadStorePath)));
 
         public static UiPublicShareSnapshot Capture(UiJob job)
         {

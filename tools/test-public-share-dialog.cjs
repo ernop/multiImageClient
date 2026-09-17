@@ -18,7 +18,7 @@ const illustration = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height
       if (url.pathname.endsWith('/prepare')) {
         preparations++;
         return route.fulfill({ json: { token: 'a'.repeat(64), jobId: 'fixture', generator: 'gpt2', imageIndex: 0,
-          serverName: 'Test server', channelName: 'vibecoders', publicUrl: 'https://share.test/shared/original/' + 'a'.repeat(64) + '/',
+          serverName: 'Test server', channelName: 'vibecoders', threadName: 'Daily Thursday, September 17, 2026 image thread', publicUrl: 'https://share.test/shared/original/' + 'a'.repeat(64) + '/',
           mediaKind: 'image', mediaUrl: 'media.svg', previewUrl: 'preview', inputCount: 1, outputCount: 3, hasContactSheet: true,
           linkLabel: 'View prompt', reuseLabel: 'Make your own',
           disclosure: 'Anyone with this link can see the prompt, inputs, all outputs, and contact sheet.' } });
@@ -45,7 +45,7 @@ const illustration = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height
     await open();
     await page.waitForFunction(() => !document.querySelector('.share-confirm').disabled);
     assert.equal(posts, 0);
-    assert.equal(await page.locator('.share-destination').textContent(), 'Post to Test server · #vibecoders');
+    assert.equal(await page.locator('.share-destination').textContent(), 'Post to Test server · #vibecoders → Daily Thursday, September 17, 2026 image thread (Pacific time)');
     assert.equal(await page.locator('.share-caption').textContent(), 'View prompt · Make your own');
     assert.ok((await page.locator('.share-disclosure').textContent()).includes('Anyone with this link'));
     const screenshot = path.resolve(__dirname, '../.local-ui/public-share-preview.png');

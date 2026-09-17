@@ -78,13 +78,68 @@ Existing sent records retain their historical sent status.
 
 Resolve the webhook's `guild_id` and `channel_id` during preparation and immediately before dispatch.
 Reject a changed destination or configuration.
-Server/channel display names come from explicit settings; they are not guessed from the webhook name.
+Resolve server/channel names with the configured bot and verify them again on confirmation.
+The former manual display-name settings are superseded.
 Webhook URLs with query/thread overrides cannot use this flow.
 Attach the original bytes, disable mentions, and suppress link embeds.
-Use `wait=true`, then verify the returned channel, caption, and attachment count.
+Use `wait=true&thread_id=<daily-thread-id>`, then verify the returned thread, caption, and attachment count.
 Never substitute a URL for an unavailable or oversized attachment.
 
 Source: Discord's [webhook API](https://github.com/discord/discord-api-docs/blob/main/developers/resources/webhook.mdx), checked 2026-09-17.
+
+## Daily image threads — 2026-09-17
+
+Every confirmed Vibecoders image or video goes inside one daily public thread under the configured text channel.
+The first image is also inside that thread. Do not attach a copy in the parent channel.
+Discord may display its normal thread-creation notice in the parent channel.
+Create nothing on startup, at midnight, on preview, on cancellation, or on days without confirmed sends.
+A confirmed first send creates the thread immediately before publication and attachment dispatch.
+
+Use the IANA time zone `America/Los_Angeles`, including daylight-saving changes.
+The key is the local calendar date, not a rolling 24-hour interval or the server's time zone.
+Example name: **Daily Thursday, September 17, 2026 image thread**.
+Show that exact name and “Pacific time” in the confirmation destination.
+Reject a preview that crosses Pacific midnight. Require a new preview for the new day.
+Check the date again after thread preparation, before publishing.
+Midnight changes routing for new app posts. It does not prohibit people from discussing older threads.
+Request automatic archival after 1,440 minutes of inactivity; a same-day webhook send can reopen an unlocked archived thread.
+
+The webhook posts attachments, but a bot token is required to create ordinary text-channel threads.
+Set `DiscordVibecodersBotToken` securely in each selected instance's settings.
+Give that bot access to the guild/channel and permission to create public threads.
+Grant thread messaging permissions if that bot will also participate in the threads.
+This token is separate from the optional FableBot posting action and is never returned by configuration APIs.
+Bot lookups supply verified server/channel names; the user need not enter these names manually.
+Reject forum, announcement, or non-text parent channels in this version.
+
+All instances targeting the same Discord channel must use the **same** `DiscordVibecodersThreadStorePath`.
+Provision a shared directory and group accessible to those service accounts.
+Add that exact directory to each selected systemd service's writable paths before enabling this feature.
+Do not copy thread records into separate instance stores.
+Records use guild/channel/date keys. File leases serialize creation across processes.
+Persist a pending creation record before calling Discord, and persist the exact returned thread ID afterward.
+Validate the guild, parent, name, type, ID, and unlocked state before reusing a thread.
+Never choose a similarly named thread or post to the parent channel after an error.
+
+An uncertain creation result leaves a pending record and blocks another creation attempt for that day.
+An operator must reconcile its exact Discord identity before unblocking it.
+This favors zero duplicate threads over automatic recovery from uncertain network failures.
+A failed first send can leave an empty thread because creation and message posting are separate Discord operations.
+No retry or replacement thread is created automatically.
+
+Sources: Discord's [thread creation API](https://github.com/discord/discord-api-docs/blob/main/developers/resources/channel.mdx#start-thread-without-message)
+and [webhook thread routing](https://github.com/discord/discord-api-docs/blob/main/developers/resources/webhook.mdx#execute-webhook).
+
+## Production rollout correction — 2026-09-17
+
+The original service received the confirmation release, but the Vibecoders instance still ran older direct-send code.
+A 19:57 UTC send record appeared in the Vibecoders instance's store.
+The original instance's latest record remained September 9.
+Checking only the original service did not verify the user's exercised production action.
+For this correction, update both original and Vibecoders app instances and inspect each deployed send implementation.
+Preserve each instance's settings, accounts, history, and routes.
+Do not report public sharing operational until its public route, bot access, and shared thread directory are configured.
+Do not send live test images as part of release verification.
 
 ## Public routing and login
 
@@ -93,8 +148,8 @@ Configure these instance settings:
 ```json
 {
   "UiPublicShareBaseUrl": "https://multiimageclient.alpha.fuseki.net/shared/original",
-  "DiscordVibecodersServerName": "<verified server name>",
-  "DiscordVibecodersChannelName": "<verified channel name>"
+  "DiscordVibecodersBotToken": "<bot token; secret>",
+  "DiscordVibecodersThreadStorePath": "<absolute shared writable directory>"
 }
 ```
 
@@ -138,10 +193,12 @@ Their existing endpoint/global additions remain their personal settings.
 - `Implementation/UiPublicShares.cs`: snapshot, disk store, URL policy, HTML, and caption.
 - `Workflows/UiWorkflow.PublicShares.cs`: preparation, consent, publication, assets, and login handoff.
 - `Workflows/UiWorkflow.cs`: narrow anonymous exception and route registration.
+- `Implementation/DiscordDailyThreads.cs`: Pacific calendar dates, shared file leases, and durable thread identities.
+- `MultiImageClient.Tests/DiscordDailyThreadTests.cs`: midnight, daylight saving, concurrency, restarts, and uncertain creation.
 - `Implementation/DiscordVibecoders.cs`: destination lookup and compact linked payload.
 - `Implementation/UiDiscordVibecodersStore.cs`: pending/sent records.
 - `Ui/wwwroot/public-share-dialog.js`, `index.html`, `style.css`, `app.js`: confirmation and composer reuse.
-- `ImageGenerationClasses/Settings.cs`: public base and destination display names.
+- `ImageGenerationClasses/Settings.cs`: public base, bot token, and shared thread-store location.
 - `deploy/install-public-sharing.py`: explicit original-environment public route migration.
 - `MultiImageClient.Tests/PublicShareTests.cs`: privacy, URL rejection, unpublished drafts, confirmation, successful and uncertain delivery, login, and membership revocation.
 - `tools/test-public-share-dialog.cjs`: visual preview, cancellation, exact confirmation, and blocked retries.

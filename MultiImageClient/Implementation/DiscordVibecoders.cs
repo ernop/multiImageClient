@@ -76,6 +76,7 @@ namespace MultiImageClient
         };
 
         private readonly string _webhookUrl;
+        private readonly Settings _settings;
         private readonly HttpClient _http;
 
         public DiscordVibecodersClient(Settings settings, HttpClient? httpClient = null)
@@ -85,6 +86,7 @@ namespace MultiImageClient
                 throw new InvalidOperationException("Discord vibecoders webhook is not configured.");
             }
             _webhookUrl = url;
+            _settings = settings;
             _http = httpClient ?? Http;
         }
 
@@ -104,6 +106,65 @@ namespace MultiImageClient
             return (guild, channel);
         }
 
+        public async Task<(string GuildId, string ChannelId, string ServerName, string ChannelName)> GetDailyDestinationAsync(CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(_settings.DiscordVibecodersThreadStorePath)
+                || !Path.IsPathFullyQualified(_settings.DiscordVibecodersThreadStorePath))
+                throw new InvalidOperationException("Configure the shared Discord daily-thread store before sharing.");
+            var target = await GetDestinationAsync(ct);
+            using var channel = await BotRequestAsync(HttpMethod.Get, "channels/" + target.ChannelId, null, ct);
+            using var guild = await BotRequestAsync(HttpMethod.Get, "guilds/" + target.GuildId, null, ct);
+            var c = channel.RootElement;
+            var g = guild.RootElement;
+            if (c.GetProperty("id").GetString() != target.ChannelId || c.GetProperty("guild_id").GetString() != target.GuildId
+                || c.GetProperty("type").GetInt32() != 0 || g.GetProperty("id").GetString() != target.GuildId)
+                throw new InvalidOperationException("Daily images require the webhook's exact Discord text channel.");
+            var serverName = g.GetProperty("name").GetString();
+            var channelName = c.GetProperty("name").GetString();
+            if (string.IsNullOrWhiteSpace(serverName) || string.IsNullOrWhiteSpace(channelName))
+                throw new InvalidOperationException("Discord did not return the destination names.");
+            return (target.GuildId, target.ChannelId, serverName, channelName);
+        }
+
+        public Task<string> GetDailyThreadAsync(string guildId, string channelId, string day, CancellationToken ct) =>
+            DiscordDailyThreads.GetOrCreateAsync(_settings.DiscordVibecodersThreadStorePath, guildId, channelId, day,
+                async () =>
+                {
+                    using var created = await BotRequestAsync(HttpMethod.Post, "channels/" + channelId + "/threads",
+                        new { name = DiscordDailyThreads.Name(day), type = 11, auto_archive_duration = 1440 }, ct);
+                    return ValidateThread(created.RootElement, guildId, channelId, day, null);
+                },
+                async threadId =>
+                {
+                    using var thread = await BotRequestAsync(HttpMethod.Get, "channels/" + threadId, null, ct);
+                    ValidateThread(thread.RootElement, guildId, channelId, day, threadId);
+                });
+
+        private static string ValidateThread(JsonElement thread, string guildId, string channelId, string day, string? expectedId)
+        {
+            var id = thread.GetProperty("id").GetString() ?? "";
+            if (!ulong.TryParse(id, out var parsed) || parsed == 0 || (expectedId != null && id != expectedId)
+                || thread.GetProperty("guild_id").GetString() != guildId || thread.GetProperty("parent_id").GetString() != channelId
+                || thread.GetProperty("type").GetInt32() != 11 || thread.GetProperty("name").GetString() != DiscordDailyThreads.Name(day)
+                || thread.GetProperty("thread_metadata").GetProperty("locked").GetBoolean())
+                throw new InvalidOperationException("The daily thread is locked or has a different identity. Sharing stopped.");
+            return id;
+        }
+
+        private async Task<JsonDocument> BotRequestAsync(HttpMethod method, string route, object? body, CancellationToken ct)
+        {
+            if (!FableBot.FableBotDiscord.TryNormalizeBotToken(_settings.DiscordVibecodersBotToken, out var token))
+                throw new InvalidOperationException("Configure the Vibecoders bot token to create daily image threads.");
+            using var request = new HttpRequestMessage(method, "https://discord.com/api/v10/" + route);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bot", token);
+            request.Headers.UserAgent.ParseAdd("MultiImageClient/1.0");
+            if (body != null) request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            using var response = await _http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Discord daily-thread request failed ({(int)response.StatusCode}). Check bot access and permissions.");
+            return JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        }
+
         public async Task SendAsync(
             string senderName,
             Stream media,
@@ -111,7 +172,8 @@ namespace MultiImageClient
             string fileName,
             CancellationToken cancellationToken,
             string? publicUrl = null,
-            string? expectedChannelId = null)
+            string? expectedChannelId = null,
+            string? threadId = null)
         {
             if (media == Stream.Null || !media.CanRead || !media.CanSeek
                 || media.Length - media.Position <= 0 || media.Length - media.Position > DiscordVibecoders.MaxAttachmentBytes)
@@ -152,7 +214,9 @@ namespace MultiImageClient
                 form.Add(file, "files[0]", fileName);
             }
 
-            using var response = await _http.PostAsync(publicUrl == null ? _webhookUrl : _webhookUrl + "?wait=true", form, cancellationToken);
+            if (publicUrl != null && (!ulong.TryParse(threadId, out var parsedThread) || parsedThread == 0 || threadId != expectedChannelId))
+                throw new InvalidOperationException("Confirmed public shares must target the exact daily thread.");
+            using var response = await _http.PostAsync(publicUrl == null ? _webhookUrl : _webhookUrl + "?wait=true&thread_id=" + threadId, form, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 throw new InvalidOperationException(

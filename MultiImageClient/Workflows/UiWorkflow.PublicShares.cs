@@ -143,8 +143,6 @@ namespace MultiImageClient
                 try
                 {
                     var baseUrl = UiPublicShares.BaseUrl(settings);
-                    if (string.IsNullOrWhiteSpace(settings.DiscordVibecodersServerName) || string.IsNullOrWhiteSpace(settings.DiscordVibecodersChannelName))
-                        throw new InvalidOperationException("Configure the Discord server and channel names before sharing.");
                     var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
                     var job = jobs.Get(form["jobId"].ToString());
                     var gen = form["generator"].ToString();
@@ -166,18 +164,20 @@ namespace MultiImageClient
                             throw new InvalidOperationException("An original in this prompt is unavailable; sharing stopped.");
                     _ = await runner.TryGetImageBytesIncludingHostedAsync(job, gen, index, DiscordVibecoders.MaxAttachmentBytes, ctx.RequestAborted)
                         ?? throw new InvalidOperationException("The selected original is unavailable or exceeds 10 MiB.");
-                    var target = await clientFactory().GetDestinationAsync(ctx.RequestAborted);
+                    var target = await clientFactory().GetDailyDestinationAsync(ctx.RequestAborted);
                     store.PruneExpiredDrafts();
                     var token = UiPublicShareStore.NewToken();
+                    var threadDay = DiscordDailyThreads.Day(DateTimeOffset.UtcNow);
                     var record = new UiPublicShareRecord { Token = token, JobId = job.Id, Generator = gen, ImageIndex = index,
                         Owner = Sender(ctx), CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                         ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(20).ToUnixTimeMilliseconds(), Snapshot = snapshot,
                         DestinationHash = UiPublicShares.DestinationHash(settings), GuildId = target.GuildId, ChannelId = target.ChannelId,
-                        ServerName = settings.DiscordVibecodersServerName, ChannelName = settings.DiscordVibecodersChannelName,
+                        ServerName = target.ServerName, ChannelName = target.ChannelName,
+                        ThreadDay = threadDay, ThreadName = DiscordDailyThreads.Name(threadDay),
                         PublicUrl = baseUrl + "/" + token + "/" };
                     store.Save(record);
                     return Results.Json(new { token, jobId = job.Id, generator = gen, imageIndex = index,
-                        serverName = record.ServerName, channelName = record.ChannelName,
+                        serverName = record.ServerName, channelName = record.ChannelName, threadName = record.ThreadName,
                         disclosure = UiPublicShares.Disclosure, linkLabel = UiPublicShares.LinkLabel, reuseLabel = UiPublicShares.ReuseLabel,
                         publicUrl = record.PublicUrl, caption = UiPublicShares.Caption(record.PublicUrl),
                         mediaKind = media.Kind, mediaUrl = $"api/discord/vibecoders/preview/{token}/asset/{selected}",
@@ -210,11 +210,18 @@ namespace MultiImageClient
                         || JsonSerializer.Serialize(record.Snapshot) != JsonSerializer.Serialize(UiPublicShares.Capture(job)))
                         throw new InvalidOperationException("The prompt or destination changed. Review a new preview.");
                     var client = clientFactory();
-                    var target = await client.GetDestinationAsync(ctx.RequestAborted);
-                    if (target.GuildId != record.GuildId || target.ChannelId != record.ChannelId)
+                    var target = await client.GetDailyDestinationAsync(ctx.RequestAborted);
+                    if (target.GuildId != record.GuildId || target.ChannelId != record.ChannelId
+                        || target.ServerName != record.ServerName || target.ChannelName != record.ChannelName)
                         throw new InvalidOperationException("The Discord destination changed. Review a new preview.");
                     var original = await runner.TryGetImageBytesIncludingHostedAsync(job, record.Generator, record.ImageIndex,
                         DiscordVibecoders.MaxAttachmentBytes, ctx.RequestAborted) ?? throw new InvalidOperationException("The original is unavailable.");
+                    if (record.ThreadDay != DiscordDailyThreads.Day(DateTimeOffset.UtcNow)
+                        || record.ThreadName != DiscordDailyThreads.Name(record.ThreadDay))
+                        throw new InvalidOperationException("The California date changed. Open a new preview for today’s image thread.");
+                    var threadId = await client.GetDailyThreadAsync(record.GuildId, record.ChannelId, record.ThreadDay, ctx.RequestAborted);
+                    if (record.ThreadDay != DiscordDailyThreads.Day(DateTimeOffset.UtcNow))
+                        throw new InvalidOperationException("The California date changed. Open a new preview for today’s image thread.");
                     var claim = new UiDiscordVibecodersSend { Kind = record.Snapshot.Assets.Any(a => a.Generator == record.Generator && a.Kind == "video") ? "video" : "image",
                         JobId = record.JobId, Generator = record.Generator, ImageIndex = record.ImageIndex,
                         SentByLogin = record.Owner, SentAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), State = "pending" };
@@ -226,7 +233,7 @@ namespace MultiImageClient
                     using var bytes = new MemoryStream(original.Bytes, writable: false);
                     await client.SendAsync(record.Owner, bytes, original.ContentType,
                         record.Generator + "-" + record.ImageIndex + DiscordVibecoders.FileExtension(original.ContentType),
-                        ctx.RequestAborted, record.PublicUrl, record.ChannelId);
+                        ctx.RequestAborted, record.PublicUrl, threadId, threadId);
                     store.Save(record with { State = "sent" });
                     sent.Complete(record.JobId, record.Generator, record.ImageIndex);
                     return Results.Json(new { state = "sent", publicUrl = record.PublicUrl, version = sent.Snapshot().Version,

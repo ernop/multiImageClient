@@ -224,8 +224,9 @@ root commands. Re-run the installer after changing `update-shared-host.sh` so
 
 The owner authorized public prompt pages with per-post confirmation.
 Read [the public sharing contract](../docs/public-prompt-sharing.md).
-Run `deploy/install-public-sharing.py --server-name '<verified name>' --channel-name '<verified name>'` as Linux root.
-The installer adds only the original instance's `/shared/original/` route and three sharing settings.
+Configure the bot token and shared writable thread directory first.
+Run `deploy/install-public-sharing.py` as Linux root.
+The installer adds only the original instance's `/shared/original/` route and public base setting.
 It backs up the existing configuration, validates nginx, and reloads nginx.
 The private route and other services remain unchanged.
 Then run the normal original-service redeploy above.

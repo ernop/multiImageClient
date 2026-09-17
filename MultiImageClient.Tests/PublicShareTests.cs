@@ -84,9 +84,9 @@ public sealed class PublicShareTests
     {
         var folder = Directory.CreateTempSubdirectory("mic-share-http-").FullName;
         var settings = new Settings { ImageDownloadBaseFolder = folder, LogFilePath = Path.Combine(folder, "test.log"),
+            DiscordVibecodersBotToken = new string('t', 60), DiscordVibecodersThreadStorePath = Path.Combine(folder, "threads"),
             EnableGenerationArchive = false, DiscordVibecodersWebhookUrl = "https://discord.com/api/webhooks/123/testtoken",
-            UiPublicBaseUrl = "https://example.test/private-path", UiPublicShareBaseUrl = "https://example.test/shared/original",
-            DiscordVibecodersServerName = "Test server", DiscordVibecodersChannelName = "test-channel" };
+            UiPublicBaseUrl = "https://example.test/private-path", UiPublicShareBaseUrl = "https://example.test/shared/original" };
         var jobs = new UiJobRegistry(settings);
         var job = new UiJob { Prompt = "Public test prompt", CreatorLogin = "alice", GeneratorKeys = new[] { "gpt2" } };
         jobs.Add(job);
@@ -129,11 +129,11 @@ public sealed class PublicShareTests
             Assert.Equal(0, handler.Posts);
             Assert.Contains("Public test prompt", await http.GetStringAsync($"/api/discord/vibecoders/preview/{token}/"));
             // Confirmation cannot publish a modified destination under an old preview.
-            settings.DiscordVibecodersChannelName = "changed";
+            settings.DiscordVibecodersWebhookUrl = "https://discord.com/api/webhooks/123/changed";
             using var changed = await Post("/api/discord/vibecoders", ("token", token), ("confirmed", "true"));
             Assert.False(changed.IsSuccessStatusCode);
             Assert.Equal(0, handler.Posts);
-            settings.DiscordVibecodersChannelName = "test-channel";
+            settings.DiscordVibecodersWebhookUrl = "https://discord.com/api/webhooks/123/testtoken";
             // Simulate a lost response after Discord accepted the request.
             handler.LoseResponse = loseResponse;
             using var confirmed = await Post("/api/discord/vibecoders", ("token", token), ("confirmed", "true"));
@@ -229,15 +229,25 @@ public sealed class PublicShareTests
         public string Body = "";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            if (request.Method == HttpMethod.Get) return new(HttpStatusCode.OK) { Content = new StringContent("{\"guild_id\":\"111\",\"channel_id\":\"222\"}") };
+            if (request.RequestUri!.AbsolutePath.EndsWith("/threads")) {
+                Assert.Equal(HttpMethod.Post, request.Method);
+                Assert.Equal("Bot", request.Headers.Authorization?.Scheme);
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { id = "999", guild_id = "111", parent_id = "222", type = 11, name = DiscordDailyThreads.Name(DiscordDailyThreads.Day(DateTimeOffset.UtcNow)), thread_metadata = new { locked = false } })) };
+            }
+            if (request.Method == HttpMethod.Get) {
+                var data = request.RequestUri.AbsolutePath.Contains("/guilds/") ? "{\"id\":\"111\",\"name\":\"Test server\"}"
+                    : request.RequestUri.AbsolutePath.Contains("/channels/") ? "{\"id\":\"222\",\"guild_id\":\"111\",\"type\":0,\"name\":\"test-channel\"}"
+                    : "{\"guild_id\":\"111\",\"channel_id\":\"222\"}";
+                return new(HttpStatusCode.OK) { Content = new StringContent(data) };
+            }
             Posts++;
             Body = Encoding.UTF8.GetString(await request.Content!.ReadAsByteArrayAsync(cancellationToken));
-            Assert.Equal("?wait=true", request.RequestUri!.Query);
+            Assert.Equal("?wait=true&thread_id=999", request.RequestUri!.Query);
             if (LoseResponse) throw new HttpRequestException("simulated response loss");
             var parts = (MultipartFormDataContent)request.Content!;
             var payload = parts.Single(p => p.Headers.ContentDisposition!.Name!.Trim('"') == "payload_json");
             using var json = JsonDocument.Parse(await payload.ReadAsStringAsync(cancellationToken));
-            return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { id = "333", channel_id = "222", content = json.RootElement.GetProperty("content").GetString(), attachments = new[] { new { id = "444" } } })) };
+            return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { id = "333", channel_id = "999", content = json.RootElement.GetProperty("content").GetString(), attachments = new[] { new { id = "444" } } })) };
         }
     }
 }

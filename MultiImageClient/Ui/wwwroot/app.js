@@ -7358,8 +7358,8 @@ function renderImageViewerVibecoders(item) {
   const key = vibecodersIdentity(item.jobId, item.generator, item.imageIndex);
   if (vibecodersMutation === key) {
     imageViewerVibecoders.disabled = true;
-    imageViewerVibecoders.textContent = "sending…";
-    imageViewerVibecoders.title = "Sending to #vibecoders";
+    imageViewerVibecoders.textContent = "reviewing share…";
+    imageViewerVibecoders.title = "Review the preview before publication or sending";
     return;
   }
   if (vibecodersPendingKeys.has(key)) {
@@ -7423,7 +7423,7 @@ function paintVibecodersButton(button) {
   }
   if (vibecodersMutation === key) {
     button.disabled = true;
-    button.textContent = "sending…";
+    button.textContent = "reviewing share…";
     return;
   }
   if (vibecodersSentKeys.has(key)) {

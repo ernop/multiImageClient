@@ -42,6 +42,13 @@ Preserve the private prefix and never include it in Discord payloads or anonymou
 Read [the sharing contract](../../docs/public-prompt-sharing.md) before changing publication or its routing.
 Ordinary authenticated routes remain private. Public sharing never grants account access.
 
+The September 17 sharing correction targets both the original service and `multiimageclient-env-vibecoders-ai-generation`.
+The latter retained direct-send code and recorded the reported production send.
+Verify each selected app instance before reporting this sharing rollout complete.
+This does not expand ordinary releases to unrelated services.
+Vibecoders posts require preview and confirmation, then use one thread per `America/Los_Angeles` calendar date.
+Keep a shared durable thread registry across instances targeting the same channel. Never fall back to posting in the parent channel.
+
 ## Explicit additional environments
 
 The owner authorized separate environments on this same hostname on 2026-09-08.

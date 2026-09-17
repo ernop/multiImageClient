@@ -1,7 +1,8 @@
 # FableBot — Discord bot posting interface
 
 **2026-09-17:** Vibecoders now uses [public prompt sharing](public-prompt-sharing.md) with an explicit HTML preview and publication confirmation.
-Its caption links only to the separate public subset route.
+Its caption links only to the separate public subset route. Confirmed sends use one daily image thread in California time.
+A separate Vibecoders bot token creates the thread; the webhook posts every image inside it.
 Private MIC addresses and account links remain prohibited.
 The separate FableBot transport retains its attachment-only behavior below.
 The 2026-09-09 Vibecoders attachment-only decision is superseded by this confirmed-publication flow.

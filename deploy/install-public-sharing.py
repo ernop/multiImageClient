@@ -37,12 +37,15 @@ def checked(*args):
         raise RuntimeError(f"{args[0]} failed; inspect diagnostics privately on the server.")
 
 
-def install(server_name, channel_name):
+def install():
     if os.name != "posix" or os.geteuid() != 0:
         raise ValueError("Run as Linux root.")
-    if not server_name.strip() or not channel_name.strip():
-        raise ValueError("Specify the verified Discord server and channel names.")
     settings = json.loads(SETTINGS.read_text())
+    if not settings.get("DiscordVibecodersBotToken", "").strip():
+        raise ValueError("Configure the Vibecoders bot token securely before enabling public sharing.")
+    thread_store = Path(settings.get("DiscordVibecodersThreadStorePath", ""))
+    if not thread_store.is_absolute() or not thread_store.is_dir():
+        raise ValueError("Provision the shared writable daily-thread directory before enabling public sharing.")
     if urlparse(settings.get("UiPublicBaseUrl", "")).hostname != HOST:
         raise ValueError("The settings do not identify the original MultiImageClient host.")
     spec = importlib.util.spec_from_file_location("environment_deploy", Path(__file__).with_name("create-environment.py"))
@@ -67,8 +70,6 @@ def install(server_name, channel_name):
     shutil.copy2(SETTINGS, backup / "settings.json")
     had_include = INCLUDE.exists()
     settings["UiPublicShareBaseUrl"] = f"https://{HOST}/shared/original"
-    settings["DiscordVibecodersServerName"] = server_name.strip()
-    settings["DiscordVibecodersChannelName"] = channel_name.strip().lstrip("#")
     try:
         INCLUDE.write_text(expected)
         os.chmod(INCLUDE, 0o644)
@@ -90,7 +91,5 @@ def install(server_name, channel_name):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server-name", required=True)
-    parser.add_argument("--channel-name", required=True)
-    args = parser.parse_args()
-    install(args.server_name, args.channel_name)
+    parser.parse_args()
+    install()

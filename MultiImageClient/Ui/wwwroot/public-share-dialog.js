@@ -97,7 +97,7 @@ window.previewPublicShare = async function previewPublicShare({ apiUrl, jobId, g
         if (body.jobId !== jobId || body.generator !== generator || body.imageIndex !== imageIndex)
           throw new Error("The preview did not match the selected image.");
         record = body;
-        destination.textContent = `Post to ${body.serverName} · #${body.channelName.replace(/^#/, "")}`;
+        destination.textContent = `Post to ${body.serverName} · #${body.channelName.replace(/^#/, "")} → ${body.threadName} (Pacific time)`;
         disclosure.textContent = body.disclosure;
         const media = document.createElement(body.mediaKind === "video" ? "video" : "img");
         if (body.mediaKind === "video") { media.controls = true; media.preload = "metadata"; }
