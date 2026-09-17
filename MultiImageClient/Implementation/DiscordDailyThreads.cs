@@ -75,8 +75,12 @@ namespace MultiImageClient
         {
             // The provisioned setgid directory supplies the shared service group.
             // Both services use restrictive umasks, so new registry files need explicit group access.
-            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite);
+            if (!OperatingSystem.IsWindows())
+            {
+                var mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite;
+                // A second service can open the shared lease but cannot chmod another owner's file.
+                if (File.GetUnixFileMode(path) != mode) File.SetUnixFileMode(path, mode);
+            }
         }
     }
 }
