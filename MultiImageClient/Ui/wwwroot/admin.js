@@ -40,6 +40,12 @@ async function load() {
     const rewrite = field(features, "Prompt rewriting", "rewrite", env.promptRewrite, "checkbox"); form.append(features);
     const night = field(features, "Night filter", "night", env.nightFilter ?? true, "checkbox");
     const sharing = field(features, "Send to Vibecoders", "sharing", env.vibecodersSharing ?? env.original, "checkbox");
+    const targetLabel = node("label", "Target ");
+    const target = node("select"); target.name = "discordShareTarget";
+    for (const [value, label] of [["vibecoders", "Vibecoders"], ["bot-testing", "Bot testing"]]) {
+      const option = node("option", label); option.value = value; target.append(option);
+    }
+    target.value = env.discordShareTarget ?? "vibecoders"; targetLabel.append(target); features.append(targetLabel);
     const defaults = node("fieldset"); defaults.append(node("legend", "Default providers"));
     const selected = new Set(env.defaultGenerators ?? catalog.filter(g => g.defaultOn).map(g => g.key));
     const providerRow = node("div"); providerRow.className = "generator-options";
@@ -56,7 +62,7 @@ async function load() {
     form.append(node("button", "Save configuration")); section.append(form);
     form.addEventListener("submit", event => { event.preventDefault(); run(async () => {
       await api("api/control/environment", { ...env, name: name.value.trim(), slug: env.original ? env.slug : slug.value.trim(),
-        goalLoops: goals.checked, video: video.checked, promptRewrite: rewrite.checked, vibecodersSharing: sharing.checked, nightFilter: night.checked,
+        goalLoops: goals.checked, video: video.checked, promptRewrite: rewrite.checked, vibecodersSharing: sharing.checked, discordShareTarget: target.value, nightFilter: night.checked,
         members: boxes.filter(b => b.checked).map(b => b.name), defaultGenerators: providers.filter(b => b.checked).map(b => b.name) }, true);
       $("status").textContent = "Configuration saved. URL changes take effect after provisioning finishes.";
     }); });

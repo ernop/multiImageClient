@@ -144,9 +144,9 @@ Do not report public sharing operational until its public route, bot access, and
 Do not send live test images as part of release verification.
 The owner subsequently approved the Vibecoders service update; both instances now have the confirmation implementation.
 Browser checks exercised both deployed clients while intercepting all writes locally.
-The existing SocialAI bot credential returned HTTP 401 during read-only checks.
+The old SocialAI credential returned HTTP 401. The owner replaced it on September 18.
 The production image sender uses a working webhook credential, which cannot create ordinary text-channel threads.
-Discord permits webhook-created threads only in forum/media channels. Keep the requested text channel; obtain a valid bot credential.
+Discord permits webhook-created threads only in forum/media channels. Keep the requested text channel and use the verified bot credential.
 
 ## Public routing and login
 
@@ -215,3 +215,32 @@ Their existing endpoint/global additions remain their personal settings.
 - `tools/test-public-share-dialog.cjs`: visual preview, cancellation, exact confirmation, and blocked retries.
 
 Live verification must not post to Discord or publish a real private prompt without a separate explicit posting instruction.
+
+## Target selection and activation — 2026-09-18
+
+Both production instances now have the renewed SocialAI bot credential.
+Read-only checks verified access to Ernie server and #vibecoders from both instances.
+
+Each environment has a saved **Target** selector in Administration beside **Send to Vibecoders**.
+Choose **Vibecoders** or **Bot testing**. Existing environments default to Vibecoders.
+The standalone local instance exposes **Settings → Discord Target** and stores its selection on disk.
+Local sharing still requires a configured public HTTPS address and bot credentials.
+
+Bot testing targets the private #mic-bot-testing channel (1550532551846662165) in Ernie server (675090558867472424).
+Only Ernie and social-ai were explicitly allowed. Discord administrators retain access.
+Configure DiscordBotTestingGuildId and DiscordBotTestingChannelId in each participating instance.
+Testing uploads use bot authentication; Vibecoders uploads retain the existing webhook.
+Missing test configuration fails without sending to another channel.
+Changing Target invalidates earlier previews. Every confirmation displays the exact server, channel, and daily thread.
+The same public-page disclosure applies to testing. A private Discord channel does not make the published page private.
+Daily records include the parent channel identity, so each target has its own California-date thread.
+Duplicate-result protection remains per instance across targets; selecting another target does not clear uncertain or completed sends.
+
+The owner approved View Channels, Send Messages, Create Public Threads, Send Messages in Threads, and Manage Threads.
+The owner also approved Attach Files, Embed Links, Read Message History, and Add Reactions.
+Administrator, moderation, role management, webhook management, and Mention Everyone were not requested.
+
+A live test used synthetic content in the private test channel only.
+The application's daily registry created one thread and reused it for a second message.
+An 800×480 test card subsequently verified a visible image attachment.
+No private prompt was published during these checks.

@@ -76,12 +76,16 @@ namespace MultiImageClient
         };
 
         private readonly string _webhookUrl;
+        private readonly bool _botTesting;
         private readonly Settings _settings;
         private readonly HttpClient _http;
 
-        public DiscordVibecodersClient(Settings settings, HttpClient? httpClient = null)
+        public DiscordVibecodersClient(Settings settings, HttpClient? httpClient = null, string target = "vibecoders")
         {
-            if (!DiscordVibecoders.TryNormalizeWebhookUrl(settings.DiscordVibecodersWebhookUrl, out var url))
+            if (target is not ("vibecoders" or "bot-testing")) throw new InvalidOperationException("Unknown Discord target.");
+            _botTesting = target == "bot-testing";
+            var url = "";
+            if (!_botTesting && !DiscordVibecoders.TryNormalizeWebhookUrl(settings.DiscordVibecodersWebhookUrl, out url))
             {
                 throw new InvalidOperationException("Discord vibecoders webhook is not configured.");
             }
@@ -92,6 +96,13 @@ namespace MultiImageClient
 
         public async Task<(string GuildId, string ChannelId)> GetDestinationAsync(CancellationToken cancellationToken)
         {
+            if (_botTesting)
+            {
+                if (!ulong.TryParse(_settings.DiscordBotTestingGuildId, out var g) || g == 0
+                    || !ulong.TryParse(_settings.DiscordBotTestingChannelId, out var c) || c == 0)
+                    throw new InvalidOperationException("Configure the Bot testing server and channel before sharing.");
+                return (_settings.DiscordBotTestingGuildId, _settings.DiscordBotTestingChannelId);
+            }
             if (new Uri(_webhookUrl).Query.Length != 0)
                 throw new InvalidOperationException("Public sharing requires a webhook without thread or query overrides.");
             using var request = new HttpRequestMessage(HttpMethod.Get, _webhookUrl);
@@ -118,7 +129,7 @@ namespace MultiImageClient
             var g = guild.RootElement;
             if (c.GetProperty("id").GetString() != target.ChannelId || c.GetProperty("guild_id").GetString() != target.GuildId
                 || c.GetProperty("type").GetInt32() != 0 || g.GetProperty("id").GetString() != target.GuildId)
-                throw new InvalidOperationException("Daily images require the webhook's exact Discord text channel.");
+                throw new InvalidOperationException("Daily images require the selected Discord text channel.");
             var serverName = g.GetProperty("name").GetString();
             var channelName = c.GetProperty("name").GetString();
             if (string.IsNullOrWhiteSpace(serverName) || string.IsNullOrWhiteSpace(channelName))
@@ -190,7 +201,7 @@ namespace MultiImageClient
             using var form = new MultipartFormDataContent();
             var payload = new
             {
-                username,
+                username = _botTesting ? null : username,
                 content = publicUrl == null ? null : UiPublicShares.Caption(publicUrl),
                 flags = publicUrl == null ? (int?)null : 4,
                 allowed_mentions = new { parse = Array.Empty<string>() },
@@ -216,7 +227,17 @@ namespace MultiImageClient
 
             if (publicUrl != null && (!ulong.TryParse(threadId, out var parsedThread) || parsedThread == 0 || threadId != expectedChannelId))
                 throw new InvalidOperationException("Confirmed public shares must target the exact daily thread.");
-            using var response = await _http.PostAsync(publicUrl == null ? _webhookUrl : _webhookUrl + "?wait=true&thread_id=" + threadId, form, cancellationToken);
+            if (_botTesting && publicUrl == null) throw new InvalidOperationException("Bot testing requires a confirmed public preview.");
+            var destination = _botTesting ? "https://discord.com/api/v10/channels/" + threadId + "/messages"
+                : publicUrl == null ? _webhookUrl : _webhookUrl + "?wait=true&thread_id=" + threadId;
+            using var upload = new HttpRequestMessage(HttpMethod.Post, destination) { Content = form };
+            if (_botTesting)
+            {
+                if (!FableBot.FableBotDiscord.TryNormalizeBotToken(_settings.DiscordVibecodersBotToken, out var botToken))
+                    throw new InvalidOperationException("Configure the Discord bot token before sharing.");
+                upload.Headers.Authorization = new AuthenticationHeaderValue("Bot", botToken);
+            }
+            using var response = await _http.SendAsync(upload, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
                 throw new InvalidOperationException(

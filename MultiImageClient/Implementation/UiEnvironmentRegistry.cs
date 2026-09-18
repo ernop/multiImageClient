@@ -23,6 +23,7 @@ namespace MultiImageClient
             public bool PromptRewrite { get; set; } = true;
             public bool NightFilter { get; set; } = true;
             public bool? VibecodersSharing { get; set; }
+            public string DiscordShareTarget { get; set; } = "vibecoders";
             [JsonIgnore] public bool AllowVibecoders => VibecodersSharing ?? Original;
             public List<string> Members { get; set; } = new();
             public List<string>? DefaultGenerators { get; set; }
@@ -80,7 +81,8 @@ namespace MultiImageClient
                     || string.IsNullOrWhiteSpace(e.Name) || e.Name.Length > 80 || e.Name.Any(char.IsControl)
                     || e.Members == null || e.Members.Count > 500 || e.Members.Any(string.IsNullOrWhiteSpace)
                     || e.Members.Distinct(StringComparer.Ordinal).Count() != e.Members.Count
-                    || e.DefaultGenerators?.Count > 64)
+                    || e.DefaultGenerators?.Count > 64
+                    || e.DiscordShareTarget is not ("vibecoders" or "bot-testing"))
                     throw new InvalidDataException("Invalid environment name, URL name, or membership.");
             }
         }

@@ -28,7 +28,25 @@ namespace MultiImageClient
             UiDiscordVibecodersStore sent, UiEnvironmentRegistry? environments,
             Func<DiscordVibecodersClient>? clientFactory = null)
         {
-            clientFactory ??= () => new DiscordVibecodersClient(settings);
+            var localTargetPath = Path.Combine(settings.ImageDownloadBaseFolder, "discord-share-target.txt");
+            string ShareTarget() => environments?.Get(settings.UiEnvironmentId).DiscordShareTarget
+                ?? (File.Exists(localTargetPath) ? File.ReadAllText(localTargetPath).Trim() : "vibecoders");
+            if (auth == null && environments == null)
+            {
+                app.MapGet("/api/discord/target", () => Results.Json(new { target = ShareTarget() }));
+                app.MapPost("/api/discord/target", async (HttpContext ctx) =>
+                {
+                    if (ctx.Request.Headers["X-MIC-Share"] != "1") return Results.StatusCode(403);
+                    var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
+                    var target = form["target"].ToString();
+                    if (target is not ("vibecoders" or "bot-testing")) return Results.BadRequest(new { error = "Unknown target." });
+                    await PublicShareSendLimit.WaitAsync(ctx.RequestAborted);
+                    try { Directory.CreateDirectory(settings.ImageDownloadBaseFolder); File.WriteAllText(localTargetPath, target); }
+                    finally { PublicShareSendLimit.Release(); }
+                    return Results.Json(new { target });
+                });
+            }
+            DiscordVibecodersClient Client(string target) => clientFactory?.Invoke() ?? new DiscordVibecodersClient(settings, target: target);
             var store = new UiPublicShareStore(settings.ImageDownloadBaseFolder);
             string Sender(HttpContext ctx) => ctx.Items["micUser"] as string ?? (auth == null ? "local" : "");
             bool Allowed(HttpContext ctx) => Sender(ctx).Length > 0 &&
@@ -164,14 +182,15 @@ namespace MultiImageClient
                             throw new InvalidOperationException("An original in this prompt is unavailable; sharing stopped.");
                     _ = await runner.TryGetImageBytesIncludingHostedAsync(job, gen, index, DiscordVibecoders.MaxAttachmentBytes, ctx.RequestAborted)
                         ?? throw new InvalidOperationException("The selected original is unavailable or exceeds 10 MiB.");
-                    var target = await clientFactory().GetDailyDestinationAsync(ctx.RequestAborted);
+                    var shareTarget = ShareTarget();
+                    var target = await Client(shareTarget).GetDailyDestinationAsync(ctx.RequestAborted);
                     store.PruneExpiredDrafts();
                     var token = UiPublicShareStore.NewToken();
                     var threadDay = DiscordDailyThreads.Day(DateTimeOffset.UtcNow);
                     var record = new UiPublicShareRecord { Token = token, JobId = job.Id, Generator = gen, ImageIndex = index,
                         Owner = Sender(ctx), CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                         ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(20).ToUnixTimeMilliseconds(), Snapshot = snapshot,
-                        DestinationHash = UiPublicShares.DestinationHash(settings), GuildId = target.GuildId, ChannelId = target.ChannelId,
+                        DestinationHash = UiPublicShares.DestinationHash(settings, shareTarget), GuildId = target.GuildId, ChannelId = target.ChannelId,
                         ServerName = target.ServerName, ChannelName = target.ChannelName,
                         ThreadDay = threadDay, ThreadName = DiscordDailyThreads.Name(threadDay),
                         PublicUrl = baseUrl + "/" + token + "/" };
@@ -205,11 +224,12 @@ namespace MultiImageClient
                     if (record == null || record.State != "draft") throw new InvalidOperationException("The preview expired or was already confirmed. Open a new preview.");
                     var job = jobs.Get(record.JobId)!;
                     if (!CanManageVisibility(job, Sender(ctx), auth != null)) return Results.StatusCode(403);
-                    if (record.DestinationHash != UiPublicShares.DestinationHash(settings)
+                    var shareTarget = ShareTarget();
+                    if (record.DestinationHash != UiPublicShares.DestinationHash(settings, shareTarget)
                         || record.PublicUrl != UiPublicShares.BaseUrl(settings) + "/" + record.Token + "/"
                         || JsonSerializer.Serialize(record.Snapshot) != JsonSerializer.Serialize(UiPublicShares.Capture(job)))
                         throw new InvalidOperationException("The prompt or destination changed. Review a new preview.");
-                    var client = clientFactory();
+                    var client = Client(shareTarget);
                     var target = await client.GetDailyDestinationAsync(ctx.RequestAborted);
                     if (target.GuildId != record.GuildId || target.ChannelId != record.ChannelId
                         || target.ServerName != record.ServerName || target.ChannelName != record.ChannelName)

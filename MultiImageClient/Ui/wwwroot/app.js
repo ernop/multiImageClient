@@ -488,7 +488,24 @@ function migrateLegacyGpt2GuidancePreference(preferences) {
   setEndpointFieldOverride(preferences, "gpt2", "extraText", effectiveText);
 }
 
+async function loadLocalDiscordTarget() {
+  const row = el("local-discord-target-row"), select = el("local-discord-target");
+  if (!row || window.MicEnvironment?.id) return;
+  const response = await fetch(apiUrl("api/discord/target"));
+  if (!response.ok) return;
+  select.value = (await response.json()).target; row.hidden = false;
+  select.onchange = async () => {
+    select.disabled = true;
+    try {
+      const saved = await fetch(apiUrl("api/discord/target"), { method: "POST", headers: { "X-MIC-Share": "1" }, body: new URLSearchParams({ target: select.value }) });
+      if (!saved.ok) throw Error("Could not save Target.");
+      el("local-discord-target-status").textContent = "Saved for this local instance.";
+    } catch (error) { el("local-discord-target-status").textContent = error.message; }
+    finally { select.disabled = false; }
+  };
+}
 async function loadConfig() {
+  loadLocalDiscordTarget().catch(() => {});
   const resp = await fetch(apiUrl("api/config"));
   if (resp.status === 401) { location.reload(); return; }
   if (!resp.ok) {

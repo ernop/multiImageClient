@@ -120,8 +120,8 @@ namespace MultiImageClient
         }
         public static string Caption(string publicUrl) =>
             $"[{LinkLabel}](<{publicUrl}>) · [{ReuseLabel}](<{publicUrl}reuse>)";
-        public static string DestinationHash(Settings settings) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-            settings.DiscordVibecodersWebhookUrl + "\n" + settings.DiscordVibecodersBotToken + "\n" + settings.DiscordVibecodersThreadStorePath)));
+        public static string DestinationHash(Settings settings, string target = "vibecoders") => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            target + "\n" + settings.DiscordBotTestingGuildId + "\n" + settings.DiscordBotTestingChannelId + "\n" + settings.DiscordVibecodersWebhookUrl + "\n" + settings.DiscordVibecodersBotToken + "\n" + settings.DiscordVibecodersThreadStorePath)));
 
         public static UiPublicShareSnapshot Capture(UiJob job)
         {
