@@ -90,6 +90,40 @@ public sealed class UiLoginLinksTests : IDisposable
     }
 
     [Fact]
+    public void ReplaceCredentialsIssuesNewPasswordAndLinkAndInvalidatesThePreviousPair()
+    {
+        var store = Store();
+        var issued = store.Create("Alice", _ => { }, UiAuth.NewPasswordHash("old-password-value"));
+        Assert.True(store.TryPassword(issued.Account.Login, "old-password-value", SigningSecret, out var oldCookie));
+        Assert.True(store.TryExchange(issued.Token, SigningSecret, out _, out _));
+        var replaced = store.ReplaceCredentials(issued.Account.Id, UiAuth.NewPasswordHash("new-password-value"));
+        Assert.Equal(issued.Account.Login, replaced.Username);
+        var stored = File.ReadAllText(Path.Combine(_root, "links.json"));
+        Assert.DoesNotContain(replaced.Token.Split('.')[1], stored);
+        Assert.DoesNotContain("new-password-value", stored);
+        Assert.False(store.TryPassword(issued.Account.Login, "old-password-value", SigningSecret, out _));
+        Assert.False(store.TryExchange(issued.Token, SigningSecret, out _, out _));
+        Assert.False(store.TryValidateCookie(oldCookie, SigningSecret, out _));
+        Assert.True(store.TryPassword(issued.Account.Login, "new-password-value", SigningSecret, out _));
+        Assert.True(store.TryExchange(replaced.Token, SigningSecret, out _, out _));
+    }
+
+    [Fact]
+    public void ReplaceCredentialsRejectsOwnerMalformedHashAndUnknownAccount()
+    {
+        var store = Store();
+        var issued = store.Create("Alice", _ => { }, UiAuth.NewPasswordHash("ok-password"));
+        Assert.Throws<InvalidDataException>(() => store.ReplaceCredentials(issued.Account.Id, "not-a-hash"));
+        Assert.Throws<InvalidDataException>(() => store.ReplaceCredentials(new string('a', 32), UiAuth.NewPasswordHash("ok-password")));
+        var id = Guid.NewGuid().ToString("N");
+        File.WriteAllText(Path.Combine(_root, "owner.json"), """
+            {"version":1,"accounts":[{"id":"REPLACE_ID","login":"ernieMultiZone","displayName":"Ernie","tokenHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","revoked":false}]}
+            """.Replace("REPLACE_ID", id));
+        var ownerStore = new UiLoginLinks(Path.Combine(_root, "owner.json"));
+        Assert.Throws<InvalidDataException>(() => ownerStore.ReplaceCredentials(id, UiAuth.NewPasswordHash("new-password")));
+    }
+
+    [Fact]
     public void NamedEnvironmentUsesSeparateCookieNameAndPathAndKeepsPasswordLogin()
     {
         Store();

@@ -1,6 +1,7 @@
 # Separate workspaces and personal login links
 
 Date: 2026-09-08, America/Los_Angeles.
+Updated: 2026-09-19, America/Los_Angeles.
 Status: activated in production on 2026-09-09; both environments verified through the public hostname.
 
 A workspace is one isolated tenant, also called an image-making studio.
@@ -19,6 +20,7 @@ The new idea is a second tenant with its own membership and history.
 | R6 | Require no credential explanation. | The recipient only needs to click their personal link. |
 | R7 | Start with entirely new accounts and data. | Share global identity only; keep history, images, and personal configurations separate. |
 | R8 | Match repeated provider lists (2026-09-10). | Use the composer's compact provider controls and grid in environment administration. |
+| R9 | Reissue login details for an existing normal account (2026-09-19). | Administration **Issue login details** creates a new password and a new reusable login link, shows both once, and ends the previous password and link. Stored hashes cannot be recovered. Canonical password-file accounts without a login-link identity stay unchanged. |
 
 These requirements came from the owner during the review.
 The link grants the account's actual permissions; it does not merely select a display name.
@@ -159,8 +161,13 @@ Managed instances share one canonical password-account file and one reusable-lin
 These files represent the same global identities, not independent per-environment accounts.
 New normal accounts support both an automatically generated password and a reusable personal link.
 Passwords use PBKDF2-SHA256. Personal links store only SHA-256 token digests.
-The owner receives new credentials once. Later link retrieval requires replacement.
+The owner receives new credentials once. Stored password hashes cannot be recovered.
+**Issue login details** creates a new password and a new reusable login link and shows both once.
+That action ends the previous password and the previous login link.
+**New link** still replaces only the reusable link. The existing password remains valid for a later login.
 Existing legacy accounts retain their existing password hashes.
+Canonical password-file accounts have no login-link identity in administration.
+The application does not write the password-account file, so those accounts cannot receive a reminder password here.
 
 Managed instances use the existing root-path `mic_auth` cookie.
 A login therefore works across assigned environments without another credential prompt.
@@ -242,6 +249,9 @@ The fragment token is removed immediately, then exchanged through a POST request
 The landing page uses no external assets, does not cache, and sends no referrer.
 
 Use **New link** to replace a normal account's link.
+Use **Issue login details** to create a new password and login link for an existing normal account.
+Copy the shown link, username, and password, then send them yourself.
+The previous password and previous login link stop working.
 Use **Revoke account** to revoke that new account across environments without deleting its history.
 Edit membership checkboxes to grant or remove access to an individual environment.
 Use **Create an environment** to request another named environment.
@@ -301,6 +311,7 @@ An update verifies the selected service and loopback health and retains the prev
 | `POST api/control/environment` | Admin-only configuration and membership update. |
 | `POST api/control/environment?create=true` | Request an environment; reject an existing identity. |
 | `POST api/control/accounts` | Create a normal account and return credentials once. |
+| `POST api/control/accounts/{id}/credentials` | Replace the account's password and reusable link; return both once. |
 | `POST api/control/accounts/{id}/replace` | Replace the account's reusable link. |
 | `POST api/control/accounts/{id}/revoke` | Revoke a new account globally. |
 | `GET api/admin/summary` | Admin-only login/activity records and generation-submission summaries. |

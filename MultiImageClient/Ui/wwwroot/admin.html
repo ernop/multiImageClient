@@ -1,11 +1,12 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer"><script src="environment.js"></script><title>Environment administration</title>
 <link rel="stylesheet" href="style.css"><style>
-main{max-width:1100px;margin:90px auto 30px;padding:0 20px}section{background:white;border:1px solid #ccc;border-radius:8px;padding:20px;margin:20px 0}
+main{width:100%;margin:90px auto 30px;padding:0 20px;box-sizing:border-box}section{background:white;border:1px solid #ccc;border-radius:8px;padding:20px;margin:20px 0}
 label:not(.gen-toggle){display:block;margin:10px 0}input:not([type=checkbox]),select,button{padding:8px;max-width:100%;box-sizing:border-box}input[type=text]{width:360px}
 fieldset{min-width:0}
 table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;border-bottom:1px solid #ddd}.table{overflow:auto}
-.features{display:flex;gap:20px;flex-wrap:wrap}.secret{width:100%!important}button{margin:4px}.muted{color:#666}[hidden]{display:none!important}
+.features{display:flex;gap:20px;flex-wrap:wrap}.secret,.issued-value{width:100%!important;color:#000;font-size:1.2rem;font-weight:700}button{margin:4px}[hidden]{display:none!important}
+#issued-username,#issued-password{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </style></head><body><header><h1>Administration<span id="environment-name"></span></h1><a href="./">main page</a></header>
 <main><h2>Environments</h2><p id="status" role="status">Loading…</p><button id="refresh">Refresh activity</button>
 <div id="environments"></div>
@@ -14,6 +15,13 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;bord
 <p>Use lowercase letters, numbers, and hyphens. Provisioning runs after you save.</p><button>Create environment</button></form></section>
 <section><h3>Create a normal account</h3><form id="person"><label>Name <input name="name" required maxlength="32"></label>
 <label>Environment <select name="environment" id="person-environment"></select></label><button>Create account and login link</button></form>
-<div id="issued" hidden><p>Copy the personal link. Anyone possessing it can act as this account.</p><input id="link" class="secret" readonly aria-label="Personal login link"><button id="copy">Copy link</button>
-<p id="credentials"></p><p>These credentials are shown once. Replacing a link ends its previous sessions.</p></div></section>
-</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20260918-discord-target"></script></body></html>
+<div id="issued" hidden>
+<p>Copy these login details. Anyone who has them can act as this account.</p>
+<label>Personal login link <input id="link" class="secret" readonly aria-label="Personal login link"></label>
+<button id="copy" type="button">Copy link</button>
+<div id="issued-username-row" hidden><label>Username <input id="issued-username" class="issued-value" readonly aria-label="Username"></label></div>
+<div id="issued-password-row" hidden><label>Password <input id="issued-password" class="issued-value" readonly aria-label="Password"></label></div>
+<button id="copy-details" type="button" hidden>Copy login details</button>
+<p>These details appear once. A new password ends the previous password and login link.</p>
+</div></section>
+</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20260919-credentials"></script></body></html>

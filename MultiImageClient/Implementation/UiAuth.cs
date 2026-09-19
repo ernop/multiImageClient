@@ -373,6 +373,10 @@ namespace MultiImageClient
             return $"pbkdf2-sha256${Pbkdf2Iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(digest)}";
         }
 
+        internal static bool IsPasswordHash(string? passwordHash) =>
+            !string.IsNullOrEmpty(passwordHash)
+            && TryParsePasswordHash(passwordHash, out _, out _, out _);
+
         internal static bool VerifyPassword(string password, string passwordHash)
         {
             if (!TryParsePasswordHash(passwordHash, out var salt, out var digest, out _))

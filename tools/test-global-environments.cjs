@@ -119,6 +119,13 @@ async function start(id) {
   assert(summary.accounts[created.username].firstLogin);
   await alice.evaluate(async()=>fetch('api/auth/logout',{method:'POST'}));
   assert.equal(await alice.evaluate(async c=>(await fetch('api/auth/login',{method:'POST',body:new URLSearchParams({username:c.username,password:c.password})})).status,created),200);
+  const aliceId = (await page.evaluate(async()=> (await (await fetch('api/control/state')).json()).accounts.find(a=>a.name==='Alice').id));
+  const reissued = await page.evaluate(async id=>(await fetch(`api/control/accounts/${id}/credentials`,{method:'POST',headers:{'X-Mic-Manage':'1'},body:new URLSearchParams({environment:'two'})})).json(), aliceId);
+  assert.equal(reissued.username, created.username);
+  assert(reissued.password && reissued.password !== created.password);
+  assert(reissued.url && reissued.url !== created.url);
+  assert.equal(await alice.evaluate(async c=>(await fetch('api/auth/login',{method:'POST',body:new URLSearchParams({username:c.username,password:c.password})})).status,created),401);
+  assert.equal(await alice.evaluate(async c=>(await fetch('api/auth/login',{method:'POST',body:new URLSearchParams({username:c.username,password:c.password})})).status,reissued),200);
   policy.members=[];
   assert.equal(await page.evaluate(async policy=>(await fetch('api/control/environment',{method:'POST',headers:{'X-Mic-Manage':'1','Content-Type':'application/json'},body:JSON.stringify(policy)})).status,policy),200);
   assert.equal(await alice.evaluate(async()=> (await fetch('api/jobs')).status),403);

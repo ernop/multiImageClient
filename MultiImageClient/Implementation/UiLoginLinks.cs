@@ -32,7 +32,7 @@ namespace MultiImageClient
             public required string DisplayName { get; init; }
             public required string TokenHash { get; set; }
             public bool Revoked { get; set; }
-            public string? PasswordHash { get; init; }
+            public string? PasswordHash { get; set; }
         }
 
         public sealed class Document
@@ -91,6 +91,25 @@ namespace MultiImageClient
                 account.Revoked = false;
                 Write(doc);
                 return id + "." + secret;
+            }
+        }
+
+        public (string Token, string Username) ReplaceCredentials(string id, string passwordHash)
+        {
+            if (!UiAuth.IsPasswordHash(passwordHash))
+                throw new InvalidDataException("The replacement password hash is invalid.");
+            lock (_sync)
+            {
+                var doc = Read();
+                var account = RequireAccount(doc, id);
+                if (account.Login == OwnerLogin)
+                    throw new InvalidDataException("The owner account cannot be reissued here.");
+                var secret = NewSecret();
+                account.TokenHash = Hash(secret);
+                account.PasswordHash = passwordHash;
+                account.Revoked = false;
+                Write(doc);
+                return (id + "." + secret, account.Login);
             }
         }
 

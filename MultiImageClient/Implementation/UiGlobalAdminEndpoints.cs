@@ -76,9 +76,15 @@ namespace MultiImageClient
                     var account = auth.LoginLinks!.List().SingleOrDefault(a => a.Id == id);
                     if (account == null || account.Login == UiLoginLinks.OwnerLogin) return Results.BadRequest();
                     if (action == "revoke") { auth.LoginLinks.Revoke(id); return Results.Json(new { ok = true }); }
-                    if (action != "replace") return Results.BadRequest();
                     var form = await ctx.Request.ReadFormAsync(); var environment = registry.Get(form["environment"].ToString());
                     if (!environment.Members.Contains(account.Login)) return Results.BadRequest(new { error = "Assign membership before creating a link." });
+                    if (action == "credentials")
+                    {
+                        var password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+                        var issued = auth.LoginLinks.ReplaceCredentials(id, UiAuth.NewPasswordHash(password));
+                        return Results.Json(new { url = Url(environment.Id, issued.Token), username = issued.Username, password });
+                    }
+                    if (action != "replace") return Results.BadRequest();
                     return Results.Json(new { url = Url(environment.Id, auth.LoginLinks.Replace(id)) });
                 }
                 catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }

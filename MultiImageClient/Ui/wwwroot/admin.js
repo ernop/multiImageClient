@@ -17,9 +17,20 @@ function field(form, label, name, value, type = "text") {
 }
 async function run(action) { try { await action(); } catch (error) { $("status").textContent = error.message; } }
 function issued(result) {
-  $("issued").hidden = false; $("link").value = result.url;
-  $("credentials").textContent = result.password ? "Username: " + result.username + " · Password: " + result.password : "";
+  $("issued").hidden = false;
+  $("link").value = result.url || "";
+  $("issued-username").value = result.username || "";
+  $("issued-password").value = result.password || "";
+  $("issued-username-row").hidden = !result.username;
+  $("issued-password-row").hidden = !result.password;
+  $("copy-details").hidden = !(result.url && result.username && result.password);
   $("issued").scrollIntoView({ block: "center" });
+}
+function detailsText() {
+  const lines = ["Click this link to log in.", $("link").value];
+  if (!$("issued-username-row").hidden) lines.push("", "Username: " + $("issued-username").value);
+  if (!$("issued-password-row").hidden) lines.push("Password: " + $("issued-password").value);
+  return lines.join("\n");
 }
 function date(value) { return value ? new Date(value).toLocaleString() : "Not recorded"; }
 async function load() {
@@ -77,11 +88,14 @@ async function load() {
       const row = node("tr"); for (const text of [account.name, account.role, date(activity?.firstLogin), date(activity?.lastLogin),
         date(activity?.lastActive), usage ? String(generation?.jobsSubmitted || 0) : "Unknown"]) row.append(node("td", text));
       const controls = node("td");
-      if (account.id) for (const action of ["replace", "revoke"]) {
-        const button = node("button", action === "replace" ? "New link" : account.revoked ? "Revoked" : "Revoke account"); button.type = "button";
+      if (account.id) for (const action of ["credentials", "replace", "revoke"]) {
+        const button = node("button", action === "credentials" ? "Issue login details" : action === "replace" ? "New link" : account.revoked ? "Revoked" : "Revoke account"); button.type = "button";
         button.disabled = action === "revoke" && account.revoked;
         button.addEventListener("click", () => run(async () => {
-          if (!confirm(action === "revoke" ? "Revoke this account across every environment?" : "Replace this account's link across every environment?")) return;
+          const prompt = action === "revoke" ? "Revoke this account across every environment?"
+            : action === "credentials" ? "Create a new password and login link? The previous password and link stop working."
+            : "Replace this account's link across every environment?";
+          if (!confirm(prompt)) return;
           const result = await api(`api/control/accounts/${account.id}/${action}`, { environment: env.id });
           if (result.url) issued(result); else await load();
         })); controls.append(button);
@@ -100,5 +114,6 @@ $("person").addEventListener("submit", event => { event.preventDefault(); run(as
   const result = await api("api/control/accounts", Object.fromEntries(new FormData(event.target))); await load(); issued(result);
 }); });
 $("copy").addEventListener("click", () => run(async () => { await navigator.clipboard.writeText($("link").value); $("status").textContent = "Login link copied."; }));
+$("copy-details").addEventListener("click", () => run(async () => { await navigator.clipboard.writeText(detailsText()); $("status").textContent = "Login details copied."; }));
 $("refresh").addEventListener("click", () => run(load));
 run(async () => { await load(); $("status").textContent = "Only your admin account can manage environments and accounts."; });
