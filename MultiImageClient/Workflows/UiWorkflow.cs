@@ -229,6 +229,17 @@ namespace MultiImageClient
             // disk and hydrate again after that reload.
             var clientInstanceId = Guid.NewGuid().ToString("N");
             var accountActivity = auth == null ? null : new UiAccountActivity(settings.ImageDownloadBaseFolder);
+            if (auth?.LoginLinks != null)
+            {
+                foreach (var transfer in auth.LoginLinks.PasswordAccountTransfers())
+                {
+                    jobs.RewriteCreatorLogin(transfer.From, transfer.To);
+                    goalLoops.RewriteCreatorLogin(transfer.From, transfer.To);
+                    community.TransferLogin(transfer.From, transfer.To);
+                    favorites.TransferLogin(transfer.From, transfer.To);
+                    accountActivity?.TransferLogin(transfer.From, transfer.To);
+                }
+            }
 
             // ---- access gate (shared deployments only) ----
             // Runs before static files and every endpoint. Unauthenticated
@@ -356,7 +367,7 @@ namespace MultiImageClient
             // Intentionally content-free and authentication-independent. The
             // in-process guard calls this through a raw loopback socket to prove
             // that Kestrel, routing, and middleware can still complete work.
-            UiEnvironmentEndpoints.Map(app, settings, auth, community, runner, wwwroot, environments, accountActivity);
+            UiEnvironmentEndpoints.Map(app, settings, auth, community, runner, wwwroot, environments, accountActivity, jobs, goalLoops, favorites);
 
             app.MapGet("/api/admin/summary", (HttpContext ctx) =>
             {

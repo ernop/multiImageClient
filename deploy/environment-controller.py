@@ -76,10 +76,44 @@ def initialize():
     print('Prepared global account configuration. Existing credentials and the original route were preserved.')
 
 
+def retire_password_accounts():
+    links_path = ROOT / 'state/links.json'
+    auth_path = ROOT / 'auth.json'
+    provision.require(links_path.is_file() and auth_path.is_file(), 'Shared account files are missing.')
+    provision.require(links_path.stat().st_size <= 1048576 and auth_path.stat().st_size <= 1048576,
+                      'Shared account files exceed their size limits.')
+    links = json.loads(links_path.read_text())
+    retired = links.get('retiredPasswordLogins') or []
+    if not retired:
+        return
+    if not isinstance(retired, list) or any(not isinstance(name, str) or not name.strip() or name.strip() != name
+                                            or name.lower() == 'erniemultizone' for name in retired):
+        raise ValueError('Retired password-file names are invalid.')
+    lowered = {name.lower() for name in retired}
+    if len(lowered) != len(retired):
+        raise ValueError('Retired password-file names are duplicated.')
+    auth = json.loads(auth_path.read_text())
+    provision.require(auth.get('version') == 2 and auth.get('enabled') is True, 'Canonical auth file is invalid.')
+    accounts = auth.get('accounts')
+    provision.require(isinstance(accounts, list)
+                      and all(isinstance(account, dict) and isinstance(account.get('username'), str)
+                              for account in accounts),
+                      'Canonical auth file has no accounts array.')
+    remaining = [account for account in accounts if account['username'].lower() not in lowered]
+    if remaining == accounts:
+        return
+    provision.require(sum(account.get('username') == 'ernieMultiZone' for account in remaining) == 1,
+                      'Canonical owner account must remain after password-file conversion.')
+    auth['accounts'] = remaining
+    group = grp.getgrnam('mic-auth')
+    private_json(auth_path, auth, 0, group.gr_gid)
+
+
 def reconcile():
     import fcntl
     with open('/run/multiimageclient-environment-controller.lock', 'w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        retire_password_accounts()
         state_path = ROOT / 'state/registry.json'
         provision.require(state_path.stat().st_size <= 1048576, 'Registry exceeds its size limit.')
         registry = json.loads(state_path.read_text())

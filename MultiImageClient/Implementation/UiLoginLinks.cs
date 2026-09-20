@@ -35,11 +35,19 @@ namespace MultiImageClient
             public string? PasswordHash { get; set; }
         }
 
+        public sealed class PasswordAccountTransfer
+        {
+            public required string From { get; init; }
+            public required string To { get; init; }
+        }
+
         public sealed class Document
         {
             public required int Version { get; init; }
             public required List<Account> Accounts { get; init; }
             public List<string>? DefaultGenerators { get; set; }
+            public List<string>? RetiredPasswordLogins { get; set; }
+            public List<PasswordAccountTransfer>? PasswordAccountTransfers { get; set; }
         }
 
         public UiLoginLinks(string path)
@@ -50,6 +58,16 @@ namespace MultiImageClient
 
         public IReadOnlyList<Account> List() { lock (_sync) return Read().Accounts; }
         public IReadOnlyList<string>? Defaults() { lock (_sync) return Read().DefaultGenerators; }
+        public IReadOnlyList<string> RetiredPasswordLogins()
+        {
+            lock (_sync) return Read().RetiredPasswordLogins ?? new List<string>();
+        }
+        public IReadOnlyList<PasswordAccountTransfer> PasswordAccountTransfers()
+        {
+            lock (_sync) return Read().PasswordAccountTransfers ?? new List<PasswordAccountTransfer>();
+        }
+        public bool IsRetiredPasswordLogin(string login) =>
+            RetiredPasswordLogins().Any(name => name.Equals(login.Trim(), StringComparison.OrdinalIgnoreCase));
 
         public static string NormalizeName(string name)
         {
@@ -62,19 +80,54 @@ namespace MultiImageClient
         public (Account Account, string Token) Create(string displayName, Action<Account> prepareProfile, string? passwordHash = null)
         {
             displayName = NormalizeName(displayName);
+            if (displayName.Equals(OwnerLogin, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("That name is reserved for the owner account.");
             lock (_sync)
             {
                 var doc = Read();
                 if (doc.Accounts.Count >= MaxAccounts)
                     throw new InvalidDataException("This environment has reached its 500-account limit.");
-                if (doc.Accounts.Any(a => a.DisplayName.Equals(displayName, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidDataException("That name already has an account in this environment.");
+                RejectTakenName(doc, displayName, allowRetiredSource: null);
                 var id = Guid.NewGuid().ToString("N");
                 var secret = NewSecret();
-                var account = new Account { Id = id, Login = "member-" + id, DisplayName = displayName, TokenHash = Hash(secret), PasswordHash = passwordHash };
+                var account = new Account { Id = id, Login = displayName, DisplayName = displayName, TokenHash = Hash(secret), PasswordHash = passwordHash };
                 // A profile failure must never issue a usable token. A later file failure leaves only a reserved name.
                 prepareProfile(account);
                 doc.Accounts.Add(account);
+                Write(doc);
+                return (account, id + "." + secret);
+            }
+        }
+
+        public (Account Account, string Token) ConvertPasswordAccount(string sourceLogin, string newLogin, string passwordHash)
+        {
+            if (!UiAuth.IsPasswordHash(passwordHash))
+                throw new InvalidDataException("The replacement password hash is invalid.");
+            sourceLogin = sourceLogin.Trim();
+            newLogin = NormalizeName(newLogin);
+            if (sourceLogin.Length == 0 || sourceLogin.Equals(OwnerLogin, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The owner account cannot be converted here.");
+            if (newLogin.Equals(OwnerLogin, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("That name is reserved for the owner account.");
+            lock (_sync)
+            {
+                var doc = Read();
+                if (doc.Accounts.Count >= MaxAccounts)
+                    throw new InvalidDataException("This environment has reached its 500-account limit.");
+                doc.RetiredPasswordLogins ??= new List<string>();
+                doc.PasswordAccountTransfers ??= new List<PasswordAccountTransfer>();
+                if (doc.RetiredPasswordLogins.Any(name => name.Equals(sourceLogin, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidDataException("That password-file account has already been converted.");
+                RejectTakenName(doc, newLogin, allowRetiredSource: sourceLogin);
+                if (doc.PasswordAccountTransfers.Any(t => t.From.Equals(sourceLogin, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidDataException("That password-file account has already been converted.");
+                var id = Guid.NewGuid().ToString("N");
+                var secret = NewSecret();
+                var account = new Account { Id = id, Login = newLogin, DisplayName = newLogin, TokenHash = Hash(secret), PasswordHash = passwordHash };
+                doc.Accounts.Add(account);
+                doc.RetiredPasswordLogins.Add(sourceLogin);
+                if (!sourceLogin.Equals(newLogin, StringComparison.Ordinal))
+                    doc.PasswordAccountTransfers.Add(new PasswordAccountTransfer { From = sourceLogin, To = newLogin });
                 Write(doc);
                 return (account, id + "." + secret);
             }
@@ -189,10 +242,31 @@ namespace MultiImageClient
             {
                 if (a == null || a.Id == null || !Regex.IsMatch(a.Id, @"\A[a-f0-9]{32}\z")
                     || !ids.Add(a.Id) || a.Login == null || !logins.Add(a.Login)
-                    || (a.Login != "member-" + a.Id && a.Login != OwnerLogin)
+                    || !LoginAllowed(a.Login, a.Id)
                     || a.DisplayName == null || NormalizeName(a.DisplayName) != a.DisplayName
                     || a.TokenHash == null || !Regex.IsMatch(a.TokenHash, @"\A[a-f0-9]{64}\z"))
                     throw new InvalidDataException("The login-link file contains an invalid or duplicate account.");
+            }
+            var retired = doc.RetiredPasswordLogins ?? new List<string>();
+            if (retired.Count > MaxAccounts
+                || retired.Any(name => string.IsNullOrWhiteSpace(name) || name != name.Trim()
+                    || name.Equals(OwnerLogin, StringComparison.OrdinalIgnoreCase)
+                    || !Regex.IsMatch(name, @"\A[A-Za-z0-9 ._-]{1,32}\z"))
+                || retired.Distinct(StringComparer.OrdinalIgnoreCase).Count() != retired.Count)
+                throw new InvalidDataException("The login-link file contains an invalid retired password-file account.");
+            var transfers = doc.PasswordAccountTransfers ?? new List<PasswordAccountTransfer>();
+            var transferFrom = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var transfer in transfers)
+            {
+                if (transfer == null || string.IsNullOrWhiteSpace(transfer.From) || string.IsNullOrWhiteSpace(transfer.To)
+                    || transfer.From != transfer.From.Trim() || NormalizeName(transfer.To) != transfer.To
+                    || transfer.From.Equals(OwnerLogin, StringComparison.OrdinalIgnoreCase)
+                    || transfer.To.Equals(OwnerLogin, StringComparison.OrdinalIgnoreCase)
+                    || transfer.From.Equals(transfer.To, StringComparison.OrdinalIgnoreCase)
+                    || !transferFrom.Add(transfer.From)
+                    || !retired.Any(name => name.Equals(transfer.From, StringComparison.OrdinalIgnoreCase))
+                    || !doc.Accounts.Any(a => a.Login.Equals(transfer.To, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidDataException("The login-link file contains an invalid password-file conversion.");
             }
             if (doc.DefaultGenerators != null && (doc.DefaultGenerators.Count > 64
                 || doc.DefaultGenerators.Any(k => string.IsNullOrWhiteSpace(k) || k.Length > 80)
@@ -215,6 +289,25 @@ namespace MultiImageClient
                 File.Move(temporary, _path, true);
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
+
+        private static void RejectTakenName(Document doc, string name, string? allowRetiredSource)
+        {
+            if (doc.Accounts.Any(a => a.DisplayName.Equals(name, StringComparison.OrdinalIgnoreCase)
+                || a.Login.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException("That name already has an account in this environment.");
+            var retired = doc.RetiredPasswordLogins ?? new List<string>();
+            if (retired.Any(existing => existing.Equals(name, StringComparison.OrdinalIgnoreCase)
+                && (allowRetiredSource == null
+                    || !existing.Equals(allowRetiredSource, StringComparison.OrdinalIgnoreCase))))
+                throw new InvalidDataException("That name belonged to a converted password-file account.");
+        }
+
+        private static bool LoginAllowed(string login, string id)
+        {
+            if (login == OwnerLogin || login == "member-" + id) return true;
+            try { return NormalizeName(login) == login && !login.Equals(OwnerLogin, StringComparison.OrdinalIgnoreCase); }
+            catch (InvalidDataException) { return false; }
         }
 
         private static Account RequireAccount(Document doc, string id) => doc.Accounts.SingleOrDefault(a => a.Id == id)

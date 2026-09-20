@@ -178,6 +178,63 @@ namespace MultiImageClient
             }
         }
 
+        public int TransferLogin(string from, string to)
+        {
+            from = from.Trim();
+            to = to.Trim();
+            if (from.Length == 0 || to.Length == 0)
+                throw new InvalidDataException("A login transfer requires the exact previous login and the exact new login.");
+            if (string.Equals(from, to, StringComparison.Ordinal))
+                return 0;
+            lock (_lock)
+            {
+                var matches = _records.Values
+                    .Where(record => string.Equals(record.UserLogin, from, StringComparison.Ordinal))
+                    .ToList();
+                foreach (var record in matches)
+                {
+                    var updated = new UiFavoriteRecord
+                    {
+                        Version = record.Version,
+                        Kind = record.Kind,
+                        User = record.User,
+                        UserLogin = to,
+                        JobId = record.JobId,
+                        Generator = record.Generator,
+                        ImageIndex = record.ImageIndex,
+                        GeneratorImageCount = record.GeneratorImageCount,
+                        Prompt = record.Prompt,
+                        CreatedBy = record.CreatedBy,
+                        JobCreatedAtUnixMs = record.JobCreatedAtUnixMs,
+                        HasInputImage = record.HasInputImage,
+                        ImageUrl = record.ImageUrl,
+                        ThumbUrl = record.ThumbUrl,
+                        Size = record.Size,
+                        FavoritedAtUnixMs = record.FavoritedAtUnixMs,
+                    };
+                    var oldKey = RecordKey(record);
+                    var oldPath = RecordPath(record);
+                    var newKey = RecordKey(updated);
+                    var newPath = RecordPath(updated);
+                    if (_records.ContainsKey(newKey))
+                    {
+                        throw new InvalidDataException(
+                            $"Favorite identity already exists for the new login: {DescribeIdentity(updated)}");
+                    }
+                    WriteAtomically(newPath, updated);
+                    _records.Remove(oldKey);
+                    _records.Add(newKey, updated);
+                    if (!string.Equals(Path.GetFullPath(oldPath), Path.GetFullPath(newPath), StringComparison.Ordinal)
+                        && File.Exists(oldPath))
+                    {
+                        File.Delete(oldPath);
+                    }
+                    _revision++;
+                }
+                return matches.Count;
+            }
+        }
+
         private void Load()
         {
             foreach (var path in Directory.EnumerateFiles(_folder, "*.json"))

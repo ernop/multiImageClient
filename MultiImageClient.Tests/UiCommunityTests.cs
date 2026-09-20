@@ -237,6 +237,49 @@ public sealed class UiCommunityTests
             Assert.NotNull(reloaded);
             Assert.Equal("Alice Old", reloaded.CreatedBy);
             Assert.Equal("alice-login", reloaded.CreatorLogin);
+
+            Assert.Equal(1, registry.RewriteCreatorLogin("alice-login", "governorOfThings"));
+            Assert.Equal("governorOfThings", job.CreatorLogin);
+            Assert.Equal("Alice Old", job.CreatedBy);
+            var transferred = new UiJobRegistry(settings).Get(job.Id);
+            Assert.Equal("governorOfThings", transferred!.CreatorLogin);
+            Assert.Equal(0, registry.RewriteCreatorLogin("alice-login", "governorOfThings"));
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    [Fact]
+    public void TransferLoginMovesExactStoredIdentityAndKeepsThePreviousNameReserved()
+    {
+        var folder = CreateTempFolder();
+        try
+        {
+            var store = CreateStore(folder);
+            store.SetProfileName("victor", "victor", Array.Empty<string>(), 1_800_000_000_000);
+            store.SaveGeneratorPreferences(new UiGeneratorPreferencesRecord
+            {
+                Login = "victor",
+                ShowImageSection = true,
+                ShowDescribeSection = false,
+                DefaultView = "only-sota",
+                HiddenGeneratorKeys = new List<string> { "gpt1" },
+                DefaultSelectedKeys = new List<string> { "gpt2" },
+                Presets = new List<UiGeneratorPresetRecord>(),
+                EndpointConfigurations = new List<UiGeneratorEndpointConfigurationRecord>(),
+                UpdatedAtUnixMs = 1_800_000_000_000,
+            });
+            store.TransferLogin("victor", "governorOfThings");
+            var snapshot = store.SnapshotProfiles();
+            Assert.Equal("governorOfThings", snapshot.Profiles.Single().Login);
+            Assert.Equal("victor", snapshot.ResolveDisplay("governorOfThings", "fallback"));
+            Assert.False(store.IsDisplayNameAvailable("other-login", "victor"));
+            var preferences = store.GetGeneratorPreferences("governorOfThings");
+            Assert.NotNull(preferences);
+            Assert.Equal("only-sota", preferences!.DefaultView);
+            Assert.Null(store.GetGeneratorPreferences("victor"));
         }
         finally
         {

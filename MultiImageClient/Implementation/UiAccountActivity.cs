@@ -46,5 +46,26 @@ namespace MultiImageClient
         {
             lock (_sync) return new Dictionary<string, Entry>(_entries);
         }
+
+        public void TransferLogin(string from, string to)
+        {
+            from = from.Trim();
+            to = to.Trim();
+            if (from.Length == 0 || to.Length == 0)
+                throw new InvalidDataException("A login transfer requires the exact previous login and the exact new login.");
+            if (string.Equals(from, to, StringComparison.Ordinal))
+                return;
+            lock (_sync)
+            {
+                if (!_entries.TryGetValue(from, out var entry))
+                    return;
+                if (_entries.ContainsKey(to))
+                    throw new InvalidDataException("Account activity already has an entry for the new login.");
+                _entries.Remove(from);
+                _entries[to] = entry;
+                var temp = _path + ".tmp";
+                File.WriteAllText(temp, JsonSerializer.Serialize(_entries)); File.Move(temp, _path, true);
+            }
+        }
     }
 }

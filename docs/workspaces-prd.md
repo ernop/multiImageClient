@@ -1,7 +1,7 @@
 # Separate workspaces and personal login links
 
 Date: 2026-09-08, America/Los_Angeles.
-Updated: 2026-09-19, America/Los_Angeles.
+Updated: 2026-09-20, America/Los_Angeles.
 Status: activated in production on 2026-09-09; both environments verified through the public hostname.
 
 A workspace is one isolated tenant, also called an image-making studio.
@@ -20,7 +20,8 @@ The new idea is a second tenant with its own membership and history.
 | R6 | Require no credential explanation. | The recipient only needs to click their personal link. |
 | R7 | Start with entirely new accounts and data. | Share global identity only; keep history, images, and personal configurations separate. |
 | R8 | Match repeated provider lists (2026-09-10). | Use the composer's compact provider controls and grid in environment administration. |
-| R9 | Reissue login details for an existing normal account (2026-09-19). | Administration **Issue login details** creates a new password and a new reusable login link, shows both once, and ends the previous password and link. Stored hashes cannot be recovered. Canonical password-file accounts without a login-link identity stay unchanged. |
+| R9 | Reissue login details for an existing normal account (2026-09-19). | Administration **Issue login details** creates a new password and a new reusable login link, shows both once, and ends the previous password and link. Stored hashes cannot be recovered. |
+| R10 | Convert a password-file account to a login-link account (2026-09-20). | Administration **Convert to login-link account** creates a chosen username as the sendable login, mints a new password and reusable login link, shows both once, retires the previous password-file username, and moves that person's membership and stored creator identity to the new login. Production mappings: `victor` → `governorOfThings`, `austin` → `dallasVille`. The previous password cannot be recovered. After conversion, **Issue login details** remains available. |
 
 These requirements came from the owner during the review.
 The link grants the account's actual permissions; it does not merely select a display name.
@@ -160,14 +161,19 @@ Display names cannot grant administrator access.
 Managed instances share one canonical password-account file and one reusable-link account file.
 These files represent the same global identities, not independent per-environment accounts.
 New normal accounts support both an automatically generated password and a reusable personal link.
+The chosen username is the sendable login. It is not a `member-` identifier.
 Passwords use PBKDF2-SHA256. Personal links store only SHA-256 token digests.
 The owner receives new credentials once. Stored password hashes cannot be recovered.
 **Issue login details** creates a new password and a new reusable login link and shows both once.
 That action ends the previous password and the previous login link.
 **New link** still replaces only the reusable link. The existing password remains valid for a later login.
-Existing legacy accounts retain their existing password hashes.
-Canonical password-file accounts have no login-link identity in administration.
-The application does not write the password-account file, so those accounts cannot receive a reminder password here.
+**Convert to login-link account** moves a remaining password-file account onto that same login-link identity.
+The owner types the sendable username, for example `governorOfThings` or `dallasVille`.
+Conversion retires the previous password-file username immediately.
+Membership, job creator login, goal-loop creator login, favorites, activity, and community records that used the previous login move to the new login.
+Historical `CreatedBy` display text stays as stored. A profile can change later display.
+The application still does not write the password-account file.
+The retired names stay ignored for login and cookies until the privileged reconciler removes those rows from the canonical auth file.
 
 Managed instances use the existing root-path `mic_auth` cookie.
 A login therefore works across assigned environments without another credential prompt.
@@ -238,9 +244,9 @@ The fixture intercepted administration saves; it changed no live environment con
 2. Open **administration** from the header.
 3. Select **Open environment** to enter a listed environment.
 4. Edit an environment's name, features, default providers, or membership and save it.
-5. Enter a person's name under **Create a normal account**.
+5. Enter a person's username under **Create a normal account**.
 6. Select their environment and create the account.
-7. Copy the returned personal login link and send it yourself.
+7. Copy the returned personal login link, username, and password and send them yourself.
 
 The recipient only needs to click their link.
 Anyone holding it can act as that account, as explicitly requested.
@@ -248,6 +254,10 @@ The link selects its destination environment and initializes the assigned displa
 The fragment token is removed immediately, then exchanged through a POST request.
 The landing page uses no external assets, does not cache, and sends no referrer.
 
+Use **Convert to login-link account** on a remaining password-file row.
+Type the sendable username, then convert.
+Copy the shown link, username, and password, then send them yourself.
+The previous password-file username and password stop working.
 Use **New link** to replace a normal account's link.
 Use **Issue login details** to create a new password and login link for an existing normal account.
 Copy the shown link, username, and password, then send them yourself.
@@ -283,6 +293,7 @@ Additional application accounts receive read access through the `mic-auth` group
 The shared root directory is root-owned. Its writable state directory is separate from root-written status and authentication files.
 The reconciler accepts bounded JSON, fixed path roots, validated identifiers, and validated single-segment URL names.
 It never accepts a supplied shell command or arbitrary service path.
+It also removes retired password-file usernames from the canonical auth file after conversion.
 
 Additional instances use 1024 MiB MemoryHigh and 1536 MiB MemoryMax.
 They copy the original provider request cap, pending capacity, and provider lane limits.
@@ -310,7 +321,8 @@ An update verifies the selected service and loopback health and retains the prev
 | `GET api/control/state` | Admin-only environment, membership, account, and provisioning list. |
 | `POST api/control/environment` | Admin-only configuration and membership update. |
 | `POST api/control/environment?create=true` | Request an environment; reject an existing identity. |
-| `POST api/control/accounts` | Create a normal account and return credentials once. |
+| `POST api/control/accounts` | Create a normal account and return credentials once. The chosen username is the login. |
+| `POST api/control/password-accounts/convert` | Convert a password-file account to a chosen login-link username; return credentials once. |
 | `POST api/control/accounts/{id}/credentials` | Replace the account's password and reusable link; return both once. |
 | `POST api/control/accounts/{id}/replace` | Replace the account's reusable link. |
 | `POST api/control/accounts/{id}/revoke` | Revoke a new account globally. |
@@ -324,7 +336,7 @@ Unknown environments, malformed stores, duplicate routes, and unavailable identi
 Implementation files:
 
 - `UiEnvironmentRegistry.cs`: bounded environment policy and membership storage.
-- `UiLoginLinks.cs` and `UiAuth.cs`: shared identities, credentials, link rotation, and revocation.
+- `UiLoginLinks.cs` and `UiAuth.cs`: shared identities, credentials, chosen usernames, password-file conversion, link rotation, and revocation.
 - `UiAccountActivity.cs`: durable login and activity observations.
 - `UiGlobalAdminEndpoints.cs` and `UiEnvironmentEndpoints.cs`: administration and login APIs.
 - `UiWorkflow.cs`: membership, feature enforcement, and activity integration.

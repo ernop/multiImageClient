@@ -267,6 +267,7 @@ namespace MultiImageClient
         {
             return CurrentFile().Accounts
                 .Select(account => account.Username)
+                .Where(username => LoginLinks == null || !LoginLinks.IsRetiredPasswordLogin(username))
                 .ToList();
         }
 
@@ -281,6 +282,8 @@ namespace MultiImageClient
             var file = CurrentFile();
             var account = file.Accounts.FirstOrDefault(
                 a => string.Equals(a.Username, username.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (account != null && LoginLinks != null && LoginLinks.IsRetiredPasswordLogin(account.Username))
+                account = null;
             var passwordMatches = account != null
                 ? VerifyPassword(password, account.Salt, account.Digest)
                 : VerifyPassword(password, DummyPasswordHash);
@@ -326,7 +329,8 @@ namespace MultiImageClient
             var file = CurrentFile();
             var account = file.Accounts.FirstOrDefault(
                 a => string.Equals(a.Username, user, StringComparison.Ordinal));
-            if (account == null)
+            if (account == null
+                || (LoginLinks != null && LoginLinks.IsRetiredPasswordLogin(account.Username)))
             {
                 return false;
             }

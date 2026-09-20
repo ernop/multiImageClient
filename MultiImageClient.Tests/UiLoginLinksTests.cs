@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -23,7 +24,7 @@ public sealed class UiLoginLinksTests : IDisposable
     {
         var store = Store();
         var issued = store.Create("Alice", _ => { });
-        Assert.StartsWith("member-", issued.Account.Login);
+        Assert.Equal("Alice", issued.Account.Login);
         Assert.DoesNotContain(issued.Token.Split('.')[1], File.ReadAllText(Path.Combine(_root, "links.json")));
         for (var i = 0; i < 2; i++)
         {
@@ -64,11 +65,8 @@ public sealed class UiLoginLinksTests : IDisposable
     [Fact]
     public void DisplayNameCannotGrantOwnerPrivileges()
     {
-        var store = Store(); var issued = store.Create(UiLoginLinks.OwnerLogin, _ => { });
-        Assert.NotEqual(UiLoginLinks.OwnerLogin, issued.Account.Login);
-        Assert.True(store.TryExchange(issued.Token, SigningSecret, out var cookie, out _));
-        Assert.True(store.TryValidateCookie(cookie, SigningSecret, out var login));
-        Assert.NotEqual(UiLoginLinks.OwnerLogin, login);
+        var store = Store();
+        Assert.Throws<InvalidDataException>(() => store.Create(UiLoginLinks.OwnerLogin, _ => { }));
     }
 
     [Fact]
@@ -155,6 +153,45 @@ public sealed class UiLoginLinksTests : IDisposable
         Assert.Equal("mic_auth", legacy.SessionCookieName);
         Assert.Equal("/", legacy.SessionCookiePath);
         Assert.False(legacy.TryValidateCookie(linkCookie, out _));
+    }
+
+    [Fact]
+    public void ConvertPasswordAccountIssuesChosenUsernameAndRetiresTheOldLogin()
+    {
+        var store = Store();
+        var salt = RandomNumberGenerator.GetBytes(16);
+        var digest = Rfc2898DeriveBytes.Pbkdf2("old-password-value", salt, 600000, HashAlgorithmName.SHA256, 32);
+        var authPath = Path.Combine(_root, "auth-convert.json");
+        File.WriteAllText(authPath, JsonSerializer.Serialize(new { version = 2, enabled = true, secret = SigningSecret,
+            accounts = new[] {
+                new { username = UiLoginLinks.OwnerLogin,
+                    passwordHash = "pbkdf2-sha256$600000$" + Convert.ToBase64String(salt) + "$" + Convert.ToBase64String(digest) },
+                new { username = "victor",
+                    passwordHash = "pbkdf2-sha256$600000$" + Convert.ToBase64String(salt) + "$" + Convert.ToBase64String(digest) } } }));
+        var settings = new Settings { UiAuthFilePath = authPath, UiLoginLinksFilePath = Path.Combine(_root, "links.json") };
+        var auth = UiAuth.CreateFromSettings(settings)!;
+        Assert.True(auth.TryLogin("victor", "old-password-value", "test", out var oldCookie, out _));
+        Assert.Contains("victor", auth.ListAccountNames());
+        var converted = auth.LoginLinks!.ConvertPasswordAccount("victor", "governorOfThings", PasswordHash("new-password-value"));
+        Assert.Equal("governorOfThings", converted.Account.Login);
+        Assert.Equal(new[] { "victor" }, auth.LoginLinks.RetiredPasswordLogins());
+        Assert.Equal("victor", auth.LoginLinks.PasswordAccountTransfers().Single().From);
+        Assert.Equal("governorOfThings", auth.LoginLinks.PasswordAccountTransfers().Single().To);
+        Assert.DoesNotContain("victor", auth.ListAccountNames());
+        Assert.False(auth.TryLogin("victor", "old-password-value", "test", out _, out _));
+        Assert.False(auth.TryValidateCookie(oldCookie, out _));
+        Assert.True(auth.TryLogin("governorOfThings", "new-password-value", "test", out _, out _));
+        Assert.True(auth.LoginLinks.TryExchange(converted.Token, SigningSecret, out _, out var account));
+        Assert.Equal("governorOfThings", account!.Login);
+        Assert.Throws<InvalidDataException>(() =>
+            auth.LoginLinks.ConvertPasswordAccount("victor", "someoneElse", PasswordHash("other-password")));
+        Assert.Throws<InvalidDataException>(() => store.Create("governorOfThings", _ => { }));
+        Assert.Throws<InvalidDataException>(() => store.Create("victor", _ => { }));
+        File.WriteAllText(Path.Combine(_root, "legacy-member.json"), """
+            {"version":1,"accounts":[{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","login":"member-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","displayName":"Legacy","tokenHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","revoked":false}]}
+            """);
+        var legacyMembers = new UiLoginLinks(Path.Combine(_root, "legacy-member.json"));
+        Assert.Equal("member-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", legacyMembers.List().Single().Login);
     }
 
     public void Dispose() => Directory.Delete(_root, true);

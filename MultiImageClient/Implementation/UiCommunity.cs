@@ -513,6 +513,60 @@ namespace MultiImageClient
         public void ReserveAliases(string ownerLogin, IEnumerable<string> aliases)
             => ReserveAliases(aliases.Select(alias => (Owner: ownerLogin, Alias: alias)));
 
+        public void TransferLogin(string from, string to)
+        {
+            from = from.Trim();
+            to = to.Trim();
+            if (from.Length == 0 || to.Length == 0)
+                throw new InvalidDataException("A login transfer requires the exact previous login and the exact new login.");
+            if (string.Equals(from, to, StringComparison.OrdinalIgnoreCase))
+                return;
+            var fromKey = "login:" + from;
+            var toKey = "login:" + to;
+            var publicId = PublicIdentityId(to);
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var transaction = connection.BeginTransaction();
+                FailIfLoginExists(connection, transaction, "ui_profiles", "login", to);
+                FailIfLoginExists(connection, transaction, "ui_generator_preferences", "login", to);
+                FailIfValueExists(connection, transaction, "ui_creator_presence", "identity_key", toKey);
+                Execute(connection, transaction,
+                    "UPDATE ui_profiles SET login = $to, public_id = $publicId WHERE login = $from;",
+                    ("$to", to), ("$publicId", publicId), ("$from", from));
+                Execute(connection, transaction,
+                    "UPDATE ui_profile_aliases SET owner_login = $to WHERE owner_login = $from;",
+                    ("$to", to), ("$from", from));
+                Execute(connection, transaction,
+                    "UPDATE ui_generator_preferences SET login = $to WHERE login = $from;",
+                    ("$to", to), ("$from", from));
+                Execute(connection, transaction,
+                    "UPDATE ui_claude_prompt_exchanges SET identity_key = $toKey WHERE identity_key = $fromKey;",
+                    ("$toKey", toKey), ("$fromKey", fromKey));
+                Execute(connection, transaction,
+                    "UPDATE ui_creator_presence SET identity_key = $toKey WHERE identity_key = $fromKey;",
+                    ("$toKey", toKey), ("$fromKey", fromKey));
+                Execute(connection, transaction,
+                    "UPDATE ui_activity SET actor_login = $to WHERE actor_login = $from;",
+                    ("$to", to), ("$from", from));
+                Execute(connection, transaction,
+                    "UPDATE ui_activity SET target_login = $to WHERE target_login = $from;",
+                    ("$to", to), ("$from", from));
+                Execute(connection, transaction,
+                    "UPDATE ui_user_requests SET submitter_login = $to WHERE submitter_login = $from;",
+                    ("$to", to), ("$from", from));
+                ReserveAlias(connection, transaction, from, to);
+                ReserveAlias(connection, transaction, to, to);
+                using (var revision = connection.CreateCommand())
+                {
+                    revision.Transaction = transaction;
+                    revision.CommandText = "UPDATE ui_profile_meta SET revision = revision + 1 WHERE singleton = 1;";
+                    revision.ExecuteNonQuery();
+                }
+                transaction.Commit();
+            }
+        }
+
         private void ReserveAliases(IEnumerable<(string Owner, string Alias)> reservations)
         {
             lock (_sync)
@@ -1023,6 +1077,45 @@ namespace MultiImageClient
             command.Parameters.AddWithValue("$generator", generator ?? "");
             command.Parameters.AddWithValue("$imageIndex", imageIndex);
             command.Parameters.AddWithValue("$resourceKind", resourceKind ?? "");
+            command.ExecuteNonQuery();
+        }
+
+        private static void FailIfLoginExists(
+            SqliteConnection connection,
+            SqliteTransaction transaction,
+            string table,
+            string column,
+            string value)
+        {
+            FailIfValueExists(connection, transaction, table, column, value);
+        }
+
+        private static void FailIfValueExists(
+            SqliteConnection connection,
+            SqliteTransaction transaction,
+            string table,
+            string column,
+            string value)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $"SELECT 1 FROM {table} WHERE {column} = $value LIMIT 1;";
+            command.Parameters.AddWithValue("$value", value);
+            if (command.ExecuteScalar() != null)
+                throw new InvalidDataException($"Stored data already uses the new login in {table}.");
+        }
+
+        private static void Execute(
+            SqliteConnection connection,
+            SqliteTransaction transaction,
+            string sql,
+            params (string Name, object Value)[] parameters)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = sql;
+            foreach (var parameter in parameters)
+                command.Parameters.AddWithValue(parameter.Name, parameter.Value);
             command.ExecuteNonQuery();
         }
 

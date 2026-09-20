@@ -2517,6 +2517,33 @@ namespace MultiImageClient
         public List<UiGoalLoop> ListSummaries()
             => _index.Values.OrderByDescending(l => l.CreatedAtUnixMs).ToList();
 
+        public int RewriteCreatorLogin(string from, string to)
+        {
+            from = from.Trim();
+            to = to.Trim();
+            if (from.Length == 0 || to.Length == 0)
+                throw new InvalidDataException("A login transfer requires the exact previous login and the exact new login.");
+            if (string.Equals(from, to, StringComparison.Ordinal))
+                return 0;
+            var matches = _index.Values.Where(loop => string.Equals(loop.CreatorLogin, from, StringComparison.Ordinal)).ToList();
+            foreach (var loop in matches)
+            {
+                if (!string.Equals(loop.CreatorLogin, from, StringComparison.Ordinal))
+                    throw new InvalidDataException($"Goal loop {loop.Id} creator login is '{loop.CreatorLogin}', not '{from}'.");
+                loop.CreatorLogin = to;
+                try
+                {
+                    new UiGoalLoopStorage(_root, loop.Id).SaveMetadata(loop);
+                }
+                catch
+                {
+                    loop.CreatorLogin = from;
+                    throw;
+                }
+            }
+            return matches.Count;
+        }
+
         private void EvictIdleIfNeeded()
         {
             var idle = _hydrated.Values.Where(s => !s.IsRunning).ToList();

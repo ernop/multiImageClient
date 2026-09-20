@@ -18,7 +18,8 @@ namespace MultiImageClient
             SHA256.HashData(Encoding.UTF8.GetBytes(ctx.Request.Cookies[auth.SessionCookieName] ?? "")))[..32];
 
         public static void Map(WebApplication app, Settings settings, UiAuth? auth, UiCommunityStore community,
-            UiJobRunner runner, string wwwroot, UiEnvironmentRegistry? environments = null, UiAccountActivity? activity = null)
+            UiJobRunner runner, string wwwroot, UiEnvironmentRegistry? environments = null, UiAccountActivity? activity = null,
+            UiJobRegistry? jobs = null, UiGoalLoopRegistry? goalLoops = null, UiFavoriteStore? favorites = null)
         {
             app.MapGet("/environment.js", (HttpContext ctx) =>
             {
@@ -68,7 +69,9 @@ namespace MultiImageClient
 
             if (environments != null)
             {
-                UiGlobalAdminEndpoints.Map(app, settings, auth, environments, runner);
+                if (jobs == null || goalLoops == null || favorites == null)
+                    throw new InvalidDataException("Administration requires job, goal-loop, and favorite stores.");
+                UiGlobalAdminEndpoints.Map(app, settings, auth, environments, runner, community, jobs, goalLoops, favorites, activity);
                 app.MapGet("/people.html", () => Results.Redirect("/" + environments.Read().Environments.Single(e => e.Original).Slug + "/admin.html"));
                 return;
             }

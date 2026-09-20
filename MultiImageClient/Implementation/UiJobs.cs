@@ -101,6 +101,34 @@ namespace MultiImageClient
                 }
             }
         }
+
+        internal void RewriteCreatorLogin(string from, string to)
+        {
+            lock (_lock)
+            {
+                if (string.Equals(CreatorLogin, to, StringComparison.Ordinal))
+                    return;
+                if (!string.Equals(CreatorLogin, from, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        $"Job {Id} creator login is '{CreatorLogin}', not '{from}'.");
+                }
+                if (_storage == null)
+                {
+                    throw new InvalidDataException($"Job {Id} has no durable history storage.");
+                }
+                CreatorLogin = to;
+                try
+                {
+                    _storage.SaveMetadataStrict(this);
+                }
+                catch
+                {
+                    CreatorLogin = from;
+                    throw;
+                }
+            }
+        }
         private Action<UiJob, string>? _emitCallback;
 
         public bool IsDone
@@ -817,29 +845,53 @@ namespace MultiImageClient
         {
             try
             {
-                var metadata = new UiPersistedJob
-                {
-                    Id = job.Id,
-                    Prompt = job.Prompt,
-                    CreatedBy = job.CreatedBy,
-                    CreatorLogin = job.CreatorLogin,
-                    InputImagePath = job.InputImagePath,
-                    InputImagePaths = job.InputImagePaths.ToList(),
-                    InputImageWidth = job.InputImageWidth,
-                    InputImageHeight = job.InputImageHeight,
-                    GeneratorKeys = job.GeneratorKeys.ToList(),
-                    CreatedAt = job.CreatedAt,
-                    SourceJobId = job.SourceJobId,
-                    SourceGenerator = job.SourceGenerator,
-                    SourceIndex = job.SourceIndex,
-                    Done = job.IsDone,
-                };
-                WriteJsonAtomically(_metadataPath, metadata);
+                SaveMetadataStrict(job);
             }
             catch (Exception ex)
             {
                 Logger.Log($"UI history: could not save job {job.Id}: {ex.Message}");
             }
+        }
+
+        internal void SaveMetadataStrict(UiJob job)
+        {
+            var metadata = new UiPersistedJob
+            {
+                Id = job.Id,
+                Prompt = job.Prompt,
+                CreatedBy = job.CreatedBy,
+                CreatorLogin = job.CreatorLogin,
+                InputImagePath = job.InputImagePath,
+                InputImagePaths = job.InputImagePaths.ToList(),
+                InputImageWidth = job.InputImageWidth,
+                InputImageHeight = job.InputImageHeight,
+                GeneratorKeys = job.GeneratorKeys.ToList(),
+                CreatedAt = job.CreatedAt,
+                SourceJobId = job.SourceJobId,
+                SourceGenerator = job.SourceGenerator,
+                SourceIndex = job.SourceIndex,
+                Done = job.IsDone,
+            };
+            WriteJsonAtomically(_metadataPath, metadata);
+        }
+
+        public static void RewritePersistedCreatorLogin(string root, string folderName, string from, string to)
+        {
+            var path = Path.Combine(root, folderName, "job.json");
+            if (!File.Exists(path))
+                throw new InvalidDataException($"Job history file is missing for {folderName}.");
+            var metadata = JsonSerializer.Deserialize<UiPersistedJob>(File.ReadAllText(path), JsonOptions)
+                ?? throw new InvalidDataException($"Job history file is empty for {folderName}.");
+            if (string.Equals(metadata.CreatorLogin, to, StringComparison.Ordinal))
+                return;
+            if (!string.Equals(metadata.CreatorLogin, from, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    $"Job {metadata.Id} creator login is '{metadata.CreatorLogin}', not '{from}'.");
+            }
+            metadata.CreatorLogin = to;
+            var storage = new UiJobStorage(root, folderName);
+            storage.WriteJsonAtomically(path, metadata);
         }
 
         public void AppendEvent(string json)
@@ -2181,6 +2233,53 @@ namespace MultiImageClient
                 .Where(e => e.HasInputImage && string.IsNullOrEmpty(e.SourceJobId))
                 .OrderByDescending(e => e.CreatedAt)
                 .ToList();
+        }
+
+        public int RewriteCreatorLogin(string from, string to)
+        {
+            from = from.Trim();
+            to = to.Trim();
+            if (from.Length == 0 || to.Length == 0)
+                throw new InvalidDataException("A login transfer requires the exact previous login and the exact new login.");
+            if (string.Equals(from, to, StringComparison.Ordinal))
+                return 0;
+            List<UiHistoryIndexEntry> matches;
+            lock (_indexLock)
+            {
+                matches = _index.Where(entry => string.Equals(entry.CreatorLogin, from, StringComparison.Ordinal)).ToList();
+            }
+            foreach (var entry in matches)
+            {
+                if (_jobs.TryGetValue(entry.Id, out var job))
+                    job.RewriteCreatorLogin(from, to);
+                else
+                    UiJobStorage.RewritePersistedCreatorLogin(_historyRoot, entry.FolderName, from, to);
+                lock (_indexLock)
+                {
+                    var index = _index.FindIndex(item => string.Equals(item.Id, entry.Id, StringComparison.Ordinal));
+                    if (index < 0)
+                        throw new InvalidDataException($"Job {entry.Id} left the history index during login transfer.");
+                    var current = _index[index];
+                    if (!string.Equals(current.CreatorLogin, from, StringComparison.Ordinal)
+                        && !string.Equals(current.CreatorLogin, to, StringComparison.Ordinal))
+                    {
+                        throw new InvalidDataException(
+                            $"Job {entry.Id} creator login is '{current.CreatorLogin}', not '{from}'.");
+                    }
+                    _index[index] = new UiHistoryIndexEntry
+                    {
+                        Id = current.Id,
+                        FolderName = current.FolderName,
+                        CreatedAt = current.CreatedAt,
+                        CreatedBy = current.CreatedBy,
+                        CreatorLogin = to,
+                        SourceJobId = current.SourceJobId,
+                        InputImageCount = current.InputImageCount,
+                        Done = current.Done,
+                    };
+                }
+            }
+            return matches.Count;
         }
 
         public string HistoryRoot => _historyRoot;

@@ -10,13 +10,31 @@ namespace MultiImageClient
 {
     internal static class UiGlobalAdminEndpoints
     {
-        public static void Map(WebApplication app, Settings settings, UiAuth auth, UiEnvironmentRegistry registry, UiJobRunner runner)
+        public static void Map(
+            WebApplication app,
+            Settings settings,
+            UiAuth auth,
+            UiEnvironmentRegistry registry,
+            UiJobRunner runner,
+            UiCommunityStore community,
+            UiJobRegistry jobs,
+            UiGoalLoopRegistry goalLoops,
+            UiFavoriteStore favorites,
+            UiAccountActivity? activity)
         {
             bool Allowed(HttpContext ctx, bool write = false) => settings.UiEnvironmentController
                 && (ctx.Items["micUser"] as string) == UiLoginLinks.OwnerLogin
                 && (!write || ctx.Request.Headers["X-Mic-Manage"] == "1");
             string Url(string environment, string token) => new Uri(new Uri(settings.UiPublicBaseUrl),
                 "/" + registry.Get(environment).Slug + "/enter.html#" + token).AbsoluteUri;
+            void TransferStoredIdentity(string from, string to)
+            {
+                jobs.RewriteCreatorLogin(from, to);
+                goalLoops.RewriteCreatorLogin(from, to);
+                community.TransferLogin(from, to);
+                favorites.TransferLogin(from, to);
+                activity?.TransferLogin(from, to);
+            }
             app.MapGet("/api/control/state", (HttpContext ctx) =>
             {
                 ctx.Response.Headers.CacheControl = "no-store";
@@ -28,8 +46,8 @@ namespace MultiImageClient
                 return Results.Json(new { environments = registry.Read().Environments,
                     provisioning = provisioning.RootElement.Clone(),
                     accounts = auth.ListAccountNames().Select(login => new { login, name = login,
-                        role = login == UiLoginLinks.OwnerLogin ? "admin" : "normal", id = "", revoked = false })
-                        .Concat(linked.Select(a => new { login = a.Login, name = a.DisplayName, role = "normal", id = a.Id, revoked = a.Revoked })) });
+                        role = login == UiLoginLinks.OwnerLogin ? "admin" : "normal", id = "", revoked = false, convertible = login != UiLoginLinks.OwnerLogin })
+                        .Concat(linked.Select(a => new { login = a.Login, name = a.DisplayName, role = "normal", id = a.Id, revoked = a.Revoked, convertible = false })) });
             });
             app.MapPost("/api/control/environment", async (HttpContext ctx) =>
             {
@@ -66,6 +84,44 @@ namespace MultiImageClient
                     return Results.Json(new { url = Url(environment.Id, issued.Token), username = issued.Account.Login, password });
                 }
                 catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            });
+            app.MapPost("/api/control/password-accounts/convert", async (HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                if (!Allowed(ctx, true)) return Results.StatusCode(403);
+                var form = await ctx.Request.ReadFormAsync();
+                try
+                {
+                    var source = auth.ListAccountNames().FirstOrDefault(name =>
+                        name.Equals(form["source"].ToString().Trim(), StringComparison.OrdinalIgnoreCase));
+                    if (source == null || source == UiLoginLinks.OwnerLogin)
+                        return Results.BadRequest(new { error = "Select a password-file account that still needs conversion." });
+                    var environment = registry.Get(form["environment"].ToString());
+                    var password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+                    var issued = auth.LoginLinks!.ConvertPasswordAccount(source, form["login"].ToString(), UiAuth.NewPasswordHash(password));
+                    foreach (var env in registry.Read().Environments)
+                    {
+                        if (!env.Members.Contains(source, StringComparer.Ordinal)) continue;
+                        env.Members.RemoveAll(member => member.Equals(source, StringComparison.Ordinal));
+                        if (!env.Members.Contains(issued.Account.Login, StringComparer.Ordinal))
+                            env.Members.Add(issued.Account.Login);
+                        registry.Save(env);
+                    }
+                    TransferStoredIdentity(source, issued.Account.Login);
+                    community.SetProfileName(
+                        issued.Account.Login,
+                        issued.Account.DisplayName,
+                        new[] { source },
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    var destination = environment.Members.Contains(issued.Account.Login, StringComparer.Ordinal)
+                        ? environment
+                        : registry.Read().Environments.FirstOrDefault(env =>
+                            env.Members.Contains(issued.Account.Login, StringComparer.Ordinal))
+                          ?? environment;
+                    return Results.Json(new { url = Url(destination.Id, issued.Token), username = issued.Account.Login, password });
+                }
+                catch (InvalidDataException ex) { return Results.BadRequest(new { error = ex.Message }); }
+                catch (UiProfileNameConflictException ex) { return Results.BadRequest(new { error = ex.Message }); }
             });
             app.MapPost("/api/control/accounts/{id}/{action}", async (string id, string action, HttpContext ctx) =>
             {

@@ -92,13 +92,28 @@ async function load() {
         const button = node("button", action === "credentials" ? "Issue login details" : action === "replace" ? "New link" : account.revoked ? "Revoked" : "Revoke account"); button.type = "button";
         button.disabled = action === "revoke" && account.revoked;
         button.addEventListener("click", () => run(async () => {
-          const prompt = action === "revoke" ? "Revoke this account across every environment?"
+          const promptText = action === "revoke" ? "Revoke this account across every environment?"
             : action === "credentials" ? "Create a new password and login link? The previous password and link stop working."
             : "Replace this account's link across every environment?";
-          if (!confirm(prompt)) return;
+          if (!confirm(promptText)) return;
           const result = await api(`api/control/accounts/${account.id}/${action}`, { environment: env.id });
           if (result.url) issued(result); else await load();
         })); controls.append(button);
+      } else if (account.role !== "admin") {
+        const loginInput = node("input");
+        loginInput.type = "text";
+        loginInput.value = account.login;
+        loginInput.maxLength = 32;
+        loginInput.setAttribute("aria-label", "New username for " + account.login);
+        const button = node("button", "Convert to login-link account");
+        button.type = "button";
+        button.addEventListener("click", () => run(async () => {
+          if (!confirm("Convert this password-file account? The previous username and password stop working. A new password and login link appear once.")) return;
+          const result = await api("api/control/password-accounts/convert", {
+            source: account.login, login: loginInput.value.trim(), environment: env.id });
+          issued(result); await load();
+        }));
+        controls.append(loginInput, button);
       }
       row.append(controls); table.append(row);
     }

@@ -13,7 +13,7 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;bord
 <section><h3>Create an environment</h3><form id="create"><label>Display name <input name="name" required maxlength="80"></label>
 <label>URL name <input name="slug" required pattern="[a-z][a-z0-9-]{0,23}" maxlength="24"></label>
 <p>Use lowercase letters, numbers, and hyphens. Provisioning runs after you save.</p><button>Create environment</button></form></section>
-<section><h3>Create a normal account</h3><form id="person"><label>Name <input name="name" required maxlength="32"></label>
+<section><h3>Create a normal account</h3><form id="person"><label>Username <input name="name" required maxlength="32"></label>
 <label>Environment <select name="environment" id="person-environment"></select></label><button>Create account and login link</button></form>
 <div id="issued" hidden>
 <p>Copy these login details. Anyone who has them can act as this account.</p>
@@ -24,4 +24,4 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;bord
 <button id="copy-details" type="button" hidden>Copy login details</button>
 <p>These details appear once. A new password ends the previous password and login link.</p>
 </div></section>
-</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20260919-credentials"></script></body></html>
+</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20260920-convert"></script></body></html>
