@@ -25,7 +25,7 @@ function harness() {
     getImageViewerPrompts: () => [],
     findViewerAnchor: () => ({ closest: () => card }),
     confirm: () => true, alert: message => alerts.push(message),
-    favoritesGrid: { querySelectorAll: () => [] }, updateJobProgress() {},
+    favoritesGrid: { querySelectorAll: () => [] }, updateJobProgress() {}, hiddenImageKeys: new Set(),
     persistHiddenResource: async () => { throw new Error('The item is hidden, but permanent file deletion is incomplete.'); },
   });
   vm.runInContext('let visibilityMutation = null;\n'

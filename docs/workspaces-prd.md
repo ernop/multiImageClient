@@ -345,7 +345,7 @@ Implementation files:
 - `generator-toggle.js`, `generator-chooser.js`, and `style.css`: shared provider controls and compact list layout.
 - `create-environment.py` and `environment-controller.py`: explicit provisioning and root-owned reconciliation.
 - `UiEnvironmentRegistryTests.cs`, `UiLoginLinksTests.cs`, and `test_create_environment.py`: unit and provisioning tests.
-- `tools/test-global-environments.cjs`: two-server browser tests for global identity, membership, features, and activity.
+- `tools/test-global-environments.cjs`: two-server browser tests for global identity, membership, features, activity, credential reissue, and password-file conversion through the admin page (2026-09-20). Password checks call the server directly because an open page reloads on 401 after a credential change.
 
 The earlier `people.html` and isolated-cookie mode remain available for independently configured standalone instances.
 They are not the selected production architecture.

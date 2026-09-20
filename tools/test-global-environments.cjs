@@ -20,8 +20,9 @@ async function start(id) {
   const directory = path.join(temporary, id); fs.mkdirSync(directory);
   const port = await freePort();
   const salt = crypto.randomBytes(16);
-  const passwordHash = `pbkdf2-sha256$600000$${salt.toString('base64')}$${crypto.pbkdf2Sync('fixture-password', salt, 600000, 32, 'sha256').toString('base64')}`;
-  const auth = {version:2, enabled:true, secret:crypto.randomBytes(32).toString('hex'), accounts:[{username:'ernieMultiZone',passwordHash}]};
+  const hash = password => `pbkdf2-sha256$600000$${salt.toString('base64')}$${crypto.pbkdf2Sync(password, salt, 600000, 32, 'sha256').toString('base64')}`;
+  const auth = {version:2, enabled:true, secret:crypto.randomBytes(32).toString('hex'),
+    accounts:[{username:'ernieMultiZone',passwordHash:hash('fixture-password')},{username:'victor',passwordHash:hash('victor-old-password')}]};
   const accountId = crypto.randomUUID().replaceAll('-', ''); const secret = crypto.randomBytes(32).toString('base64url');
   const link = `https://environment.test/${id}/enter.html#${accountId}.${secret}`;
   const links = {version:1, accounts:[{id:accountId, login:'ernieMultiZone', displayName:'Ernie',tokenHash:sha(secret),revoked:false}],defaultGenerators:['gpt2']};
@@ -45,11 +46,17 @@ async function start(id) {
   }
   assert(ready,`Fixture ${id} did not start.`);return {port,link,directory};
 }
+// Password checks go straight to the server. An open page reloads itself on 401 after a
+// credential change, which would destroy any page.evaluate context mid-flight.
+async function loginStatus(server, username, password) {
+  return (await fetch(`http://127.0.0.1:${server.port}/api/auth/login`,{method:'POST',headers:{'x-forwarded-proto':'https'},
+    body:new URLSearchParams({username,password})})).status;
+}
 (async()=>{
  let browser;
  try {
   fs.writeFileSync(path.join(temporary,'registry.json'),JSON.stringify({version:1,environments:[
-   {id:'one',slug:'one',name:'Original',original:true,members:[],goalLoops:true,video:true,promptRewrite:true},
+   {id:'one',slug:'one',name:'Original',original:true,members:['victor'],goalLoops:true,video:true,promptRewrite:true},
    {id:'two',slug:'two',name:'Vibecoders AI Generation',original:false,members:[],goalLoops:true,video:true,promptRewrite:true}]}));
   const one=await start('one'),two=await start('two');
   browser=await chromium.launch({headless:true,channel:'chrome'});
@@ -117,21 +124,53 @@ async function start(id) {
    assert.equal(await alice.evaluate(async path=>(await fetch(path)).status,path),403,path);
   const summary=await page.evaluate(async()=> (await (await fetch('/two/api/admin/summary')).json()));
   assert(summary.accounts[created.username].firstLogin);
-  await alice.evaluate(async()=>fetch('api/auth/logout',{method:'POST'}));
-  assert.equal(await alice.evaluate(async c=>(await fetch('api/auth/login',{method:'POST',body:new URLSearchParams({username:c.username,password:c.password})})).status,created),200);
+  assert.equal(await loginStatus(two, created.username, created.password),200);
   const aliceId = (await page.evaluate(async()=> (await (await fetch('api/control/state')).json()).accounts.find(a=>a.name==='Alice').id));
   const reissued = await page.evaluate(async id=>(await fetch(`api/control/accounts/${id}/credentials`,{method:'POST',headers:{'X-Mic-Manage':'1'},body:new URLSearchParams({environment:'two'})})).json(), aliceId);
   assert.equal(reissued.username, created.username);
   assert(reissued.password && reissued.password !== created.password);
   assert(reissued.url && reissued.url !== created.url);
-  assert.equal(await alice.evaluate(async c=>(await fetch('api/auth/login',{method:'POST',body:new URLSearchParams({username:c.username,password:c.password})})).status,created),401);
-  assert.equal(await alice.evaluate(async c=>(await fetch('api/auth/login',{method:'POST',body:new URLSearchParams({username:c.username,password:c.password})})).status,reissued),200);
+  assert.equal(await loginStatus(two, created.username, created.password),401);
+  assert.equal(await loginStatus(two, created.username, reissued.password),200);
+  // Password-file account conversion through the admin page: chosen username, one-time
+  // credentials, retired old login, transferred membership, and no second conversion.
+  assert.equal(await loginStatus(one, 'victor', 'victor-old-password'),200);
+  const before=await page.evaluate(async()=> (await (await fetch('api/control/state')).json()).accounts);
+  assert.deepEqual(before.filter(a=>a.login==='victor').map(a=>[a.id,a.convertible]),[['',true]]);
+  await page.goto('https://environment.test/one/admin.html');await page.waitForSelector('#environments section');
+  const victorRow=page.locator('#environments section').first().locator('tr',{hasText:'victor'});
+  await victorRow.locator('input[aria-label="New username for victor"]').fill('governorOfThings');
+  page.once('dialog',dialog=>dialog.accept());
+  await victorRow.getByRole('button',{name:'Convert to login-link account'}).click();
+  await page.waitForFunction(()=>document.getElementById('issued-username').value==='governorOfThings');
+  const convertedUrl=await page.locator('#link').inputValue(), convertedPassword=await page.locator('#issued-password').inputValue();
+  assert(convertedUrl.startsWith('https://environment.test/one/enter.html#'));
+  assert.match(convertedPassword,/^[0-9a-f]{32}$/);
+  assert.equal(await page.locator('#copy-details').isHidden(),false);
+  assert.equal(await loginStatus(one,'victor','victor-old-password'),401);
+  assert.equal(await loginStatus(one,'governorOfThings',convertedPassword),200);
+  const after=await page.evaluate(async()=> (await (await fetch('api/control/state')).json()));
+  assert.equal(after.accounts.some(a=>a.login==='victor'),false);
+  assert.equal(after.accounts.filter(a=>a.login==='governorOfThings'&&a.id&&!a.convertible).length,1);
+  assert.deepEqual(after.environments.find(e=>e.id==='one').members,[created.username,'governorOfThings']);
+  assert.equal(await page.locator('#environments section').first().getByRole('button',{name:'Convert to login-link account'}).count(),0);
+  const again=await page.evaluate(async()=> (await fetch('api/control/password-accounts/convert',{method:'POST',headers:{'X-Mic-Manage':'1'},
+    body:new URLSearchParams({source:'victor',login:'someoneElse',environment:'one'})})).status);
+  assert.equal(again,400);
+  const governor=await context();const governorPage=await governor.newPage();await governorPage.goto(convertedUrl);await governorPage.waitForURL('https://environment.test/one/');
+  await governorPage.waitForFunction(()=>document.getElementById('username-input')?.value==='governorOfThings');
+  assert.equal(await governorPage.evaluate(async()=> (await fetch('api/jobs')).status),200);
+  assert.equal(await governorPage.evaluate(async()=> (await fetch('/two/api/jobs')).status),403);
+  await governor.close();
+  // The reissue replaced Alice's token hash, so her earlier session is gone; re-enter through the new link.
+  await alice.goto(reissued.url);await alice.waitForURL('https://environment.test/two/');
+  assert.equal(await alice.evaluate(async()=> (await fetch('api/jobs')).status),200);
   policy.members=[];
   assert.equal(await page.evaluate(async policy=>(await fetch('api/control/environment',{method:'POST',headers:{'X-Mic-Manage':'1','Content-Type':'application/json'},body:JSON.stringify(policy)})).status,policy),200);
   assert.equal(await alice.evaluate(async()=> (await fetch('api/jobs')).status),403);
   await page.reload();await page.waitForSelector('#environments section');await page.setViewportSize({width:1100,height:950});
   await page.screenshot({path:path.join(temporary,'admin.png'),fullPage:true});
-  console.log('PASS: one owner login across environments; normal membership; private administration/logs; shared activity; editable titles; disabled APIs; persistent login records; password and link identity.');
+  console.log('PASS: one owner login across environments; normal membership; private administration/logs; shared activity; editable titles; disabled APIs; persistent login records; password and link identity; password-file account conversion.');
   console.log('Artifacts: '+temporary);
  } finally {
   if(browser)await browser.close();for(const child of processes){if(child.exitCode!==null)continue;const exited=new Promise(resolve=>child.once('exit',resolve));child.kill();await exited;}
