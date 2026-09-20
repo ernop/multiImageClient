@@ -8,6 +8,10 @@
     <PackageReference Include="SQLitePCLRaw.provider.dynamic_cdecl" Version="3.0.5" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\MultiImageClient\Ui\wwwroot\text-entry.js" Link="wwwroot\text-entry.js" ContentRoot="$(MSBuildProjectDirectory)/../MultiImageClient/Ui/wwwroot/" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>

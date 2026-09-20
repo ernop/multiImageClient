@@ -44,6 +44,7 @@ INSTALLED_APPS = [
 ]
 
 STATICFILES_DIRS = [
+    ("mic-shared", BASE_DIR.parent.parent / "MultiImageClient" / "Ui" / "wwwroot"),
     BASE_DIR / "static",
 ]
 
