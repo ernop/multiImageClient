@@ -23,6 +23,7 @@ window.previewPublicShare = async function previewPublicShare({ apiUrl, jobId, g
   details.hidden = true;
   frame.removeAttribute("src");
   confirm.disabled = true;
+  confirm.textContent = "Make public & send";
   cancel.disabled = false;
   dialog.showModal();
 
@@ -97,6 +98,10 @@ window.previewPublicShare = async function previewPublicShare({ apiUrl, jobId, g
         if (body.jobId !== jobId || body.generator !== generator || body.imageIndex !== imageIndex)
           throw new Error("The preview did not match the selected image.");
         record = body;
+        if (body.pagePublished) {
+          confirm.textContent = "Send to thread";
+          status.textContent = "This prompt already has a public page. This image will use the same page.";
+        }
         destination.textContent = `Post to ${body.serverName} · #${body.channelName.replace(/^#/, "")} → ${body.threadName} (Pacific time)`;
         disclosure.textContent = body.disclosure;
         const media = document.createElement(body.mediaKind === "video" ? "video" : "img");
@@ -108,11 +113,11 @@ window.previewPublicShare = async function previewPublicShare({ apiUrl, jobId, g
         media.addEventListener("error", () => { status.textContent = "The image preview could not load. Close and try again."; }, { once: true });
         media.src = apiUrl(body.mediaUrl);
         mediaBox.append(media);
-        for (const [label, suffix] of [[body.linkLabel, ""], [body.reuseLabel, "reuse"]]) {
+        for (const [label, url] of [[body.linkLabel, body.viewUrl], [body.reuseLabel, body.publicUrl + "reuse"]]) {
           if (caption.childNodes.length) caption.append(" · ");
           const link = document.createElement("a");
           link.textContent = label;
-          link.href = body.publicUrl + suffix;
+          link.href = url;
           link.addEventListener("click", event => { event.preventDefault(); details.open = true; });
           caption.append(link);
         }

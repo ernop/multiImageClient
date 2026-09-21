@@ -22,6 +22,7 @@ The new idea is a second tenant with its own membership and history.
 | R8 | Match repeated provider lists (2026-09-10). | Use the composer's compact provider controls and grid in environment administration. |
 | R9 | Reissue login details for an existing normal account (2026-09-19). | Administration **Issue login details** creates a new password and a new reusable login link, shows both once, and ends the previous password and link. Stored hashes cannot be recovered. |
 | R10 | Convert a password-file account to a login-link account (2026-09-20). | Administration **Convert to login-link account** creates a chosen username as the sendable login, mints a new password and reusable login link, shows both once, retires the previous password-file username, and moves that person's membership and stored creator identity to the new login. Production mappings: `victor` → `governorOfThings`, `austin` → `dallasVille`. The previous password cannot be recovered. After conversion, **Issue login details** remains available. |
+| R11 | Request an account through Discord (2026-09-20). | Enter an exact Discord username on a public page. Verify membership and access to #vibecoders. DM that account a 30-minute, one-use link. Explicit confirmation creates a normal account with Vibecoders membership only. |
 
 These requirements came from the owner during the review.
 The link grants the account's actual permissions; it does not merely select a display name.
@@ -128,7 +129,8 @@ There are exactly two permission levels: admin and normal.
 The existing `ernieMultiZone` account is the sole global administrator.
 Its existing password and cookie signing secret remain unchanged.
 No separate environment administrator role exists.
-Normal accounts require explicit environment membership assigned by the owner.
+Normal accounts require explicit environment membership.
+The owner assigns membership, with the narrow Discord signup exception below.
 A normal account can belong to multiple environments without merging their data.
 
 The first additional environment is **Vibecoders AI Generation**.
@@ -146,8 +148,95 @@ The original private URL remains fixed and must never be printed or committed.
 Normal members cannot access server configuration, raw application logs, administration endpoints, or unassigned environments.
 The former browser-only settings button is labelled preferences in managed environments.
 Everyone in an environment can see its shared activity.
-No public registration or member-controlled invitations exist.
-Only the owner creates accounts and distributes their personal links.
+The owner creates accounts and distributes reusable personal links.
+The optional Discord request flow below permits normal account creation for eligible Vibecoders members.
+Members cannot create invitation links or grant environment membership.
+
+## Discord account requests (2026-09-20)
+
+The owner requested signup without Discord's browser authorization screen, commonly called OAuth.
+An entered username selects a recipient; receiving and using the DM proves control of that account.
+The requesting browser receives neither a login link nor an authenticated session.
+
+1. Open a public image page and select **Request account**.
+2. Enter the exact Discord username. An initial `@` and uppercase letters are accepted.
+3. Select **Send me an account link**.
+4. Open the bot's DM and follow **Continue to Vibecoders**.
+5. Select **Continue to Vibecoders** on the confirmation page.
+
+The bot searches the server attached to the real Vibecoders webhook.
+The image-sharing **Target** selector does not change signup eligibility.
+Require one exact username match; reject display names, nicknames, incomplete results, and ambiguous matches.
+Re-fetch the exact member and verify effective channel-view permission, including role and member overrides.
+Reject bots and members with incomplete screening.
+Check the same Discord account, server, and channel again when redeeming the link.
+These checks do not continuously synchronize existing site memberships with Discord.
+
+Use the existing `DiscordVibecodersBotToken` for the DM.
+Validate the returned DM channel and its sole recipient before sending the link.
+Disable mentions and link embeds.
+Blocked DMs show a delivery error with message-privacy guidance.
+Uncertain delivery remains pending; never retry automatically or return its token through the website.
+
+Each link expires after 30 minutes and can create only one authenticated response.
+The secret appears in the URL fragment, which the browser removes immediately.
+Opening the page does not redeem the link; explicit confirmation sends a same-origin POST.
+Pages use no external assets, prohibit caching, and send no referrer.
+Only the claim endpoint returns the existing secure, HTTP-only global session cookie.
+The one-use link does not make that browser session one-use.
+
+Create only a normal account in the exact `vibecoders-ai-generation` environment.
+Never grant original-environment membership or administrator access.
+Use the verified Discord username as the initial site login and display name.
+Bind the account to the permanent Discord user ID.
+Later Discord username changes retain the same site account and login.
+A matching existing site name never proves ownership; reject that collision and direct the person to Ernie.
+New accounts receive no generated password or reusable login link through this flow.
+The owner can still use **Issue login details** afterward.
+An existing Discord-bound account can request another one-use login link without resetting its other credentials.
+Revoked accounts and removed Vibecoders memberships remain blocked.
+
+A request from a Vibecoders public page preserves its exact prompt for the composer after login.
+A request from an original-environment public page opens the Vibecoders composer without importing private-environment data.
+Anonymous visitors can continue reading either published subset without an account.
+
+Only the original controller writes shared accounts, memberships, and signup tickets.
+All public image pages direct signup to `/shared/original/signup` on the configured public origin.
+This uses the existing public proxy route and exposes no private prefix.
+Persist tickets under the controller's data root at `UiDiscordAccountRequests/requests.json`.
+Store token digests, recipient IDs, expiry, source-share tokens, delivery state, and activation progress.
+Never store the raw token or client IP.
+Flush state before sending and before returning a session; preserve exact account identity through interrupted activation.
+An interrupted membership grant never restores membership after removal.
+An interrupted grant that cannot be verified requires owner intervention.
+
+Persist limits before searching Discord: 12 requests per IP per hour and 60 requests overall per hour.
+Hash IP addresses and discard attempts older than one hour when processing the next request.
+Allow at most three tickets per Discord account per hour, separated by five minutes.
+An unexpired pending, sent, or activating ticket blocks another delivery.
+Prune ticket history 24 hours after expiry when processing the next request.
+Cap storage at 2 MiB and 2,048 records.
+Permit one request or redemption at a time on the controller.
+Trust forwarded client addresses only from loopback; use nginx's appended final address.
+
+Administration exposes **Discord account requests** only for Vibecoders AI Generation.
+The switch defaults to off; the server rejects enabling it for any other environment.
+Disabling it removes public request links and rejects new requests and redemptions.
+Existing accounts retain their explicit site memberships.
+Deploy compatible code to both approved instances before enabling the switch or creating Discord-bound accounts.
+Older versions reject the new shared-store fields. See [the release instructions](../deploy/README.md#discord-account-request-activation-2026-09-20).
+
+Read-only production checks passed on September 20 for bot authentication, member search, server data, and #vibecoders data.
+These checks sent no DM and created no live account.
+All 489 application tests passed after implementation.
+Desktop and mobile browser checks passed for public-image entry, form submission, explicit confirmation, and token removal.
+The owner authorized production activation on September 20.
+Release both the original controller and Vibecoders instance, then enable **Discord account requests** for Vibecoders.
+Verify public forms and existing account access without sending a test DM.
+
+Discord references: [member search](https://docs.discord.com/developers/resources/guild#search-guild-members),
+[permission calculation](https://docs.discord.com/developers/topics/permissions), and
+[DM creation](https://docs.discord.com/developers/resources/user#create-dm).
 
 ## Data and authentication boundaries
 
@@ -318,6 +407,10 @@ An update verifies the selected service and loopback health and retains the prev
 |---|---|
 | `POST api/auth/login` | One username/password identity across assigned environments. |
 | `POST api/auth/link` | Reusable-token login with destination membership validation. |
+| `GET /public/signup` | Anonymous exact-username form on the original controller, when enabled. |
+| `POST /public/signup/request` | Same-origin, limited member lookup and one-use DM delivery. Never returns authentication. |
+| `GET /public/signup/claim` | Confirmation page; GET never consumes a token. |
+| `POST /public/signup/claim` | Same-origin, explicit token redemption; recheck membership, persist consumption, and issue a session. |
 | `GET api/control/state` | Admin-only environment, membership, account, and provisioning list. |
 | `POST api/control/environment` | Admin-only configuration and membership update. |
 | `POST api/control/environment?create=true` | Request an environment; reject an existing identity. |
@@ -329,7 +422,7 @@ An update verifies the selected service and loopback health and retains the prev
 | `GET api/admin/summary` | Admin-only login/activity records and generation-submission summaries. |
 | `GET environment.js` | Current title, role, feature visibility, browser-storage scope, and session marker. |
 
-Management mutations require the exact owner identity and the `X-Mic-Manage` header.
+Administration mutations require the exact owner identity and the `X-Mic-Manage` header.
 The application does not enable cross-origin administrative requests.
 Unknown environments, malformed stores, duplicate routes, and unavailable identities fail closed.
 
@@ -338,6 +431,11 @@ Implementation files:
 - `UiEnvironmentRegistry.cs`: bounded environment policy and membership storage.
 - `UiLoginLinks.cs` and `UiAuth.cs`: shared identities, credentials, chosen usernames, password-file conversion, link rotation, and revocation.
 - `UiAccountActivity.cs`: durable login and activity observations.
+- `DiscordAccountRequests.cs`: exact member lookup, effective channel access, and verified-recipient DM transport.
+- `UiDiscordAccountRequests.cs`: controller-only tickets, persistent limits, Discord account binding, and one-use redemption.
+- `UiDiscordAccountEndpoints.cs`: public forms, origin checks, explicit confirmation, and authenticated handoff.
+- `DiscordAccountRequestTests.cs`: delivery errors, identity collisions, expiry, concurrent redemption, interrupted activation, revocation, permissions, and HTTP boundaries.
+- `tools/test-discord-account-requests.cjs`: actual rendered forms, fragment removal, explicit confirmation, errors, and desktop/mobile browser checks.
 - `UiGlobalAdminEndpoints.cs` and `UiEnvironmentEndpoints.cs`: administration and login APIs.
 - `UiWorkflow.cs`: membership, feature enforcement, and activity integration.
 - `UiJobs.cs`: account summaries from lightweight history entries.

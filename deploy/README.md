@@ -235,6 +235,32 @@ Then run the normal original-service redeploy above.
 Verify anonymous unknown tokens return 404 without revealing the private address.
 Do not publish existing private prompts or post test messages during release checks.
 
+## Discord account request activation (2026-09-20)
+
+Read [the account contract](../docs/workspaces-prd.md#discord-account-requests-2026-09-20) before enabling signup.
+The implementation defaults to off and requires no new nginx location.
+Both public sites link to the original controller's existing `/shared/original/signup` route.
+The controller uses its existing Vibecoders bot credential and webhook destination.
+
+1. Run the normal release gate and original-service release.
+2. Update the selected `vibecoders-ai-generation` instance through `create-environment.py update --id vibecoders-ai-generation --publish <verified-publish>`.
+3. Verify both selected services run compatible code before changing the shared registry or accepting Discord accounts.
+4. Enable **Discord account requests** for Vibecoders AI Generation in administration, then select **Save configuration**.
+5. Verify both public image pages link to the controller's public signup form.
+6. Verify the claim page opens without signing in or consuming a token.
+
+New shared account records contain `discordUserId`; enabled environment records contain `discordAccountRequests`.
+Older application versions reject these fields.
+Do not enable signup while an older reader remains running.
+Disable signup before investigating delivery or account-creation failures.
+Disabling signup preserves established accounts and does not make their records readable by older versions.
+Preserve current accounts and memberships during recovery; never delete new fields to force an incompatible rollback.
+Use recipient-approved requests for any live DM check. Ordinary release checks send no Discord messages.
+Do not print DM tokens, existing credentials, or the private site prefix.
+
+Development verification uses `DiscordAccountRequestTests` and `tools/test-discord-account-requests.cjs` with mocked Discord responses.
+Set `MIC_DISCORD_SIGNUP_FIXTURES` to a temporary directory during the C# tests and the browser check.
+
 ## Additional isolated environments
 
 See [the environment setup guide](../docs/workspaces-prd.md#operator-setup-and-recipient-flow).

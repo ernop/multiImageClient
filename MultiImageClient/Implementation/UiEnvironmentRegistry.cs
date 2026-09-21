@@ -24,6 +24,8 @@ namespace MultiImageClient
             public bool NightFilter { get; set; } = true;
             public bool? VibecodersSharing { get; set; }
             public string DiscordShareTarget { get; set; } = "vibecoders";
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+            public bool DiscordAccountRequests { get; set; }
             [JsonIgnore] public bool AllowVibecoders => VibecodersSharing ?? Original;
             public List<string> Members { get; set; } = new();
             public List<string>? DefaultGenerators { get; set; }
@@ -49,6 +51,17 @@ namespace MultiImageClient
         public Environment Get(string id) => Read().Environments.SingleOrDefault(e => e.Id == id)
             ?? throw new InvalidDataException("Unknown environment.");
         public bool CanEnter(string id, string login) => login == UiLoginLinks.OwnerLogin || Get(id).Members.Contains(login, StringComparer.Ordinal);
+        public void AddDiscordMember(string login)
+        {
+            lock (_sync)
+            {
+                var environment = Get(UiDiscordAccountRequests.EnvironmentId);
+                if (environment.Original || !environment.DiscordAccountRequests)
+                    throw new InvalidDataException("Discord account requests are disabled.");
+                if (!environment.Members.Contains(login, StringComparer.Ordinal)) environment.Members.Add(login);
+                Save(environment);
+            }
+        }
         public void Save(Environment value)
         {
             lock (_sync)
@@ -82,7 +95,8 @@ namespace MultiImageClient
                     || e.Members == null || e.Members.Count > 500 || e.Members.Any(string.IsNullOrWhiteSpace)
                     || e.Members.Distinct(StringComparer.Ordinal).Count() != e.Members.Count
                     || e.DefaultGenerators?.Count > 64
-                    || e.DiscordShareTarget is not ("vibecoders" or "bot-testing"))
+                    || e.DiscordShareTarget is not ("vibecoders" or "bot-testing")
+                    || (e.DiscordAccountRequests && (e.Original || e.Id != UiDiscordAccountRequests.EnvironmentId)))
                     throw new InvalidDataException("Invalid environment name, URL name, or membership.");
             }
         }

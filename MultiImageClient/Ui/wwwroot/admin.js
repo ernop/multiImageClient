@@ -51,6 +51,8 @@ async function load() {
     const rewrite = field(features, "Prompt rewriting", "rewrite", env.promptRewrite, "checkbox"); form.append(features);
     const night = field(features, "Night filter", "night", env.nightFilter ?? true, "checkbox");
     const sharing = field(features, "Send to Vibecoders", "sharing", env.vibecodersSharing ?? env.original, "checkbox");
+    const accountRequests = env.id === "vibecoders-ai-generation"
+      ? field(features, "Discord account requests", "accountRequests", env.discordAccountRequests ?? false, "checkbox") : null;
     const targetLabel = node("label", "Target ");
     const target = node("select"); target.name = "discordShareTarget";
     for (const [value, label] of [["vibecoders", "Vibecoders"], ["bot-testing", "Bot testing"]]) {
@@ -74,6 +76,7 @@ async function load() {
     form.addEventListener("submit", event => { event.preventDefault(); run(async () => {
       await api("api/control/environment", { ...env, name: name.value.trim(), slug: env.original ? env.slug : slug.value.trim(),
         goalLoops: goals.checked, video: video.checked, promptRewrite: rewrite.checked, vibecodersSharing: sharing.checked, discordShareTarget: target.value, nightFilter: night.checked,
+        discordAccountRequests: accountRequests?.checked ?? false,
         members: boxes.filter(b => b.checked).map(b => b.name), defaultGenerators: providers.filter(b => b.checked).map(b => b.name) }, true);
       $("status").textContent = "Configuration saved. URL changes take effect after provisioning finishes.";
     }); });

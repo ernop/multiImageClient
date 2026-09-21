@@ -184,7 +184,8 @@ namespace MultiImageClient
             CancellationToken cancellationToken,
             string? publicUrl = null,
             string? expectedChannelId = null,
-            string? threadId = null)
+            string? threadId = null,
+            int? publicOutputSlot = null)
         {
             if (media == Stream.Null || !media.CanRead || !media.CanSeek
                 || media.Length - media.Position <= 0 || media.Length - media.Position > DiscordVibecoders.MaxAttachmentBytes)
@@ -202,7 +203,7 @@ namespace MultiImageClient
             var payload = new
             {
                 username = _botTesting ? null : username,
-                content = publicUrl == null ? null : UiPublicShares.Caption(publicUrl),
+                content = publicUrl == null ? null : UiPublicShares.Caption(publicUrl, publicOutputSlot),
                 flags = publicUrl == null ? (int?)null : 4,
                 allowed_mentions = new { parse = Array.Empty<string>() },
             };
@@ -247,7 +248,7 @@ namespace MultiImageClient
             {
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
                 if (json.RootElement.GetProperty("channel_id").GetString() != expectedChannelId
-                    || json.RootElement.GetProperty("content").GetString() != UiPublicShares.Caption(publicUrl)
+                    || json.RootElement.GetProperty("content").GetString() != UiPublicShares.Caption(publicUrl, publicOutputSlot)
                     || json.RootElement.GetProperty("attachments").GetArrayLength() != 1)
                     throw new InvalidOperationException("Discord returned a different message identity or content.");
             }

@@ -43,6 +43,21 @@ Preserve the private prefix and never include it in Discord payloads or anonymou
 Read [the sharing contract](../../docs/public-prompt-sharing.md) before changing publication or its routing.
 Ordinary authenticated routes remain private. Public sharing never grants account access.
 
+## Discord account requests (2026-09-20)
+
+The owner authorized exact-username requests followed by verified-recipient, one-use Discord DMs.
+Follow [the account contract](../../docs/workspaces-prd.md#discord-account-requests-2026-09-20).
+This narrow exception permits only the public signup link in that recipient's DM.
+Never disclose private prefixes, reusable login links, passwords, or signup tokens in channel posts.
+Create only normal accounts with membership in `vibecoders-ai-generation`.
+Never infer account ownership from a matching site name or restore revoked accounts or removed memberships.
+Keep the original controller as the sole writer of global accounts, memberships, and signup tickets.
+Deploy compatible code to the original and explicitly selected Vibecoders instance before enabling Discord account requests.
+Do not roll either instance back to a parser that rejects the new shared account or environment fields.
+The feature starts disabled and uses the existing public proxy route.
+
+## Public sharing release targets
+
 The September 17 sharing correction targets both the original service and `multiimageclient-env-vibecoders-ai-generation`.
 The latter retained direct-send code and recorded the reported production send.
 Verify each selected app instance before reporting this sharing rollout complete.

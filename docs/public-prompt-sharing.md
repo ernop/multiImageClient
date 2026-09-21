@@ -8,14 +8,16 @@ Decision date: 2026-09-17.
 |---|---|
 | Public subset | Publish one completed prompt, its recorded appended text, inputs, successful outputs, descriptions, and contact sheet. |
 | Anonymous reading | Anyone possessing the random link can read that page without logging in. |
-| Private boundary | Do not expose the private site prefix, account links, other jobs, raw events, logs, provider requests, or filesystem paths. |
+| Stable page | Every share from one exact prompt instance uses the same public page address. |
+| Selected output | Each Discord **View prompt** link opens and highlights the selected output on that page. |
+| Private boundary | Do not expose the private site prefix, reusable account links, other jobs, raw events, logs, provider requests, or filesystem paths. One-use account tokens go only to verified recipients through the separate DM flow. |
 | Explicit publication | Clicking **send to vibecoders** prepares a private preview. It does not publish or post. |
 | Concrete preview | Show the selected original, exact link labels, destination server/channel, and publication notice. |
 | Full scope | Include an expandable preview of the complete public page before confirmation. |
-| Final action | **Make public & send** publishes the page and sends the selected original with its link caption. |
+| Final action | **Make public & send** publishes the page and sends the selected original. Already public prompts show **Send to thread**. |
 | Compact caption | Send one line: **View prompt · Make your own**. Both phrases are masked Markdown links. |
 | Reuse | **Make your own** requires login and environment membership, then loads the prompt and inputs into the composer. |
-| New accounts | Display: “Log in to use or edit this prompt. Need an account? Ask Ernie in Discord.” |
+| New accounts | When enabled, show **Request account** beside the prompt and each output. Otherwise direct visitors to Ernie in Discord. Signup grants only Vibecoders membership; see the account contract below. |
 | Publishing permission | Require the prompt creator or existing owner override. Ungated local instances retain local-owner semantics. |
 | Stable consent | Bind consent to the exact snapshot, selected attachment, sender, public address, and Discord destination. |
 | Changed data | Reject expired previews, changed destinations, deleted results, or changed snapshots. Require a new preview. |
@@ -54,25 +56,71 @@ It grants read access to that fixed subset only.
 
 ## Publication and delivery states
 
-`UiPublicShares/<256-bit-random-token>.json` stores a draft, pending, or sent record.
-Drafts expire after 20 minutes. Later preparations remove expired drafts.
-Public requests return 404 for drafts, unknown tokens, or deleted source content.
+`UiPublicShares/<256-bit-random-token>.json` stores page records and separate preview/delivery records.
+Preview records expire after 20 minutes. Later preparations remove expired preview records.
+Reserved page records remain private until confirmation and retain their stable address after preview cancellation or expiry.
+Public requests return 404 for unpublished pages, preview/delivery tokens, unknown tokens, or deleted source content.
+Historical published records retain anonymous access at their existing addresses.
 Preview routes require the same authenticated sender who prepared the draft.
 
 On confirmation, recheck ownership, source visibility, snapshot equality, and destination identity.
 Fetch the selected original under the existing 10 MiB attachment limit.
 Claim the exact result in the durable Vibecoders send store.
-Then persist the public pending record before calling Discord.
-Success marks both records sent.
+Then publish the stable page and persist the separate pending delivery record before calling Discord.
+Success marks the delivery record and the result claim sent.
 A lost response leaves the page public and delivery pending.
 The UI reports uncertainty and blocks repeat sends.
-Failures before publication leave the page private and release any unused claim.
+Failures before first publication keep the reserved page private and release any unused claim.
 An operator must check Discord before reconciling uncertain delivery records.
 
 One process-wide operation slot bounds preparation and sending.
-Public page records load individually from disk, without a permanent in-memory share index.
+Public page records and prompt-to-page references load individually from disk, without a permanent in-memory share index.
 Asset allowlists cap at 128 entries; additions cap at 64; returned text entries cap at 128.
 Existing sent records retain their historical sent status.
+
+## One page per prompt instance — 2026-09-20
+
+All new shares from the same completed job use one stable public page.
+Different jobs retain separate pages, even when their prompt text matches.
+Each image still receives its own Discord message and confirmation.
+When the page is already public, the preview states this and uses **Send to thread** for confirmation.
+Daily thread routing and duplicate-image protection remain unchanged.
+
+Preparation reserves the page address without publishing it.
+Each preview has a separate random token, sender, attachment identity, destination, snapshot, and expiry.
+Concurrent previews share the same reserved page, regardless of their confirmation order.
+Cancelling a later preview does not revoke an already published page.
+An uncertain delivery blocks that exact image; another image can still use the same page.
+
+The first confirmed share publishes every successful output in the recorded run, including images not individually posted to Discord.
+Subsequent shares must match that exact snapshot. Reject changes instead of expanding or replacing the public content.
+Deleting the prompt or any result disables the page and its assets.
+
+**View prompt** links end in `#output-<asset-slot>`.
+The browser scrolls to that output and shows a border and **Selected output** label.
+Each output provides **View prompt** and **All outputs** navigation.
+The page also links to the contact sheet and states the output count.
+Reserved preview dimensions prevent earlier image loads from moving the selected output.
+Images retain thumbnail previews and original-file links. No scripts or account are required for reading.
+**Make your own** retains the unfragmented page's `/reuse` route and existing login requirements.
+The confirmation's complete-page preview uses the same selected-output fragment.
+
+`UiPublicShares/prompts/<sha256-job-id>.json` stores the exact job-to-page reference.
+Page records use `IsPage=true` and transition from `draft` to `public`.
+Preview/delivery records use `PageToken` to identify their stable page.
+Their `Token` identifies consent and delivery only; it never becomes another anonymous page.
+Persist page records before their references. Preserve unpublished reservations when pruning expired previews.
+Existing references must resolve exactly; missing records or conflicting snapshots stop sharing.
+
+For an existing job, adopt its earliest historical publication with the same exact snapshot.
+Break equal creation timestamps by token order. Reject conflicting historical snapshots for that job.
+Keep every historical public URL working without editing Discord messages.
+Require a new preview for unconfirmed records created before this change.
+
+Verify with `PublicShareTests`, `DiscordVibecodersTests`, and `DiscordDailyThreadTests`.
+Set `MIC_PUBLIC_SHARE_HTML_FIXTURE` to a temporary HTML path while running the C# tests.
+Then run `tools/test-public-share-page.cjs` with the same variable for desktop and mobile browser checks.
+Run `tools/test-public-share-dialog.cjs` for caption, confirmation, cancellation, and uncertain-delivery checks.
 
 ## Discord payload
 
@@ -175,8 +223,9 @@ It never restarts neighboring services.
 Install the route/settings and then use the normal `deploy/agent-redeploy.sh` release procedure.
 Only these two approved instances are accepted by the installer.
 
-Public GET routes allow only the page, listed asset slots, and reuse handoff.
-The public POST route accepts only login for that exact published share.
+Public sharing GET routes allow only the page, listed asset slots, and reuse handoff.
+The sharing POST route accepts only login for that exact published share.
+The separate signup routes below also use the explicit public allowlist.
 Require same-origin login forms, existing credential validation/throttling, and environment membership.
 Return the private composer address only after successful authentication and membership checks.
 The composer receives a share token, resolves its published prompt and inputs through authenticated routes, and removes the query.
@@ -184,18 +233,37 @@ Loading a shared prompt does not generate anything automatically.
 The recipient can edit it and choose their own endpoints before submitting.
 Their existing endpoint/global additions remain their personal settings.
 
+### Account requests from public images (2026-09-20)
+
+Follow [the Discord account contract](workspaces-prd.md#discord-account-requests-2026-09-20).
+The optional **Request account** action accepts an exact Discord username without an authorization screen.
+The existing bot checks that member's access to #vibecoders and sends that account a one-use, 30-minute link.
+The recipient confirms account creation or login on a public page.
+The form sender receives no login link or session.
+New accounts belong only to Vibecoders AI Generation.
+Preserve the selected public prompt when signup began from that environment.
+Original-environment public pages instead lead to the Vibecoders composer without granting original membership.
+Reading published prompts remains anonymous.
+
+The owner-authorized exception permits one-use account tokens only in these verified-recipient DMs.
+Never put them in channel posts, image captions, reusable account links, public HTML, or application logs.
+Private site prefixes remain prohibited everywhere in Discord.
+The setting defaults to off and requires compatible code in both approved instances before activation.
+
 ## API
 
 | Method and route | Contract |
 |---|---|
-| `POST /api/discord/vibecoders/prepare` | Exact job/generator/image index; returns private preview token and presentation data. Requires `X-MIC-Share: 1`. |
+| `POST /api/discord/vibecoders/prepare` | Exact job/generator/image index; returns preview token, stable `publicUrl`, selected `viewUrl`, `pagePublished`, and presentation data. Requires `X-MIC-Share: 1`. |
 | `GET /api/discord/vibecoders/preview/{token}/` | Same publisher's HTML preview. |
 | `GET /api/discord/vibecoders/preview/{token}/asset/{slot}` | Exact preview asset. |
 | `POST /api/discord/vibecoders` | Requires preview token, `confirmed=true`, and `X-MIC-Share: 1`. Old direct-send requests fail closed. |
-| `GET /public/{token}/` | Anonymous published page. |
+| `GET /public/{token}/` | Anonymous stable published page, with optional browser-only `#output-<asset-slot>` selection. |
 | `GET /public/{token}/asset/{slot}` | Anonymous allowlisted original or `?thumb=1` preview. |
 | `GET /public/{token}/reuse` | Authenticated composer redirect or compact login form. |
 | `POST /public/{token}/reuse` | Validate login and membership, then redirect to the composer. |
+| `GET /public/signup`, `GET /public/signup/claim` | Original controller's optional account-request and explicit-confirmation forms. |
+| `POST /public/signup/request`, `POST /public/signup/claim` | Limited DM delivery and one-use account redemption. See the global-account contract. |
 | `GET /api/public-shares/{token}/reuse` | Authenticated prompt and exact input URLs. |
 | `GET /api/public-shares/{token}/asset/{slot}` | Authenticated reuse input access. |
 
@@ -204,6 +272,7 @@ Their existing endpoint/global additions remain their personal settings.
 - `Implementation/UiPublicShares.cs`: snapshot, disk store, URL policy, HTML, and caption.
 - `Workflows/UiWorkflow.PublicShares.cs`: preparation, consent, publication, assets, and login handoff.
 - `Workflows/UiWorkflow.cs`: narrow anonymous exception and route registration.
+- `Implementation/UiDiscordAccountEndpoints.cs`, `UiDiscordAccountRequests.cs`, and `DiscordAccountRequests.cs`: optional public signup through verified-recipient DMs.
 - `Implementation/DiscordDailyThreads.cs`: Pacific calendar dates, shared file leases, and durable thread identities.
 - `MultiImageClient.Tests/DiscordDailyThreadTests.cs`: midnight, daylight saving, concurrency, restarts, and uncertain creation.
 - `Implementation/DiscordVibecoders.cs`: destination lookup and compact linked payload.
@@ -213,6 +282,7 @@ Their existing endpoint/global additions remain their personal settings.
 - `deploy/install-public-sharing.py`: explicit original-environment public route migration.
 - `MultiImageClient.Tests/PublicShareTests.cs`: privacy, URL rejection, unpublished drafts, confirmation, successful and uncertain delivery, login, and membership revocation.
 - `tools/test-public-share-dialog.cjs`: visual preview, cancellation, exact confirmation, and blocked retries.
+- `tools/test-public-share-page.cjs`: actual C# HTML, selected output, delayed images, prompt navigation, and desktop/mobile layout.
 
 Live verification must not post to Discord or publish a real private prompt without a separate explicit posting instruction.
 

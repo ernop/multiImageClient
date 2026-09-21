@@ -2705,6 +2705,7 @@ namespace MultiImageClient
             });
 
             MapPublicShares(app, settings, auth, jobs, visibility, runner, vibecoders, environments);
+            UiDiscordAccountEndpoints.Map(app, settings, auth, environments, accountActivity);
 
             // Shared persistent image + prompt favorites. POST takes the
             // desired boolean state instead of "toggle", so a retried request

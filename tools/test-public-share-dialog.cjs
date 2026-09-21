@@ -19,6 +19,8 @@ const illustration = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height
         preparations++;
         return route.fulfill({ json: { token: 'a'.repeat(64), jobId: 'fixture', generator: 'gpt2', imageIndex: 0,
           serverName: 'Test server', channelName: 'vibecoders', threadName: 'Daily Thursday, September 17, 2026 image thread', publicUrl: 'https://share.test/shared/original/' + 'a'.repeat(64) + '/',
+          viewUrl: 'https://share.test/shared/original/' + 'a'.repeat(64) + '/#output-2',
+          pagePublished: posts > 0,
           mediaKind: 'image', mediaUrl: 'media.svg', previewUrl: 'preview', inputCount: 1, outputCount: 3, hasContactSheet: true,
           linkLabel: 'View prompt', reuseLabel: 'Make your own',
           disclosure: 'Anyone with this link can see the prompt, inputs, all outputs, and contact sheet.' } });
@@ -47,6 +49,8 @@ const illustration = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height
     assert.equal(posts, 0);
     assert.equal(await page.locator('.share-destination').textContent(), 'Post to Test server · #vibecoders → Daily Thursday, September 17, 2026 image thread (Pacific time)');
     assert.equal(await page.locator('.share-caption').textContent(), 'View prompt · Make your own');
+    assert.ok((await page.locator('.share-caption a').first().getAttribute('href')).endsWith('/#output-2'));
+    assert.ok((await page.locator('.share-caption a').last().getAttribute('href')).endsWith('/reuse'));
     assert.ok((await page.locator('.share-disclosure').textContent()).includes('Anyone with this link'));
     const screenshot = path.resolve(__dirname, '../.local-ui/public-share-preview.png');
     fs.mkdirSync(path.dirname(screenshot), { recursive: true });
@@ -64,7 +68,8 @@ const illustration = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height
     fail = true;
     await open();
     await page.waitForFunction(() => !document.querySelector('.share-confirm').disabled);
-    await page.getByRole('button', { name: 'Make public & send' }).click();
+    assert.ok((await page.locator('.share-status').textContent()).includes('already has a public page'));
+    await page.getByRole('button', { name: 'Send to thread' }).click();
     await page.getByRole('button', { name: 'Close', exact: true }).waitFor();
     assert.equal(await page.locator('.share-confirm').isDisabled(), true);
     await page.keyboard.press('Escape');

@@ -3,9 +3,18 @@
 **2026-09-17:** Vibecoders now uses [public prompt sharing](public-prompt-sharing.md) with an explicit HTML preview and publication confirmation.
 Its caption links only to the separate public subset route. Confirmed sends use one daily image thread in California time.
 A separate Vibecoders bot token creates the thread; the webhook posts every image inside it.
-Private MIC addresses and account links remain prohibited.
+Private MIC addresses and reusable account links remain prohibited.
+The September 20 exception below permits one-use account links only in a separate verified-recipient DM flow.
 The separate FableBot transport retains its attachment-only behavior below.
 The 2026-09-09 Vibecoders attachment-only decision is superseded by this confirmed-publication flow.
+
+**2026-09-20:** [Discord account requests](workspaces-prd.md#discord-account-requests-2026-09-20) use the existing Vibecoders bot credential.
+An exact username selects a server member who can view #vibecoders.
+The bot sends only that member an expiring, one-use account link.
+The original controller handles account creation after explicit recipient confirmation.
+This exception changes neither FableBot channel posting nor the image-sharing caption contract.
+Never send private prefixes, reusable login links, passwords, or one-use signup tokens in channel posts.
+The feature defaults to off. The owner authorized production activation on September 20 after both instances receive compatible code.
 
 Status: CLI implemented 2026-09-04; UI result posting implemented 2026-09-08.
 Local configuration has no bot token or channel ID. Live verification remains pending.

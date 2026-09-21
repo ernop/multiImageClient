@@ -33,6 +33,8 @@ namespace MultiImageClient
             public required string TokenHash { get; set; }
             public bool Revoked { get; set; }
             public string? PasswordHash { get; set; }
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+            public string? DiscordUserId { get; init; }
         }
 
         public sealed class PasswordAccountTransfer
@@ -130,6 +132,45 @@ namespace MultiImageClient
                     doc.PasswordAccountTransfers.Add(new PasswordAccountTransfer { From = sourceLogin, To = newLogin });
                 Write(doc);
                 return (account, id + "." + secret);
+            }
+        }
+
+        // Only the controller calls this after an exact Discord DM token has been redeemed.
+        // The caller journals accountId first, so an interrupted activation can resume that exact account.
+        public Account CreateDiscordAccount(string accountId, string discordUserId, string login)
+        {
+            login = NormalizeName(login);
+            if (!Regex.IsMatch(accountId, @"\A[a-f0-9]{32}\z") || !ValidDiscordId(discordUserId)
+                || login.Equals(OwnerLogin, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Invalid Discord account identity.");
+            lock (_sync)
+            {
+                var doc = Read();
+                var existing = doc.Accounts.SingleOrDefault(a => a.Id == accountId || a.DiscordUserId == discordUserId);
+                if (existing != null)
+                {
+                    if (existing.Id != accountId || existing.DiscordUserId != discordUserId || existing.Login != login || existing.Revoked)
+                        throw new InvalidDataException("The Discord account identity changed. Ask Ernie in Discord.");
+                    return existing;
+                }
+                if (doc.Accounts.Count >= MaxAccounts) throw new InvalidDataException("The account limit has been reached. Ask Ernie in Discord.");
+                RejectTakenName(doc, login, allowRetiredSource: null);
+                var account = new Account { Id = accountId, Login = login, DisplayName = login,
+                    DiscordUserId = discordUserId, TokenHash = Hash(NewSecret()) };
+                doc.Accounts.Add(account);
+                Write(doc);
+                return account;
+            }
+        }
+
+        internal string DiscordSession(string accountId, string discordUserId, string signingSecret)
+        {
+            lock (_sync)
+            {
+                var account = RequireAccount(Read(), accountId);
+                if (account.DiscordUserId != discordUserId || account.Revoked || account.Login == OwnerLogin)
+                    throw new InvalidDataException("This Discord account cannot sign in. Ask Ernie in Discord.");
+                return "link:" + account.Id + "." + Mac(signingSecret, account);
             }
         }
 
@@ -238,13 +279,16 @@ namespace MultiImageClient
                 throw new InvalidDataException("The login-link file has an unsupported version or account count.");
             var ids = new HashSet<string>(StringComparer.Ordinal);
             var logins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var discordIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var a in doc.Accounts)
             {
                 if (a == null || a.Id == null || !Regex.IsMatch(a.Id, @"\A[a-f0-9]{32}\z")
                     || !ids.Add(a.Id) || a.Login == null || !logins.Add(a.Login)
                     || !LoginAllowed(a.Login, a.Id)
                     || a.DisplayName == null || NormalizeName(a.DisplayName) != a.DisplayName
-                    || a.TokenHash == null || !Regex.IsMatch(a.TokenHash, @"\A[a-f0-9]{64}\z"))
+                    || a.TokenHash == null || !Regex.IsMatch(a.TokenHash, @"\A[a-f0-9]{64}\z")
+                    || (a.DiscordUserId != null && (!ValidDiscordId(a.DiscordUserId) || !discordIds.Add(a.DiscordUserId)
+                        || a.Login == OwnerLogin)))
                     throw new InvalidDataException("The login-link file contains an invalid or duplicate account.");
             }
             var retired = doc.RetiredPasswordLogins ?? new List<string>();
@@ -313,6 +357,8 @@ namespace MultiImageClient
         private static Account RequireAccount(Document doc, string id) => doc.Accounts.SingleOrDefault(a => a.Id == id)
             ?? throw new InvalidDataException("The account does not exist in this environment.");
         private static string NewSecret() => Base64Url(RandomNumberGenerator.GetBytes(32));
+        private static bool ValidDiscordId(string id) => Regex.IsMatch(id, @"\A[1-9][0-9]{0,19}\z")
+            && ulong.TryParse(id, out _);
         private static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
         private static string Mac(string secret, Account account) => Base64Url(HMACSHA256.HashData(
             Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes("login-link\n" + account.Id + "\n" + account.Login + "\n" + account.TokenHash)));

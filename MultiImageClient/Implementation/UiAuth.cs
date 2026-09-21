@@ -363,6 +363,10 @@ namespace MultiImageClient
             return true;
         }
 
+        internal string DiscordSession(string accountId, string discordUserId) =>
+            LoginLinks?.DiscordSession(accountId, discordUserId, CurrentFile().Secret)
+            ?? throw new InvalidDataException("Discord account requests require global accounts.");
+
         private static string ComputeMac(string secret, string username, string passwordHash)
         {
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));

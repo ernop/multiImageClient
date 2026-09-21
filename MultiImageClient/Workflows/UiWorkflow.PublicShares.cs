@@ -2,7 +2,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -56,12 +55,17 @@ namespace MultiImageClient
             UiPublicShareRecord? Public(string token)
             {
                 var record = store.Get(token);
-                return record is { Published: true } && Visible(record) ? record : null;
+                return record is { Published: true, PageToken: "" } && Visible(record) ? record : null;
+            }
+            string? AccountRequestUrl(UiPublicShareRecord record)
+            {
+                var url = UiDiscordAccountRequests.PublicUrl(settings, auth, environments);
+                return url == null ? null : url + (settings.UiEnvironmentId == UiDiscordAccountRequests.EnvironmentId ? "?share=" + record.Token : "");
             }
             UiPublicShareRecord? Draft(string token, HttpContext ctx)
             {
                 var record = store.Get(token);
-                return record != null && record.Owner == Sender(ctx) && Allowed(ctx) && Visible(record)
+                return record is { IsPage: false } && record.Owner == Sender(ctx) && Allowed(ctx) && Visible(record)
                     && (record.Published || record.ExpiresAt >= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) ? record : null;
             }
 
@@ -90,7 +94,8 @@ namespace MultiImageClient
             {
                 ShareHeaders(ctx);
                 var record = Public(token);
-                return record == null ? Results.NotFound() : Results.Content(UiPublicShares.Html(record, "asset/", "reuse"), "text/html; charset=utf-8");
+                return record == null ? Results.NotFound() : Results.Content(UiPublicShares.Html(record, "asset/", "reuse",
+                    requestAccountUrl: AccountRequestUrl(record)), "text/html; charset=utf-8");
             });
             app.MapGet("/public/{token}/asset/{index:int}", (string token, int index, HttpContext ctx) => Asset(Public(token), index, ctx));
 
@@ -110,7 +115,8 @@ namespace MultiImageClient
                 if (record == null) return Results.NotFound();
                 if (auth == null || (auth.TryValidateCookie(ctx.Request.Cookies[auth.SessionCookieName], out var user) && Member(user)))
                     return Results.Redirect(ComposerUrl(token));
-                return Results.Content(UiPublicShares.Html(record, "asset/", null, login: true), "text/html; charset=utf-8");
+                return Results.Content(UiPublicShares.Html(record, "asset/", null, login: true,
+                    requestAccountUrl: AccountRequestUrl(record)), "text/html; charset=utf-8");
             });
             app.MapPost("/public/{token}/reuse", async (string token, HttpContext ctx) =>
             {
@@ -124,7 +130,8 @@ namespace MultiImageClient
                 if (!auth.TryLogin(username, form["password"].ToString(), ClientIpForThrottle(ctx), out var cookie, out _)
                     || !Member(username))
                     return Results.Content(UiPublicShares.Html(record, "asset/", null,
-                        "Login failed or this account lacks access. Ask Ernie in Discord.", true), "text/html; charset=utf-8", statusCode: 401);
+                        "Login failed or this account lacks access. Ask Ernie in Discord.", true,
+                        AccountRequestUrl(record)), "text/html; charset=utf-8", statusCode: 401);
                 ctx.Response.Cookies.Append(auth.SessionCookieName, cookie, new CookieOptions
                 {
                     HttpOnly = true, Secure = IsEffectivelyHttps(ctx), SameSite = SameSiteMode.Lax,
@@ -185,22 +192,25 @@ namespace MultiImageClient
                     var shareTarget = ShareTarget();
                     var target = await Client(shareTarget).GetDailyDestinationAsync(ctx.RequestAborted);
                     store.PruneExpiredDrafts();
+                    var page = store.GetOrCreatePage(job.Id, snapshot);
                     var token = UiPublicShareStore.NewToken();
                     var threadDay = DiscordDailyThreads.Day(DateTimeOffset.UtcNow);
-                    var record = new UiPublicShareRecord { Token = token, JobId = job.Id, Generator = gen, ImageIndex = index,
+                    var record = new UiPublicShareRecord { Token = token, PageToken = page.Token, JobId = job.Id, Generator = gen, ImageIndex = index,
                         Owner = Sender(ctx), CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                         ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(20).ToUnixTimeMilliseconds(), Snapshot = snapshot,
                         DestinationHash = UiPublicShares.DestinationHash(settings, shareTarget), GuildId = target.GuildId, ChannelId = target.ChannelId,
                         ServerName = target.ServerName, ChannelName = target.ChannelName,
                         ThreadDay = threadDay, ThreadName = DiscordDailyThreads.Name(threadDay),
-                        PublicUrl = baseUrl + "/" + token + "/" };
+                        PublicUrl = baseUrl + "/" + page.Token + "/" };
                     store.Save(record);
                     return Results.Json(new { token, jobId = job.Id, generator = gen, imageIndex = index,
                         serverName = record.ServerName, channelName = record.ChannelName, threadName = record.ThreadName,
                         disclosure = UiPublicShares.Disclosure, linkLabel = UiPublicShares.LinkLabel, reuseLabel = UiPublicShares.ReuseLabel,
-                        publicUrl = record.PublicUrl, caption = UiPublicShares.Caption(record.PublicUrl),
+                        publicUrl = record.PublicUrl, viewUrl = UiPublicShares.ViewUrl(record.PublicUrl, selected),
+                        pagePublished = page.Published,
+                        caption = UiPublicShares.Caption(record.PublicUrl, selected),
                         mediaKind = media.Kind, mediaUrl = $"api/discord/vibecoders/preview/{token}/asset/{selected}",
-                        previewUrl = $"api/discord/vibecoders/preview/{token}/", inputCount = job.InputImageCount,
+                        previewUrl = $"api/discord/vibecoders/preview/{token}/#output-{selected}", inputCount = job.InputImageCount,
                         outputCount = snapshot.Assets.Count(a => a.Kind is "image" or "video"), hasContactSheet = snapshot.Assets.Any(a => a.Kind == "grid") });
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -224,11 +234,13 @@ namespace MultiImageClient
                     if (record == null || record.State != "draft") throw new InvalidOperationException("The preview expired or was already confirmed. Open a new preview.");
                     var job = jobs.Get(record.JobId)!;
                     if (!CanManageVisibility(job, Sender(ctx), auth != null)) return Results.StatusCode(403);
+                    var page = store.PageForShare(record);
                     var shareTarget = ShareTarget();
                     if (record.DestinationHash != UiPublicShares.DestinationHash(settings, shareTarget)
-                        || record.PublicUrl != UiPublicShares.BaseUrl(settings) + "/" + record.Token + "/"
-                        || JsonSerializer.Serialize(record.Snapshot) != JsonSerializer.Serialize(UiPublicShares.Capture(job)))
+                        || record.PublicUrl != UiPublicShares.BaseUrl(settings) + "/" + page.Token + "/"
+                        || !UiPublicShares.SameSnapshot(record.Snapshot, UiPublicShares.Capture(job)))
                         throw new InvalidOperationException("The prompt or destination changed. Review a new preview.");
+                    var selected = UiPublicShares.SelectedSlot(record);
                     var client = Client(shareTarget);
                     var target = await client.GetDailyDestinationAsync(ctx.RequestAborted);
                     if (target.GuildId != record.GuildId || target.ChannelId != record.ChannelId
@@ -247,16 +259,18 @@ namespace MultiImageClient
                         SentByLogin = record.Owner, SentAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), State = "pending" };
                     if (!sent.TryClaim(claim)) return Results.Json(new { error = "This result was already sent or needs a delivery check." }, statusCode: 409);
                     claimed = true;
+                    store.PublishPage(record);
+                    published = true;
                     record = record with { State = "pending" };
                     store.Save(record);
-                    published = true;
                     using var bytes = new MemoryStream(original.Bytes, writable: false);
                     await client.SendAsync(record.Owner, bytes, original.ContentType,
                         record.Generator + "-" + record.ImageIndex + DiscordVibecoders.FileExtension(original.ContentType),
-                        ctx.RequestAborted, record.PublicUrl, threadId, threadId);
+                        ctx.RequestAborted, record.PublicUrl, threadId, threadId, selected);
                     store.Save(record with { State = "sent" });
                     sent.Complete(record.JobId, record.Generator, record.ImageIndex);
-                    return Results.Json(new { state = "sent", publicUrl = record.PublicUrl, version = sent.Snapshot().Version,
+                    return Results.Json(new { state = "sent", publicUrl = record.PublicUrl,
+                        viewUrl = UiPublicShares.ViewUrl(record.PublicUrl, selected), version = sent.Snapshot().Version,
                         item = new { jobId = record.JobId, generator = record.Generator, imageIndex = record.ImageIndex } });
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)

@@ -77,6 +77,91 @@ public sealed class PublicShareTests
         finally { Directory.Delete(folder, true); }
     }
 
+    [Fact]
+    public async Task PromptPagesPersistAcrossPreviewsRestartsAndConcurrentReservations()
+    {
+        var folder = Directory.CreateTempSubdirectory("mic-share-pages-").FullName;
+        try
+        {
+            var snapshot = new UiPublicShareSnapshot("Same prompt text", new(), new(), new());
+            var store = new UiPublicShareStore(folder);
+            var pages = await Task.WhenAll(Enumerable.Range(0, 8)
+                .Select(_ => Task.Run(() => store.GetOrCreatePage("run-a", snapshot))));
+            Assert.Single(pages.Select(page => page.Token).Distinct());
+            var page = pages[0];
+            Assert.False(page.Published);
+            store.Save(new UiPublicShareRecord { Token = UiPublicShareStore.NewToken(), PageToken = page.Token,
+                JobId = "run-a", Snapshot = snapshot, ExpiresAt = 1 });
+            store.PruneExpiredDrafts();
+            store = new UiPublicShareStore(folder);
+            Assert.Equal(page.Token, store.GetOrCreatePage("run-a", snapshot).Token);
+            Assert.False(store.Get(page.Token)!.Published);
+            Assert.NotEqual(page.Token, store.GetOrCreatePage("run-b", snapshot).Token);
+            Assert.Throws<InvalidOperationException>(() => store.GetOrCreatePage("run-a", snapshot with { Prompt = "Changed" }));
+            var share = new UiPublicShareRecord { Token = UiPublicShareStore.NewToken(), PageToken = page.Token,
+                JobId = "run-a", Snapshot = snapshot };
+            store.PublishPage(share);
+            Assert.True(new UiPublicShareStore(folder).PageForShare(share).Published);
+            Assert.Throws<InvalidDataException>(() => store.PageForShare(share with { PageToken = UiPublicShareStore.NewToken() }));
+            File.Delete(Path.Combine(folder, "UiPublicShares", page.Token + ".json"));
+            Assert.Throws<InvalidDataException>(() => store.GetOrCreatePage("run-a", snapshot));
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    [Fact]
+    public void ExistingPublicationsAdoptTheEarliestExactRunAndKeepEveryOldLink()
+    {
+        var folder = Directory.CreateTempSubdirectory("mic-share-legacy-").FullName;
+        try
+        {
+            var store = new UiPublicShareStore(folder);
+            var first = new UiPublicShareRecord { Token = new string('b', 64), JobId = "run", State = "sent",
+                CreatedAt = 10, Snapshot = new("Prompt", new(), new(), new()) };
+            var second = first with { Token = new string('a', 64), CreatedAt = 20, State = "pending" };
+            store.Save(first);
+            store.Save(second);
+            Assert.Equal(first.Token, store.GetOrCreatePage("run", first.Snapshot).Token);
+            Assert.True(store.Get(first.Token)!.Published);
+            Assert.True(store.Get(second.Token)!.Published);
+            Assert.Equal(first.Token, new UiPublicShareStore(folder).GetOrCreatePage("run", first.Snapshot).Token);
+            store.Save(second with { Token = new string('c', 64), JobId = "conflicting-run" });
+            store.Save(first with { Token = new string('d', 64), JobId = "conflicting-run",
+                Snapshot = first.Snapshot with { Prompt = "Different" } });
+            Assert.Throws<InvalidOperationException>(() => store.GetOrCreatePage("conflicting-run", first.Snapshot));
+        }
+        finally { Directory.Delete(folder, true); }
+    }
+
+    [Fact]
+    public void PublicPageSelectionUsesExactAssetSlotsAndKeepsReuseSeparate()
+    {
+        var record = new UiPublicShareRecord { Generator = "model-b", ImageIndex = 0,
+            Snapshot = new("A bright landscape with hills and a lake.",
+                new() { new("input", "input", 0, "Input 1"), new("image", "model-a", 0, "Model A · 1"),
+                    new("image", "model-a", 1, "Model A · 2"), new("image", "model-b", 0, "Model B · 1"),
+                    new("video", "model-c", 0, "Model C · 1"), new("grid", "grid", 0, "Contact sheet") },
+                new() { new("Model B", "Use clear daylight.") }, new()) };
+        var slot = UiPublicShares.SelectedSlot(record);
+        Assert.Equal(3, slot);
+        var publicUrl = "https://share.test/shared/original/" + new string('a', 64) + "/";
+        Assert.Equal($"[View prompt](<{publicUrl}#output-3>) · [Make your own](<{publicUrl}reuse>)",
+            UiPublicShares.Caption(publicUrl, slot));
+        Assert.Throws<InvalidDataException>(() => UiPublicShares.SelectedSlot(record with { ImageIndex = 99 }));
+        var html = UiPublicShares.Html(record, "asset/", "reuse");
+        Assert.Contains("id=\"output-3\"", html);
+        Assert.Contains("id=\"output-4\"", html);
+        Assert.DoesNotContain("id=\"output-0\"", html);
+        Assert.Contains("4 outputs from this prompt.", html);
+        Assert.Contains("Selected output", html);
+        Assert.Contains("href=\"#prompt\"", html);
+        Assert.Contains("href=\"#outputs\"", html);
+        Assert.DoesNotContain("<script", html);
+        // The browser regression consumes this exact renderer with synthetic content only.
+        var fixture = Environment.GetEnvironmentVariable("MIC_PUBLIC_SHARE_HTML_FIXTURE");
+        if (!string.IsNullOrEmpty(fixture)) File.WriteAllText(fixture, html);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -93,8 +178,9 @@ public sealed class PublicShareTests
         var file = Path.Combine(folder, "result.png");
         File.WriteAllBytes(file, Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII="));
         job.StoreImagePath("gpt2", 0, file, "image/png");
+        job.StoreImagePath("gpt2", 1, file, "image/png");
         job.StoreImagePath("grid", 0, file, "image/png");
-        job.Emit(new { type = "gen-result", gen = "gpt2", ok = true, images = new[] { "/private/image" } });
+        job.Emit(new { type = "gen-result", gen = "gpt2", ok = true, images = new[] { "/private/image", "/private/image-2" } });
         job.Emit(new { type = "grid", url = "/private/grid" });
         job.MarkDone();
         await using var runner = new UiJobRunner(settings, new MultiClientRunStats(), new RunOptions());
@@ -125,7 +211,21 @@ public sealed class PublicShareTests
             Assert.True(prepared.IsSuccessStatusCode, preparedText);
             using var draft = JsonDocument.Parse(preparedText);
             var token = draft.RootElement.GetProperty("token").GetString()!;
+            var publicUrl = draft.RootElement.GetProperty("publicUrl").GetString()!;
+            var publicToken = new Uri(publicUrl).Segments.Last().Trim('/');
+            Assert.NotEqual(token, publicToken);
+            Assert.False(draft.RootElement.GetProperty("pagePublished").GetBoolean());
+            Assert.Equal(publicUrl + "#output-0", draft.RootElement.GetProperty("viewUrl").GetString());
+            // Two independently confirmed images reserve the same page before either is published.
+            using var preparedSecond = await Post("/api/discord/vibecoders/prepare", ("jobId", job.Id), ("generator", "gpt2"), ("imageIndex", "1"));
+            preparedSecond.EnsureSuccessStatusCode();
+            using var second = JsonDocument.Parse(await preparedSecond.Content.ReadAsStringAsync());
+            var secondToken = second.RootElement.GetProperty("token").GetString()!;
+            Assert.NotEqual(token, secondToken);
+            Assert.Equal(publicUrl, second.RootElement.GetProperty("publicUrl").GetString());
+            Assert.Equal(publicUrl + "#output-1", second.RootElement.GetProperty("viewUrl").GetString());
             Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/public/{token}/")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/public/{publicToken}/")).StatusCode);
             Assert.Equal(0, handler.Posts);
             Assert.Contains("Public test prompt", await http.GetStringAsync($"/api/discord/vibecoders/preview/{token}/"));
             // Confirmation cannot publish a modified destination under an old preview.
@@ -141,11 +241,12 @@ public sealed class PublicShareTests
             Assert.Contains(loseResponse ? "pending" : "sent", await confirmed.Content.ReadAsStringAsync());
             Assert.Equal(1, handler.Posts);
             Assert.Equal(loseResponse ? "pending" : "sent", sent.Snapshot().Records.Single().State);
-            var html = await http.GetStringAsync($"/public/{token}/");
+            var html = await http.GetStringAsync($"/public/{publicToken}/");
             Assert.Contains("Public test prompt", html);
             Assert.DoesNotContain("private-path", html);
-            Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/public/{token}/asset/0")).StatusCode);
-            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/public/{token}/asset/999")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/public/{publicToken}/asset/0")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/public/{publicToken}/asset/999")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/public/{token}/")).StatusCode);
             using var repeat = await Post("/api/discord/vibecoders", ("token", token), ("confirmed", "true"));
             Assert.False(repeat.IsSuccessStatusCode);
             Assert.Equal(1, handler.Posts);
@@ -153,6 +254,25 @@ public sealed class PublicShareTests
             Assert.Contains("View prompt", handler.Body);
             Assert.Contains("allowed_mentions", handler.Body);
             Assert.Contains("flags", handler.Body);
+            Assert.Contains(publicUrl + "#output-0", handler.Body);
+            // Cancelling another preview cannot change the existing page or its address.
+            using var cancelledPreview = await Post("/api/discord/vibecoders/prepare", ("jobId", job.Id), ("generator", "gpt2"), ("imageIndex", "1"));
+            cancelledPreview.EnsureSuccessStatusCode();
+            using var cancelled = JsonDocument.Parse(await cancelledPreview.Content.ReadAsStringAsync());
+            Assert.True(cancelled.RootElement.GetProperty("pagePublished").GetBoolean());
+            Assert.Equal(publicUrl, cancelled.RootElement.GetProperty("publicUrl").GetString());
+            handler.LoseResponse = false;
+            using var confirmedSecond = await Post("/api/discord/vibecoders", ("token", secondToken), ("confirmed", "true"));
+            Assert.True(confirmedSecond.IsSuccessStatusCode, await confirmedSecond.Content.ReadAsStringAsync());
+            Assert.Equal(2, handler.Posts);
+            Assert.Contains(publicUrl + "#output-1", handler.Body);
+            Assert.Equal(html, await http.GetStringAsync($"/public/{publicToken}/"));
+            using var duplicateImage = await Post("/api/discord/vibecoders/prepare", ("jobId", job.Id), ("generator", "gpt2"), ("imageIndex", "1"));
+            Assert.Equal(HttpStatusCode.Conflict, duplicateImage.StatusCode);
+            visibility.Hide(new UiHiddenResource { Kind = "image", JobId = job.Id, Generator = "gpt2", ImageIndex = 1,
+                HiddenByLogin = "alice", HiddenAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/public/{publicToken}/")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/public/{publicToken}/asset/0")).StatusCode);
         }
         finally { await app.StopAsync(); Directory.Delete(folder, true); }
     }
@@ -235,6 +355,8 @@ public sealed class PublicShareTests
                 return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { id = "999", guild_id = "111", parent_id = "222", type = 11, name = DiscordDailyThreads.Name(DiscordDailyThreads.Day(DateTimeOffset.UtcNow)), thread_metadata = new { locked = false } })) };
             }
             if (request.Method == HttpMethod.Get) {
+                if (request.RequestUri.AbsolutePath.EndsWith("/channels/999"))
+                    return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { id = "999", guild_id = "111", parent_id = "222", type = 11, name = DiscordDailyThreads.Name(DiscordDailyThreads.Day(DateTimeOffset.UtcNow)), thread_metadata = new { locked = false } })) };
                 var data = request.RequestUri.AbsolutePath.Contains("/guilds/") ? "{\"id\":\"111\",\"name\":\"Test server\"}"
                     : request.RequestUri.AbsolutePath.Contains("/channels/") ? "{\"id\":\"222\",\"guild_id\":\"111\",\"type\":0,\"name\":\"test-channel\"}"
                     : "{\"guild_id\":\"111\",\"channel_id\":\"222\"}";
