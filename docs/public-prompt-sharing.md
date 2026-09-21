@@ -237,7 +237,9 @@ Their existing endpoint/global additions remain their personal settings.
 
 Follow [the Discord account contract](workspaces-prd.md#discord-account-requests-2026-09-20).
 The optional **Request account** action accepts an exact Discord username without an authorization screen.
-The existing bot checks that member's access to #vibecoders and sends that account a one-use, 30-minute link.
+The existing bot checks that member's access to #vibecoders and queues the request for owner review.
+**Test** sends Brouhahaha a copy with a harmless preview link.
+Only **Confirmed, send to user** creates and sends that recipient a one-use, 30-minute account link.
 The recipient confirms account creation or login on a public page.
 The form sender receives no login link or session.
 New accounts belong only to Vibecoders AI Generation.
@@ -263,7 +265,8 @@ The setting defaults to off and requires compatible code in both approved instan
 | `GET /public/{token}/reuse` | Authenticated composer redirect or compact login form. |
 | `POST /public/{token}/reuse` | Validate login and membership, then redirect to the composer. |
 | `GET /public/signup`, `GET /public/signup/claim` | Original controller's optional account-request and explicit-confirmation forms. |
-| `POST /public/signup/request`, `POST /public/signup/claim` | Limited DM delivery and one-use account redemption. See the global-account contract. |
+| `GET /public/signup/request`, `GET /public/signup/preview` | Form recovery and harmless owner-test page; neither sends messages nor authenticates. |
+| `POST /public/signup/request`, `POST /public/signup/claim` | Limited owner-review requests and one-use account redemption. See the global-account contract. |
 | `GET /api/public-shares/{token}/reuse` | Authenticated prompt and exact input URLs. |
 | `GET /api/public-shares/{token}/asset/{slot}` | Authenticated reuse input access. |
 
@@ -272,7 +275,7 @@ The setting defaults to off and requires compatible code in both approved instan
 - `Implementation/UiPublicShares.cs`: snapshot, disk store, URL policy, HTML, and caption.
 - `Workflows/UiWorkflow.PublicShares.cs`: preparation, consent, publication, assets, and login handoff.
 - `Workflows/UiWorkflow.cs`: narrow anonymous exception and route registration.
-- `Implementation/UiDiscordAccountEndpoints.cs`, `UiDiscordAccountRequests.cs`, and `DiscordAccountRequests.cs`: optional public signup through verified-recipient DMs.
+- `Implementation/UiDiscordAccountEndpoints.cs`, `UiDiscordAccountRequests.cs`, `UiDiscordAccountReviews.cs`, and `DiscordAccountRequests.cs`: optional public signup through verified-recipient DMs.
 - `Implementation/DiscordDailyThreads.cs`: Pacific calendar dates, shared file leases, and durable thread identities.
 - `MultiImageClient.Tests/DiscordDailyThreadTests.cs`: midnight, daylight saving, concurrency, restarts, and uncertain creation.
 - `Implementation/DiscordVibecoders.cs`: destination lookup and compact linked payload.

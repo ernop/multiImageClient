@@ -22,7 +22,7 @@ The new idea is a second tenant with its own membership and history.
 | R8 | Match repeated provider lists (2026-09-10). | Use the composer's compact provider controls and grid in environment administration. |
 | R9 | Reissue login details for an existing normal account (2026-09-19). | Administration **Issue login details** creates a new password and a new reusable login link, shows both once, and ends the previous password and link. Stored hashes cannot be recovered. |
 | R10 | Convert a password-file account to a login-link account (2026-09-20). | Administration **Convert to login-link account** creates a chosen username as the sendable login, mints a new password and reusable login link, shows both once, retires the previous password-file username, and moves that person's membership and stored creator identity to the new login. Production mappings: `victor` → `governorOfThings`, `austin` → `dallasVille`. The previous password cannot be recovered. After conversion, **Issue login details** remains available. |
-| R11 | Request an account through Discord (2026-09-20). | Enter an exact Discord username on a public page. Verify membership and access to #vibecoders. DM that account a 30-minute, one-use link. Explicit confirmation creates a normal account with Vibecoders membership only. |
+| R11 | Request an account through Discord (2026-09-20). | Enter an exact Discord username and verify #vibecoders access. Queue the request for owner review. **Test** sends Brouhahaha a harmless copy. **Confirmed, send to user** sends the recipient a 30-minute, one-use link. Recipient confirmation creates a normal Vibecoders member. |
 
 These requirements came from the owner during the review.
 The link grants the account's actual permissions; it does not merely select a display name.
@@ -160,9 +160,38 @@ The requesting browser receives neither a login link nor an authenticated sessio
 
 1. Open a public image page and select **Request account**.
 2. Enter the exact Discord username. An initial `@` and uppercase letters are accepted.
-3. Select **Send me an account link**.
-4. Open the bot's DM and follow **Continue to Vibecoders**.
-5. Select **Continue to Vibecoders** on the confirmation page.
+3. Select **Request account**. The page shows that Ernie must review the request.
+4. Wait for the owner to test and confirm delivery.
+5. Open the bot's DM and follow **Continue to Vibecoders**.
+6. Select **Continue to Vibecoders** on the confirmation page.
+
+The owner revised delivery on September 20: public requests no longer send DMs automatically.
+Open **Administration → Discord account requests** to review pending recipients.
+Select **Test** to send a copy only to Brouhahaha's verified permanent Discord ID.
+Configure that ID with `DiscordAccountReviewerId` on the original controller.
+The copy names the intended recipient and includes the real message body with a harmless public preview link.
+That preview cannot create or sign in to any account.
+No usable signup secret exists before the owner confirms delivery.
+After checking the DM, select **Confirmed, send to user** for that exact request.
+The server requires a successful test within the previous 30 minutes, sent to the currently configured reviewer.
+The server rechecks the recipient's ID, username, server, and channel access before either send.
+The final action creates the real secret and starts its 30-minute lifetime.
+A request expires after 24 hours without confirmation.
+A failed test remains retryable only after Discord explicitly rejects delivery.
+Uncertain test delivery blocks confirmation and further tests for that request.
+**Reject request** closes requests that have not reached actual account-link delivery.
+The owner list shows at most 100 unexpired requests, with unfinished requests first.
+Loading or refreshing administration sends no Discord message.
+A lost action response forces a state refresh before controls become usable again.
+Only the authenticated owner can use these endpoints; each mutation requires `X-Mic-Manage: 1`.
+
+The native form previously combined `no-referrer` with an exact Origin check.
+Browsers can send `Origin: null` for that combination, producing an empty denial page.
+The request form now uses JavaScript `fetch` with `mode: cors` and `X-Mic-Account: 1`.
+This preserves the same-origin check and keeps error messages inside the form.
+Keep `no-referrer`; never weaken the origin check to accept `null`.
+A GET to the old `/signup/request` error address returns to the signup form without sending anything.
+See the [Fetch Origin header algorithm](https://fetch.spec.whatwg.org/#append-a-request-origin-header).
 
 The bot searches the server attached to the real Vibecoders webhook.
 The image-sharing **Target** selector does not change signup eligibility.
@@ -178,7 +207,7 @@ Disable mentions and link embeds.
 Blocked DMs show a delivery error with message-privacy guidance.
 Uncertain delivery remains pending; never retry automatically or return its token through the website.
 
-Each link expires after 30 minutes and can create only one authenticated response.
+Each real link expires 30 minutes after owner confirmation and can create only one authenticated response.
 The secret appears in the URL fragment, which the browser removes immediately.
 Opening the page does not redeem the link; explicit confirmation sends a same-origin POST.
 Pages use no external assets, prohibit caching, and send no referrer.
@@ -205,6 +234,8 @@ All public image pages direct signup to `/shared/original/signup` on the configu
 This uses the existing public proxy route and exposes no private prefix.
 Persist tickets under the controller's data root at `UiDiscordAccountRequests/requests.json`.
 Store token digests, recipient IDs, expiry, source-share tokens, delivery state, and activation progress.
+Also store the reviewer ID, successful test time, and owner confirmation time.
+Keep older delivered tickets readable; new requests always require owner review.
 Never store the raw token or client IP.
 Flush state before sending and before returning a session; preserve exact account identity through interrupted activation.
 An interrupted membership grant never restores membership after removal.
@@ -213,23 +244,25 @@ An interrupted grant that cannot be verified requires owner intervention.
 Persist limits before searching Discord: 12 requests per IP per hour and 60 requests overall per hour.
 Hash IP addresses and discard attempts older than one hour when processing the next request.
 Allow at most three tickets per Discord account per hour, separated by five minutes.
-An unexpired pending, sent, or activating ticket blocks another delivery.
+An unexpired review, test, pending, sent, or activating ticket blocks another request.
+Rejected and explicitly failed real deliveries remain subject to the rate limits.
 Prune ticket history 24 hours after expiry when processing the next request.
 Cap storage at 2 MiB and 2,048 records.
-Permit one request or redemption at a time on the controller.
+Permit one request, test, confirmation, rejection, or redemption at a time on the controller.
 Trust forwarded client addresses only from loopback; use nginx's appended final address.
 
 Administration exposes **Discord account requests** only for Vibecoders AI Generation.
 The switch defaults to off; the server rejects enabling it for any other environment.
-Disabling it removes public request links and rejects new requests and redemptions.
+Disabling it removes public request links and rejects requests, tests, confirmations, rejections, and redemptions.
 Existing accounts retain their explicit site memberships.
 Deploy compatible code to both approved instances before enabling the switch or creating Discord-bound accounts.
 Older versions reject the new shared-store fields. See [the release instructions](../deploy/README.md#discord-account-request-activation-2026-09-20).
 
 Read-only production checks passed on September 20 for bot authentication, member search, server data, and #vibecoders data.
 These checks sent no DM and created no live account.
-All 489 application tests passed after implementation.
-Desktop and mobile browser checks passed for public-image entry, form submission, explicit confirmation, and token removal.
+All 501 application tests passed after adding owner review, including 44 Discord account-request cases.
+The review tests cover owner-only endpoints, exact recipients, expired tests, lost responses, and one-use redemption.
+Browser checks verify Origin headers under no-referrer, inline errors, and explicit owner actions at desktop and mobile widths.
 The owner authorized production activation on September 20.
 Release both the original controller and Vibecoders instance, then enable **Discord account requests** for Vibecoders.
 Verify public forms and existing account access without sending a test DM.
@@ -408,7 +441,11 @@ An update verifies the selected service and loopback health and retains the prev
 | `POST api/auth/login` | One username/password identity across assigned environments. |
 | `POST api/auth/link` | Reusable-token login with destination membership validation. |
 | `GET /public/signup` | Anonymous exact-username form on the original controller, when enabled. |
-| `POST /public/signup/request` | Same-origin, limited member lookup and one-use DM delivery. Never returns authentication. |
+| `POST /public/signup/request` | Same-origin member lookup and review queue; requires `X-Mic-Account: 1`. Returns JSON, never authentication. |
+| `GET /public/signup/request` | Recover the previous error address by returning to the form. |
+| `GET /public/signup/preview` | Harmless test-link page; never creates or authenticates an account. |
+| `GET /api/control/discord-account-requests` | Owner-only request list with current action permissions; no signup secrets. |
+| `POST /api/control/discord-account-requests/{id}/{action}` | Owner-only `test`, `send`, or `reject`; requires `X-Mic-Manage: 1`. Confirmed send requires a successful recent test. |
 | `GET /public/signup/claim` | Confirmation page; GET never consumes a token. |
 | `POST /public/signup/claim` | Same-origin, explicit token redemption; recheck membership, persist consumption, and issue a session. |
 | `GET api/control/state` | Admin-only environment, membership, account, and provisioning list. |
@@ -433,6 +470,9 @@ Implementation files:
 - `UiAccountActivity.cs`: durable login and activity observations.
 - `DiscordAccountRequests.cs`: exact member lookup, effective channel access, and verified-recipient DM transport.
 - `UiDiscordAccountRequests.cs`: controller-only tickets, persistent limits, Discord account binding, and one-use redemption.
+- `UiDiscordAccountReviews.cs`: durable owner testing and confirmed delivery.
+- `Ui/wwwroot/admin-discord-requests.js`: owner review controls and recovery from lost responses.
+- `tools/test-discord-account-reviews.cjs`: desktop/mobile review behavior with mocked delivery.
 - `UiDiscordAccountEndpoints.cs`: public forms, origin checks, explicit confirmation, and authenticated handoff.
 - `DiscordAccountRequestTests.cs`: delivery errors, identity collisions, expiry, concurrent redemption, interrupted activation, revocation, permissions, and HTTP boundaries.
 - `tools/test-discord-account-requests.cjs`: actual rendered forms, fragment removal, explicit confirmation, errors, and desktop/mobile browser checks.

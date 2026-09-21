@@ -119,7 +119,18 @@ namespace MultiImageClient
             return (permissions & viewChannel) != 0;
         }
 
-        public async Task SendLinkAsync(string userId, string link, CancellationToken ct)
+        public static string AccountMessage(string link) => "Your MultiImageClient account request\n[Continue to Vibecoders](<" + link
+            + ">)\nThis link expires in 30 minutes and works once.\nIf you did not request it, ignore this message.";
+
+        public static string PreviewMessage(string username, string link) => "TEST COPY — intended for @" + Username(username)
+            + "\n\n" + AccountMessage(link) + "\n\nThis test link cannot create or sign in to an account.";
+
+        public Task SendLinkAsync(string userId, string link, CancellationToken ct) => SendMessageAsync(userId, AccountMessage(link), ct);
+
+        public Task SendPreviewAsync(string reviewerId, string username, string link, CancellationToken ct) =>
+            SendMessageAsync(reviewerId, PreviewMessage(username, link), ct);
+
+        private async Task SendMessageAsync(string userId, string content, CancellationToken ct)
         {
             using var dm = await RequestAsync(HttpMethod.Post, "users/@me/channels", new { recipient_id = userId }, ct, delivery: true);
             var channel = dm.RootElement;
@@ -128,8 +139,6 @@ namespace MultiImageClient
                 || Id(recipients[0].GetProperty("id")) != userId)
                 throw new InvalidOperationException("Discord returned a different DM recipient. No link was sent.");
             var channelId = Id(channel.GetProperty("id"));
-            var content = "Your MultiImageClient account request\n[Continue to Vibecoders](<" + link
-                + ">)\nThis link expires in 30 minutes and works once.\nIf you did not request it, ignore this message.";
             using var message = await RequestAsync(HttpMethod.Post, "channels/" + channelId + "/messages",
                 new { content, flags = 4, allowed_mentions = new { parse = Array.Empty<string>() } }, ct, delivery: true);
             if (Id(message.RootElement.GetProperty("channel_id")) != channelId

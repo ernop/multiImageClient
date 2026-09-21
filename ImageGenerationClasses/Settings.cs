@@ -144,6 +144,8 @@ namespace MultiImageClient
         // (the default) hides the button. Confirmed posts attach originals with public-subset links in daily threads.
         public string DiscordVibecodersWebhookUrl { get; set; } = "";
         public string DiscordVibecodersBotToken { get; set; } = "";
+        // Permanent Discord ID of the owner's account for account-request test copies.
+        public string DiscordAccountReviewerId { get; set; } = "";
         public string DiscordBotTestingChannelId { get; set; } = "";
         public string DiscordBotTestingGuildId { get; set; } = "";
         public string DiscordVibecodersThreadStorePath { get; set; } = "";

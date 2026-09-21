@@ -9,6 +9,11 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;bord
 #issued-username,#issued-password{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 </style></head><body><header><h1>Administration<span id="environment-name"></span></h1><a href="./">main page</a></header>
 <main><h2>Environments</h2><p id="status" role="status">Loading…</p><button id="refresh">Refresh activity</button>
+<section id="discord-account-reviews"><h3>Discord account requests</h3>
+<p>Select Test to send a copy to Brouhahaha. The test link cannot create or sign in to an account.</p>
+<p>Check that DM, then select Confirmed, send to user. The real link expires after 30 minutes.</p>
+<button id="refresh-discord-requests" type="button">Refresh requests</button>
+<p id="discord-request-status" role="status">Loading requests…</p><div id="discord-requests"></div></section>
 <div id="environments"></div>
 <section><h3>Create an environment</h3><form id="create"><label>Display name <input name="name" required maxlength="80"></label>
 <label>URL name <input name="slug" required pattern="[a-z][a-z0-9-]{0,23}" maxlength="24"></label>
@@ -24,4 +29,4 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;bord
 <button id="copy-details" type="button" hidden>Copy login details</button>
 <p>These details appear once. A new password ends the previous password and login link.</p>
 </div></section>
-</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20260920-convert"></script></body></html>
+</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20260920-convert"></script><script src="admin-discord-requests.js?v=20260920-review"></script></body></html>

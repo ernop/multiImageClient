@@ -242,12 +242,19 @@ The implementation defaults to off and requires no new nginx location.
 Both public sites link to the original controller's existing `/shared/original/signup` route.
 The controller uses its existing Vibecoders bot credential and webhook destination.
 
-1. Run the normal release gate and original-service release.
-2. Update the selected `vibecoders-ai-generation` instance through `create-environment.py update --id vibecoders-ai-generation --publish <verified-publish>`.
-3. Verify both selected services run compatible code before changing the shared registry or accepting Discord accounts.
-4. Enable **Discord account requests** for Vibecoders AI Generation in administration, then select **Save configuration**.
-5. Verify both public image pages link to the controller's public signup form.
-6. Verify the claim page opens without signing in or consuming a token.
+1. Pause **Discord account requests** before upgrading an existing automatic-delivery installation.
+2. Configure `DiscordAccountReviewerId` with Brouhahaha's verified permanent Discord ID on the original controller.
+3. Run the normal release gate and original-service release.
+4. Update the selected `vibecoders-ai-generation` instance through `create-environment.py update --id vibecoders-ai-generation --publish <verified-publish>`.
+5. Verify both selected services run compatible code before changing the shared registry or accepting Discord accounts.
+6. Enable **Discord account requests** for Vibecoders AI Generation in administration, then select **Save configuration**.
+7. Verify both public image pages link to the controller's public signup form.
+8. Verify the claim page opens without signing in or consuming a token.
+
+Verify **Administration → Discord account requests** loads without sending messages.
+The owner must click **Test**, check the Brouhahaha DM, then click **Confirmed, send to user**.
+An ordinary release check must not click either delivery control.
+New review tickets require a compatible controller parser; preserve them during rollback planning.
 
 New shared account records contain `discordUserId`; enabled environment records contain `discordAccountRequests`.
 Older application versions reject these fields.
@@ -259,6 +266,7 @@ Use recipient-approved requests for any live DM check. Ordinary release checks s
 Do not print DM tokens, existing credentials, or the private site prefix.
 
 Development verification uses `DiscordAccountRequestTests` and `tools/test-discord-account-requests.cjs` with mocked Discord responses.
+Run `tools/test-discord-account-reviews.cjs` for the owner controls and lost-response recovery.
 Set `MIC_DISCORD_SIGNUP_FIXTURES` to a temporary directory during the C# tests and the browser check.
 
 ## Additional isolated environments

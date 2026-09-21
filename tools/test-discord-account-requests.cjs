@@ -9,8 +9,12 @@ if (!fixtures) throw new Error('Set MIC_DISCORD_SIGNUP_FIXTURES to the C# fixtur
 const requestHtml = fs.readFileSync(path.join(fixtures, 'request.html'), 'utf8');
 const claimHtml = fs.readFileSync(path.join(fixtures, 'claim.html'), 'utf8');
 const publicHtml = fs.readFileSync(path.join(fixtures, 'public.html'), 'utf8');
-const script = claimHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
-const scriptHash = crypto.createHash('sha256').update(script).digest('base64');
+function headers(html) {
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const hash = crypto.createHash('sha256').update(script).digest('base64');
+  return { 'referrer-policy': 'no-referrer',
+    'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; script-src 'sha256-" + hash + "'" };
+}
 const signupUrl = 'https://share.test/shared/original/signup';
 const publicUrl = 'https://share.test/shared/vibecoders-ai-generation/' + 'c'.repeat(64) + '/';
 const token = 'a'.repeat(32) + '.' + 'b'.repeat(43);
@@ -22,7 +26,7 @@ const token = 'a'.repeat(32) + '.' + 'b'.repeat(43);
       const page = await browser.newPage({ viewport });
       const errors = [], requests = [], redemptions = [];
       page.on('pageerror', error => errors.push(error.message));
-      let reject = true;
+      let reject = true, requestOutcome = 'error';
       await page.route('https://share.test/**', async route => {
         const request = route.request(), url = request.url();
         assert.ok(!url.includes(token), 'A token entered an HTTP URL.');
@@ -31,9 +35,14 @@ const token = 'a'.repeat(32) + '.' + 'b'.repeat(43);
           body: '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#ccd"/></svg>' });
         if (url === signupUrl + '/request') {
           assert.equal(request.method(), 'POST');
+          assert.equal(request.headers().origin, 'https://share.test');
+          assert.equal(request.headers()['x-mic-account'], '1');
+          assert.equal(request.headers().referer, undefined);
           const fields = new URLSearchParams(request.postData());
           requests.push(fields.get('username'));
-          return route.fulfill({ contentType: 'text/html', body: '<p>Check your Discord DMs for the account link.</p>' });
+          if (requestOutcome === 'unavailable') return route.fulfill({ status: 503, contentType: 'text/html', body: '<p>Unavailable</p>' });
+          return route.fulfill({ status: requestOutcome === 'error' ? 400 : 200, json: requestOutcome === 'error'
+            ? { error: 'No exact Discord username matched.' } : { state: 'review', message: 'Your request is waiting for Ernie to review.' } });
         }
         if (url === signupUrl + '/claim' && request.method() === 'POST') {
           assert.equal(request.headers().origin, 'https://share.test');
@@ -43,8 +52,8 @@ const token = 'a'.repeat(32) + '.' + 'b'.repeat(43);
             : { destination: 'https://share.test/vibecoders-ai-generation/' } });
         }
         if (url === signupUrl + '/claim') return route.fulfill({ contentType: 'text/html', body: claimHtml,
-          headers: { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; connect-src 'self'; script-src 'sha256-" + scriptHash + "'" } });
-        if (url === signupUrl) return route.fulfill({ contentType: 'text/html', body: requestHtml });
+          headers: headers(claimHtml) });
+        if (url === signupUrl) return route.fulfill({ contentType: 'text/html', body: requestHtml, headers: headers(requestHtml) });
         if (url === 'https://share.test/vibecoders-ai-generation/') return route.fulfill({ contentType: 'text/html', body: '<h1>Vibecoders</h1>' });
         throw new Error('Unexpected browser URL: ' + url);
       });
@@ -55,9 +64,19 @@ const token = 'a'.repeat(32) + '.' + 'b'.repeat(43);
       const screenshots = path.resolve(__dirname, '../.local-ui');
       fs.mkdirSync(screenshots, { recursive: true });
       await page.screenshot({ path: path.join(screenshots, `discord-account-request-${viewport.width}.png`) });
-      await page.getByRole('button', { name: 'Send me an account link' }).click();
-      await page.getByText('Check your Discord DMs for the account link.').waitFor();
+      await page.getByRole('button', { name: 'Request account', exact: true }).click();
+      await page.getByText('No exact Discord username matched.').waitFor();
+      assert.equal(page.url(), signupUrl);
       assert.deepEqual(requests, ['alice.discord']);
+      requestOutcome = 'unavailable';
+      await page.getByRole('button', { name: 'Request account', exact: true }).click();
+      await page.getByText('The server could not process this request. Try again later.').waitFor();
+      assert.equal(page.url(), signupUrl);
+      requestOutcome = 'success';
+      await page.getByRole('button', { name: 'Request account', exact: true }).click();
+      await page.getByText('Your request is waiting for Ernie to review.').waitFor();
+      assert.deepEqual(requests, ['alice.discord', 'alice.discord', 'alice.discord']);
+      assert.equal(page.url(), signupUrl);
       assert.equal(redemptions.length, 0);
       await page.goto(signupUrl + '/claim#' + token);
       await page.waitForFunction(() => !document.querySelector('button').disabled);

@@ -45,7 +45,11 @@ Ordinary authenticated routes remain private. Public sharing never grants accoun
 
 ## Discord account requests (2026-09-20)
 
-The owner authorized exact-username requests followed by verified-recipient, one-use Discord DMs.
+The owner authorized exact-username requests followed by owner review and verified-recipient, one-use Discord DMs.
+Require **Test** to send Brouhahaha a harmless preview before **Confirmed, send to user** creates the real link.
+Enforce this order on the server. Public requests must never send automatically.
+Bind `DiscordAccountReviewerId` to the verified permanent owner ID.
+The owner explicitly reserved both delivery clicks for the UI; release checks must not send test or real DMs.
 Follow [the account contract](../../docs/workspaces-prd.md#discord-account-requests-2026-09-20).
 This narrow exception permits only the public signup link in that recipient's DM.
 Never disclose private prefixes, reusable login links, passwords, or signup tokens in channel posts.

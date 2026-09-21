@@ -16,7 +16,20 @@ public sealed class DiscordAccountRequestTests
         using var fixture = new Fixture();
         var originalAuth = File.ReadAllText(fixture.Settings.UiAuthFilePath);
         var service = fixture.Service();
-        var delivery = await service.RequestAsync("@Alice.Discord", "192.0.2.1", new string('a', 64), default);
+        var queued = await service.RequestAsync("@Alice.Discord", "192.0.2.1", new string('a', 64), default);
+        Assert.Equal("review", queued.State);
+        Assert.Equal(0, fixture.Discord.DmOpens);
+        var review = Assert.Single(service.Reviews());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendReviewedAsync(review.Id, default));
+        Assert.Equal("tested", (await service.TestAsync(review.Id, default)).State);
+        Assert.Equal(1, fixture.Discord.TestMessages);
+        Assert.Equal(0, fixture.Discord.Messages);
+        Assert.Empty(fixture.Discord.Token);
+        Assert.Contains("TEST COPY — intended for @alice.discord", fixture.Discord.TestContent);
+        Assert.Contains("/signup/preview", fixture.Discord.TestContent);
+        Assert.DoesNotContain("claim#", fixture.Discord.TestContent);
+        Assert.Empty(fixture.Auth.LoginLinks!.List());
+        var delivery = await fixture.Service().SendReviewedAsync(review.Id, default);
         Assert.Equal("sent", delivery.State);
         Assert.Empty(fixture.Auth.LoginLinks!.List());
         Assert.Equal(1, fixture.Discord.Messages);
@@ -40,11 +53,116 @@ public sealed class DiscordAccountRequestTests
     }
 
     [Fact]
-    public async Task SimultaneousRedemptionsIssueOnlyOneSession()
+    public async Task ReviewAndTestExpiryRequireANewExplicitTestBeforeDelivery()
     {
         using var fixture = new Fixture();
         var service = fixture.Service();
         await service.RequestAsync("alice.discord", "ip", "", default);
+        var review = Assert.Single(service.Reviews());
+        fixture.Now += TimeSpan.FromHours(2);
+        await service.TestAsync(review.Id, default);
+        fixture.Now += TimeSpan.FromMinutes(30);
+        Assert.False(Assert.Single(service.Reviews()).CanSend);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendReviewedAsync(review.Id, default));
+        await service.TestAsync(review.Id, default);
+        await service.SendReviewedAsync(review.Id, default);
+        Assert.Equal(2, fixture.Discord.TestMessages);
+        Assert.Equal(1, fixture.Discord.Messages);
+        fixture.Now += TimeSpan.FromMinutes(29);
+        Assert.NotNull(await service.RedeemAsync(fixture.Discord.Token, default));
+        fixture.Now += TimeSpan.FromMinutes(6);
+        await service.RequestAsync("alice.discord", "ip", "", default);
+        var expired = service.Reviews().Single(r => r.State == "review");
+        fixture.Now += TimeSpan.FromHours(24);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TestAsync(expired.Id, default));
+        Assert.Equal(2, fixture.Discord.TestMessages);
+    }
+
+    [Theory]
+    [InlineData("test-lost-response", "test-pending", false)]
+    [InlineData("test-wrong-recipient", "test-pending", false)]
+    [InlineData("test-blocked", "test-failed", true)]
+    public async Task UnsuccessfulTestsCannotUnlockRecipientDelivery(string failure, string state, bool canRetry)
+    {
+        using var fixture = new Fixture();
+        var service = fixture.Service();
+        await service.RequestAsync("alice.discord", "ip", "", default);
+        var id = Assert.Single(service.Reviews()).Id;
+        fixture.Discord.Failure = failure;
+        Assert.Equal(state, (await service.TestAsync(id, default)).State);
+        Assert.Equal(0, fixture.Discord.Messages);
+        Assert.Empty(fixture.Discord.Token);
+        Assert.Equal(canRetry, Assert.Single(fixture.Service().Reviews()).CanTest);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service().SendReviewedAsync(id, default));
+        if (canRetry) { fixture.Discord.Failure = ""; await service.TestAsync(id, default); }
+        else await Assert.ThrowsAsync<InvalidOperationException>(() => service.TestAsync(id, default));
+        await service.RejectAsync(id, default);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendReviewedAsync(id, default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TestAsync(id, default));
+        Assert.Empty(fixture.Auth.LoginLinks!.List());
+    }
+
+    [Theory]
+    [InlineData("no-access")]
+    [InlineData("destination")]
+    [InlineData("username")]
+    [InlineData("reviewer")]
+    [InlineData("paused")]
+    public async Task ChangedRecipientOrConfigurationBlocksConfirmedDelivery(string change)
+    {
+        using var fixture = new Fixture();
+        var service = fixture.Service();
+        await service.RequestAsync("alice.discord", "ip", "", default);
+        var id = Assert.Single(service.Reviews()).Id;
+        await service.TestAsync(id, default);
+        if (change == "username") fixture.Discord.Username = "renamed.alice";
+        else if (change == "reviewer") fixture.Settings.DiscordAccountReviewerId = "888";
+        else if (change == "paused") { var env = fixture.Registry.Get(UiDiscordAccountRequests.EnvironmentId); env.DiscordAccountRequests = false; fixture.Registry.Save(env); }
+        else fixture.Discord.Failure = change;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendReviewedAsync(id, default));
+        Assert.Equal(0, fixture.Discord.Messages);
+        Assert.Empty(fixture.Discord.Token);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExpiryDuringRecipientCheckPreventsTheSend(bool reviewExpires)
+    {
+        using var fixture = new Fixture();
+        var service = fixture.Service();
+        await service.RequestAsync("alice.discord", "ip", "", default);
+        var id = Assert.Single(service.Reviews()).Id;
+        if (reviewExpires) fixture.Now += TimeSpan.FromHours(23) + TimeSpan.FromMinutes(59);
+        await service.TestAsync(id, default);
+        fixture.Discord.BlockMemberLookup = true;
+        var sending = service.SendReviewedAsync(id, default);
+        await fixture.Discord.LookupEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        fixture.Now += TimeSpan.FromMinutes(30);
+        fixture.Discord.ContinueLookup.SetResult();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sending);
+        Assert.Equal(0, fixture.Discord.Messages);
+    }
+
+    [Fact]
+    public async Task LegacyDeliveredTicketsRemainUsableButCannotBypassReviewForNewRequests()
+    {
+        using var fixture = new Fixture();
+        await fixture.SendApprovedAsync(fixture.Service());
+        var doc = JsonNode.Parse(File.ReadAllText(fixture.StorePath))!;
+        var ticket = doc["tickets"]![0]!;
+        foreach (var name in new[] { "reviewRequired", "reviewerId", "testedAt", "approvedAt" }) ticket.AsObject().Remove(name);
+        ticket["expiresAt"] = ticket["createdAt"]!.GetValue<long>() + (long)TimeSpan.FromMinutes(30).TotalMilliseconds;
+        File.WriteAllText(fixture.StorePath, doc.ToJsonString());
+        Assert.NotNull(await fixture.Service().RedeemAsync(fixture.Discord.Token, default));
+    }
+
+    [Fact]
+    public async Task SimultaneousRedemptionsIssueOnlyOneSession()
+    {
+        using var fixture = new Fixture();
+        var service = fixture.Service();
+        await fixture.SendApprovedAsync(service);
         fixture.Discord.BlockMemberLookup = true;
         var first = service.RedeemAsync(fixture.Discord.Token, default);
         await fixture.Discord.LookupEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -79,12 +197,12 @@ public sealed class DiscordAccountRequestTests
     {
         using var fixture = new Fixture();
         var service = fixture.Service();
-        await service.RequestAsync("alice.discord", "ip", "", default);
+        await fixture.SendApprovedAsync(service);
         var first = await service.RedeemAsync(fixture.Discord.Token, default);
         var account = fixture.Auth.LoginLinks!.List().Single();
         fixture.Now += TimeSpan.FromMinutes(6);
         fixture.Discord.Username = "renamed.alice";
-        await service.RequestAsync("renamed.alice", "ip", "", default);
+        await fixture.SendApprovedAsync(service, "renamed.alice");
         var next = await service.RedeemAsync(fixture.Discord.Token, default);
         Assert.Equal(first.Cookie, next.Cookie);
         Assert.Equal(account.Id, fixture.Auth.LoginLinks.List().Single().Id);
@@ -118,7 +236,7 @@ public sealed class DiscordAccountRequestTests
     {
         using var fixture = new Fixture();
         var service = fixture.Service();
-        await service.RequestAsync("alice.discord", "ip", "", default);
+        await fixture.SendApprovedAsync(service);
         fixture.Discord.Failure = failure;
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.RedeemAsync(fixture.Discord.Token, default));
         Assert.Empty(fixture.Auth.LoginLinks!.List());
@@ -128,7 +246,7 @@ public sealed class DiscordAccountRequestTests
     public async Task ExpiredLinksCannotCreateAccounts()
     {
         using var fixture = new Fixture();
-        await fixture.Service().RequestAsync("alice.discord", "ip", "", default);
+        await fixture.SendApprovedAsync(fixture.Service());
         fixture.Now += TimeSpan.FromMinutes(30);
         await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service().RedeemAsync(fixture.Discord.Token, default));
         Assert.Empty(fixture.Auth.LoginLinks!.List());
@@ -141,7 +259,7 @@ public sealed class DiscordAccountRequestTests
     {
         using var fixture = new Fixture();
         var service = fixture.Service();
-        await service.RequestAsync("alice.discord", "ip", "", default);
+        await fixture.SendApprovedAsync(service);
         await service.RedeemAsync(fixture.Discord.Token, default);
         var account = fixture.Auth.LoginLinks!.List().Single();
         if (revoke) fixture.Auth.LoginLinks.Revoke(account.Id);
@@ -156,7 +274,7 @@ public sealed class DiscordAccountRequestTests
     {
         using var fixture = new Fixture();
         var existing = fixture.Auth.LoginLinks!.Create("alice.discord", _ => { });
-        await fixture.Service().RequestAsync("alice.discord", "ip", "", default);
+        await fixture.SendApprovedAsync(fixture.Service());
         await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service().RedeemAsync(fixture.Discord.Token, default));
         Assert.Null(fixture.Auth.LoginLinks.List().Single().DiscordUserId);
         Assert.True(fixture.Auth.TryLoginLink(existing.Token, "ip", out _, out _, out _));
@@ -170,7 +288,7 @@ public sealed class DiscordAccountRequestTests
     {
         using var fixture = new Fixture();
         fixture.Discord.Failure = failure;
-        var result = await fixture.Service().RequestAsync("alice.discord", "ip", "", default);
+        var result = await fixture.SendApprovedAsync(fixture.Service());
         Assert.Equal(state, result.State);
         Assert.DoesNotContain("claim#", result.Message);
         if (failure == "wrong-recipient") Assert.Equal(0, fixture.Discord.Messages);
@@ -201,7 +319,7 @@ public sealed class DiscordAccountRequestTests
     public async Task InterruptedActivationResumesOnlyItsRecordedAccountAndNeverRestoresRemovedMembership()
     {
         using var fixture = new Fixture();
-        await fixture.Service().RequestAsync("alice.discord", "ip", "", default);
+        await fixture.SendApprovedAsync(fixture.Service());
         var id = new string('b', 32);
         var doc = JsonNode.Parse(File.ReadAllText(fixture.StorePath))!;
         var ticket = doc["tickets"]![0]!;
@@ -247,10 +365,12 @@ public sealed class DiscordAccountRequestTests
     public async Task AnonymousHttpFlowRequiresSameOriginAndNeverSignsInTheRequestingBrowser()
     {
         using var fixture = new Fixture();
+        var service = fixture.Service();
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         await using var app = builder.Build();
-        UiDiscordAccountEndpoints.Map(app, fixture.Settings, fixture.Auth, fixture.Registry, requests: fixture.Service());
+        app.Use(async (ctx, next) => { ctx.Items["micUser"] = ctx.Request.Headers["Test-Account"].ToString(); await next(); });
+        UiDiscordAccountEndpoints.Map(app, fixture.Settings, fixture.Auth, fixture.Registry, requests: service);
         await app.StartAsync();
         using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { BaseAddress = new Uri(app.Urls.Single()) };
         try
@@ -260,17 +380,34 @@ public sealed class DiscordAccountRequestTests
                 using var request = new HttpRequestMessage(HttpMethod.Post, route)
                 { Content = new FormUrlEncodedContent(new Dictionary<string, string> { [key] = value }) };
                 request.Headers.Add("Origin", origin);
+                request.Headers.Add("X-Mic-Account", "1");
                 return await http.SendAsync(request);
             }
             var page = await http.GetStringAsync("/public/signup");
             Assert.Contains("Discord username", page);
             Assert.DoesNotContain("private-path", page);
+            Assert.Equal(HttpStatusCode.Redirect, (await http.GetAsync("/public/signup/request")).StatusCode);
+            Assert.Contains("cannot create or sign in", await http.GetStringAsync("/public/signup/preview"));
+            Assert.Equal(HttpStatusCode.Forbidden, (await http.GetAsync("/api/control/discord-account-requests")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await Post("/api/control/discord-account-requests/any/test", "unused", "")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await Post("/public/signup/request", "username", "alice.discord", "null")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await Post("/public/signup/request", "username", "alice.discord", "https://other.test")).StatusCode);
             Assert.Equal(0, fixture.Discord.Messages);
             using var requested = await Post("/public/signup/request", "username", "alice.discord");
             Assert.Equal(HttpStatusCode.OK, requested.StatusCode);
             Assert.False(requested.Headers.Contains("Set-Cookie"));
-            Assert.DoesNotContain(fixture.Discord.Token, await requested.Content.ReadAsStringAsync());
+            Assert.Contains("review", await requested.Content.ReadAsStringAsync());
+            Assert.Equal(0, fixture.Discord.DmOpens);
+            var review = Assert.Single(service.Reviews());
+            http.DefaultRequestHeaders.Add("Test-Account", UiLoginLinks.OwnerLogin);
+            Assert.Equal(HttpStatusCode.Forbidden, (await Post($"/api/control/discord-account-requests/{review.Id}/test", "unused", "")).StatusCode);
+            http.DefaultRequestHeaders.Add("X-Mic-Manage", "1");
+            Assert.Equal(HttpStatusCode.BadRequest, (await Post($"/api/control/discord-account-requests/{review.Id}/send", "unused", "")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await Post($"/api/control/discord-account-requests/{review.Id}/test", "unused", "")).StatusCode);
+            Assert.Equal(0, fixture.Discord.Messages);
+            Assert.Equal(HttpStatusCode.OK, (await Post($"/api/control/discord-account-requests/{review.Id}/send", "unused", "")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest, (await Post($"/api/control/discord-account-requests/{review.Id}/send", "unused", "")).StatusCode);
+            Assert.Equal(1, fixture.Discord.Messages);
             Assert.Empty(fixture.Auth.LoginLinks!.List());
             using var claimPage = await http.GetAsync("/public/signup/claim");
             Assert.Equal(HttpStatusCode.OK, claimPage.StatusCode);
@@ -299,7 +436,9 @@ public sealed class DiscordAccountRequestTests
         foreach (var route in new[] { "/public/signup", "/public/signup/claim" }) Assert.True(UiPublicShares.IsPublicRequest(route, "GET"));
         Assert.True(UiPublicShares.IsPublicRequest("/public/signup/request", "POST"));
         Assert.False(UiPublicShares.IsPublicRequest("/public/signup/settings", "GET"));
-        Assert.False(UiPublicShares.IsPublicRequest("/public/signup/request", "GET"));
+        Assert.True(UiPublicShares.IsPublicRequest("/public/signup/request", "GET"));
+        Assert.True(UiPublicShares.IsPublicRequest("/public/signup/preview", "GET"));
+        Assert.False(UiPublicShares.IsPublicRequest("/public/signup/preview", "POST"));
         Assert.Equal("https://share.test/shared/original/signup", UiDiscordAccountRequests.PublicUrl(fixture.Settings, fixture.Auth, fixture.Registry));
         var html = UiPublicShares.Html(new UiPublicShareRecord { Snapshot = new("Public prompt", new() { new("image", "model", 0, "Model") }, new(), new()) },
             "asset/", "reuse", requestAccountUrl: UiDiscordAccountRequests.PublicUrl(fixture.Settings, fixture.Auth, fixture.Registry));
@@ -331,7 +470,7 @@ public sealed class DiscordAccountRequestTests
                 UiEnvironmentController = true, UiAuthFilePath = Path.Combine(Root, "auth.json"), UiLoginLinksFilePath = Path.Combine(Root, "links.json"),
                 UiEnvironmentRegistryPath = Path.Combine(Root, "registry.json"), UiPublicBaseUrl = "https://share.test/private-path",
                 UiPublicShareBaseUrl = "https://share.test/shared/original", DiscordVibecodersBotToken = new string('t', 60),
-                DiscordVibecodersWebhookUrl = "https://discord.com/api/webhooks/123/testtoken" };
+                DiscordAccountReviewerId = "777", DiscordVibecodersWebhookUrl = "https://discord.com/api/webhooks/123/testtoken" };
             File.WriteAllText(Settings.UiAuthFilePath, JsonSerializer.Serialize(new { version = 2, enabled = true, secret = new string('s', 40),
                 accounts = new[] { new { username = UiLoginLinks.OwnerLogin, passwordHash = "pbkdf2-sha256$600000$"
                     + Convert.ToBase64String(new byte[16]) + "$" + Convert.ToBase64String(new byte[32]) } } }));
@@ -345,13 +484,20 @@ public sealed class DiscordAccountRequestTests
             Http = new(Discord);
         }
         public UiDiscordAccountRequests Service() => new(Settings, Auth, Registry, () => new(Settings, Http), () => Now);
+        public async Task<UiDiscordAccountRequests.Delivery> SendApprovedAsync(UiDiscordAccountRequests service, string username = "alice.discord")
+        {
+            Assert.Equal("review", (await service.RequestAsync(username, "ip", "", default)).State);
+            var review = service.Reviews().Single(r => r.State == "review");
+            Assert.Equal("tested", (await service.TestAsync(review.Id, default)).State);
+            return await service.SendReviewedAsync(review.Id, default);
+        }
         public void Dispose() { Http.Dispose(); Directory.Delete(Root, true); }
     }
 
     private sealed class DiscordHandler : HttpMessageHandler
     {
-        public string Failure = "", Username = "alice.discord", Content = "", Token = "";
-        public int Searches, DmOpens, Messages;
+        public string Failure = "", Username = "alice.discord", Content = "", Token = "", TestContent = "";
+        public int Searches, DmOpens, Messages, TestMessages;
         public bool BlockMemberLookup;
         public readonly TaskCompletionSource LookupEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly TaskCompletionSource ContinueLookup = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -371,6 +517,7 @@ public sealed class DiscordAccountRequestTests
                 if (Failure == "duplicate") return Json(new[] { Member(), Member() });
                 return Json(new[] { Member() });
             }
+            if (route.EndsWith("/members/777")) return Json(new { user = new { id = "777", username = "brouhahaha" }, roles = new[] { "444" } });
             if (route.Contains("/members/"))
             {
                 if (BlockMemberLookup) { LookupEntered.TrySetResult(); await ContinueLookup.Task.WaitAsync(ct); }
@@ -385,8 +532,23 @@ public sealed class DiscordAccountRequestTests
             {
                 DmOpens++;
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
-                Assert.Equal("333", body.RootElement.GetProperty("recipient_id").GetString());
+                var recipient = body.RootElement.GetProperty("recipient_id").GetString();
+                if (recipient == "777") return Json(new { id = "556", type = 1,
+                    recipients = new[] { new { id = Failure == "test-wrong-recipient" ? "888" : "777" } } });
+                Assert.Equal("333", recipient);
                 return Json(new { id = "555", type = 1, recipients = new[] { new { id = Failure == "wrong-recipient" ? "888" : "333" } } });
+            }
+            if (route.EndsWith("/channels/556/messages"))
+            {
+                TestMessages++;
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                TestContent = body.RootElement.GetProperty("content").GetString()!;
+                Assert.DoesNotContain("claim#", TestContent);
+                Assert.Equal(4, body.RootElement.GetProperty("flags").GetInt32());
+                Assert.Equal(0, body.RootElement.GetProperty("allowed_mentions").GetProperty("parse").GetArrayLength());
+                if (Failure == "test-lost-response") throw new HttpRequestException("Response lost after accepting the test.");
+                if (Failure == "test-blocked") return new(HttpStatusCode.Forbidden);
+                return Json(new { id = "667", channel_id = "556", content = TestContent });
             }
             if (route.EndsWith("/channels/555/messages"))
             {

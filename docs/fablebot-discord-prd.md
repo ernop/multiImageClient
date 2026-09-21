@@ -10,7 +10,10 @@ The 2026-09-09 Vibecoders attachment-only decision is superseded by this confirm
 
 **2026-09-20:** [Discord account requests](workspaces-prd.md#discord-account-requests-2026-09-20) use the existing Vibecoders bot credential.
 An exact username selects a server member who can view #vibecoders.
-The bot sends only that member an expiring, one-use account link.
+The public request waits for owner review.
+**Test** sends Brouhahaha a copy with a harmless preview link.
+**Confirmed, send to user** sends only the verified member an expiring, one-use account link.
+The controller stores Brouhahaha's verified permanent ID in `DiscordAccountReviewerId`.
 The original controller handles account creation after explicit recipient confirmation.
 This exception changes neither FableBot channel posting nor the image-sharing caption contract.
 Never send private prefixes, reusable login links, passwords, or one-use signup tokens in channel posts.
