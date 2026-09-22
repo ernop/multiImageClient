@@ -25,70 +25,16 @@ function applyEnvironmentBranding() {
 }
 applyEnvironmentBranding();
 
-// ---------- identity ----------
-// The page reuses the composer's identity rather than asking for a name:
-// the authenticated profile's display name when one exists, else the
-// creating-as field of the canonical personal configuration document
-// (personal-config.js), else the legacy mic_username mirror. Only when none
-// exists does a name input appear; what it collects is written the same way
-// the composer would read it, so both pages agree afterwards.
+// Authenticated creation and forks use the server's signed-in account.
+// Local mode reuses the name saved by the composer, without a second name editor.
 const PersonalConfigurationSchema = globalThis.MultiImagePersonalConfiguration;
 
-function storedCreatingAs() {
-  try {
-    const doc = PersonalConfigurationSchema.parseStored(localStorage.getItem(PersonalConfigurationSchema.StorageKey));
-    const value = doc && doc.creatingAs;
-    if (typeof value === "string" && value.trim()) return { name: value.trim(), source: "browser" };
-  } catch {
-    // A malformed document is the settings panel's problem to report; this
-    // page must not guess a name from it.
-  }
-  const legacy = localStorage.getItem(UsernameKey);
-  if (legacy && legacy.trim()) return { name: legacy.trim(), source: "browser" };
-  return null;
-}
-
-// Persist a name typed here: into the canonical document's creatingAs field
-// when the document exists (all other fields untouched), else into the
-// legacy key the composer migrates from on its next snapshot.
-function persistCreatingAs(name) {
-  const raw = localStorage.getItem(PersonalConfigurationSchema.StorageKey);
-  if (raw) {
-    try {
-      const doc = PersonalConfigurationSchema.parseStored(raw);
-      doc.creatingAs = name;
-      localStorage.setItem(PersonalConfigurationSchema.StorageKey, JSON.stringify(doc));
-      return;
-    } catch {
-      // Leave a malformed document alone; the legacy key still reaches the composer.
-    }
-  }
-  localStorage.setItem(UsernameKey, name);
-}
-
-let identity = null; // { name, source: "profile" | "browser" | "typed" }
-
-function renderIdentity() {
-  const known = el("goal-identity-known");
-  const input = el("goal-user");
-  if (identity && identity.name) {
-    known.hidden = false;
-    input.hidden = true;
-    el("goal-identity-name").textContent = identity.name;
-    el("goal-identity-source").textContent = identity.source === "profile"
-      ? "(signed-in profile)"
-      : "(the composer's creating-as name)";
-    el("goal-identity-change").hidden = identity.source === "profile";
-  } else {
-    known.hidden = true;
-    input.hidden = false;
-    input.required = true;
-  }
-}
-
-function currentIdentityName() {
-  if (identity && identity.name) return identity.name;
-  return el("goal-user").value.trim().replace(/\s+/g, " ");
+function appendLocalCreator(form) {
+  if (authInfo.enabled) return;
+  const user = (storedPersonalField("creatingAs") ?? localStorage.getItem(UsernameKey) ?? "")
+    .trim().replace(/\s+/g, " ");
+  if (!user) throw new Error("Set your name on the main page before creating a loop.");
+  form.append("user", user);
 }
 
 async function fetchJson(path, init) {
@@ -238,14 +184,6 @@ function updateCriticCount() {
 
 async function loadConfig() {
   config = await fetchJson("api/config");
-  if (config.auth && config.auth.profile && config.auth.profile.displayName) {
-    identity = { name: config.auth.profile.displayName, source: "profile" };
-  } else {
-    identity = storedCreatingAs()
-      || (config.auth && config.auth.user ? { name: config.auth.user, source: "browser" } : null);
-  }
-  renderIdentity();
-
   generators = config.generators;
   authInfo = config.auth || { enabled: false };
   generatorEndpointConfiguration = config.generatorEndpointConfiguration;
@@ -327,16 +265,6 @@ el("goal-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const error = el("goal-form-error");
   error.textContent = "";
-  const user = currentIdentityName();
-  if (!user) {
-    error.textContent = "enter the name to create as";
-    return;
-  }
-  if (!identity || !identity.name) {
-    persistCreatingAs(user);
-    identity = { name: user, source: "typed" };
-    renderIdentity();
-  }
   const generatorKeys = selectedGeneratorKeys();
   if (generatorKeys.length === 0) {
     error.textContent = "pick at least one image generator";
@@ -356,7 +284,6 @@ el("goal-form").addEventListener("submit", async (event) => {
   const form = new FormData();
   const submittedGoal = el("goal-text").value;
   form.append("goal", submittedGoal);
-  form.append("user", user);
   for (const key of generatorKeys) form.append("generators", key);
   form.append("manager", el("goal-manager").value);
   for (const key of criticKeys) form.append("critics", key);
@@ -371,6 +298,7 @@ el("goal-form").addEventListener("submit", async (event) => {
   const button = el("goal-start");
   button.disabled = true;
   try {
+    appendLocalCreator(form);
     const body = await fetchJson("api/goal-loops", { method: "POST", body: form });
     if (el("goal-text").value === submittedGoal) {
       el("goal-text").value = "";
@@ -2432,8 +2360,8 @@ async function submitFork(entryIndex, text, maxTurns, button, errorBox) {
   form.append("entryIndex", String(entryIndex));
   if (text != null) form.append("text", text);
   if (maxTurns) form.append("maxTurns", maxTurns);
-  form.append("user", currentIdentityName());
   try {
+    appendLocalCreator(form);
     const body = await fetchJson(`api/goal-loops/${encodeURIComponent(selectedLoopId)}/fork`, { method: "POST", body: form });
     await pollList();
     selectLoop(body.id, true);

@@ -11,7 +11,7 @@ namespace MultiImageClient.Tests;
 public sealed class DiscordAccountRequestTests
 {
     [Fact]
-    public async Task OnlyTheDmRecipientCanCreateAnAccountAndTheLinkWorksOnce()
+    public async Task OnlyTheDmRecipientCanCreateAnAccountAndTheLinkIsReusable()
     {
         using var fixture = new Fixture();
         var originalAuth = File.ReadAllText(fixture.Settings.UiAuthFilePath);
@@ -35,6 +35,8 @@ public sealed class DiscordAccountRequestTests
         Assert.Equal(1, fixture.Discord.Messages);
         Assert.DoesNotContain("private-path", fixture.Discord.Content);
         Assert.Contains("/shared/original/signup/claim#", fixture.Discord.Content);
+        Assert.Contains("It does not expire.", fixture.Discord.Content);
+        Assert.Null(Assert.Single(service.Reviews()).ExpiresAt);
         Assert.DoesNotContain(fixture.Discord.Token, JsonSerializer.Serialize(delivery));
         var saved = File.ReadAllText(fixture.StorePath);
         Assert.DoesNotContain(fixture.Discord.Token[33..], saved);
@@ -48,7 +50,8 @@ public sealed class DiscordAccountRequestTests
         Assert.False(fixture.Registry.CanEnter("original", login));
         Assert.Equal("https://share.test/vibecoders-ai-generation/?shared=" + new string('a', 64), signedIn.Destination);
         Assert.Equal("333", fixture.Auth.LoginLinks.List().Single().DiscordUserId);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RedeemAsync(fixture.Discord.Token, default));
+        Assert.Equal(signedIn, await fixture.Service().RedeemAsync(fixture.Discord.Token, default));
+        Assert.Single(fixture.Auth.LoginLinks.List());
         Assert.Equal(originalAuth, File.ReadAllText(fixture.Settings.UiAuthFilePath));
     }
 
@@ -154,11 +157,13 @@ public sealed class DiscordAccountRequestTests
         foreach (var name in new[] { "reviewRequired", "reviewerId", "testedAt", "approvedAt" }) ticket.AsObject().Remove(name);
         ticket["expiresAt"] = ticket["createdAt"]!.GetValue<long>() + (long)TimeSpan.FromMinutes(30).TotalMilliseconds;
         File.WriteAllText(fixture.StorePath, doc.ToJsonString());
+        fixture.Now += TimeSpan.FromDays(365);
+        Assert.NotNull(await fixture.Service().RedeemAsync(fixture.Discord.Token, default));
         Assert.NotNull(await fixture.Service().RedeemAsync(fixture.Discord.Token, default));
     }
 
     [Fact]
-    public async Task SimultaneousRedemptionsIssueOnlyOneSession()
+    public async Task SimultaneousRedemptionsSerializeActivationAndAllowLaterReuse()
     {
         using var fixture = new Fixture();
         var service = fixture.Service();
@@ -172,7 +177,7 @@ public sealed class DiscordAccountRequestTests
         }
         finally { fixture.Discord.ContinueLookup.SetResult(); }
         Assert.NotNull(await first);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RedeemAsync(fixture.Discord.Token, default));
+        Assert.NotNull(await service.RedeemAsync(fixture.Discord.Token, default));
         Assert.Single(fixture.Auth.LoginLinks!.List());
     }
 
@@ -243,13 +248,100 @@ public sealed class DiscordAccountRequestTests
     }
 
     [Fact]
-    public async Task ExpiredLinksCannotCreateAccounts()
+    public async Task DeliveredLinksSurviveYearsRestartsPruningAndRepeatedLogins()
     {
         using var fixture = new Fixture();
         await fixture.SendApprovedAsync(fixture.Service());
-        fixture.Now += TimeSpan.FromMinutes(30);
+        var token = fixture.Discord.Token;
+        fixture.Now += TimeSpan.FromDays(3650);
+        // A later request runs pruning before first use of the original link.
+        await fixture.Service().RequestAsync("alice.discord", "ip", "", default);
+        var first = await fixture.Service().RedeemAsync(token, default);
+        fixture.Now += TimeSpan.FromDays(3650);
+        await fixture.Service().RequestAsync("alice.discord", "ip", "", default);
+        Assert.Equal(first, await fixture.Service().RedeemAsync(token, default));
+        Assert.Single(fixture.Auth.LoginLinks!.List());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetainedHistoricalDeliveredAndUsedLinksBecomeReusable(bool alreadyUsed)
+    {
+        using var fixture = new Fixture();
+        await fixture.SendApprovedAsync(fixture.Service());
+        if (alreadyUsed) await fixture.Service().RedeemAsync(fixture.Discord.Token, default);
+        var doc = JsonNode.Parse(File.ReadAllText(fixture.StorePath))!;
+        var ticket = doc["tickets"]![0]!;
+        ticket.AsObject().Remove("accountTokenHash");
+        ticket["expiresAt"] = ticket["approvedAt"]!.GetValue<long>() + (long)TimeSpan.FromMinutes(30).TotalMilliseconds;
+        File.WriteAllText(fixture.StorePath, doc.ToJsonString());
+        fixture.Now += TimeSpan.FromDays(3650);
+        await fixture.Service().RequestAsync("alice.discord", "ip", "", default);
+        var first = await fixture.Service().RedeemAsync(fixture.Discord.Token, default);
+        Assert.Equal(first, await fixture.Service().RedeemAsync(fixture.Discord.Token, default));
+        Assert.Single(fixture.Auth.LoginLinks!.List());
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ReplacingCredentialsInvalidatesDeliveredAndUsedDiscordLinks(bool replacePassword, bool redeemSecondLink)
+    {
+        using var fixture = new Fixture();
+        var service = fixture.Service();
+        await fixture.SendApprovedAsync(service);
+        await service.RedeemAsync(fixture.Discord.Token, default);
+        var firstToken = fixture.Discord.Token;
+        fixture.Now += TimeSpan.FromMinutes(6);
+        await fixture.SendApprovedAsync(service);
+        if (redeemSecondLink) await service.RedeemAsync(fixture.Discord.Token, default);
+        var account = fixture.Auth.LoginLinks!.List().Single();
+        var replacement = replacePassword
+            ? fixture.Auth.LoginLinks.ReplaceCredentials(account.Id, "pbkdf2-sha256$600000$"
+                + Convert.ToBase64String(new byte[16]) + "$" + Convert.ToBase64String(new byte[32])).Token
+            : fixture.Auth.LoginLinks.Replace(account.Id);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service().RedeemAsync(firstToken, default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service().RedeemAsync(fixture.Discord.Token, default));
+        Assert.True(fixture.Auth.TryLoginLink(replacement, "ip", out _, out _, out _));
+    }
+
+    [Fact]
+    public async Task ReusingALinkNeverRecreatesADeletedAccount()
+    {
+        using var fixture = new Fixture();
+        await fixture.SendApprovedAsync(fixture.Service());
+        await fixture.Service().RedeemAsync(fixture.Discord.Token, default);
+        File.WriteAllText(fixture.Settings.UiLoginLinksFilePath, """{"version":1,"accounts":[]}""");
         await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service().RedeemAsync(fixture.Discord.Token, default));
         Assert.Empty(fixture.Auth.LoginLinks!.List());
+    }
+
+    [Fact]
+    public async Task CreatingAnAccountBindsOtherUnclaimedLinksBeforeCredentialReplacement()
+    {
+        using var fixture = new Fixture();
+        var service = fixture.Service();
+        await fixture.SendApprovedAsync(service);
+        var unclaimed = fixture.Discord.Token;
+        fixture.Now += TimeSpan.FromMinutes(6);
+        await fixture.SendApprovedAsync(service);
+        await service.RedeemAsync(fixture.Discord.Token, default);
+        fixture.Auth.LoginLinks!.Replace(fixture.Auth.LoginLinks.List().Single().Id);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service().RedeemAsync(unclaimed, default));
+    }
+
+    [Fact]
+    public async Task EachReuseRechecksDiscordChannelAccess()
+    {
+        using var fixture = new Fixture();
+        await fixture.SendApprovedAsync(fixture.Service());
+        await fixture.Service().RedeemAsync(fixture.Discord.Token, default);
+        fixture.Discord.Failure = "no-access";
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service().RedeemAsync(fixture.Discord.Token, default));
+        Assert.Single(fixture.Auth.LoginLinks!.List());
     }
 
     [Theory]
@@ -264,6 +356,7 @@ public sealed class DiscordAccountRequestTests
         var account = fixture.Auth.LoginLinks!.List().Single();
         if (revoke) fixture.Auth.LoginLinks.Revoke(account.Id);
         else { var environment = fixture.Registry.Get(UiDiscordAccountRequests.EnvironmentId); environment.Members.Clear(); fixture.Registry.Save(environment); }
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service().RedeemAsync(fixture.Discord.Token, default));
         fixture.Now += TimeSpan.FromMinutes(6);
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.RequestAsync("alice.discord", "ip", "", default));
         Assert.Equal(1, fixture.Discord.Messages);
@@ -421,7 +514,7 @@ public sealed class DiscordAccountRequestTests
             Assert.Contains("secure", cookie);
             Assert.Contains("httponly", cookie);
             Assert.Contains("path=/", cookie);
-            Assert.Equal(HttpStatusCode.BadRequest, (await Post("/public/signup/claim", "token", fixture.Discord.Token)).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await Post("/public/signup/claim", "token", fixture.Discord.Token)).StatusCode);
             var environment = fixture.Registry.Get(UiDiscordAccountRequests.EnvironmentId);
             environment.DiscordAccountRequests = false; fixture.Registry.Save(environment);
             Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync("/public/signup")).StatusCode);

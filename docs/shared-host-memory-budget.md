@@ -37,6 +37,119 @@ to
 (the design rule) and [deploy/README.md](../deploy/README.md) (the install
 procedure).
 
+## Beta standby approved and applied — 2026-09-20
+
+At 17:52 Pacific, the owner explicitly requested stopping beta without removing its files or database.
+The earlier read-only review below is a snapshot before this change.
+
+Verified identity: `machine_name=tpbeta`, beta uWSGI configuration, and nginx routing to `/tmp/parkour2_beta.sock`.
+Production TP is a separate host, `tp`, with `machine_name=tparkour` and active `tp.uwsgi.service`.
+Beta had zero fresh player heartbeats, zero joins in seven days, and a last recorded join on July 7.
+Roblox's public API also reported zero beta players during this check.
+The earlier recommendation to consider retirement lacked this identity and activity verification.
+
+`tpbeta.uwsgi.service` is now inactive, PID zero, and disabled at boot.
+Its service definition, application files, virtual environment, nginx route, and PostgreSQL database remain installed.
+The service consumed 478,154,752 bytes (456 MiB) immediately before stopping.
+Host available memory measured approximately 2.68 GiB afterward.
+Both image services and Fuseki retained their existing process IDs.
+
+Cause of automatic reactivation: `/etc/logrotate.d/terrainparkour-beta` ran `systemctl restart tpbeta.uwsgi` after rotating logs.
+Boot enablement was already disabled; this independent command still started the service.
+Changed only that command to `systemctl try-restart tpbeta.uwsgi`.
+Validated the configuration with `logrotate --debug`.
+Invoked `try-restart` afterward and confirmed beta remained inactive and disabled.
+
+Preserved backups under `/root/maintenance-backups/tp-beta-disable-20260921T005253Z/`.
+The installed service definition's checksum remained unchanged.
+Recorded the standby requirement in both Terrain Parkour checkouts' `AGENTS.md` and `docs/server-operations.md`.
+Starting beta again requires a new explicit owner request.
+Its earlier always-active guidance is superseded by this decision.
+This authorization does not extend to unrelated services.
+
+Django inventory on the shared image host:
+
+| Application | Address or route | State after maintenance |
+|---|---|---|
+| Terrain Parkour beta | `tpbeta` / beta host IP, through the beta Unix socket | Stopped; installed and preserved |
+| Fuseki (`fuseki4_ai`) | `fuseki.net` and `www.fuseki.net` | Running; approximately 328 MiB |
+
+The `subcreation` nginx site serves static files; it is not another Django process.
+MultiImageClient's two instances use .NET, not Django.
+Production Terrain Parkour remains on its separate host.
+
+## Production memory review — 2026-09-20
+
+Measured September 20 at 17:34–17:38 Pacific (September 21 at 00:34–00:38 UTC).
+This review changed no production services, limits, caches, or stored work.
+The server checkout was `bdb71c07ff9e366e0cd7be9a9fbfb46880413df6`.
+
+### Measurements before beta standby
+
+The host has 3916 MiB physical RAM and no swap.
+Available RAM rose from 2221 to 2317 MiB during the review.
+The 10-, 60-, and 300-second memory-pressure averages were zero at both samples.
+File cache accounted for approximately 2060 MiB in the first sample.
+Low completely free RAM therefore did not indicate current exhaustion.
+
+| Service | Current group memory | Relevant detail |
+|---|---:|---|
+| Original image site | 75 MiB | Managed objects about 5 MiB; 2048/2560 MiB high/hard limits |
+| Vibecoders | 112–117 MiB | Managed objects about 40 MiB; 1024/1536 MiB high/hard limits |
+| Terrain Parkour beta (`tpbeta.uwsgi`) | 454 MiB | About 448 MiB anonymous memory; active despite disabled boot enablement |
+| `fuseki4_ai.uwsgi` | 328 MiB | About 315 MiB anonymous memory |
+| Journal service | 132 MiB | About 125 MiB file-backed memory |
+| nginx | 92 MiB | About 78 MiB file-backed memory |
+
+Group memory includes charged cache and differs from process resident memory, which also counts shared mapped pages.
+Do not add both measurements as separate costs.
+Both image services had restarted approximately 13–18 minutes before inspection.
+Neither had queued or active provider requests. Neither held a warm browser or cached card previews.
+These are idle measurements after restart, not representative generation peaks.
+
+The seven-day journal records two Vibecoders memory-guard restarts on September 17.
+The guard measured approximately 1067 and 1070 MiB before those exits, above its 1024 MiB threshold.
+Its previous service lifetime also reported a 1.0 GiB peak on September 20.
+No kernel out-of-memory events appeared in the retained seven-day kernel journal.
+Two original-site SIGKILL exits have no established cause from these records.
+
+The beta service became active September 19 at 17:00 Pacific.
+Its reactivation supersedes the August statement that it remained stopped.
+The initial review did not establish the restart cause or player activity; the follow-up above resolved both.
+Do not stop it as part of an image-site release.
+Its approximately 454 MiB consumption must count toward the shared host budget.
+The two image services' combined 4096 MiB hard limits exceed physical RAM before neighboring services are included.
+Those limits constrain individual services; they do not reserve capacity or guarantee simultaneous peak operation.
+
+### Improvements identified, not implemented
+
+1. **Release image buffers after request serialization.**
+   `ManagerChatHttp.SendAsync` adds each full `ManagerChatImagePayload` to its `labels` list.
+   The list is needed for the redacted copy, but retains every image byte array through that serialization pass.
+   It should retain only label, media type, and byte count after writing each image.
+   The cards loop's round-nine critic supplied twelve images totaling 35,319,387 bytes (33.7 MiB).
+   This is confirmed retained payload data, not a measured estimate of total process savings.
+   Preserve exact outgoing bytes, image order, placeholders, and provider limits.
+2. **Expire completed live-feed jobs.**
+   `UiJobRegistry` chooses today's jobs at startup but never removes job IDs from `_liveFeedJobIds`.
+   Archive eviction excludes those IDs, so a resident process retains completed jobs across calendar days.
+   Introduce a bounded live window with safe client resynchronization and disk-backed archive access.
+   Preserve unfinished jobs, archive records, ownership, and exact image identities.
+3. **Reduce loop-history allocation and bound caches by bytes.**
+   Idle loops have a 48-loop count cap, without byte or age limits.
+   `CloneWithoutWire` serializes and clones wire payloads before discarding them.
+   The cards loop contains 2,542,874 wire characters in approximately 5.2 MB of stored entry JSON.
+   Multiple tabs repeat these allocations when loading complete histories.
+   Omit wire fields before copying; retain exact per-entry wire access from disk.
+4. **Reassess the shared budget before increasing concurrency or limits.**
+   Beta standby was subsequently authorized and applied as recorded above.
+   Add anonymous/file-cache breakdown and recent peaks to image-site memory diagnostics.
+   Current idle readings cannot identify which allocation caused the older memory-guard restarts.
+   Leave operating-system cache reclamation and existing safety limits in place during diagnosis.
+
+The cards loop reached round nine before a critic reply failed its goal-completion consistency check.
+That saved failure identifies a reply-contract error, not a memory failure.
+
 ## Grok-web image concurrency (2026-09-09)
 
 Local and original private production settings now override `UiTargetConcurrency["grok-web-ws"]` to `4`.

@@ -3,8 +3,8 @@
 **2026-09-17:** Vibecoders now uses [public prompt sharing](public-prompt-sharing.md) with an explicit HTML preview and publication confirmation.
 Its caption links only to the separate public subset route. Confirmed sends use one daily image thread in California time.
 A separate Vibecoders bot token creates the thread; the webhook posts every image inside it.
-Private MIC addresses and reusable account links remain prohibited.
-The September 20 exception below permits one-use account links only in a separate verified-recipient DM flow.
+Private MIC addresses and account links remain prohibited in channel posts.
+The September 21 update below permits reusable account links without expiry only in a separate verified-recipient DM flow.
 The separate FableBot transport retains its attachment-only behavior below.
 The 2026-09-09 Vibecoders attachment-only decision is superseded by this confirmed-publication flow.
 
@@ -12,7 +12,7 @@ The 2026-09-09 Vibecoders attachment-only decision is superseded by this confirm
 An exact username selects a server member who can view #vibecoders.
 The public request waits for owner review.
 **Test** sends Brouhahaha a copy with a harmless preview link.
-**Confirmed, send to user** sends only the verified member an expiring, one-use account link.
+**Confirmed, send to user** sends only the verified member a reusable account link without expiry (updated 2026-09-21).
 The controller stores Brouhahaha's verified permanent ID in `DiscordAccountReviewerId`.
 The original controller handles account creation after explicit recipient confirmation.
 This exception changes neither FableBot channel posting nor the image-sharing caption contract.

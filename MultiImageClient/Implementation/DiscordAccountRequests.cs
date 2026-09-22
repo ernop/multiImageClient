@@ -120,7 +120,7 @@ namespace MultiImageClient
         }
 
         public static string AccountMessage(string link) => "Your MultiImageClient account request\n[Continue to Vibecoders](<" + link
-            + ">)\nThis link expires in 30 minutes and works once.\nIf you did not request it, ignore this message.";
+            + ">)\nKeep this link for future logins. It does not expire.\nAnyone with this link can use your account.\nIf you did not request it, ignore this message.";
 
         public static string PreviewMessage(string username, string link) => "TEST COPY — intended for @" + Username(username)
             + "\n\n" + AccountMessage(link) + "\n\nThis test link cannot create or sign in to an account.";

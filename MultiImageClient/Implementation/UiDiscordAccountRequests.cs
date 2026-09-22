@@ -17,7 +17,7 @@ namespace MultiImageClient
     public sealed partial class UiDiscordAccountRequests
     {
         public const string EnvironmentId = "vibecoders-ai-generation";
-        private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(30);
+        private static readonly TimeSpan TestLifetime = TimeSpan.FromMinutes(30);
         private static readonly TimeSpan ReviewLifetime = TimeSpan.FromHours(24);
         private readonly Settings _settings;
         private readonly UiAuth _auth;
@@ -38,6 +38,7 @@ namespace MultiImageClient
             public required string GuildId { get; init; }
             public required string ChannelId { get; init; }
             public required long CreatedAt { get; init; }
+            // Zero means no expiry. Issued legacy links retain their old timestamp until first reuse.
             public required long ExpiresAt { get; set; }
             public bool ReviewRequired { get; init; }
             public string ReviewerId { get; set; } = "";
@@ -48,6 +49,8 @@ namespace MultiImageClient
             public string AccountId { get; set; } = "";
             public string Login { get; set; } = "";
             public bool CreatesAccount { get; set; }
+            [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+            public string? AccountTokenHash { get; set; }
         }
         public sealed record Attempt(string IpHash, long At);
         public sealed class Document
@@ -72,7 +75,11 @@ namespace MultiImageClient
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
                 if (!File.Exists(_path)) Write(new());
-                _ = Read();
+                var doc = Read();
+                var changed = false;
+                foreach (var account in _auth.LoginLinks!.List())
+                    changed |= BindIssuedLinks(doc, account);
+                if (changed) Write(doc);
             }
         }
 
@@ -110,7 +117,9 @@ namespace MultiImageClient
                 var client = _client();
                 var member = await client.FindMemberAsync(username, ct);
                 var previous = doc.Tickets.Where(ticket => ticket.UserId == member.UserId).ToArray();
-                if (previous.Any(ticket => ticket.ExpiresAt > now && ticket.State is not ("used" or "failed" or "rejected")))
+                if (previous.Any(ticket => IsReview(ticket) && ticket.ExpiresAt > now
+                    || ticket.State is "pending" or "activating" or "granting"
+                    || ticket.State == "sent" && ticket.ApprovedAt > now - (long)TimeSpan.FromMinutes(5).TotalMilliseconds))
                     return new("pending", previous.Any(ticket => ticket.ExpiresAt > now && IsReview(ticket))
                         ? "An account request is already pending. Ernie must review it before the bot sends your link."
                         : "An account link is already pending. Check your Discord DMs before requesting another link.");
@@ -141,8 +150,14 @@ namespace MultiImageClient
                 var ticket = RequireTicket(doc, token);
                 await _client().CheckMemberAsync(ticket.UserId, ticket.GuildId, ticket.ChannelId, ct);
                 if (!Enabled) throw new InvalidOperationException("Discord account requests are disabled.");
-                if (ticket.ExpiresAt <= _now().ToUnixTimeMilliseconds()) throw new InvalidOperationException("This account link expired. Request a new link.");
                 var links = _auth.LoginLinks!;
+                if (ticket.AccountTokenHash != null)
+                {
+                    var bound = links.List().SingleOrDefault(account => account.Id == ticket.AccountId);
+                    if (bound == null || bound.DiscordUserId != ticket.UserId || bound.Login != ticket.Login
+                        || bound.Revoked || bound.TokenHash != ticket.AccountTokenHash)
+                        throw new InvalidOperationException("This account link was revoked or replaced. Ask Ernie in Discord.");
+                }
                 if (ticket.State is "pending" or "sent")
                 {
                     var existing = links.List().SingleOrDefault(account => account.DiscordUserId == ticket.UserId);
@@ -162,13 +177,15 @@ namespace MultiImageClient
                             throw new InvalidOperationException("This account's access is disabled. Ask Ernie in Discord.");
                         ticket.AccountId = existing.Id;
                         ticket.Login = existing.Login;
+                        ticket.AccountTokenHash = existing.TokenHash;
                     }
                     ticket.State = "activating";
                     Write(doc); // Resume only this account after an interrupted activation.
                 }
-                if (ticket.CreatesAccount)
+                if (ticket.CreatesAccount && ticket.State is "activating" or "granting")
                 {
-                    _ = links.CreateDiscordAccount(ticket.AccountId, ticket.UserId, ticket.Login);
+                    var created = links.CreateDiscordAccount(ticket.AccountId, ticket.UserId, ticket.Login);
+                    BindIssuedLinks(doc, created);
                     if (ticket.State == "activating")
                     {
                         // A retry must never restore membership an administrator has since removed.
@@ -179,11 +196,14 @@ namespace MultiImageClient
                 }
                 var account = links.List().SingleOrDefault(account => account.Id == ticket.AccountId);
                 if (account == null || account.DiscordUserId != ticket.UserId || account.Revoked
-                    || account.Login != ticket.Login || !_environments.CanEnter(EnvironmentId, account.Login))
+                    || account.Login != ticket.Login || !_environments.CanEnter(EnvironmentId, account.Login)
+                    || ticket.AccountTokenHash != null && ticket.AccountTokenHash != account.TokenHash)
                     throw new InvalidOperationException("This account's access changed. Ask Ernie in Discord.");
                 var cookie = _auth.DiscordSession(account.Id, ticket.UserId);
+                BindIssuedLinks(doc, account);
+                ticket.ExpiresAt = 0;
                 ticket.State = "used";
-                Write(doc); // No response receives a session until the one-use token is consumed durably.
+                Write(doc); // Persist completed activation before issuing a session. Later uses retain this identity.
                 var environment = _environments.Get(EnvironmentId);
                 var origin = new Uri(UiPublicShares.BaseUrl(_settings)).GetLeftPart(UriPartial.Authority);
                 var destination = origin + "/" + environment.Slug + "/";
@@ -196,13 +216,12 @@ namespace MultiImageClient
         private Ticket RequireTicket(Document doc, string token)
         {
             if (!Regex.IsMatch(token, @"\A[a-f0-9]{32}\.[A-Za-z0-9_-]{43}\z"))
-                throw new InvalidOperationException("This account link is invalid, expired, or already used.");
+                throw new InvalidOperationException("This account link is invalid or revoked.");
             var ticket = doc.Tickets.SingleOrDefault(ticket => ticket.Id == token[..32]);
-            if (ticket == null || ticket.ExpiresAt <= _now().ToUnixTimeMilliseconds()
-                || ticket.State is not ("pending" or "sent" or "activating" or "granting")
+            if (ticket == null || !HasReusableLink(ticket)
                 || ticket.ReviewRequired && (ticket.ApprovedAt == 0 || ticket.TestedAt == 0)
                 || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(ticket.TokenHash), Encoding.UTF8.GetBytes(Hash(token[33..]))))
-                throw new InvalidOperationException("This account link is invalid, expired, or already used.");
+                throw new InvalidOperationException("This account link is invalid or revoked.");
             return ticket;
         }
 
@@ -219,9 +238,11 @@ namespace MultiImageClient
                     || !ulong.TryParse(ticket.GuildId, out var guildId) || guildId == 0
                     || !ulong.TryParse(ticket.ChannelId, out var channelId) || channelId == 0
                     || !ValidReview(ticket)
-                    || ticket.ExpiresAt != (ticket.ReviewRequired
-                        ? ticket.ApprovedAt > 0 ? ticket.ApprovedAt + (long)Lifetime.TotalMilliseconds : ticket.CreatedAt + (long)ReviewLifetime.TotalMilliseconds
-                        : ticket.CreatedAt + (long)Lifetime.TotalMilliseconds)
+                    || (!(ticket.ExpiresAt == 0 && HasReusableLink(ticket)) && ticket.ExpiresAt != (ticket.ReviewRequired
+                        ? ticket.ApprovedAt > 0 ? ticket.ApprovedAt + (long)TestLifetime.TotalMilliseconds : ticket.CreatedAt + (long)ReviewLifetime.TotalMilliseconds
+                        : ticket.CreatedAt + (long)TestLifetime.TotalMilliseconds))
+                    || ticket.AccountTokenHash != null && (!Regex.IsMatch(ticket.AccountTokenHash, @"\A[a-f0-9]{64}\z")
+                        || !Regex.IsMatch(ticket.AccountId, @"\A[a-f0-9]{32}\z") || ticket.Login.Length == 0)
                     || ticket.State is not ("review" or "test-pending" or "tested" or "test-failed" or "rejected" or "pending" or "sent" or "failed" or "activating" or "granting" or "used")
                     || (ticket.ShareToken.Length > 0 && !UiPublicShareStore.ValidToken(ticket.ShareToken))
                     || (ticket.State is "activating" or "granting" or "used" && (!Regex.IsMatch(ticket.AccountId, @"\A[a-f0-9]{32}\z") || ticket.Login.Length == 0))))
@@ -239,13 +260,32 @@ namespace MultiImageClient
             if (ticket.State is "test-pending" or "test-failed") return ticket.TestedAt == 0 && ticket.ApprovedAt == 0;
             if (reviewState) return ticket.ApprovedAt == 0 && (ticket.State == "rejected" && ticket.TestedAt == 0 || ticket.TestedAt >= ticket.CreatedAt);
             return ticket.TestedAt >= ticket.CreatedAt && ticket.ApprovedAt >= ticket.TestedAt
-                && ticket.ApprovedAt < ticket.TestedAt + (long)Lifetime.TotalMilliseconds
+                && ticket.ApprovedAt < ticket.TestedAt + (long)TestLifetime.TotalMilliseconds
                 && ticket.ApprovedAt < ticket.CreatedAt + (long)ReviewLifetime.TotalMilliseconds;
         }
         private static void Prune(Document doc, long now)
         {
             doc.Attempts.RemoveAll(attempt => attempt.At <= now - (long)TimeSpan.FromHours(1).TotalMilliseconds);
-            doc.Tickets.RemoveAll(ticket => ticket.ExpiresAt <= now - (long)TimeSpan.FromDays(1).TotalMilliseconds);
+            doc.Tickets.RemoveAll(ticket => !HasReusableLink(ticket)
+                && ticket.ExpiresAt <= now - (long)TimeSpan.FromDays(1).TotalMilliseconds);
+        }
+        private static bool HasReusableLink(Ticket ticket) => ticket.State is "pending" or "sent" or "activating" or "granting" or "used";
+        private static bool BindIssuedLinks(Document doc, UiLoginLinks.Account account)
+        {
+            if (account.DiscordUserId == null) return false;
+            var changed = false;
+            foreach (var ticket in doc.Tickets.Where(ticket => HasReusableLink(ticket)
+                && ticket.UserId == account.DiscordUserId && ticket.AccountTokenHash == null))
+            {
+                if (ticket.AccountId.Length > 0 && ticket.AccountId != account.Id
+                    || ticket.Login.Length > 0 && ticket.Login != account.Login)
+                    throw new InvalidDataException("The account link's recorded identity does not match its Discord account.");
+                ticket.AccountId = account.Id;
+                ticket.Login = account.Login;
+                ticket.AccountTokenHash = account.TokenHash;
+                changed = true;
+            }
+            return changed;
         }
         private void Write(Document doc)
         {

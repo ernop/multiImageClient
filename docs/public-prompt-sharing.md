@@ -239,7 +239,7 @@ Follow [the Discord account contract](workspaces-prd.md#discord-account-requests
 The optional **Request account** action accepts an exact Discord username without an authorization screen.
 The existing bot checks that member's access to #vibecoders and queues the request for owner review.
 **Test** sends Brouhahaha a copy with a harmless preview link.
-Only **Confirmed, send to user** creates and sends that recipient a one-use, 30-minute account link.
+Only **Confirmed, send to user** creates and sends that recipient a reusable account link with no expiry (updated 2026-09-21).
 The recipient confirms account creation or login on a public page.
 The form sender receives no login link or session.
 New accounts belong only to Vibecoders AI Generation.
@@ -247,8 +247,8 @@ Preserve the selected public prompt when signup began from that environment.
 Original-environment public pages instead lead to the Vibecoders composer without granting original membership.
 Reading published prompts remains anonymous.
 
-The owner-authorized exception permits one-use account tokens only in these verified-recipient DMs.
-Never put them in channel posts, image captions, reusable account links, public HTML, or application logs.
+The owner-authorized exception permits reusable account tokens only in these verified-recipient DMs.
+Never put account tokens in channel posts, image captions, public HTML, or application logs.
 Private site prefixes remain prohibited everywhere in Discord.
 The setting defaults to off and requires compatible code in both approved instances before activation.
 
@@ -266,7 +266,7 @@ The setting defaults to off and requires compatible code in both approved instan
 | `POST /public/{token}/reuse` | Validate login and membership, then redirect to the composer. |
 | `GET /public/signup`, `GET /public/signup/claim` | Original controller's optional account-request and explicit-confirmation forms. |
 | `GET /public/signup/request`, `GET /public/signup/preview` | Form recovery and harmless owner-test page; neither sends messages nor authenticates. |
-| `POST /public/signup/request`, `POST /public/signup/claim` | Limited owner-review requests and one-use account redemption. See the global-account contract. |
+| `POST /public/signup/request`, `POST /public/signup/claim` | Limited owner-review requests and reusable account login without expiry. See the global-account contract. |
 | `GET /api/public-shares/{token}/reuse` | Authenticated prompt and exact input URLs. |
 | `GET /api/public-shares/{token}/asset/{slot}` | Authenticated reuse input access. |
 

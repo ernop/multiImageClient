@@ -7,7 +7,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="style.css?v=20260905-shared-chooser">
 <link rel="stylesheet" href="viewer.css?v=20260904-shared-viewer">
-<link rel="stylesheet" href="goal.css?v=20260905-contributors">
+<link rel="stylesheet" href="goal.css?v=20260920-account-identity">
 </head>
 <body class="goal-page">
 <header>
@@ -22,15 +22,6 @@
     <section id="goal-new" class="goal-panel">
       <h2>New goal loop</h2>
       <form id="goal-form" autocomplete="off">
-        <div class="goal-field" id="goal-identity">
-          <span class="goal-label">creating as</span>
-          <div id="goal-identity-known" hidden>
-            <span id="goal-identity-name" class="goal-identity-name"></span>
-            <span id="goal-identity-source" class="goal-identity-source"></span>
-            <a id="goal-identity-change" href="./" class="goal-identity-change" title="The name is the composer's creating-as name; change it on the main page">change on main page</a>
-          </div>
-          <input id="goal-user" type="text" maxlength="32" placeholder="your name (no creating-as name is stored yet)" hidden>
-        </div>
         <label class="goal-field">
           <span class="goal-label">goal</span>
           <textarea id="goal-text" rows="7" required data-text-draft="new-goal"
@@ -165,6 +156,6 @@
 <script src="goal-feedback.js"></script>
 <script src="generator-toggle.js?v=20260910"></script>
 <script src="generator-chooser.js?v=20260910-shared"></script>
-<script src="goal.js?v=20260912-text-drafts"></script>
+<script src="goal.js?v=20260920-account-identity"></script>
 </body>
 </html>

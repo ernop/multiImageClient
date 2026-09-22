@@ -4,6 +4,15 @@ Status: **implemented 2026-09-04** in the `--ui` web app. This document is the
 durable statement of the requirement, the settled decisions, and where each
 part lives in code.
 
+## Implicit creator identity — 2026-09-20
+
+The goal-loop form has no creator-name field, identity chip, or change-name link.
+Authenticated creation and forks omit the `user` field. The server uses the signed-in account and its existing profile.
+Existing creator ownership checks and saved loop attribution remain unchanged.
+Local instances reuse the composer's saved `creatingAs` value or its legacy `mic_username` setting.
+Without a saved local name, submission asks the owner to set it on the main page.
+The goal page never edits or saves creator names.
+
 ## Loop reliability audit, page load, and information tiers — 2026-09-12
 
 ### Audit of stored loops
@@ -474,7 +483,7 @@ after editing the text of that message.
 | R14 | Manager rates and explains whether to try again | Required evaluation on every reply after a render (`evaluation` before protocol 4, `evaluation` + `freshEvaluation` on protocol 4, one `evaluations[]` entry per render shown on protocol 5); `decision` is `render` or `done` with the reason in `reasoning`/`doneStatement`. |
 | R15 (2026-09-04) | "As many as possible" must not stop early | Protocol 3 goal kinds. An open-ended goal may end only after a render pushed past the best result and degraded; the turn budget is never a reason to stop; the server objects to a premature `done` and re-asks with `done` barred. See section 3, "Goal kinds". |
 | R16 | Same viewer, page-independent | `viewer.js` is a standalone viewer module with a source-parameterized interface (`MultiImageViewer.create({ items, resolveUrl })`). The goal page walks every render of the selected loop with it: preview-first atomic paint, ±10 preloading over 6 fetch slots, arrow/wheel/side-button/Home/End navigation, `f` fullscreen, `?` help, Esc/click-outside close. |
-| R17 | Reuse the existing identity | The page shows the composer's creating-as name (authenticated profile display name first, else the canonical personal configuration document's `creatingAs`, else the legacy mirror key) as a read-only chip. A name input appears only when none exists; what it collects is written back to the canonical document. |
+| R17 (2026-09-20) | Use the known creator without another identity control | Authenticated creation and forks use the signed-in account. Local creation reuses the composer's saved name. The goal page has no creator-name controls. |
 | R18 | See the prompt changes turn to turn | Word-level LCS diff (`ins`/`del`, `+N −M words` summary, plain-text toggle) on every render request against the previous rendered prompt, and on every review's next prompt against the prompt just rendered. |
 | R19 | One image with every step | **build all-turns contact sheet** on the loop head renders one PNG: header band (goal, generator, manager, kind, best turn, status) above a square grid of every rendered turn with its score, `turn N of M`, pixel size, the exact prompt, and the manager's assessment/problems. Rebuild is offered when entries were added since. |
 | R20 (2026-09-04, later) | Leave the rut: two renders per turn | The user observed loops iterating on one image, each turn a small edit of the last prompt, never leaving a weak composition. Protocol 4: every turn renders a **refine** prompt (an improvement of the render the manager chose to continue from; on turn 1 the primary design) **and** a **fresh** prompt (a from-scratch re-attempt at the goal: new composition, staging, camera, medium/style, palette — a different way to convey the same point, written with what has been learned so far). The manager scores both and sets `continueFrom` to the render its next refine builds on, so the lineage can jump to the fresh image at any turn. See section 3, "Protocol version 4". |
@@ -1134,7 +1143,7 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   responseChars}`; `&wire=1` returns them inline.
 - `GET /api/goal-loops/{id}/entries/{index}/wire` — `{id, index, wireRequest,
   wireResponse}` for one exact entry; 404 for an unknown loop or index.
-- `POST /api/goal-loops` — form: `user`, `goal`, `generators` (repeated
+- `POST /api/goal-loops` — form: `user` (local only; omitted when authenticated), `goal`, `generators` (repeated
   field or comma-separated, 1–8 distinct keys; legacy single `generator`
   still accepted), `manager`, `maxTurns`, `shape`, `detail`, `quality`,
   `moderation`, `goalKind` (`auto` | `bounded` | `open-ended`), `critics`
@@ -1152,7 +1161,7 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   Returns the persisted feedback operation. Requires control of the loop. Does not start or resume generation.
 - `POST /api/goal-loops/{id}/resume` — optional `maxTurns`.
 - `POST /api/goal-loops/{id}/fork` — `entryIndex`, optional `text`,
-  optional `maxTurns`; returns the child id.
+  optional `maxTurns`, `user` (local only; omitted when authenticated); returns the child id.
 
 ## 7. Files
 
@@ -1186,7 +1195,7 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   object; `app.js` renders it as the card badge.
 - `MultiImageClient/Ui/wwwroot/goal.html`, `goal.js`, `goal.css` — the page
   (contributor roster, paired images, score comparison, expandable contributions,
-  request records, identity chip, prompt diffs, sheet controls, and viewer wiring).
+  request records, implicit creator attribution, prompt diffs, sheet controls, and viewer wiring).
 - `tools/tests/goal-recap.test.cjs` — exact joins, tied best scores, missing reviews, failed replies, and legacy identities.
 - `MultiImageClient/Ui/wwwroot/goal-sidebar.js` — persistent, keyboard-accessible sidebar resizing.
 - `MultiImageClient/Ui/wwwroot/recap.html`, `recap.css`, `recap-model.js`, `recap.js` — reusable recap and browser exports.
@@ -1242,7 +1251,7 @@ raw provider response). Render entries carry the `gen-result` event JSON as
   `objection` step (unit-tested), and the `done` would be accepted only
   after a later render scored below 9.
 - Protocol 3 page verification (local `--ui`, loop `001c5dbe1244`, 6
-  renders at 5056×3392): identity chip shows the composer's name; the
+  renders at 5056×3392): the former identity chip showed the composer's name (removed 2026-09-20); the
   viewer opened on turn 1, decoded the original, walked with ArrowRight
   (turn 2 chrome + card thumb + "preview" badge painted first, blob swapped
   in after decode, ±10 neighbors preloaded), `End` reached 6/6, Esc cleared

@@ -16,7 +16,7 @@ const root = path.resolve(__dirname, '../MultiImageClient/Ui/wwwroot');
         const request = route.request(), url = new URL(request.url());
         if (url.pathname === '/api/control/discord-account-requests') return route.fulfill({ json: {
           enabled: true, reviewer: 'Brouhahaha', requests: [{ id: 'a'.repeat(32), username: 'alice.discord', state,
-            createdAt: Date.now(), expiresAt: Date.now() + 86400000,
+            createdAt: Date.now(), expiresAt: state === 'sent' ? null : Date.now() + 86400000,
             canTest: state === 'review', canSend: state === 'tested', canReject: state === 'review' || state === 'tested' }],
         } });
         if (url.pathname.startsWith('/api/control/discord-account-requests/')) {
@@ -55,6 +55,7 @@ const root = path.resolve(__dirname, '../MultiImageClient/Ui/wwwroot');
       loseResponse = true;
       await send.click();
       await reviews.getByText('Account link sent', { exact: false }).waitFor();
+      await reviews.getByText('Login link does not expire', { exact: false }).waitFor();
       assert.equal(await send.isDisabled(), true);
       await reviews.getByRole('button', { name: 'Refresh requests' }).click();
       assert.deepEqual(actions, ['test', 'send']);

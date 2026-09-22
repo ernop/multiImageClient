@@ -76,10 +76,11 @@ namespace MultiImageClient
                 try
                 {
                     var environment = registry.Get(form["environment"].ToString());
-                    if (auth.ListAccountNames().Contains(form["name"].ToString(), StringComparer.OrdinalIgnoreCase))
-                        return Results.BadRequest(new { error = "That name belongs to an existing account." });
+                    var name = UiLoginLinks.NormalizeName(form["name"].ToString());
+                    if (auth.ListAccountNames().Contains(name, StringComparer.OrdinalIgnoreCase))
+                        return Results.BadRequest(new { error = "That username already exists. Use its account row to convert or reissue login details." });
                     var password = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
-                    var issued = auth.LoginLinks!.Create(form["name"].ToString(), _ => { }, UiAuth.NewPasswordHash(password));
+                    var issued = auth.LoginLinks!.Create(name, _ => { }, UiAuth.NewPasswordHash(password));
                     environment.Members.Add(issued.Account.Login); registry.Save(environment);
                     return Results.Json(new { url = Url(environment.Id, issued.Token), username = issued.Account.Login, password });
                 }

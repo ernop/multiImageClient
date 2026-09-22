@@ -150,8 +150,9 @@ namespace MultiImageClient
             + "<p>Use your unique username, not your display name or server nickname.</p>"
             + "<input type=\"hidden\" name=\"share\" value=\"" + E(shareToken) + "\"><button disabled>Request account</button></form><p id=\"status\" role=\"status\"></p>"
             + "<noscript>Enable JavaScript to request an account.</noscript><script>" + RequestScript + "</script>");
-        public static string ClaimPage() => Page("Finish your account request",
+        public static string ClaimPage() => Page("Log in to Vibecoders",
             "<p>Create your account or sign in to your existing account.</p><p>This grants access to Vibecoders AI Generation.</p>"
+            + "<p>Keep the original DM link for future logins. It does not expire.</p>"
             + "<form id=\"claim\"><button disabled>Continue to Vibecoders</button></form><p id=\"status\" role=\"status\"></p>"
             + "<noscript>Enable JavaScript to use this account link.</noscript><script>" + ClaimScript + "</script>");
         private static string Page(string title, string body) => "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"

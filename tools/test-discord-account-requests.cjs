@@ -48,7 +48,7 @@ const token = 'a'.repeat(32) + '.' + 'b'.repeat(43);
           assert.equal(request.headers().origin, 'https://share.test');
           redemptions.push(new URLSearchParams(request.postData()).get('token'));
           return route.fulfill({ status: reject ? 400 : 200, json: reject
-            ? { error: 'This account link is invalid, expired, or already used.' }
+            ? { error: 'This account link is invalid or revoked.' }
             : { destination: 'https://share.test/vibecoders-ai-generation/' } });
         }
         if (url === signupUrl + '/claim') return route.fulfill({ contentType: 'text/html', body: claimHtml,
@@ -85,12 +85,16 @@ const token = 'a'.repeat(32) + '.' + 'b'.repeat(43);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await page.screenshot({ path: path.join(screenshots, `discord-account-claim-${viewport.width}.png`) });
       await page.getByRole('button', { name: 'Continue to Vibecoders' }).click();
-      await page.getByText('This account link is invalid, expired, or already used.').waitFor();
+      await page.getByText('This account link is invalid or revoked.').waitFor();
       assert.deepEqual(redemptions, [token]);
       reject = false;
       await page.getByRole('button', { name: 'Continue to Vibecoders' }).click();
       await page.waitForURL('https://share.test/vibecoders-ai-generation/');
       assert.deepEqual(redemptions, [token, token]);
+      await page.goto(signupUrl + '/claim#' + token);
+      await page.getByRole('button', { name: 'Continue to Vibecoders' }).click();
+      await page.waitForURL('https://share.test/vibecoders-ai-generation/');
+      assert.deepEqual(redemptions, [token, token, token]);
       await page.goto(signupUrl + '/claim');
       assert.equal(await page.getByRole('button').isDisabled(), true);
       assert.deepEqual(errors, []);

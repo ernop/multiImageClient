@@ -43,7 +43,6 @@ const config = {clientInstanceId:"a".repeat(32),defaults:{shape:"auto",detail:"s
  await page.getByRole('button',{name:'All models',exact:true}).click();
  assert.equal((await selected()).length,9);
  assert.equal(await page.locator('#goal-generators-count.over').count(),1);
- await page.locator('#goal-user').fill('Tester');
  await page.locator('#goal-text').fill('A diagram');
  await page.locator('#goal-start').click();
  assert.equal(posts,0);

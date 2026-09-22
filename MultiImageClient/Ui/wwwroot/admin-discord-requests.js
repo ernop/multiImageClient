@@ -14,7 +14,8 @@
     for (const request of result.requests) {
       const row = node("div"); row.style.margin = "16px 0";
       row.append(node("strong", "@" + request.username), node("p", (labels[request.state] || request.state)
-        + " · Requested " + date(request.createdAt) + " · Expires " + date(request.expiresAt)));
+        + " · Requested " + date(request.createdAt)
+        + (request.expiresAt === null ? " · Login link does not expire" : " · Request expires " + date(request.expiresAt))));
       for (const [action, text, enabled] of [["test", "Test", request.canTest],
         ["send", "Confirmed, send to user", request.canSend], ["reject", "Reject request", request.canReject]]) {
         const button = node("button", text); button.type = "button"; button.disabled = !enabled;

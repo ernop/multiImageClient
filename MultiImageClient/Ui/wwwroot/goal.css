@@ -285,13 +285,6 @@ details.goal-entry[open] > summary::before { content: "▾"; }
 .goal-editor textarea { width: 100%; font-size: 14px; }
 .goal-editor button { font-size: 13px; padding: 6px 12px; }
 
-/* ---- identity (reused from the composer) ---- */
-#goal-identity-known { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
-#goal-identity-known[hidden], #goal-user[hidden], #goal-identity-change[hidden] { display: none; }
-.goal-identity-name { font-size: 17px; font-weight: 900; color: var(--ink); }
-.goal-identity-source { font-size: 12px; font-weight: 700; color: var(--ink); }
-.goal-identity-change { font-size: 12px; font-weight: 800; color: var(--accent-dark); }
-
 /* ---- objection entries ---- */
 .goal-entry.kind-objection { border-color: #b45309; background: #fff4e5; }
 .goal-entry.kind-objection .goal-text { background: #fff; border-color: #b45309; font-weight: 700; }

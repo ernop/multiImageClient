@@ -255,6 +255,11 @@ Verify **Administration → Discord account requests** loads without sending mes
 The owner must click **Test**, check the Brouhahaha DM, then click **Confirmed, send to user**.
 An ordinary release check must not click either delivery control.
 New review tickets require a compatible controller parser; preserve them during rollback planning.
+The September 21 update makes issued DM links reusable without expiry.
+Its controller ticket records use zero expiry and an optional `accountTokenHash` credential binding.
+Older controllers reject these records. Never remove binding fields to force a rollback.
+Retained older tickets remain usable; previously pruned tickets cannot be recovered.
+The 30-minute owner-test deadline and 24-hour unconfirmed request deadline remain unchanged.
 
 New shared account records contain `discordUserId`; enabled environment records contain `discordAccountRequests`.
 Older application versions reject these fields.

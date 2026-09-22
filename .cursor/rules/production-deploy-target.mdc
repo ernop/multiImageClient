@@ -45,7 +45,7 @@ Ordinary authenticated routes remain private. Public sharing never grants accoun
 
 ## Discord account requests (2026-09-20)
 
-The owner authorized exact-username requests followed by owner review and verified-recipient, one-use Discord DMs.
+The owner authorized exact-username requests followed by owner review and verified-recipient Discord DMs. The September 21 update makes these login links reusable without expiry.
 Require **Test** to send Brouhahaha a harmless preview before **Confirmed, send to user** creates the real link.
 Enforce this order on the server. Public requests must never send automatically.
 Bind `DiscordAccountReviewerId` to the verified permanent owner ID.

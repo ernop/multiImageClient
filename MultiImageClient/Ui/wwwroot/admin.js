@@ -16,15 +16,24 @@ function field(form, label, name, value, type = "text") {
   row.append(input); form.append(row); return input;
 }
 async function run(action) { try { await action(); } catch (error) { $("status").textContent = error.message; } }
-function issued(result) {
-  $("issued").hidden = false;
+function issued(result, username, environment, action) {
+  $("issued").hidden = true;
+  $("issued-title").textContent = "Login details for " + username;
+  $("issued-context").textContent = action + " · " + environment;
   $("link").value = result.url || "";
   $("issued-username").value = result.username || "";
   $("issued-password").value = result.password || "";
   $("issued-username-row").hidden = !result.username;
   $("issued-password-row").hidden = !result.password;
   $("copy-details").hidden = !(result.url && result.username && result.password);
-  $("issued").scrollIntoView({ block: "center" });
+  $("issued").hidden = false;
+  $("issued").scrollIntoView({ block: "start" });
+}
+function dismissIssued() {
+  $("issued").hidden = true;
+  for (const id of ["link", "issued-username", "issued-password"]) $(id).value = "";
+  $("issued-title").textContent = "Login details";
+  $("issued-context").textContent = "";
 }
 function detailsText() {
   const lines = ["Click this link to log in.", $("link").value];
@@ -34,10 +43,16 @@ function detailsText() {
 }
 function date(value) { return value ? new Date(value).toLocaleString() : "Not recorded"; }
 async function load() {
-  state = await api("api/control/state"); $("environments").replaceChildren(); $("person-environment").replaceChildren();
-  const catalog = (await api("api/config")).generators.filter(g => g.available);
+  state = await api("api/control/state"); $("environments").replaceChildren();
+  const destination = $("person-environment").value;
+  const placeholder = node("option", "Select an environment"); placeholder.value = ""; placeholder.disabled = true;
+  $("person-environment").replaceChildren(placeholder);
   for (const env of state.environments) {
     const option = node("option", env.name); option.value = env.id; $("person-environment").append(option);
+  }
+  $("person-environment").value = state.environments.some(env => env.id === destination) ? destination : "";
+  const catalog = (await api("api/config")).generators.filter(g => g.available);
+  for (const env of state.environments) {
     const section = node("section"), heading = node("h3", env.name); section.append(heading);
     const provision = state.provisioning?.[env.id];
     if (provision) section.append(node("p", provision.status === "ready" ? "Ready" : provision.error));
@@ -100,7 +115,8 @@ async function load() {
             : "Replace this account's link across every environment?";
           if (!confirm(promptText)) return;
           const result = await api(`api/control/accounts/${account.id}/${action}`, { environment: env.id });
-          if (result.url) issued(result); else await load();
+          if (result.url) issued(result, account.login, env.name, action === "credentials" ? "Login details reissued" : "Login link replaced");
+          else await load();
         })); controls.append(button);
       } else if (account.role !== "admin") {
         const loginInput = node("input");
@@ -114,7 +130,7 @@ async function load() {
           if (!confirm("Convert this password-file account? The previous username and password stop working. A new password and login link appear once.")) return;
           const result = await api("api/control/password-accounts/convert", {
             source: account.login, login: loginInput.value.trim(), environment: env.id });
-          issued(result); await load();
+          issued(result, result.username, env.name, "Account converted"); await load();
         }));
         controls.append(loginInput, button);
       }
@@ -129,8 +145,16 @@ $("create").addEventListener("submit", event => { event.preventDefault(); run(as
   event.target.reset(); await load(); $("status").textContent = "Environment requested. Refresh to check its status.";
 }); });
 $("person").addEventListener("submit", event => { event.preventDefault(); run(async () => {
-  const result = await api("api/control/accounts", Object.fromEntries(new FormData(event.target))); await load(); issued(result);
+  const form = new FormData(event.target);
+  const environment = state.environments.find(env => env.id === form.get("environment"));
+  if (!environment) throw Error("Select an environment for the new account.");
+  const result = await api("api/control/accounts", { name: form.get("new-account-name").trim(), environment: environment.id });
+  event.target.reset(); $("new-account-name").value = ""; $("person-environment").value = "";
+  issued(result, result.username, environment.name, "Account created"); await load();
 }); });
+$("new-account-name").value = "";
+$("person-environment").value = "";
+$("dismiss-issued").addEventListener("click", dismissIssued);
 $("copy").addEventListener("click", () => run(async () => { await navigator.clipboard.writeText($("link").value); $("status").textContent = "Login link copied."; }));
 $("copy-details").addEventListener("click", () => run(async () => { await navigator.clipboard.writeText(detailsText()); $("status").textContent = "Login details copied."; }));
 $("refresh").addEventListener("click", () => run(load));

@@ -7,26 +7,33 @@ fieldset{min-width:0}
 table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;border-bottom:1px solid #ddd}.table{overflow:auto}
 .features{display:flex;gap:20px;flex-wrap:wrap}.secret,.issued-value{width:100%!important;color:#000;font-size:1.2rem;font-weight:700}button{margin:4px}[hidden]{display:none!important}
 #issued-username,#issued-password{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#issued{scroll-margin-top:90px}
 </style></head><body><header><h1>Administration<span id="environment-name"></span></h1><a href="./">main page</a></header>
 <main><h2>Environments</h2><p id="status" role="status">Loading…</p><button id="refresh">Refresh activity</button>
+<section id="issued" hidden aria-labelledby="issued-title">
+<h3 id="issued-title">Login details</h3><p id="issued-context"></p>
+<p>Copy these login details. Anyone who has them can act as this account.</p>
+<p>The login link is reusable and does not expire. Replacing credentials or revoking the account ends previous links.</p>
+<label>Personal login link <input id="link" class="secret" readonly autocomplete="off" aria-label="Personal login link"></label>
+<button id="copy" type="button">Copy link</button>
+<div id="issued-username-row" hidden><label>Username <input id="issued-username" class="issued-value" readonly autocomplete="off" aria-label="Username"></label></div>
+<div id="issued-password-row" hidden><label>Password <input id="issued-password" class="issued-value" readonly autocomplete="off" aria-label="Password"></label></div>
+<button id="copy-details" type="button" hidden>Copy login details</button>
+<p>These details appear once. A new password ends the previous password and login link.</p>
+<button id="dismiss-issued" type="button">Dismiss login details</button>
+</section>
 <section id="discord-account-reviews"><h3>Discord account requests</h3>
 <p>Select Test to send a copy to Brouhahaha. The test link cannot create or sign in to an account.</p>
-<p>Check that DM, then select Confirmed, send to user. The real link expires after 30 minutes.</p>
+<p>Check that DM, then select Confirmed, send to user. The login link is reusable and does not expire.</p>
 <button id="refresh-discord-requests" type="button">Refresh requests</button>
 <p id="discord-request-status" role="status">Loading requests…</p><div id="discord-requests"></div></section>
 <div id="environments"></div>
 <section><h3>Create an environment</h3><form id="create"><label>Display name <input name="name" required maxlength="80"></label>
 <label>URL name <input name="slug" required pattern="[a-z][a-z0-9-]{0,23}" maxlength="24"></label>
 <p>Use lowercase letters, numbers, and hyphens. Provisioning runs after you save.</p><button>Create environment</button></form></section>
-<section><h3>Create a normal account</h3><form id="person"><label>Username <input name="name" required maxlength="32"></label>
-<label>Environment <select name="environment" id="person-environment"></select></label><button>Create account and login link</button></form>
-<div id="issued" hidden>
-<p>Copy these login details. Anyone who has them can act as this account.</p>
-<label>Personal login link <input id="link" class="secret" readonly aria-label="Personal login link"></label>
-<button id="copy" type="button">Copy link</button>
-<div id="issued-username-row" hidden><label>Username <input id="issued-username" class="issued-value" readonly aria-label="Username"></label></div>
-<div id="issued-password-row" hidden><label>Password <input id="issued-password" class="issued-value" readonly aria-label="Password"></label></div>
-<button id="copy-details" type="button" hidden>Copy login details</button>
-<p>These details appear once. A new password ends the previous password and login link.</p>
-</div></section>
-</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20260920-convert"></script><script src="admin-discord-requests.js?v=20260920-review"></script></body></html>
+<section id="create-account"><h3>Create a normal account</h3>
+<p>Enter a new username. Use the account rows above to issue login details for an existing account.</p>
+<form id="person" autocomplete="off"><label>New username <input id="new-account-name" name="new-account-name" autocomplete="off" autocapitalize="none" spellcheck="false" required maxlength="32"></label>
+<label>Environment <select name="environment" id="person-environment" required><option value="" disabled selected>Select an environment</option></select></label>
+<button>Create account and login link</button></form></section>
+</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20260921-account-form"></script><script src="admin-discord-requests.js?v=20260921-reusable"></script></body></html>

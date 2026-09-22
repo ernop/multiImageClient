@@ -10,15 +10,15 @@ namespace MultiImageClient
 {
     public sealed partial class UiDiscordAccountRequests
     {
-        public sealed record ReviewItem(string Id, string Username, string State, long CreatedAt, long ExpiresAt,
+        public sealed record ReviewItem(string Id, string Username, string State, long CreatedAt, long? ExpiresAt,
             bool CanTest, bool CanSend, bool CanReject);
 
         public IReadOnlyList<ReviewItem> Reviews()
         {
             var now = _now().ToUnixTimeMilliseconds();
-            return Read().Tickets.Where(t => t.ReviewRequired && t.ExpiresAt > now && t.State != "used")
+            return Read().Tickets.Where(t => t.ReviewRequired && (HasReusableLink(t) || t.ExpiresAt > now) && t.State != "used")
                 .OrderBy(t => t.State is "sent" or "failed" or "rejected" ? 1 : 0).ThenBy(t => t.CreatedAt).Take(100)
-                .Select(t => new ReviewItem(t.Id, t.Username, t.State, t.CreatedAt, t.ExpiresAt,
+                .Select(t => new ReviewItem(t.Id, t.Username, t.State, t.CreatedAt, HasReusableLink(t) ? null : t.ExpiresAt,
                     Enabled && CanTest(t, now), Enabled && CanSend(t, now), Enabled && IsReview(t))).ToArray();
         }
 
@@ -32,7 +32,7 @@ namespace MultiImageClient
                 throw new InvalidOperationException("Configure Brouhahaha's verified Discord account before sending test copies.");
             return id!;
         }
-        private bool RecentTest(Ticket ticket, long now) => ticket.TestedAt > now - (long)Lifetime.TotalMilliseconds
+        private bool RecentTest(Ticket ticket, long now) => ticket.TestedAt > now - (long)TestLifetime.TotalMilliseconds
             && ticket.TestedAt <= now && ticket.ReviewerId == _settings.DiscordAccountReviewerId;
         private bool CanTest(Ticket ticket, long now) => ticket.State is "review" or "test-failed"
             || ticket.State == "tested" && !RecentTest(ticket, now);
@@ -105,17 +105,23 @@ namespace MultiImageClient
                 var url = PublicUrl(_settings, _auth, _environments)!;
                 var secret = NewSecret(); var now = _now().ToUnixTimeMilliseconds();
                 ticket.TokenHash = Hash(secret); ticket.ApprovedAt = now;
-                ticket.ExpiresAt = now + (long)Lifetime.TotalMilliseconds; ticket.State = "pending";
-                Write(doc); // Create the real one-use secret only after the owner's confirmed send.
+                var existing = _auth.LoginLinks!.List().SingleOrDefault(account => account.DiscordUserId == ticket.UserId);
+                if (existing != null)
+                {
+                    ticket.AccountId = existing.Id; ticket.Login = existing.Login; ticket.AccountTokenHash = existing.TokenHash;
+                }
+                ticket.ExpiresAt = 0; ticket.State = "pending";
+                Write(doc); // Create the reusable secret only after the owner's confirmed send.
                 try
                 {
                     await client.SendLinkAsync(ticket.UserId, url + "/claim#" + ticket.Id + "." + secret, ct);
                     ticket.State = "sent"; Write(doc);
-                    return new("sent", "Account link sent to @" + ticket.Username + ". It expires in 30 minutes.");
+                    return new("sent", "Account link sent to @" + ticket.Username + ". Keep it for future logins. It does not expire.");
                 }
                 catch (DiscordDmRejectedException ex)
                 {
-                    ticket.State = "failed"; Write(doc); return new("failed", ex.Message);
+                    ticket.State = "failed"; ticket.ExpiresAt = now + (long)TestLifetime.TotalMilliseconds;
+                    Write(doc); return new("failed", ex.Message);
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {

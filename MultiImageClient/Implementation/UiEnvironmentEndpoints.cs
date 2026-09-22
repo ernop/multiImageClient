@@ -61,7 +61,17 @@ namespace MultiImageClient
                     return Results.Json(new { error = "This account does not belong to this environment." }, statusCode: 403);
                 // Preserve later profile renames. First entry initializes the bootstrap owner's display name.
                 if (!community.SnapshotProfiles().Profiles.Any(p => p.Login == account!.Login))
-                    community.SetProfileName(account!.Login, account.DisplayName, Array.Empty<string>(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                {
+                    try
+                    {
+                        community.SetProfileName(account!.Login, account.DisplayName, Array.Empty<string>(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    }
+                    catch (UiProfileNameConflictException)
+                    {
+                        return Results.Json(new { error = "This link belongs to a separate account whose display name is already in use. "
+                            + "Ask the owner to issue a login link from your existing account." }, statusCode: 409);
+                    }
+                }
                 activity?.Record(account!.Login, true);
                 ctx.Response.Cookies.Append(auth.SessionCookieName, cookie, CookieOptions(auth));
                 return Results.Json(new { ok = true });

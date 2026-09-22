@@ -28,9 +28,10 @@ public sealed class UiLoginLinksTests : IDisposable
         Assert.DoesNotContain(issued.Token.Split('.')[1], File.ReadAllText(Path.Combine(_root, "links.json")));
         for (var i = 0; i < 2; i++)
         {
-            Assert.True(store.TryExchange(issued.Token, SigningSecret, out var cookie, out var account));
+            var reloaded = new UiLoginLinks(Path.Combine(_root, "links.json"));
+            Assert.True(reloaded.TryExchange(issued.Token, SigningSecret, out var cookie, out var account));
             Assert.Equal(issued.Account.Login, account!.Login);
-            Assert.True(store.TryValidateCookie(cookie, SigningSecret, out var login));
+            Assert.True(reloaded.TryValidateCookie(cookie, SigningSecret, out var login));
             Assert.Equal(issued.Account.Login, login);
         }
     }

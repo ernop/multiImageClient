@@ -4,6 +4,35 @@ First written 2026-08-04 targeting Bunny.net; requirements re-derived with the
 owner 2026-08-05 and the provider switched to **Backblaze B2** the same day
 (owner decision). Implementation started 2026-08-05.
 
+## Disk-reserve incident — 2026-09-20
+
+The owner reported 2,935 MiB available against the unchanged 3,072 MiB job reserve.
+Stopping Terrain Parkour beta reclaimed RAM; it did not resolve this separate disk-space condition.
+Both image environments store their local output on the same root filesystem.
+
+Concurrent maintenance in the sharing release removed three obsolete NuGet package-cache versions:
+
+| Package version | Allocated size before removal |
+|---|---:|
+| `magick.net-q16-anycpu/14.14.0` | 325.6 MiB |
+| `magick.net-q16-anycpu/14.16.0` | 327.3 MiB |
+| `llamasharp.backend.cuda12/0.16.0` | 815.6 MiB |
+
+That release checked project references, published dependency manifests, and process mappings before removal.
+The three removals account for approximately 1.43 GiB; subsequent release activity also changed available space.
+This incident record does not authorize general deletion of unpacked dependencies or rollback backups.
+
+At 18:10 Pacific, both environments had 6,221 MiB available, leaving 3,149 MiB above the reserve.
+Authenticated blank-goal probes passed the disk guard on both running applications.
+Both returned HTTP 400 with `goal text is required`; neither created a loop nor called a provider.
+The guard measures capacity on each submission; it does not require resetting or lowering the reserve.
+
+Image cleanup logs showed zero original files removed during the reviewed period.
+Vibecoders recorded only 1.2 MiB of expired thumbnails, which cannot explain the larger recovery.
+The separate disk investigation deleted nothing and changed no service, resource limit, or cleanup policy.
+Retain the 3 GiB reserve and the existing verified-image cleanup rules.
+A cleared disk guard confirms admission capacity, not successful completion of every later provider request.
+
 ## Storage cleanup — owner decision, 2026-09-12
 
 Interrupted jobs can finish uploading originals before the process stops, bypassing normal local-file cleanup.

@@ -45,12 +45,13 @@ assert.ok(['127.0.0.1', 'localhost'].includes(new URL(base).hostname), 'Use a lo
       .some(key => key.includes('mic_text_draft_v1:') && sessionStorage.getItem(key).includes('activated from history'))));
     await page.reload();
     assert.equal(await page.locator('#prompt').inputValue(), 'A prompt activated from history.');
+    await page.locator('#username-input').fill('Draft test');
+    await page.locator('#username-input').dispatchEvent('change');
     await page.goto(new URL('goal.html', base).href);
     await page.locator('#goal-text').fill('My unfinished goal 🂡\nwith a second line');
     await page.reload();
     assert.equal(await page.locator('#goal-text').inputValue(), 'My unfinished goal 🂡\nwith a second line');
     await page.waitForFunction(() => typeof config !== 'undefined' && config && selectedGeneratorKeys().length > 0);
-    if (await page.locator('#goal-user').isVisible()) await page.locator('#goal-user').fill('Draft test');
     let accept, requested;
     const acceptance = new Promise(resolve => { accept = resolve; });
     const requestStarted = new Promise(resolve => { requested = resolve; });

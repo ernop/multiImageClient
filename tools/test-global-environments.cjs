@@ -8,7 +8,7 @@ const crypto = require('node:crypto');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
-const binary = path.join(root, 'MultiImageClient/bin/Debug/net10.0/MultiImageClient.dll');
+const binary = process.env.MIC_UI_TEST_BINARY || path.join(root, 'MultiImageClient/bin/Debug/net10.0/MultiImageClient.dll');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'mic-environment-browser-'));
 const processes = [];
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
@@ -59,7 +59,8 @@ async function loginStatus(server, username, password) {
    {id:'one',slug:'one',name:'Original',original:true,members:['victor'],goalLoops:true,video:true,promptRewrite:true},
    {id:'two',slug:'two',name:'Vibecoders AI Generation',original:false,members:[],goalLoops:true,video:true,promptRewrite:true}]}));
   const one=await start('one'),two=await start('two');
-  browser=await chromium.launch({headless:true,channel:'chrome'});
+  const browserChannel=process.env.MIC_UI_TEST_BROWSER_CHANNEL ?? 'chrome';
+  browser=await chromium.launch({headless:true,...(browserChannel==='bundled'?{}:{channel:browserChannel})});
   async function context() {
    const context=await browser.newContext();
    await context.route('https://environment.test/**',async route=>{
@@ -82,8 +83,59 @@ async function loginStatus(server, username, password) {
   assert.equal(await page.evaluate(async()=> (await fetch('api/admin/summary')).status),200);
   const cookies=await owner.cookies();assert(cookies.some(c=>c.name==='mic_auth'&&c.path==='/'));
   await page.goto('https://environment.test/one/admin.html');await page.waitForSelector('#environments section');
-  const created=await page.evaluate(async()=> (await fetch('api/control/accounts',{method:'POST',headers:{'X-Mic-Manage':'1'},body:new URLSearchParams({name:'Alice',environment:'two'})})).json());
+  // Legacy duplicate accounts must report the name conflict without claiming the original account or setting a cookie.
+  const duplicateId=crypto.randomUUID().replaceAll('-',''), duplicateSecret=crypto.randomBytes(32).toString('base64url');
+  const duplicateLogin='member-'+duplicateId;
+  const duplicateAccounts=JSON.parse(fs.readFileSync(path.join(temporary,'links.json')));
+  duplicateAccounts.accounts.push({id:duplicateId,login:duplicateLogin,displayName:'victor',tokenHash:sha(duplicateSecret),revoked:false});
+  fs.writeFileSync(path.join(temporary,'links.json'),JSON.stringify(duplicateAccounts));
+  const duplicateRegistry=JSON.parse(fs.readFileSync(path.join(temporary,'registry.json')));
+  duplicateRegistry.environments.find(e=>e.id==='one').members.push(duplicateLogin);
+  fs.writeFileSync(path.join(temporary,'registry.json'),JSON.stringify(duplicateRegistry));
+  const duplicateContext=await context(), duplicatePage=await duplicateContext.newPage();
+  const conflict=duplicatePage.waitForResponse(response=>response.url().endsWith('/api/auth/link'));
+  await duplicatePage.goto(`https://environment.test/one/enter.html#${duplicateId}.${duplicateSecret}`);
+  assert.equal((await conflict).status(),409);
+  await duplicatePage.getByText('Ask the owner to issue a login link from your existing account.',{exact:false}).waitFor();
+  assert.equal((await duplicateContext.cookies()).some(c=>c.name==='mic_auth'),false);
+  assert.equal(await loginStatus(one,'victor','victor-old-password'),200);
+  await duplicateContext.close();
+  duplicateAccounts.accounts=duplicateAccounts.accounts.filter(a=>a.id!==duplicateId);
+  fs.writeFileSync(path.join(temporary,'links.json'),JSON.stringify(duplicateAccounts));
+  duplicateRegistry.environments.find(e=>e.id==='one').members=duplicateRegistry.environments.find(e=>e.id==='one').members.filter(m=>m!==duplicateLogin);
+  fs.writeFileSync(path.join(temporary,'registry.json'),JSON.stringify(duplicateRegistry));
+  const paddedName=await page.evaluate(async()=> (await fetch('api/control/accounts',{method:'POST',headers:{'X-Mic-Manage':'1'},
+    body:new URLSearchParams({name:' victor ',environment:'one'})})).status);
+  assert.equal(paddedName,400);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(temporary,'links.json'))).accounts.some(a=>a.login==='victor'),false);
+  assert.equal(await page.locator('#new-account-name').inputValue(),'');
+  assert.equal(await page.locator('#person-environment').inputValue(),'');
+  assert.equal(await page.locator('#new-account-name').getAttribute('autocomplete'),'off');
+  assert.equal(await page.locator('#issued').isHidden(),true);
+  await page.locator('#new-account-name').fill('Alice');
+  assert.equal(await page.locator('#person').evaluate(form=>form.checkValidity()),false);
+  await page.locator('#person-environment').selectOption('two');
+  await page.getByRole('button',{name:'Create account and login link',exact:true}).click();
+  await page.getByRole('heading',{name:'Login details for Alice',exact:true}).waitFor();
+  const created=await page.evaluate(()=>({url:document.getElementById('link').value,
+    username:document.getElementById('issued-username').value,password:document.getElementById('issued-password').value}));
   assert(created.password&&created.url&&created.username);
+  assert.equal(await page.locator('#issued-context').innerText(),'Account created · Vibecoders AI Generation');
+  assert.equal(await page.locator('#create-account #issued').count(),0);
+  assert.equal(await page.locator('#new-account-name').inputValue(),'');
+  assert.equal(await page.locator('#person-environment').inputValue(),'');
+  for(const width of [1100,390]) {
+    await page.setViewportSize({width,height:850});
+    await page.locator('#issued').evaluate(element=>element.scrollIntoView({block:'start'}));
+    assert.ok(await page.evaluate(()=>document.getElementById('issued-title').getBoundingClientRect().top>=document.querySelector('header').getBoundingClientRect().bottom));
+    await page.screenshot({path:path.join(temporary,`issued-${width}.png`)});
+    await page.locator('#create-account').screenshot({path:path.join(temporary,`create-account-${width}.png`)});
+    assert.ok(await page.locator('#create-account').evaluate(element=>element.scrollWidth<=element.clientWidth));
+  }
+  await page.setViewportSize({width:1100,height:850});
+  await page.getByRole('button',{name:'Dismiss login details'}).click();
+  assert.equal(await page.locator('#issued').isHidden(),true);
+  for(const id of ['link','issued-username','issued-password']) assert.equal(await page.locator('#'+id).inputValue(),'');
   const member=await context();const alice=await member.newPage();await alice.goto(created.url);await alice.waitForURL('https://environment.test/two/');
   await alice.waitForFunction(()=>document.getElementById('username-input')?.value==='Alice');
   assert.deepEqual(await alice.evaluate(()=>window.MicEnvironment.environments.map(e=>e.id)),['two']);
@@ -125,8 +177,19 @@ async function loginStatus(server, username, password) {
   const summary=await page.evaluate(async()=> (await (await fetch('/two/api/admin/summary')).json()));
   assert(summary.accounts[created.username].firstLogin);
   assert.equal(await loginStatus(two, created.username, created.password),200);
-  const aliceId = (await page.evaluate(async()=> (await (await fetch('api/control/state')).json()).accounts.find(a=>a.name==='Alice').id));
-  const reissued = await page.evaluate(async id=>(await fetch(`api/control/accounts/${id}/credentials`,{method:'POST',headers:{'X-Mic-Manage':'1'},body:new URLSearchParams({environment:'two'})})).json(), aliceId);
+  await page.goto('https://environment.test/one/admin.html');await page.waitForSelector('#environments section');
+  await page.locator('#new-account-name').fill('NextPerson');
+  await page.locator('#person-environment').selectOption('two');
+  await page.locator('#refresh').click();
+  const aliceRow=page.locator('#environments section').nth(1).locator('tr',{hasText:'Alice'});
+  page.once('dialog',dialog=>dialog.accept());
+  await aliceRow.getByRole('button',{name:'Issue login details',exact:true}).click();
+  await page.getByRole('heading',{name:'Login details for Alice',exact:true}).waitFor();
+  const reissued=await page.evaluate(()=>({url:document.getElementById('link').value,
+    username:document.getElementById('issued-username').value,password:document.getElementById('issued-password').value}));
+  assert.equal(await page.locator('#issued-context').innerText(),'Login details reissued · Renamed Studio');
+  assert.equal(await page.locator('#new-account-name').inputValue(),'NextPerson');
+  assert.equal(await page.locator('#person-environment').inputValue(),'two');
   assert.equal(reissued.username, created.username);
   assert(reissued.password && reissued.password !== created.password);
   assert(reissued.url && reissued.url !== created.url);
@@ -143,6 +206,10 @@ async function loginStatus(server, username, password) {
   page.once('dialog',dialog=>dialog.accept());
   await victorRow.getByRole('button',{name:'Convert to login-link account'}).click();
   await page.waitForFunction(()=>document.getElementById('issued-username').value==='governorOfThings');
+  assert.equal(await page.locator('#issued-title').innerText(),'Login details for governorOfThings');
+  assert.equal(await page.locator('#issued-context').innerText(),'Account converted · Original');
+  assert.equal(await page.locator('#new-account-name').inputValue(),'');
+  assert.equal(await page.locator('#person-environment').inputValue(),'');
   const convertedUrl=await page.locator('#link').inputValue(), convertedPassword=await page.locator('#issued-password').inputValue();
   assert(convertedUrl.startsWith('https://environment.test/one/enter.html#'));
   assert.match(convertedPassword,/^[0-9a-f]{32}$/);
