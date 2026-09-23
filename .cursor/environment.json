@@ -1,0 +1,10 @@
+{
+  "name": "MultiImageClient",
+  "install": "bash ./.cursor/install.sh",
+  "terminals": [
+    {
+      "name": "mic-ui",
+      "command": "dotnet MultiImageClient/bin/Release/net10.0/MultiImageClient.dll --ui --ui-no-open"
+    }
+  ]
+}
