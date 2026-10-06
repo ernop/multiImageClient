@@ -684,6 +684,7 @@ namespace MultiImageClient
                             inputUsdPerMTok = m.InputUsdPerMTok,
                             outputUsdPerMTok = m.OutputUsdPerMTok,
                         }),
+                        defaultManagerKey = ManagerCatalog.DefaultKey,
                         defaultMaxTurns = UiGoalLoopRunner.DefaultMaxTurns,
                         maxTurnsCap = UiGoalLoopRunner.MaxTurnsCap,
                         maxGoalChars = UiGoalLoopRunner.MaxGoalChars,

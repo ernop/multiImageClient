@@ -196,7 +196,8 @@ async function loadConfig() {
     disabled: !m.available,
     title: m.detail || "",
   }));
-  const firstManager = managers.find((m) => !m.disabled);
+  const firstManager = managers.find((m) => m.key === config.goalLoop.defaultManagerKey && !m.disabled)
+    || managers.find((m) => !m.disabled);
   optionsFor(el("goal-manager"), managers, firstManager ? firstManager.key : undefined);
   updateManagerDetail();
   // Critic picker: the same catalog, none checked by default (each critic

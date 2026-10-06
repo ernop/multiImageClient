@@ -1122,12 +1122,21 @@ settings keys as the describe endpoints.
 | `manager-gpt-6-astra` | gpt-6-astra | OpenAI Responses API, medium reasoning, JSON object mode |
 | `manager-gpt-5.6-sol` | gpt-5.6-sol | OpenAI Responses API, reasoning summaries, JSON object mode |
 | `manager-claude-fable-5-1` | claude-fable-5-1 | Anthropic Messages, adaptive thinking |
+| `manager-claude-opus-5-5` | claude-opus-5-5 | Anthropic Messages, adaptive thinking |
+| `manager-claude-sonnet-5-5` | claude-sonnet-5-5 | Anthropic Messages, adaptive thinking (default manager) |
 | `manager-claude-opus-5` | claude-opus-5 | Anthropic Messages, adaptive thinking |
 | `manager-claude-sonnet-5` | claude-sonnet-5 | Anthropic Messages, adaptive thinking |
 | `manager-gemini-3.5-flash` | gemini-3.5-flash | Google generateContent, thoughts returned, JSON MIME |
 | `manager-grok-4.6` | grok-4.6 | xAI Responses API |
 
 Gemini 3.5 Pro is not offered (partner-only as of 2026-09-04).
+
+Opus 5.5 and Sonnet 5.5 join the shared manager/critic catalog on 2026-10-06 (owner request).
+Pricing estimates use $4/$20 (Opus 5.5) and $2/$10 (Sonnet 5.5) per million input/output tokens;
+both model IDs were live-verified 2026-10-02.
+Sonnet 5.5 is the default manager: `ManagerCatalog.DefaultKey`, exposed as
+`/api/config` `goalLoop.defaultManagerKey`, is preselected on the new-loop form when its key is
+configured. Otherwise the form falls back to the first available catalog entry. Critics stay unchecked by default.
 
 GPT-6 Astra joins the shared manager/critic catalog on 2026-09-05, including the critic selector.
 It uses the existing OpenAI key, image transport, strict critique contract, and medium reasoning.

@@ -152,10 +152,15 @@ namespace MultiImageClient
         public const string KeyGpt6Astra = "manager-gpt-6-astra";
         public const string KeyGpt56Sol = "manager-gpt-5.6-sol";
         public const string KeyClaudeFable51 = "manager-claude-fable-5-1";
+        public const string KeyClaudeOpus55 = "manager-claude-opus-5-5";
+        public const string KeyClaudeSonnet55 = "manager-claude-sonnet-5-5";
         public const string KeyClaudeOpus5 = "manager-claude-opus-5";
         public const string KeyClaudeSonnet5 = "manager-claude-sonnet-5";
         public const string KeyGemini35Flash = "manager-gemini-3.5-flash";
         public const string KeyGrok46 = "manager-grok-4.6";
+
+        // Preselected in the goal form's manager selector when available.
+        public const string DefaultKey = KeyClaudeSonnet55;
 
         // developers.openai.com/api/docs/guides/images-vision (2026-09-04):
         // 512 MB total payload, 1,500 images, 30,000 patches per image after
@@ -220,6 +225,8 @@ namespace MultiImageClient
         // $5/$25, $2/$10 per MTok. gpt-5.6-sol, gemini-3.5-flash, and grok-4.6
         // are the describe-endpoint models already live in this app. No public
         // gemini-3.5-pro exists (partner testing only), so it is not offered.
+        // claude-opus-5-5 ($4/$20) and claude-sonnet-5-5 ($2/$10) added
+        // 2026-10-06; both IDs were live-verified 2026-10-02.
         public static readonly IReadOnlyList<ManagerDefinition> All = new[]
         {
             new ManagerDefinition
@@ -243,6 +250,22 @@ namespace MultiImageClient
                 SettingsKeyName = nameof(Settings.AnthropicApiKey),
                 InputUsdPerMTok = 10m, OutputUsdPerMTok = 50m,
                 Detail = "Anthropic Messages API. Adaptive thinking is always on; thinking blocks are shown as provider reasoning.",
+                ImageLimits = AnthropicLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyClaudeOpus55, Label = "Opus 5.5", Provider = "anthropic", Model = "claude-opus-5-5",
+                SettingsKeyName = nameof(Settings.AnthropicApiKey),
+                InputUsdPerMTok = 4m, OutputUsdPerMTok = 20m,
+                Detail = "Anthropic Messages API with adaptive thinking.",
+                ImageLimits = AnthropicLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyClaudeSonnet55, Label = "Sonnet 5.5", Provider = "anthropic", Model = "claude-sonnet-5-5",
+                SettingsKeyName = nameof(Settings.AnthropicApiKey),
+                InputUsdPerMTok = 2m, OutputUsdPerMTok = 10m,
+                Detail = "Anthropic Messages API with adaptive thinking.",
                 ImageLimits = AnthropicLimits,
             },
             new ManagerDefinition
