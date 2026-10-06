@@ -655,7 +655,7 @@ namespace MultiImageClient
                         available = claudeAdviceProblem == null,
                         availabilityProblem = claudeAdviceProblem,
                     },
-                    promptRewrites = new[] { DirectedPromptRewrite.FableModel, DirectedPromptRewrite.OpenAiModel }.Select(model => new
+                    promptRewrites = DirectedPromptRewrite.Models.Select(model => new
                     {
                         model,
                         available = DirectedPromptRewrite.AvailabilityProblem(model, settings) == null,
@@ -2101,9 +2101,7 @@ namespace MultiImageClient
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 if (failure.Length > 0)
                 {
-                    var actionHint = ProviderActionHints.For(
-                        model == DirectedPromptRewrite.OpenAiModel ? UiJobRunner.KeyDescribeOpenAi : UiJobRunner.KeyDescribeClaude,
-                        failure);
+                    var actionHint = ProviderActionHints.For(UiJobRunner.KeyDescribeClaude, failure);
                     Logger.Log($"UI prompt edit {exchange.Id} failed for '{actorDisplay}': {failure}"
                         + (actionHint != null
                             ? $"\nUI prompt edit next step: {actionHint.Text} -> {actionHint.Url}"

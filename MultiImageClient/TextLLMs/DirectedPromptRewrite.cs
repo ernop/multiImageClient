@@ -2,8 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -13,8 +13,10 @@ namespace MultiImageClient
 {
     public static class DirectedPromptRewrite
     {
-        public const string FableModel = "claude-fable-5-1";
-        public const string OpenAiModel = "gpt-6-astra";
+        public const string OpusModel = "claude-opus-5-5";
+        public const string SonnetModel = "claude-sonnet-5-5";
+        // Anthropic Messages only; this area must not offer OpenAI models.
+        public static readonly IReadOnlyList<string> Models = new[] { OpusModel, SonnetModel };
         public const string Instruction =
             "Carefully consider the user's intent and flesh it out very well. "
             + "The replacement text will be sent to intelligent image-generation endpoints. "
@@ -30,12 +32,9 @@ namespace MultiImageClient
         private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromMinutes(5) };
         private static readonly SemaphoreSlim Slots = new(2, 2);
 
-        public static string? AvailabilityProblem(string model, Settings settings) => model switch
-        {
-            FableModel => ProviderKeyValidator.DescribeTextKeyProblem(nameof(settings.AnthropicApiKey), settings.AnthropicApiKey),
-            OpenAiModel => ProviderKeyValidator.DescribeTextKeyProblem(nameof(settings.OpenAIApiKey), settings.OpenAIApiKey),
-            _ => "Unknown rewrite model.",
-        };
+        public static string? AvailabilityProblem(string model, Settings settings) => Models.Contains(model)
+            ? ProviderKeyValidator.DescribeTextKeyProblem(nameof(settings.AnthropicApiKey), settings.AnthropicApiKey)
+            : "Unknown rewrite model.";
 
         public static async Task<ClaudePromptAdviceResult> RewriteAsync(string model, string prompt, Settings settings, CancellationToken ct)
         {
@@ -46,20 +45,14 @@ namespace MultiImageClient
             var raw = "";
             try
             {
-                var anthropic = model == FableModel;
-                using var request = new HttpRequestMessage(HttpMethod.Post, anthropic
-                    ? "https://api.anthropic.com/v1/messages" : "https://api.openai.com/v1/responses");
-                if (anthropic)
+                using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
+                request.Headers.Add("x-api-key", settings.AnthropicApiKey);
+                request.Headers.Add("anthropic-version", "2023-06-01");
+                var payload = new
                 {
-                    request.Headers.Add("x-api-key", settings.AnthropicApiKey);
-                    request.Headers.Add("anthropic-version", "2023-06-01");
-                }
-                else request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.OpenAIApiKey);
-                object payload = anthropic
-                    ? new { model, max_tokens = 16000, system = ClaudeService.PromptAdviceSystemPrompt,
-                        messages = new[] { new { role = "user", content = wire } } }
-                    : new { model, max_output_tokens = 16000, instructions = ClaudeService.PromptAdviceSystemPrompt,
-                        input = wire, reasoning = new { effort = "high" }, store = false };
+                    model, max_tokens = 16000, system = ClaudeService.PromptAdviceSystemPrompt,
+                    messages = new[] { new { role = "user", content = wire } },
+                };
                 request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
                 using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
                 // Bound provider output before buffering JSON in the resident server.
@@ -79,43 +72,21 @@ namespace MultiImageClient
 
         public static string ParseReplacement(string model, string raw)
         {
+            if (!Models.Contains(model)) throw new InvalidDataException("Unknown rewrite model.");
             using var document = JsonDocument.Parse(raw);
             var root = document.RootElement;
             if (root.GetProperty("model").GetString() != model)
                 throw new InvalidDataException("The provider returned a different rewrite model.");
+            if (root.GetProperty("stop_reason").GetString() != "end_turn")
+                throw new InvalidDataException(AnthropicMessagesManagerClient.DescribeStop(root) ?? "The rewrite did not finish.");
             var parts = new List<string>();
-            if (model == FableModel)
+            foreach (var part in root.GetProperty("content").EnumerateArray())
             {
-                if (root.GetProperty("stop_reason").GetString() != "end_turn")
-                    throw new InvalidDataException(AnthropicMessagesManagerClient.DescribeStop(root) ?? "The rewrite did not finish.");
-                foreach (var part in root.GetProperty("content").EnumerateArray())
-                {
-                    var type = part.GetProperty("type").GetString();
-                    if (type == "text") parts.Add(part.GetProperty("text").GetString()!);
-                    else if (type != "thinking" && type != "redacted_thinking")
-                        throw new InvalidDataException("The rewrite contains unexpected provider content.");
-                }
+                var type = part.GetProperty("type").GetString();
+                if (type == "text") parts.Add(part.GetProperty("text").GetString()!);
+                else if (type != "thinking" && type != "redacted_thinking")
+                    throw new InvalidDataException("The rewrite contains unexpected provider content.");
             }
-            else if (model == OpenAiModel)
-            {
-                if (root.GetProperty("status").GetString() != "completed")
-                    throw new InvalidDataException(ResponsesApiManagerClient.DescribeStop(root) ?? "The rewrite did not finish.");
-                foreach (var item in root.GetProperty("output").EnumerateArray())
-                {
-                    var type = item.GetProperty("type").GetString();
-                    if (type == "reasoning") continue;
-                    if (type != "message" || item.GetProperty("role").GetString() != "assistant"
-                        || item.GetProperty("status").GetString() != "completed")
-                        throw new InvalidDataException("The rewrite contains an incomplete or unexpected message.");
-                    foreach (var part in item.GetProperty("content").EnumerateArray())
-                    {
-                        if (part.GetProperty("type").GetString() != "output_text")
-                            throw new InvalidDataException("The provider refused or returned unexpected rewrite content.");
-                        parts.Add(part.GetProperty("text").GetString()!);
-                    }
-                }
-            }
-            else throw new InvalidDataException("Unknown rewrite model.");
             var text = string.Join("\n", parts);
             if (string.IsNullOrWhiteSpace(text) || text.Length > 100_000)
                 throw new InvalidDataException("The replacement must contain between 1 and 100,000 characters.");

@@ -4,50 +4,80 @@ namespace MultiImageClient;
 
 public sealed class DirectedPromptRewriteTests
 {
-    private static string OpenAi(string status = "completed", string type = "output_text", string text = "  Expanded\nprompt  ")
+    private static string Anthropic(string model, string stop = "end_turn", string type = "text", string text = "  Expanded\nprompt  ")
         => JsonSerializer.Serialize(new
         {
-            model = DirectedPromptRewrite.OpenAiModel, status,
-            output = new object[] {
-                new { type = "reasoning", summary = new[] { new { text = "Private summary is not prompt text." } } },
-                new { type = "message", role = "assistant", status = "completed", content = new[] { new { type, text } } }
+            model, stop_reason = stop,
+            content = new object[] {
+                new { type = "thinking", thinking = "Private reasoning is not prompt text." },
+                new { type, text },
             },
         });
 
     [Fact]
-    public void OpenAiPreservesExactTextAndExcludesReasoning()
-        => Assert.Equal("  Expanded\nprompt  ", DirectedPromptRewrite.ParseReplacement(DirectedPromptRewrite.OpenAiModel, OpenAi()));
-
-    [Theory]
-    [InlineData("incomplete", "output_text", "partial")]
-    [InlineData("completed", "refusal", "refused")]
-    [InlineData("completed", "output_text", " ")]
-    public void RejectsIncompleteRefusedOrEmptyOpenAi(string status, string type, string text)
-        => Assert.Throws<InvalidDataException>(() => DirectedPromptRewrite.ParseReplacement(
-            DirectedPromptRewrite.OpenAiModel, OpenAi(status, type, text)));
+    public void OffersOnlyOpusAndSonnet()
+    {
+        Assert.Equal(new[] { "claude-opus-5-5", "claude-sonnet-5-5" }, DirectedPromptRewrite.Models);
+        var settings = new Settings { AnthropicApiKey = "sk-ant-test", OpenAIApiKey = "sk-test" };
+        Assert.All(DirectedPromptRewrite.Models, model => Assert.Null(DirectedPromptRewrite.AvailabilityProblem(model, settings)));
+        Assert.Equal("Unknown rewrite model.", DirectedPromptRewrite.AvailabilityProblem("gpt-6-astra", settings));
+        Assert.Equal("Unknown rewrite model.", DirectedPromptRewrite.AvailabilityProblem("claude-fable-5-1", settings));
+    }
 
     [Fact]
-    public void RejectsWrongModelAndMissingCompletionStatus()
+    public async Task OpenAiKeyNeitherEnablesNorReachesARewrite()
     {
-        Assert.Throws<InvalidDataException>(() => DirectedPromptRewrite.ParseReplacement(
-            DirectedPromptRewrite.OpenAiModel, OpenAi().Replace("gpt-6-astra", "gpt-5.6-sol")));
-        Assert.Throws<KeyNotFoundException>(() => DirectedPromptRewrite.ParseReplacement(
-            DirectedPromptRewrite.OpenAiModel, "{\"model\":\"gpt-6-astra\",\"output\":[]}"));
+        var openAiOnly = new Settings { OpenAIApiKey = "sk-test" };
+        Assert.All(DirectedPromptRewrite.Models, model => Assert.NotNull(DirectedPromptRewrite.AvailabilityProblem(model, openAiOnly)));
+        var both = new Settings { AnthropicApiKey = "sk-ant-test", OpenAIApiKey = "sk-test" };
+        var rejected = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            DirectedPromptRewrite.RewriteAsync("gpt-6-astra", "A red apple.", both, CancellationToken.None));
+        Assert.Equal("Unknown rewrite model.", rejected.Message);
     }
+
+    [Theory]
+    [InlineData(DirectedPromptRewrite.OpusModel)]
+    [InlineData(DirectedPromptRewrite.SonnetModel)]
+    public void PreservesExactTextAndExcludesThinking(string model)
+        => Assert.Equal("  Expanded\nprompt  ", DirectedPromptRewrite.ParseReplacement(model, Anthropic(model)));
 
     [Theory]
     [InlineData("end_turn", true)]
     [InlineData("max_tokens", false)]
     [InlineData("refusal", false)]
     [InlineData("tool_use", false)]
-    public void FableRequiresCompletedText(string stop, bool accepted)
+    public void RequiresCompletedText(string stop, bool accepted)
     {
-        var json = JsonSerializer.Serialize(new {
-            model = DirectedPromptRewrite.FableModel, stop_reason = stop,
-            content = new object[] { new { type = "thinking", thinking = "Excluded." }, new { type = "text", text = "Expanded prompt" } },
+        foreach (var model in DirectedPromptRewrite.Models)
+        {
+            var json = Anthropic(model, stop);
+            if (accepted) Assert.Equal("  Expanded\nprompt  ", DirectedPromptRewrite.ParseReplacement(model, json));
+            else Assert.Throws<InvalidDataException>(() => DirectedPromptRewrite.ParseReplacement(model, json));
+        }
+    }
+
+    [Theory]
+    [InlineData("tool_use", "Expanded prompt")]
+    [InlineData("text", " ")]
+    public void RejectsUnexpectedOrEmptyContent(string type, string text)
+        => Assert.Throws<InvalidDataException>(() => DirectedPromptRewrite.ParseReplacement(
+            DirectedPromptRewrite.SonnetModel, Anthropic(DirectedPromptRewrite.SonnetModel, type: type, text: text)));
+
+    [Fact]
+    public void RejectsWrongModelMissingStopAndOpenAiReplies()
+    {
+        Assert.Throws<InvalidDataException>(() => DirectedPromptRewrite.ParseReplacement(
+            DirectedPromptRewrite.OpusModel, Anthropic(DirectedPromptRewrite.SonnetModel)));
+        Assert.Throws<KeyNotFoundException>(() => DirectedPromptRewrite.ParseReplacement(
+            DirectedPromptRewrite.SonnetModel, "{\"model\":\"claude-sonnet-5-5\",\"content\":[]}"));
+        var openAi = JsonSerializer.Serialize(new
+        {
+            model = "gpt-6-astra", status = "completed",
+            output = new object[] {
+                new { type = "message", role = "assistant", status = "completed", content = new[] { new { type = "output_text", text = "Expanded" } } }
+            },
         });
-        if (accepted) Assert.Equal("Expanded prompt", DirectedPromptRewrite.ParseReplacement(DirectedPromptRewrite.FableModel, json));
-        else Assert.Throws<InvalidDataException>(() => DirectedPromptRewrite.ParseReplacement(DirectedPromptRewrite.FableModel, json));
+        Assert.Throws<InvalidDataException>(() => DirectedPromptRewrite.ParseReplacement("gpt-6-astra", openAi));
     }
 
     [Fact]
@@ -61,7 +91,7 @@ public sealed class DirectedPromptRewriteTests
             var store = new UiCommunityStore(settings);
             for (var i = 0; i < 25; i++)
             {
-                var item = store.StartClaudePromptExchange("login:alice", "Alice", DirectedPromptRewrite.FableModel,
+                var item = store.StartClaudePromptExchange("login:alice", "Alice", DirectedPromptRewrite.OpusModel,
                     "Expand", $" original {i}\n", "system", "wire", 1000);
                 store.CompleteClaudePromptExchange(item.Id, "raw", $" replacement {i}\n", "", 2000);
             }
