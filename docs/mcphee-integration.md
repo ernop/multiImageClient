@@ -71,6 +71,17 @@ Otherwise, the stretched composer retains its full height and falsely fails over
 The fixes preserve the overlay's existing content and wrap checks.
 These are application-copy patches; the independent source checkout remains unchanged.
 
+## Release validation — 2026-10-06 (3.12.0)
+
+The merged copy passed all upstream Node suites, including the caps suite, and upstream's own browser suite passed on 3.12.0.
+The application passed 513 C# tests, 30 JavaScript tests, and all 10 local-launcher tests.
+`tools/test-mcphee-browser.cjs` passed against the restarted local UI.
+A targeted composer check showed the caps section (mixed style, per-style percentages) and applied traditional style with no page errors.
+Release `f46fd02` went to the original service through `agent-redeploy.sh`.
+Vibecoders AI Generation was then updated from the same verified publish and runs the identical binary.
+Both serve McPhee 3.12.0 with the new asset query and answer loopback and vhost health checks.
+These checks made no paid generation calls or Discord posts.
+
 ## Release validation — 2026-09-11
 
 The exact vendored copy passed all upstream Node and browser suites.

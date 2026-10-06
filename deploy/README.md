@@ -94,6 +94,23 @@ After it returns, require all of the following:
 Never print the secret path, login credentials, cookies, or provider keys in
 deployment output.
 
+## Updating an additional environment
+
+Additional environments (for example `vibecoders-ai-generation`) update only when explicitly selected.
+`update-shared-host.sh` deletes `~/multiimageclient-publish-staging` after installing the original service.
+After a verified original-service release, the verified publish is `/opt/multiimageclient` itself.
+The service writes only under `/var/lib/multiimageclient`, and the update skips `settings.json`.
+
+`create-environment.py update` refuses to run while `/opt/multiimageclient-env-<id>.previous` exists.
+Keep that recovery copy by renaming it with the date of the release it came from, for example `.previous-20260921`.
+
+```bash
+ssh tpbeta-root 'mv /opt/multiimageclient-env-<id>.previous /opt/multiimageclient-env-<id>.previous-<yyyymmdd> &&
+  python3 /home/tparkour/multiImageClient/deploy/create-environment.py update --id <id> --publish /opt/multiimageclient'
+```
+
+Then verify the service start time, loopback `/healthz` on the manifest port, the route through its manifest `privatePath`, and that its `MultiImageClient.dll` matches `/opt/multiimageclient`.
+
 ## Passwordless redeploy helper installation
 
 After the shared site is installed, give the deploy user **one** interactive
