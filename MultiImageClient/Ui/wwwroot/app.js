@@ -536,7 +536,6 @@ async function loadConfig() {
   }
   authInfo = cfg.auth || authInfo;
   generatorPreferences = loadGeneratorPreferences(cfg);
-  activeGeneratorView = generatorPreferences.defaultView;
   migrateLegacyGpt2GuidancePreference(generatorPreferences);
   if (storedPersonalConfigurationError) {
     throw storedPersonalConfigurationError;
@@ -621,12 +620,11 @@ function renderComposerGeneratorPicker(checkedKeys = allGeneratorInputs().filter
   const selected = new Set(checkedKeys);
   gensRow.innerHTML = "";
   describeRow.innerHTML = "";
-  const hiddenGeneratorKeys = new Set(generatorPreferences.hiddenGeneratorKeys);
   for (const g of generators) {
     // The composer is an action surface, so omit targets that cannot be
     // selected. The preferences dialog still lists unavailable targets with
     // their configuration problem so users can manage future availability.
-    if (hiddenGeneratorKeys.has(g.key) || !g.available || !generatorInActiveView(g)) continue;
+    if (!g.available || !generatorShownByPreferences(g)) continue;
     const chip = buildGenChip(g);
     chip.querySelector("input").checked = selected.has(g.key);
     chip.classList.toggle("checked", selected.has(g.key));

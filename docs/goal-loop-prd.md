@@ -995,7 +995,42 @@ The existing large all-turns sheet remains available beside the recap.
 The recap supplies a standard artifact view, rather than a separate one-time fruit page.
 Exports do not publish a website or change access to the production application.
 
+### Group buttons never change visibility (2026-10-06)
+
+Owner decision. This supersedes the view-switching rules in the next section.
+Only these sources decide which generators and describers appear in a picker:
+
+1. Code support and server availability (`available` in `/api/config`).
+2. The user's own gear configuration: the hidden list and the **Image generators shown** setting.
+
+Standard groups, personal groups, and **Default** change checkboxes only.
+They select the group's shown members and clear every other shown member.
+They never show a hidden generator or hide a shown one.
+A group member that is hidden or outside the shown set stays hidden and unselected.
+The **all models** button is removed, because its only function was undoing a group's filter.
+Group buttons have no pressed state.
+
+The gear's former **Default view** select is now **Image generators shown**.
+It keeps the stored `defaultView` field and its values `only-sota` and `all`.
+The setting applies on every page load until the user changes it in the gear.
+`only-sota` limits image and video generators to the only SOTA group.
+Describers stay shown, because the filter does not apply to them.
+In the gear's shown tab, generators outside only SOTA appear disabled and unchecked.
+The defaults and groups tabs list only shown generators.
+
+Environment administration controls each environment's default selections.
+It does not control which generators members can see.
+
+Rationale: buttons that look like selection presets also changed the picker's contents.
+Generators therefore disappeared and reappeared without a visible cause.
+
+Implementation: `generator-chooser.js` (`generatorShownByPreferences`), `app.js`, `goal.js`, `style.css`.
+Validation: `tools/test-generator-chooser.cjs`.
+
 ### Default model view (2026-09-08)
+
+Partly superseded on 2026-10-06; see the preceding section.
+Group buttons no longer switch views, and **all models** is removed.
 
 New users start with the **only SOTA** view in the composer and goal setup.
 This view contains exactly six image generators:
@@ -1044,7 +1079,7 @@ All three pages share compact grid styles; administration retains its separate e
 See [workspaces-prd.md](workspaces-prd.md#shared-provider-presentation-2026-09-10).
 Both pages use the same standard groups from `/api/config` and the same editable personal groups.
 Both expose Enable all, Disable all, Toggle all, Default, and the configuration dialog.
-Group buttons show their eligible generators and replace the current selection with those generators.
+Group buttons replace the current selection with their shown members (2026-10-06: they never change visibility).
 Hidden and unavailable generators remain absent from the picker.
 Goal loops also exclude videos, describe targets, and generators requiring an input image.
 The configuration dialog retains the complete catalog so settings apply consistently across both pages.

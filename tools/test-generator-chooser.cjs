@@ -28,20 +28,25 @@ const config = {clientInstanceId:"a".repeat(32),defaults:{shape:"auto",detail:"s
  });
  await page.goto('https://chooser.test/goal.html');
  await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===3);
- assert.equal(await page.getByRole('button',{name:'only SOTA',exact:true}).getAttribute('aria-pressed'),'true');
- await page.getByRole('button',{name:'all models',exact:true}).click();
- assert.equal(await page.locator('#gens-row input').count(),10);
- await page.getByRole('button',{name:'only SOTA',exact:true}).click();
+ const selected=()=>page.locator('#gens-row input:checked').evaluateAll(xs=>xs.map(x=>x.value));
+ // Group buttons select shown generators; they never show or hide any.
+ assert.equal(await page.getByRole('button',{name:'all models',exact:true}).count(),0);
+ await page.getByRole('button',{name:'All models',exact:true}).click();
  assert.equal(await page.locator('#gens-row input').count(),3);
+ assert.deepEqual(await selected(),['image-0','image-1','image-2']);
  await page.evaluate(p=>MultiImagePersonalConfiguration.saveGeneratorPreferences(localStorage,p),initial);
  await page.reload();
  await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===9);
- const selected=()=>page.locator('#gens-row input:checked').evaluateAll(xs=>xs.map(x=>x.value));
  assert.deepEqual(await selected(),['image-1']);
  await page.getByRole('button',{name:'Pair',exact:true}).click();
  assert.deepEqual(await selected(),['image-1','image-3']);
+ assert.equal(await page.locator('#gens-row input').count(),9);
+ await page.getByRole('button',{name:'only SOTA',exact:true}).click();
+ assert.deepEqual(await selected(),['image-0','image-1']);
+ assert.equal(await page.locator('#gens-row input').count(),9);
  await page.getByRole('button',{name:'All models',exact:true}).click();
  assert.equal((await selected()).length,9);
+ assert.equal(await page.locator('#gens-row input').count(),9);
  assert.equal(await page.locator('#goal-generators-count.over').count(),1);
  await page.locator('#goal-text').fill('A diagram');
  await page.locator('#goal-start').click();
@@ -97,22 +102,24 @@ const config = {clientInstanceId:"a".repeat(32),defaults:{shape:"auto",detail:"s
  await page.locator('#generator-config-toggle').click();
  await page.locator('[data-generator-config-view="defaults"]').click();
  assert.equal(await page.locator('#generator-config-dialog').isVisible(),true);
- // A fresh composer uses the same restricted view, including after attaching an image.
+ // A fresh composer shows only SOTA image generators; describers stay shown.
  await page.evaluate(()=>localStorage.clear());
  await page.reload();
  await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===3);
  await page.locator('#file-input').setInputFiles({name:'pixel.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1cAAAAASUVORK5CYII=','base64')});
- assert.equal(await page.locator('#describe-section').isVisible(),false);
+ assert.equal(await page.locator('#describe-row input').count(),1);
  await page.locator('#gens-enable-all').click();
  assert.equal((await selected()).length,3);
- await page.getByRole('button',{name:'all models',exact:true}).click();
- assert.equal(await page.locator('#describe-row input').count(),1);
+ await page.getByRole('button',{name:'All models',exact:true}).click();
+ assert.equal(await page.locator('#gens-row input').count(),3);
+ // Only the gear changes visibility.
  await page.locator('#generator-config-toggle').click();
  assert.equal(await page.locator('#generator-config-shown input').count(),13);
+ assert.equal(await page.locator('#generator-config-shown input:disabled').count(),9);
  await page.locator('#generator-config-default-view').selectOption('all');
+ assert.equal(await page.locator('#generator-config-shown input:disabled').count(),0);
  await page.locator('#generator-config-save').click();
  await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===11);
- assert.equal(await page.getByRole('button',{name:'all models',exact:true}).getAttribute('aria-pressed'),'true');
  authenticated=true; accountPreferences={...initial,defaultView:'only-sota'};
  await page.reload();
  await page.waitForFunction(()=>document.querySelectorAll('#gens-row input').length===2);

@@ -2,24 +2,18 @@
 // Shared composer and goal-loop chooser. Page adapters supply catalog, preferences,
 // eligible input rows, count updates, and persistence.
 
-let activeGeneratorView = null;
-
-function generatorInActiveView(generator) {
-  if (!activeGeneratorView || activeGeneratorView === "all") return true;
-  const group = activeGeneratorView.startsWith("personal:")
-    ? generatorPreferences.presets.find((group) => group.id === activeGeneratorView.slice(9))
-    : standardGeneratorGroups.find((group) => group.id === activeGeneratorView);
-  if (!group) throw new Error("Unknown generator view " + activeGeneratorView);
-  return group.generatorKeys.includes(generator.key);
+// Visibility comes only from availability and the gear's saved preferences
+// (hidden list + only-SOTA view). Group buttons change selection, never visibility.
+function generatorOutsideSotaView(generator, preferences = generatorPreferences) {
+  if (preferences.defaultView !== "only-sota" || generator.kind === "describe") return false;
+  const sota = standardGeneratorGroups.find((group) => group.id === "only-sota");
+  if (!sota) throw new Error("the only SOTA standard generator group is missing");
+  return !sota.generatorKeys.includes(generator.key);
 }
 
-function changeGeneratorView(view) {
-  activeGeneratorView = view;
-  if (typeof renderGoalGeneratorPicker === "function") {
-    renderGoalGeneratorPicker(selectedGeneratorKeys());
-  } else {
-    renderComposerGeneratorPicker();
-  }
+function generatorShownByPreferences(generator, preferences = generatorPreferences) {
+  return !preferences.hiddenGeneratorKeys.includes(generator.key)
+    && !generatorOutsideSotaView(generator, preferences);
 }
 
 function defaultGeneratorPreferences() {
@@ -265,27 +259,17 @@ function applyGeneratorPreset(preset, { includeDescribe = false } = {}) {
 function renderGeneratorPresetButtons() {
   const host = el("gen-personal-presets");
   host.replaceChildren();
-  const all = document.createElement("button");
-  all.type = "button";
-  all.textContent = "all models";
-  all.setAttribute("aria-pressed", String(activeGeneratorView === "all"));
-  all.addEventListener("click", () => changeGeneratorView("all"));
-  host.appendChild(all);
   const standardSignatures = new Set();
   const appendButton = (preset, standard) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "generator-personal-preset";
     button.textContent = preset.name;
-    button.title = standard
-      ? `Set the complete image-generator selection to standard group “${preset.name}”`
-      : `Set the complete image-generator selection to personal group “${preset.name}”`;
-    const view = standard ? preset.id : "personal:" + preset.id;
-    button.setAttribute("aria-pressed", String(activeGeneratorView === view));
-    button.addEventListener("click", () => {
-      changeGeneratorView(view);
-      applyGeneratorPreset(preset);
-    });
+    button.title = (standard
+      ? `Set the image-generator selection to standard group “${preset.name}”.`
+      : `Set the image-generator selection to personal group “${preset.name}”.`)
+      + " Only shown generators are selected. Use ⚙ to change which generators are shown.";
+    button.addEventListener("click", () => applyGeneratorPreset(preset));
     host.appendChild(button);
   };
   const signature = (preset) =>
@@ -323,12 +307,12 @@ function initializeGeneratorConfig() {
       <button type="button" role="tab" data-generator-config-view="endpoint" aria-selected="false">per endpoint</button>
     </div>
     <section id="generator-config-shown-panel" class="generator-config-panel" role="tabpanel">
-      <label>Default view <select id="generator-config-default-view">
+      <label>Image generators shown <select id="generator-config-default-view">
         <option value="only-sota">only SOTA</option>
         <option value="all">all models</option>
       </select></label>
-      <p>Switch views above the picker. Configure all generators and describers here.</p>
-      <p>Individually hidden targets can only be restored here.</p>
+      <p>Only this panel changes which generators and describers appear in your pickers.</p>
+      <p>Group buttons select and clear shown generators; they never show or hide any.</p>
       <div class="generator-config-sections">
         <label><input id="generator-config-show-image" type="checkbox"> show image-generation section</label>
         <label><input id="generator-config-show-describe" type="checkbox"> show describe section when images are attached</label>
@@ -424,19 +408,22 @@ function renderGeneratorConfigChoices(host, mode) {
     grid.className = "generator-config-choice-grid";
     const choices = generators.filter((generator) =>
       (generator.kind === "describe" ? "describe" : "image") === kind
-      && (mode === "shown" || !hidden.has(generator.key)));
+      && (mode === "shown" || generatorShownByPreferences(generator, generatorConfigDraft)));
     for (const generator of choices) {
       const choice = document.createElement("label");
       choice.className = "generator-config-choice";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
+      const outsideSota = generatorOutsideSotaView(generator, generatorConfigDraft);
       checkbox.checked = mode === "shown"
-        ? !hidden.has(generator.key)
+        ? !hidden.has(generator.key) && !outsideSota
         : selected.has(generator.key);
-      checkbox.disabled = mode === "defaults" && !generator.available;
+      checkbox.disabled = mode === "shown" ? outsideSota : !generator.available;
       choice.classList.toggle("selected", checkbox.checked);
       choice.classList.toggle("unavailable", checkbox.disabled);
-      if (!generator.available) {
+      if (mode === "shown" && outsideSota) {
+        choice.title = "Outside only SOTA. Choose “all models” above to show it.";
+      } else if (!generator.available) {
         choice.title = `Unavailable now: ${generator.availabilityProblem || "not configured"}`;
       }
       const text = document.createElement("span");
@@ -542,7 +529,7 @@ function renderGeneratorConfigPresets() {
   grid.className = "generator-config-choice-grid";
   const visibleImageGenerators = generators.filter((generator) =>
     generator.kind !== "describe"
-    && !generatorConfigDraft.hiddenGeneratorKeys.includes(generator.key));
+    && generatorShownByPreferences(generator, generatorConfigDraft));
   for (const generator of visibleImageGenerators) {
     const choice = document.createElement("label");
     choice.className = "generator-config-choice";
@@ -755,6 +742,7 @@ el("generator-config-close").addEventListener("click", () => generatorConfigDial
 el("generator-config-cancel").addEventListener("click", () => generatorConfigDialog.close());
 el("generator-config-default-view").addEventListener("change", (event) => {
   generatorConfigDraft.defaultView = event.target.value;
+  renderGeneratorConfig();
 });
 el("generator-config-show-image").addEventListener("change", (event) => {
   generatorConfigDraft.showImageSection = event.target.checked;
@@ -822,7 +810,6 @@ el("gens-enable-all").addEventListener("click", () => setAllGenerators("enable")
 el("gens-disable-all").addEventListener("click", () => setAllGenerators("disable"));
 el("gens-toggle-all").addEventListener("click", () => setAllGenerators("toggle"));
 el("gens-default").addEventListener("click", () => {
-  changeGeneratorView(generatorPreferences.defaultView);
   applyGeneratorPreset({ generatorKeys: generatorPreferences.defaultSelectedKeys }, { includeDescribe: true });
 });
 }
