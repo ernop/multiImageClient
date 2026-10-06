@@ -92,6 +92,10 @@
 /* Culture: lowercase nation/group/language/religion name — gentle teal. */
 .mcphee-mark-culture { background: #c9ecea; }
 
+/* Caps: a sentence start or sentence gap that departs from the text's
+   majority caps style — khaki. */
+.mcphee-mark-caps { background: #e3e8b8; }
+
 /* Hover highlight: while the pointer is on a panel row, every occurrence of
    that row's issue gets this solid saturated background — a plain full-word
    color change. NO animation and NO transition, ever: the class is added on
@@ -274,6 +278,78 @@
 .mcphee-panel-word-echo { background: #e6d9f7; padding: 0 4px; border-radius: 3px; }
 .mcphee-panel-word-obscure { background: #d5efd5; padding: 0 4px; border-radius: 3px; }
 .mcphee-panel-word-culture { background: #c9ecea; padding: 0 4px; border-radius: 3px; }
+.mcphee-panel-word-caps { background: #e3e8b8; padding: 0 4px; border-radius: 3px; white-space: pre; }
+
+/* ---------- caps block: style summary, per-style tools, diff review ----------
+   Every line is a single row; counts and percentages carry the weight,
+   labels follow them. */
+.mcphee-caps {
+  border: 1px solid #b7bd86;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  color: #000;
+}
+
+.mcphee-caps-head,
+.mcphee-caps-line,
+.mcphee-caps-style,
+.mcphee-caps-reviewhead,
+.mcphee-caps-change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.mcphee-caps-head { margin-bottom: 2px; }
+.mcphee-caps-head .mcphee-panel-btn:first-of-type { margin-left: auto; }
+.mcphee-caps-title { font-size: 15px; font-weight: 800; }
+.mcphee-caps-verdict { font-weight: 700; }
+.mcphee-caps-mixed { color: #9a3412; }
+
+.mcphee-caps-label { font-weight: 600; }
+.mcphee-caps-num { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mcphee-caps-percent { min-width: 3.2em; text-align: right; }
+.mcphee-caps-stylename { font-weight: 700; min-width: 6.5em; }
+
+.mcphee-caps-style { padding: 2px 0; }
+.mcphee-caps-style .mcphee-panel-btn:first-of-type { margin-left: auto; }
+
+.mcphee-caps-review {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #b7bd86;
+}
+
+.mcphee-caps-reviewhead .mcphee-panel-btn { margin-left: auto; }
+
+.mcphee-caps-change {
+  padding: 2px 0;
+  border-bottom: 1px solid #e5e7eb;
+  cursor: pointer;
+}
+.mcphee-caps-change:hover { background: #f3f7fc; }
+
+.mcphee-caps-context {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  font-family: ui-monospace, monospace;
+}
+
+.mcphee-caps-from { background: #ffd6dc; font-weight: 700; }
+.mcphee-caps-to { background: #d5efd5; font-weight: 700; font-family: ui-monospace, monospace; white-space: pre; }
+.mcphee-caps-arrow { font-weight: 700; }
+.mcphee-caps-apply { border-color: #15803d; color: #000; font-weight: 600; }
+.mcphee-caps-skip { color: #000; border-style: dashed; }
+.mcphee-caps-style .mcphee-panel-btn,
+.mcphee-caps-change .mcphee-panel-btn { flex-shrink: 0; }
+
+.mcphee-caps .mcphee-panel-btn:disabled { opacity: 1; color: #000; border-style: dotted; cursor: default; background: #fff; }
 
 .mcphee-panel-note { color: #92400e; }
 

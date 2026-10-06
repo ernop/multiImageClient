@@ -79,13 +79,22 @@
 //   .mcphee-mark-obscure         rare word reused in the text -> green
 //   .mcphee-mark-culture         proper name written lowercase (jupiter,
 //                                   japanese, usa) -> teal, with the cased fix
+//   .mcphee-mark-caps            a sentence start or sentence gap that
+//                                   departs from the text's majority caps
+//                                   style -> khaki
+//
+// Caps style (McPhee.capsStyles: traditional, lcstyle):
+//   sw.capsReport(text)                 style characterization + percentages
+//   sw.capsChanges(text, "lcstyle")     every edit converting to that style
+//   sw.applyCapsChanges(text, changes)  apply any subset of those edits
+//   sw.convertCaps(text, "traditional") all edits at once -> { text, changes }
 // The overlay renders BEHIND the textarea (transparent text, colored
 // backgrounds only), so typing latency and native selection are untouched.
 
 var McPhee = (function () {
   "use strict";
 
-  var VERSION = "3.11.2";
+  var VERSION = "3.12.0";
 
   var WORD_RE = /[A-Za-z]+(?:['\u2019][A-Za-z]+)*/g;
   var TOKEN_RE = /([A-Za-z]+(?:['\u2019][A-Za-z]+)*)|( {2,})/g;
@@ -105,17 +114,17 @@ var McPhee = (function () {
     standard: {
       misspelled: true, unknown: true, doublespace: true,
       sentenceCapitalization: false, terminalPunctuation: false,
-      echo: true, obscureRepeat: true, culture: true,
+      echo: true, obscureRepeat: true, culture: true, caps: true,
     },
     strict: {
       misspelled: true, unknown: true, doublespace: true,
       sentenceCapitalization: true, terminalPunctuation: true,
-      echo: true, obscureRepeat: true, culture: true,
+      echo: true, obscureRepeat: true, culture: true, caps: true,
     },
     casual: {
       misspelled: true, unknown: false, doublespace: true,
       sentenceCapitalization: false, terminalPunctuation: false,
-      echo: false, obscureRepeat: false, culture: false,
+      echo: false, obscureRepeat: false, culture: false, caps: true,
     },
   };
 
@@ -165,10 +174,14 @@ var McPhee = (function () {
       label: "terminal punctuation",
       profiles: { standard: false, strict: true, casual: false },
       defaultOrder: 7 },
+    { id: "caps", kind: "flag", rule: "caps",
+      label: "caps consistency (khaki)",
+      profiles: { standard: true, strict: true, casual: true },
+      defaultOrder: 8 },
     { id: "doublespace", kind: "flag", rule: "doublespace",
       label: "extra spaces (yellow)",
       profiles: { standard: true, strict: true, casual: true },
-      defaultOrder: 8 },
+      defaultOrder: 9 },
   ];
 
   // Formality ladder shown by the panel chooser; maps display names to
@@ -336,7 +349,7 @@ var McPhee = (function () {
     return issues.filter(function (issue) {
       if (issue.start < span.start || issue.end > span.end) return true;
       return issue.kind !== "word" && issue.kind !== "culture"
-        && issue.kind !== "capitalization";
+        && issue.kind !== "capitalization" && issue.kind !== "caps";
     });
   }
 
@@ -400,6 +413,85 @@ var McPhee = (function () {
     if (caret <= p) return caret;
     if (caret >= oldText.length - s) return newText.length - (oldText.length - caret);
     return newText.length - s;
+  }
+
+  // ---------- caps style ----------
+  // A caps style is a convention for how sentences start and what gap
+  // follows a sentence end. sentenceGap null means the style has no
+  // spacing rule and leaves gaps alone (lcstyle).
+  var CAPS_STYLES = [
+    { id: "traditional", label: "traditional", startCase: "upper", sentenceGap: " " },
+    { id: "lcstyle", label: "lcstyle", startCase: "lower", sentenceGap: null },
+  ];
+
+  function capsStyle(id) {
+    for (var i = 0; i < CAPS_STYLES.length; i++) {
+      if (CAPS_STYLES[i].id === id) return CAPS_STYLES[i];
+    }
+    throw new Error("McPhee: unknown caps style '" + id + "'");
+  }
+
+  // A period after one of these is not a sentence end. A capital forced
+  // onto the next word would be a wrong edit; a missed sentence start is
+  // only a missed edit.
+  var NON_TERMINAL_ABBREVIATIONS = new Set("mr mrs ms dr st vs etc e.g i.e cf jr sr prof approx".split(" "));
+  var CAPS_LINE_PREFIX_RE = /^ *(?:(?:[-*+>]|\d+[.)]) +)*/;
+  var CAPS_GAP_RE = /([.!?]+)(["'\u2019\u201d)\]]*)( +)/g;
+  var CAPS_WORD_RE = /^[A-Za-z]+(?:['\u2019][A-Za-z]+)*/;
+  var CAPS_OPENERS = "\"'\u201c\u2018([";
+
+  // True when the "." at line[dotIndex] closes an abbreviation: a listed
+  // one, a dotted token (e.g., U.S., file.txt), or a capital initial
+  // other than the pronoun I ("J. Smith" vs "so do I. Then").
+  function abbreviationBefore(line, dotIndex) {
+    var m = /[A-Za-z.]+$/.exec(line.slice(0, dotIndex));
+    if (!m) return false;
+    if (/^[A-HJ-Z]$/.test(m[0])) return true;
+    if (m[0].indexOf(".") !== -1) return true;
+    return NON_TERMINAL_ABBREVIATIONS.has(m[0].toLowerCase());
+  }
+
+  function capsStartTo(word, startCase) {
+    var first = word.charAt(0);
+    return (startCase === "upper" ? first.toUpperCase() : first.toLowerCase()) + word.slice(1);
+  }
+
+  // Every edit that converts the observed text to `style`, in text order.
+  function capsChangesFrom(text, obs, style) {
+    var changes = [];
+    obs.starts.forEach(function (s) {
+      if (s.startCase === "neutral" || s.startCase === style.startCase) return;
+      changes.push({ kind: "start", start: s.start, end: s.end, from: s.value, to: capsStartTo(s.value, style.startCase) });
+    });
+    if (style.sentenceGap !== null) {
+      obs.gaps.forEach(function (g) {
+        var from = text.slice(g.start, g.end);
+        if (from === style.sentenceGap) return;
+        changes.push({ kind: "gap", start: g.start, end: g.end, from: from, to: style.sentenceGap });
+      });
+    }
+    changes.sort(function (a, b) { return a.start - b.start; });
+    return changes;
+  }
+
+  // Applies any subset of a change list computed against `text`. A change
+  // whose `from` no longer matches its span means the list belongs to some
+  // other text; that throws rather than edit the wrong characters.
+  function applyCapsChanges(text, changes) {
+    var sorted = changes.slice().sort(function (a, b) { return b.start - a.start; });
+    var out = text;
+    var floor = Infinity;
+    sorted.forEach(function (c) {
+      var actual = text.slice(c.start, c.end);
+      if (actual !== c.from) {
+        throw new Error("McPhee: caps change at " + c.start + " expects " + JSON.stringify(c.from)
+          + " but the text has " + JSON.stringify(actual));
+      }
+      if (c.end > floor) throw new Error("McPhee: overlapping caps changes at " + c.start);
+      out = out.slice(0, c.start) + c.to + out.slice(c.end);
+      floor = c.start;
+    });
+    return out;
   }
 
   function Checker(dict, options, freqRank) {
@@ -891,6 +983,17 @@ var McPhee = (function () {
         issues.push({ kind: "punctuation", value: trimmed.slice(-1), start: trimmed.length - 1, end: trimmed.length, classification: "punctuation" });
       }
     }
+    if (rules.caps) {
+      // A span another rule already flags keeps that rule's row; caps only
+      // adds marks on otherwise clean characters.
+      var flagged = issues.slice();
+      this.capsDepartures(text, opts).forEach(function (c) {
+        for (var k = 0; k < flagged.length; k++) {
+          if (c.start < flagged[k].end && c.end > flagged[k].start) return;
+        }
+        issues.push(c);
+      });
+    }
     if (opts && typeof opts.caret === "number") {
       issues = hideTypingWord(issues, text, opts.caret);
     }
@@ -1203,6 +1306,165 @@ var McPhee = (function () {
       return b.score - a.score;
     });
     return { totalWords: total, rows: rows.slice(0, limit) };
+  };
+
+  // ---------- caps style analysis ----------
+
+  // How a sentence-start word reads for caps purposes: "upper", "lower", or
+  // "neutral" when no style should change it — the pronoun I, acronyms and
+  // mixed-case words (NASA, McPhee, iPhone), and proper nouns (culture list,
+  // or a lowercase form the dictionary rejects: Jupiter, Helbro).
+  Checker.prototype.capsStartCase = function (word) {
+    var first = word.charAt(0);
+    if (/[A-Z]/.test(word.slice(1))) return "neutral";
+    if (first === first.toLowerCase()) return "lower";
+    if (/^I(?:['\u2019](?:m|ve|d|ll))?$/.test(word)) return "neutral";
+    var lower = word.toLowerCase();
+    if (cultureExpected(lower) || this.cultureWords.has(lower)) return "neutral";
+    if (this.classify(lower) !== "ok") return "neutral";
+    return "upper";
+  };
+
+  // Every sentence start and every sentence gap in the text.
+  //   starts: { start, end, value, startCase } — the first word of each
+  //           line (after indentation, list/quote markers, and opening
+  //           quotes), and the first word after . ! ? plus spaces.
+  //   gaps:   { start, end, width } — the space run after a sentence end,
+  //           on the same line and followed by more text.
+  // Ellipses and abbreviations are not sentence ends; code-indented lines
+  // (tab or 4+ spaces) and exclusion zones contribute nothing.
+  Checker.prototype.capsObservations = function (text, opts) {
+    var self = this;
+    var ranges = this.excludedRanges(text, opts);
+    function touchesExcluded(start, end) {
+      for (var i = 0; i < ranges.length; i++) {
+        if (start < ranges[i][1] && end > ranges[i][0]) return true;
+      }
+      return false;
+    }
+    var starts = [];
+    var gaps = [];
+    function addStart(pos, lineEnd) {
+      while (pos < lineEnd && CAPS_OPENERS.indexOf(text.charAt(pos)) !== -1) pos++;
+      var m = CAPS_WORD_RE.exec(text.slice(pos, lineEnd));
+      if (!m || touchesExcluded(pos, pos + m[0].length)) return;
+      starts.push({ start: pos, end: pos + m[0].length, value: m[0], startCase: self.capsStartCase(m[0]) });
+    }
+    var lineStart = 0;
+    while (lineStart <= text.length) {
+      var nl = text.indexOf("\n", lineStart);
+      var lineEnd = nl === -1 ? text.length : nl;
+      var line = text.slice(lineStart, lineEnd);
+      if (line.trim() && !/^(?:\t| {4})/.test(line)) {
+        var prefixLength = CAPS_LINE_PREFIX_RE.exec(line)[0].length;
+        addStart(lineStart + prefixLength, lineEnd);
+        CAPS_GAP_RE.lastIndex = prefixLength;
+        var g;
+        while ((g = CAPS_GAP_RE.exec(line)) !== null) {
+          if (g[1].length > 1 && !/[!?]/.test(g[1])) continue;
+          var gapStart = lineStart + g.index + g[1].length + g[2].length;
+          var gapEnd = gapStart + g[3].length;
+          if (gapEnd === lineEnd) continue;
+          if (g[1] === "." && abbreviationBefore(line, g.index)) continue;
+          if (touchesExcluded(lineStart + g.index, gapEnd)) continue;
+          gaps.push({ start: gapStart, end: gapEnd, width: gapEnd - gapStart });
+          addStart(gapEnd, lineEnd);
+        }
+      }
+      if (nl === -1) break;
+      lineStart = nl + 1;
+    }
+    return { starts: starts, gaps: gaps };
+  };
+
+  // Characterizes the whole text's caps style.
+  //   starts      { upper, lower, neutral } sentence-start counts
+  //   gaps        { one, two, more } sentence-gap counts (more = 3+ spaces)
+  //   startCase   "upper" | "lower" | "mixed" | null (no deciding starts)
+  //   gapWidth    "one" | "two" | "more" | "mixed" | null (no gaps)
+  //   consistent  true when neither starts nor gaps are mixed
+  //   styles      per style: { id, label, relevant, changes, matchPercent }
+  //               — relevant is the number of starts/gaps the style has a
+  //               rule for; matchPercent (floored, so 100 means no change
+  //               needed; null with nothing relevant) is the share that
+  //               already conforms.
+  Checker.prototype.capsReport = function (text, opts) {
+    var obs = this.capsObservations(text, opts);
+    var starts = { upper: 0, lower: 0, neutral: 0 };
+    obs.starts.forEach(function (s) { starts[s.startCase]++; });
+    var gaps = { one: 0, two: 0, more: 0 };
+    obs.gaps.forEach(function (g) {
+      if (g.width === 1) gaps.one++;
+      else if (g.width === 2) gaps.two++;
+      else gaps.more++;
+    });
+    var startCase = starts.upper && starts.lower ? "mixed"
+      : starts.upper ? "upper" : starts.lower ? "lower" : null;
+    var gapKinds = ["one", "two", "more"].filter(function (k) { return gaps[k] > 0; });
+    var gapWidth = gapKinds.length > 1 ? "mixed" : gapKinds.length ? gapKinds[0] : null;
+    var styles = CAPS_STYLES.map(function (style) {
+      var relevant = starts.upper + starts.lower + (style.sentenceGap !== null ? obs.gaps.length : 0);
+      var changes = capsChangesFrom(text, obs, style).length;
+      return {
+        id: style.id, label: style.label, relevant: relevant, changes: changes,
+        matchPercent: relevant ? Math.floor(100 * (relevant - changes) / relevant) : null,
+      };
+    });
+    return {
+      starts: starts, gaps: gaps, startCase: startCase, gapWidth: gapWidth,
+      consistent: startCase !== "mixed" && gapWidth !== "mixed",
+      styles: styles,
+    };
+  };
+
+  Checker.prototype.capsChanges = function (text, styleId, opts) {
+    return capsChangesFrom(text, this.capsObservations(text, opts), capsStyle(styleId));
+  };
+
+  Checker.prototype.applyCapsChanges = function (text, changes) {
+    return applyCapsChanges(text, changes);
+  };
+
+  Checker.prototype.convertCaps = function (text, styleId, opts) {
+    var changes = this.capsChanges(text, styleId, opts);
+    return { text: applyCapsChanges(text, changes), changes: changes };
+  };
+
+  // Issues for the caps rule: the sentence starts and one/two-space gaps
+  // that depart from the text's own majority. A tie has no majority and
+  // marks nothing; 3+ space gaps belong to the doublespace rule. Each issue
+  // carries capsKind ("start" | "gap") and expected (the majority form).
+  Checker.prototype.capsDepartures = function (text, opts) {
+    var obs = this.capsObservations(text, opts);
+    var issues = [];
+    var upper = 0, lower = 0;
+    obs.starts.forEach(function (s) {
+      if (s.startCase === "upper") upper++;
+      else if (s.startCase === "lower") lower++;
+    });
+    if (upper && lower && upper !== lower) {
+      var majority = upper > lower ? "upper" : "lower";
+      obs.starts.forEach(function (s) {
+        if (s.startCase === "neutral" || s.startCase === majority) return;
+        issues.push({ kind: "caps", capsKind: "start", value: s.value, start: s.start, end: s.end,
+          classification: "caps", expected: capsStartTo(s.value, majority) });
+      });
+    }
+    var one = 0, two = 0;
+    obs.gaps.forEach(function (g) {
+      if (g.width === 1) one++;
+      else if (g.width === 2) two++;
+    });
+    if (one && two && one !== two) {
+      var gap = one > two ? " " : "  ";
+      obs.gaps.forEach(function (g) {
+        if (g.width > 2 || g.width === gap.length) return;
+        issues.push({ kind: "caps", capsKind: "gap", value: text.slice(g.start, g.end), start: g.start, end: g.end,
+          classification: "caps", expected: gap });
+      });
+    }
+    issues.sort(function (a, b) { return a.start - b.start; });
+    return issues;
   };
 
   // Picks a correction for a misspelled word, or null when nothing is safe to
@@ -1881,6 +2143,14 @@ var McPhee = (function () {
     var showConfig = false;
     var showIgnored = false;
     var confirmUnignoreAll = false;
+    // Caps tools: the open diff list ({ styleId, skipped: Set of offsets,
+    // textAt: the value the skip offsets refer to }) and the history of
+    // caps edits. An undo/redo entry applies only while the text is still
+    // exactly what that edit left (or found); after any other edit,
+    // native Ctrl+Z is the undo.
+    var capsReview = null;
+    var capsUndo = [];
+    var capsRedo = [];
 
     function persistOverrides() {
       try { localStorage.setItem(overridesKey, JSON.stringify(ruleOverrides)); } catch (e) { /* private mode */ }
@@ -2284,6 +2554,231 @@ var McPhee = (function () {
       return box;
     }
 
+    // ----- caps tools -----
+
+    // Rewrites only the changed span (one native undo step) and keeps the
+    // caret where the author was.
+    function rewriteValue(newText) {
+      var value = textarea.value;
+      if (newText === value) return;
+      var caret = caretAfterRewrite(value, newText, textarea.selectionStart);
+      var max = Math.min(value.length, newText.length);
+      var p = 0;
+      while (p < max && value.charCodeAt(p) === newText.charCodeAt(p)) p++;
+      var s = 0;
+      while (s < max - p
+        && value.charCodeAt(value.length - 1 - s) === newText.charCodeAt(newText.length - 1 - s)) s++;
+      replaceRange(textarea, p, value.length - s, newText.slice(p, newText.length - s));
+      if (textarea.value !== newText) {
+        throw new Error("McPhee: caps edit did not produce the expected text");
+      }
+      textarea.setSelectionRange(caret, caret);
+    }
+
+    function capsCommit(newText) {
+      var before = textarea.value;
+      if (newText === before) return;
+      rewriteValue(newText);
+      capsUndo.push({ before: before, after: newText });
+      capsRedo = [];
+      afterAction();
+    }
+
+    function capsCanUndo() {
+      var top = capsUndo[capsUndo.length - 1];
+      return !!top && textarea.value === top.after;
+    }
+
+    function capsCanRedo() {
+      var top = capsRedo[capsRedo.length - 1];
+      return !!top && textarea.value === top.before;
+    }
+
+    function capsUndoStep() {
+      if (!capsCanUndo()) return;
+      var entry = capsUndo.pop();
+      rewriteValue(entry.before);
+      capsRedo.push(entry);
+      afterAction();
+    }
+
+    function capsRedoStep() {
+      if (!capsCanRedo()) return;
+      var entry = capsRedo.pop();
+      rewriteValue(entry.after);
+      capsUndo.push(entry);
+      afterAction();
+    }
+
+    function textSpan(text, className) {
+      var el = document.createElement("span");
+      if (className) el.className = className;
+      el.textContent = text;
+      return el;
+    }
+
+    // Spaces in a gap are invisible; show each as an open-box glyph.
+    function visibleSpaces(s) {
+      return s.replace(/ /g, "\u2423");
+    }
+
+    function countPart(n, label) {
+      var part = document.createElement("span");
+      part.className = "mcphee-caps-count";
+      part.appendChild(textSpan(String(n), "mcphee-caps-num"));
+      part.appendChild(document.createTextNode(" " + label));
+      return part;
+    }
+
+    // The open style's pending changes: the full list minus the skipped.
+    function capsPending(value) {
+      if (capsReview.textAt !== value) {
+        capsReview.skipped = new Set();
+        capsReview.textAt = value;
+      }
+      return self.capsChanges(value, capsReview.styleId, analyzeOpts);
+    }
+
+    // Applies `chosen` (a subset of the open list) and carries the skip
+    // offsets through the length changes, so skipped rows stay skipped.
+    function capsApplyFromReview(value, chosen) {
+      var newText = applyCapsChanges(value, chosen);
+      var shifted = new Set();
+      capsReview.skipped.forEach(function (offset) {
+        var delta = 0;
+        chosen.forEach(function (c) {
+          if (c.start < offset) delta += c.to.length - (c.end - c.start);
+        });
+        shifted.add(offset + delta);
+      });
+      capsReview.skipped = shifted;
+      capsReview.textAt = newText;
+      capsCommit(newText);
+    }
+
+    function capsStyleLine(style) {
+      var line = document.createElement("div");
+      line.className = "mcphee-caps-style";
+      line.appendChild(textSpan(style.label, "mcphee-caps-stylename"));
+      line.appendChild(textSpan(style.matchPercent === null ? "\u2013" : style.matchPercent + "%", "mcphee-caps-num mcphee-caps-percent"));
+      line.appendChild(countPart(style.changes, style.changes === 1 ? "change" : "changes"));
+      var open = capsReview && capsReview.styleId === style.id;
+      var preview = button("preview", "mcphee-panel-select", function () {
+        capsReview = open ? null : { styleId: style.id, skipped: new Set(), textAt: textarea.value };
+        render();
+      });
+      if (open) preview.classList.add("mcphee-formality-selected");
+      var applyAll = button("apply all", "mcphee-caps-apply", function () {
+        capsCommit(self.convertCaps(textarea.value, style.id, analyzeOpts).text);
+      });
+      applyAll.disabled = style.changes === 0;
+      preview.disabled = style.changes === 0 && !open;
+      line.appendChild(preview);
+      line.appendChild(applyAll);
+      return line;
+    }
+
+    function capsChangeRow(value, change) {
+      var row = document.createElement("div");
+      row.className = "mcphee-caps-change";
+      var lineStart = value.lastIndexOf("\n", change.start - 1) + 1;
+      var lineEnd = value.indexOf("\n", change.end);
+      if (lineEnd === -1) lineEnd = value.length;
+      var a = Math.max(lineStart, change.start - 16);
+      var b = Math.min(lineEnd, change.end + 16);
+      var shown = change.kind === "gap" ? visibleSpaces : function (s) { return s; };
+      var ctx = document.createElement("span");
+      ctx.className = "mcphee-caps-context";
+      ctx.appendChild(document.createTextNode((a > lineStart ? "\u2026" : "") + value.slice(a, change.start)));
+      ctx.appendChild(textSpan(shown(change.from), "mcphee-caps-from"));
+      ctx.appendChild(document.createTextNode(value.slice(change.end, b) + (b < lineEnd ? "\u2026" : "")));
+      row.appendChild(ctx);
+      row.appendChild(textSpan("\u2192", "mcphee-caps-arrow"));
+      row.appendChild(textSpan(shown(change.to), "mcphee-caps-to"));
+      row.appendChild(button("apply", "mcphee-caps-apply", function () {
+        capsApplyFromReview(textarea.value, [change]);
+      }));
+      row.appendChild(button("skip", "mcphee-caps-skip", function () {
+        capsReview.skipped.add(change.start);
+        render();
+      }));
+      row.addEventListener("mouseenter", function () {
+        if (config.controller && config.controller.scrollToOffset) {
+          config.controller.scrollToOffset(change.start);
+        }
+      });
+      row.addEventListener("click", function (e) {
+        if (e.target.closest("button")) return;
+        textarea.focus();
+        textarea.setSelectionRange(change.start, change.end);
+        if (config.controller && config.controller.scrollToOffset) {
+          config.controller.scrollToOffset(change.start);
+        }
+      });
+      return row;
+    }
+
+    function capsReviewList(value) {
+      var list = document.createElement("div");
+      list.className = "mcphee-caps-review";
+      var all = capsPending(value);
+      var pending = all.filter(function (c) { return !capsReview.skipped.has(c.start); });
+      var head = document.createElement("div");
+      head.className = "mcphee-caps-reviewhead";
+      head.appendChild(textSpan(capsStyle(capsReview.styleId).label, "mcphee-caps-stylename"));
+      head.appendChild(countPart(pending.length, "to review"));
+      if (all.length > pending.length) head.appendChild(countPart(all.length - pending.length, "skipped"));
+      var applyRest = button("apply all remaining", "mcphee-caps-apply", function () {
+        capsApplyFromReview(textarea.value, pending);
+      });
+      applyRest.disabled = !pending.length;
+      head.appendChild(applyRest);
+      list.appendChild(head);
+      pending.forEach(function (c) { list.appendChild(capsChangeRow(value, c)); });
+      return list;
+    }
+
+    function capsSection() {
+      var value = textarea.value;
+      var report = self.capsReport(value, analyzeOpts);
+      var box = document.createElement("div");
+      box.className = "mcphee-caps";
+      var head = document.createElement("div");
+      head.className = "mcphee-caps-head";
+      head.appendChild(textSpan("caps", "mcphee-caps-title"));
+      var observed = report.starts.upper + report.starts.lower + report.gaps.one + report.gaps.two + report.gaps.more;
+      head.appendChild(textSpan(
+        observed ? (report.consistent ? "consistent" : "mixed") : "no sentences",
+        "mcphee-caps-verdict" + (observed && !report.consistent ? " mcphee-caps-mixed" : "")));
+      var undo = button("undo", "mcphee-panel-select", capsUndoStep);
+      undo.disabled = !capsCanUndo();
+      var redo = button("redo", "mcphee-panel-select", capsRedoStep);
+      redo.disabled = !capsCanRedo();
+      head.appendChild(undo);
+      head.appendChild(redo);
+      box.appendChild(head);
+      if (report.starts.upper + report.starts.lower) {
+        var startsLine = document.createElement("div");
+        startsLine.className = "mcphee-caps-line";
+        startsLine.appendChild(textSpan("sentence starts", "mcphee-caps-label"));
+        startsLine.appendChild(countPart(report.starts.upper, "capital"));
+        startsLine.appendChild(countPart(report.starts.lower, "lowercase"));
+        box.appendChild(startsLine);
+      }
+      if (report.gaps.one + report.gaps.two + report.gaps.more) {
+        var gapsLine = document.createElement("div");
+        gapsLine.className = "mcphee-caps-line";
+        gapsLine.appendChild(textSpan("after sentence end", "mcphee-caps-label"));
+        gapsLine.appendChild(countPart(report.gaps.one, "one space"));
+        gapsLine.appendChild(countPart(report.gaps.two, "two spaces"));
+        if (report.gaps.more) gapsLine.appendChild(countPart(report.gaps.more, "three+"));
+        box.appendChild(gapsLine);
+      }
+      report.styles.forEach(function (style) { box.appendChild(capsStyleLine(style)); });
+      if (capsReview) box.appendChild(capsReviewList(value));
+      return box;
+    }
+
     function render() {
       var issues = self.analyze(textarea.value, Object.assign({}, analyzeOpts, {
         caret: textarea.selectionStart,
@@ -2334,6 +2829,7 @@ var McPhee = (function () {
       container.appendChild(formalityChooser());
       if (showConfig) container.appendChild(configSection());
       if (showIgnored) container.appendChild(ignoredSection());
+      if (rulesFromCheckers(activeCheckers()).caps) container.appendChild(capsSection());
 
       // Group repeated words into a single row (remembering the first
       // occurrence so hover can scroll to it).
@@ -2394,7 +2890,7 @@ var McPhee = (function () {
       // disorienting.
       var SECTION_RANK = Object.assign({
         misspelled: 0, unknown: 1, culture: 2, echo: 3, obscure: 4,
-        capitalization: 5, punctuation: 6, doublespace: 7,
+        capitalization: 5, punctuation: 6, caps: 7, doublespace: 8,
       }, self.sectionRank(analyzeOpts));
       var rows = [];
 
@@ -2490,6 +2986,28 @@ var McPhee = (function () {
             start: issue.start,
             spans: [[issue.start, issue.end]],
             el: prow,
+          });
+        } else if (issue.kind === "caps") {
+          var gapIssue = issue.capsKind === "gap";
+          var cLabel = textSpan(gapIssue ? visibleSpaces(issue.value) : issue.value,
+            "mcphee-panel-word mcphee-panel-word-caps");
+          var sameCaps = function (i) {
+            return i.kind === "caps" && i.start === issue.start && i.value === issue.value;
+          };
+          var cFix = button(gapIssue ? visibleSpaces(issue.expected) : issue.expected, "mcphee-panel-suggestion", function () {
+            var value = textarea.value;
+            var current = self.analyze(value, analyzeOpts).find(sameCaps);
+            if (!current) return;
+            capsCommit(value.slice(0, current.start) + current.expected + value.slice(current.end));
+          });
+          var cFixes = document.createElement("span");
+          cFixes.className = "mcphee-panel-fixes";
+          cFixes.appendChild(cFix);
+          rows.push({
+            rank: SECTION_RANK.caps,
+            start: issue.start,
+            spans: [[issue.start, issue.end]],
+            el: panelRow([cLabel, cFixes], null, null, selectButton(sameCaps)),
           });
         }
       });
@@ -2929,5 +3447,5 @@ var McPhee = (function () {
     });
   }
 
-  return { create: create, version: VERSION, profiles: PROFILES, checkers: CHECKER_CATALOG };
+  return { create: create, version: VERSION, profiles: PROFILES, checkers: CHECKER_CATALOG, capsStyles: CAPS_STYLES };
 })();

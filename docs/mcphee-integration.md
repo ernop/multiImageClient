@@ -1,6 +1,6 @@
 # Composer spelling library
 
-Updated 2026-09-11.
+Updated 2026-10-06.
 
 ## Release decision
 
@@ -8,11 +8,16 @@ Load the current McPhee library from the owner's checkout into every MultiImageC
 This release includes the local UI, the original production environment, and Vibecoders AI Generation.
 All three use the same committed application assets.
 
-The vendored source includes the library's pending 3.11.1 Control-tap correction.
-The application copy adds two overlay fixes and reports version 3.11.2.
-Its upstream base commit is `2fd740d`; the copied files include the working changes after that commit.
-The library reports `McPhee.version === "3.11.2"`.
+The vendored copy is upstream McPhee 3.12.0 (commit `bdc28ab`) with this application's two overlay fixes merged in.
+The library reports `McPhee.version === "3.12.0"`.
 Distribution remains a complete folder copy, with no runtime dependency on the source checkout.
+
+3.12.0 adds the caps level (owner request 2026-10-06).
+The spelling panel reports the prompt's capitalization style and whether it is consistent.
+It shows how closely the prompt matches each style as a percentage: traditional (capital sentence starts, one space between sentences) or lcstyle (lowercase sentence starts).
+Departures from the prompt's own majority are marked.
+Either style can be previewed and applied all at once or one change at a time, with caps undo and redo.
+The `caps` checker is stored like every other checker under `spelling.ruleOverrides.checkers`.
 
 ## Requirements and behavior
 
@@ -52,8 +57,9 @@ Spelling checks run in the browser and do not send prompts to a provider.
 Run the library's Node and browser suites before releasing this copy.
 Run the application's release gate and verify the loaded version and dictionary on each deployed composer.
 
-## Overlay corrections in 3.11.2
+## Application overlay corrections
 
+These patches were first applied to 3.11.2 and are carried forward into each new upstream copy.
 Browser verification found two failures in the incoming 3.11.1 source.
 Copy text metrics while the textarea retains its overlay class.
 Temporarily remove that class only when reading its original background color.

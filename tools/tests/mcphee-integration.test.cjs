@@ -38,9 +38,9 @@ async function create(ctx) {
   return vm.runInContext(`McPhee.create(${options})`, ctx);
 }
 
-test('composer loads version 3.11.2 and selects the 2026 dictionary', async () => {
+test('composer loads version 3.12.0 and selects the 2026 dictionary', async () => {
   const ctx = context();
-  assert.equal(ctx.McPhee.version, '3.11.2');
+  assert.equal(ctx.McPhee.version, '3.12.0');
   const checker = await create(ctx);
   const active = checker.resolveCheckers();
   assert.equal(active.find(c => c.id === 'spell2026').enabled, true);
@@ -63,7 +63,8 @@ test('legacy and per-checker settings survive canonical configuration round trip
     rules: { unknown: false }, params: { echoCommonRank: 3000 },
     checkers: { spell2026: { enabled: false }, spell: { enabled: true, order: 0 },
       echo: { order: 9, params: { echoWindowWords: 7, echoCommonRank: 4000 } },
-      obscureRepeat: { enabled: true, params: { obscureRank: 15000 } } },
+      obscureRepeat: { enabled: true, params: { obscureRank: 15000 } },
+      caps: { enabled: false, order: 2 } },
   }]) {
     const value = spelling(overrides);
     const fields = [{ name: 'spelling', scope: 'browser', read: () => value,

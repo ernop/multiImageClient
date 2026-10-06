@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
   const requests=[]; page.on('request',r=>{if(r.url().includes('mcphee/'))requests.push(new URL(r.url()).pathname);});
   await page.goto(process.env.MIC_UI_BASE_URL || 'http://127.0.0.1:5960/');
   await page.waitForFunction(()=>typeof mcphee !== 'undefined' && mcphee && !document.querySelector('#mcphee-enabled-toggle').disabled);
-  assert.equal(await page.evaluate(()=>McPhee.version),'3.11.2');
+  assert.equal(await page.evaluate(()=>McPhee.version),'3.12.0');
   assert.ok(requests.some(p=>p.endsWith('en_US_2026.aff')));
   assert.ok(requests.some(p=>p.endsWith('en_US_2026.dic')));
   const prompt=page.locator('#prompt');
@@ -49,6 +49,6 @@ const assert = require('node:assert/strict');
    return [bd.font===ta.font,bd.visibility];
   }),[true,'visible']);
   assert.deepEqual(errors,[]);
-  console.log('PASS: real composer loads 3.11.2, fetches 2026 dictionary, highlights, corrects, undoes, and persists checker options across reload.');
+  console.log('PASS: real composer loads 3.12.0, fetches 2026 dictionary, highlights, corrects, undoes, and persists checker options across reload.');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

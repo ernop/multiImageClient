@@ -36,6 +36,7 @@ there.
 | `mcphee-mark-echo` | the same content word or exact multi-word phrase reused within 50 words (every occurrence) | light lavender block |
 | `mcphee-mark-obscure` | a rare word (outside the top 10,000 by frequency) used 2+ times in the text | light green block |
 | `mcphee-mark-culture` | a proper name written lowercase ("japanese", "usa", "jupiter") | gentle teal block |
+| `mcphee-mark-caps` | a sentence start or one/two-space sentence gap that departs from the text's majority caps style | khaki block |
 
 ## Setup
 
@@ -177,6 +178,20 @@ sw.analyze("It matters at all here, if it matters at all anywhere.");
 // -> two {kind:"echo", norm:"at all", phraseWords:2, ...} issues
 sw.ignoreRepeat("at all");     // session-scoped "this repetition is deliberate"
 
+// Caps style (McPhee.capsStyles: "traditional", "lcstyle"):
+sw.capsReport(text);
+// -> { starts: {upper, lower, neutral}, gaps: {one, two, more},
+//      startCase: "upper"|"lower"|"mixed"|null, gapWidth: "one"|"two"|"more"|"mixed"|null,
+//      consistent, styles: [{ id, label, relevant, changes, matchPercent }] }
+const changes = sw.capsChanges(text, "lcstyle");
+// -> [{ kind: "start"|"gap", start, end, from, to }, ...] in text order
+sw.applyCapsChanges(text, changes.slice(0, 2)); // any subset; throws if a
+                                                // change doesn't match text
+sw.convertCaps(text, "traditional");            // -> { text, changes }
+// The panel shows a caps block: verdict, counts, one line per style with
+// match percent, change count, preview (apply / skip per change, apply all
+// remaining) and apply all, plus undo / redo for caps edits.
+
 // Concordance primitives for deep-look UIs:
 sw.concordance(text, "but");   // every occurrence + word-gaps between them
 sw.repetitionReport(text);     // all repeated words ranked by bunching
@@ -241,17 +256,30 @@ treats it as not being there:
 - **obscureRepeat** (green) — a word rarer than `obscureRank` (default
   10000) or absent from the frequency list, used 2+ times anywhere. Same
   exemptions; inert without `freqUrl`.
+- **caps** (khaki) — a sentence start whose case, or a one/two-space
+  sentence gap whose width, is the minority in this text (issue
+  `capsKind: "start"|"gap"`, `expected` = the majority form). Sentence
+  starts are the first word of each line (after indentation under 4
+  spaces, `-` `*` `+` `>` `1.` `1)` markers, and opening quotes/brackets)
+  and the first word after `.` `!` `?` + spaces on the same line, except
+  after an ellipsis, a dotted token, a capital initial other than I, or
+  mr mrs ms dr st vs etc e.g i.e cf jr sr prof approx. Neutral (never
+  marked or converted): I and its contractions, words with an inner
+  capital, culture-list words, words whose lowercase form is not a
+  dictionary word. A tie marks nothing; 3+ space gaps are left to
+  doublespace; a span another rule flags is not marked again. Code-indented
+  lines and exclusion zones are skipped.
 
 ## Formality levels (rule profiles)
 
 The panel shows these as the always-visible chooser casual / normal /
 formal; the selected level persists per origin.
 
-| profile (chooser label) | misspelled | unknown | doublespace | culture | sentenceCapitalization | terminalPunctuation | echo | obscureRepeat |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `standard` ("normal") | on | on | on | on | off | off | on | on |
-| `strict` ("formal") | on | on | on | on | on | on | on | on |
-| `casual` ("casual") | on | off | on | off | off | off | off | off |
+| profile (chooser label) | misspelled | unknown | doublespace | culture | sentenceCapitalization | terminalPunctuation | echo | obscureRepeat | caps |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `standard` ("normal") | on | on | on | on | off | off | on | on | on |
+| `strict` ("formal") | on | on | on | on | on | on | on | on | on |
+| `casual` ("casual") | on | off | on | off | off | off | off | off | on |
 
 `casual` is the mode for contexts where lowercase proper nouns, lowercase
 i, and unpunctuated prose are intentional, so only genuine non-words and
