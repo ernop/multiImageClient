@@ -187,6 +187,7 @@ namespace MultiImageClient
 
         public static bool IsPublicRequest(string path, string method) =>
             UiDiscordAccountEndpoints.IsPublicRequest(path, method)
+            || UiWorkflow.IsShareLinkRequest(path, method)
             || method == "GET" && Regex.IsMatch(path, "\\A/public/[a-f0-9]{64}/(?:asset/[0-9]+|reuse)?\\z")
             || method == "POST" && Regex.IsMatch(path, "\\A/public/[a-f0-9]{64}/reuse\\z");
 
@@ -265,7 +266,7 @@ namespace MultiImageClient
             return new(job.Prompt, assets, additions, texts);
         }
 
-        public static string Html(UiPublicShareRecord record, string assetBase, string? reuseUrl, string? loginError = null, bool login = false,
+        public static string Html(UiPublicShareRecord record, string assetBase, string? reuseUrl, bool login = false,
             string? requestAccountUrl = null)
         {
             static string E(string value) => WebUtility.HtmlEncode(value);
@@ -283,6 +284,7 @@ namespace MultiImageClient
                 .output-links{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0}
                 img,video{display:block;width:100%;height:auto;aspect-ratio:4/3;max-height:65vh;object-fit:contain;border-radius:8px;background:#edf1f9}
                 a{color:#3548c8}button,.action{display:inline-block;padding:9px 15px;border:0;border-radius:6px;background:#3548c8;color:white;text-decoration:none}
+                button:disabled{cursor:progress}#status{min-height:1.5em;font-weight:700}#status.error{color:#b00020}
                 input{padding:9px;margin:6px}label{display:block}section{margin:24px 0}
                 figcaption{margin-bottom:8px}nav{display:flex;gap:16px;flex-wrap:wrap;margin:16px 0}
                 </style><h1>Shared prompt</h1>
@@ -294,8 +296,10 @@ namespace MultiImageClient
                 body.Append(requestAccountUrl == null
                     ? "<p>Log in to use or edit this prompt. Need an account? Ask Ernie in Discord.</p>"
                     : "<p>Log in to use or edit this prompt. Select Request account to receive a signup link through Discord.</p>");
-                if (loginError != null) body.Append("<p role=\"alert\">").Append(E(loginError)).Append("</p>");
-                body.Append("<form method=\"post\" action=\"reuse\"><label>Username <input name=\"username\" autocomplete=\"username\" required></label><label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label><button>Log in and make your own</button></form>");
+                body.Append("<form id=\"login\" method=\"post\"><label>Username <input name=\"username\" autocomplete=\"username\" autocapitalize=\"none\" spellcheck=\"false\" required></label>")
+                    .Append("<label>Password <input name=\"password\" type=\"password\" autocomplete=\"current-password\" required></label>")
+                    .Append("<button disabled>Log in and make your own</button><p id=\"status\" role=\"status\"></p></form>")
+                    .Append("<noscript><p>Enable JavaScript to log in.</p></noscript><script>").Append(UiWorkflow.ShareLinkLoginScript).Append("</script>");
             }
             var outputCount = record.Snapshot.Assets.Count(asset => asset.Kind is "image" or "video");
             body.Append("<p>").Append(outputCount).Append(outputCount == 1 ? " output from this prompt.</p>" : " outputs from this prompt.</p>");

@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20260917-public-shares">
+<link rel="stylesheet" href="style.css?v=20261006-share-links">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261006-mcphee-3-12-0">
 </head>
 <body>
@@ -424,6 +424,8 @@
             title="Make Grok video from this image">make grok video</button>
           <button id="image-viewer-hide" type="button" hidden
             title="Hide this image and permanently delete its local and Backblaze B2 files">hide + delete image</button>
+          <button id="image-viewer-share-link" type="button" hidden
+            title="Make a link to this image that only site members can open">share link</button>
           <button id="image-viewer-vibecoders" type="button" hidden
             title="Send this image to #vibecoders">send to vibecoders</button>
         </div>
@@ -834,7 +836,18 @@
   <p class="share-status" role="status"></p>
   <div class="share-actions"><button type="button" class="share-cancel">Cancel</button><button type="button" class="share-confirm" disabled>Make public &amp; send</button></div>
 </dialog>
+<dialog id="share-link-dialog" aria-labelledby="share-link-title">
+  <h2 id="share-link-title">Share link</h2>
+  <p class="share-link-scope"></p>
+  <div class="share-link-target"><img class="share-link-thumb" alt="Selected result" hidden><p class="share-link-prompt"></p></div>
+  <label for="share-link-url">Link</label>
+  <div class="share-link-row"><input id="share-link-url" type="text" readonly spellcheck="false"><button type="button" class="share-link-copy" disabled>Copy link</button></div>
+  <p class="share-link-note">Nothing is sent. The link does not log anyone in.</p>
+  <p class="share-link-status" role="status"></p>
+  <div class="share-actions"><button type="button" class="share-link-close">Close</button></div>
+</dialog>
 <script src="public-share-dialog.js?v=20260917-daily-threads"></script>
-<script src="app.js?v=20260917-daily-threads"></script>
+<script src="share-link-dialog.js?v=20261006-share-links"></script>
+<script src="app.js?v=20261006-share-links"></script>
 </body>
 </html>

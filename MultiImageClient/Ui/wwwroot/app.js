@@ -162,6 +162,7 @@ let hiddenImageKeys = new Set();
 let visibilityMutation = null;
 let vibecodersAvailable = false;
 let fableBotAvailable = false;
+let shareLinksAvailable = false;
 let fableBotSelection = "";
 let fableBotRenderVersion = 0;
 let fableBotSending = false;
@@ -308,6 +309,7 @@ const imageViewerPosition = el("image-viewer-position");
 const imageViewerFavorite = el("image-viewer-favorite");
 const imageViewerVideo = el("image-viewer-video");
 const imageViewerHide = el("image-viewer-hide");
+const imageViewerShareLink = el("image-viewer-share-link");
 const imageViewerVibecoders = el("image-viewer-vibecoders");
 const imageViewerFableBot = document.createElement("button");
 imageViewerFableBot.type = "button";
@@ -527,6 +529,7 @@ async function loadConfig() {
   videoGeneration = cfg.videoGeneration || videoGeneration;
   vibecodersAvailable = !!(cfg.vibecoders && cfg.vibecoders.available);
   fableBotAvailable = !!cfg.fableBot?.available;
+  shareLinksAvailable = !!cfg.shareLinks?.available;
   claudeAdvice = cfg.claudeAdvice || claudeAdvice;
   applyClaudeAdviceAvailability();
   promptRewrites.configure(cfg.promptRewrites || []);
@@ -7356,6 +7359,24 @@ function renderImageViewerHide(item) {
   imageViewerHide.title = waiting;
 }
 
+function renderImageViewerShareLink(item) {
+  imageViewerShareLink.hidden = !shareLinksAvailable || !item;
+}
+
+function shareCurrentViewerLink() {
+  const current = locateImageViewerState(getImageViewerPrompts());
+  if (!current) return;
+  openShareLinkDialog({
+    apiUrl,
+    jobId: current.item.jobId,
+    generator: current.item.generator,
+    imageIndex: current.item.imageIndex,
+    prompt: current.prompt.prompt,
+    thumbUrl: current.item.thumbUrl || null,
+    noun: current.item.kind === "text" ? "description" : "image",
+  });
+}
+
 function vibecodersIdentity(jobId, generator, imageIndex) {
   return `${jobId}|${generator}|${imageIndex}`;
 }
@@ -7653,6 +7674,7 @@ imageViewerVideo.addEventListener("click", () => {
     current.prompt.prompt);
 });
 imageViewerHide.addEventListener("click", () => hideCurrentViewerImage());
+imageViewerShareLink.addEventListener("click", () => shareCurrentViewerLink());
 imageViewerVibecoders.addEventListener("click", () => sendCurrentViewerToVibecoders());
 
 async function togglePromptFavorite(jobId) {
@@ -9388,6 +9410,7 @@ function paintImageViewerChrome(target) {
   renderImageViewerFavorite(target.item);
   renderImageViewerVideo(target.item);
   renderImageViewerHide(target.item);
+  renderImageViewerShareLink(target.item);
   renderImageViewerVibecoders(target.item);
   renderImageViewerPosition(target.item);
   // Describe items: the stage IS the submitted image; the panel above the
@@ -9479,6 +9502,7 @@ function clearImageViewerPresentation() {
   renderImageViewerFavorite(null);
   renderImageViewerVideo(null);
   renderImageViewerHide(null);
+  renderImageViewerShareLink(null);
   renderImageViewerVibecoders(null);
   imageViewerContentAr = null;
   applyImageViewerCompare(null);
@@ -9498,6 +9522,7 @@ async function renderImageViewer() {
     renderImageViewerFavorite(null);
     renderImageViewerVideo(null);
     renderImageViewerHide(null);
+    renderImageViewerShareLink(null);
     renderImageViewerVibecoders(null);
     imageViewerGenerator.textContent = "selected image is no longer available";
     imageViewerDimensions.textContent = "";
@@ -10302,7 +10327,7 @@ document.addEventListener("keydown", (event) => {
   // behind the dialog.
   const formOwnsKey = event.target instanceof Element &&
     event.target.closest("input, textarea, select, [contenteditable]");
-  if (videoDialog.open || sketchDialog.open || formOwnsKey) {
+  if (document.querySelector("dialog[open]") || formOwnsKey) {
     return;
   }
 
@@ -10881,6 +10906,15 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
       }
     });
     meta.appendChild(setActive);
+  }
+  if (shareLinksAvailable) {
+    const share = document.createElement("button");
+    share.type = "button";
+    share.className = "job-share-link";
+    share.textContent = "share link";
+    share.title = "Make a link to this prompt that only site members can open";
+    share.addEventListener("click", () => openShareLinkDialog({ apiUrl, jobId: id, prompt }));
+    meta.appendChild(share);
   }
   head.appendChild(meta);
   card.appendChild(head);
@@ -11660,11 +11694,14 @@ async function openSharedJobFromUrl() {
     card = document.getElementById(`job-${jobId}`);
   }
   if (!card) throw new Error("that job card did not render");
+  if (card.classList.contains("night-hidden")) throw new Error("your night filter hides the linked prompt");
+  if (card.classList.contains("user-filter-hidden")) throw new Error("your people filter hides the linked prompt");
   card.scrollIntoView({ block: "center" });
   if (!generator || !Number.isInteger(imageIndex) || imageIndex < 0) return;
   const link = card.querySelector(
     `a[data-viewer-image="true"][data-generator="${CSS.escape(generator)}"][data-image-index="${imageIndex}"]`);
-  if (link) openImageViewer(link);
+  if (!link) throw new Error("the linked result is no longer available");
+  openImageViewer(link);
 }
 
 // ---------- boot ----------

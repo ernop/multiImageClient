@@ -784,6 +784,7 @@ namespace MultiImageClient
                     {
                         available = DiscordVibecoders.IsConfigured(settings) && (environments?.Get(settings.UiEnvironmentId).AllowVibecoders ?? true),
                     },
+                    shareLinks = new { available = ShareLinksProblem(settings, auth) == null },
                 });
             });
 
@@ -2708,6 +2709,7 @@ namespace MultiImageClient
             });
 
             MapPublicShares(app, settings, auth, jobs, visibility, runner, vibecoders, environments);
+            MapShareLinks(app, settings, auth, jobs, visibility, environments, accountActivity);
             UiDiscordAccountEndpoints.Map(app, settings, auth, environments, accountActivity);
 
             // Shared persistent image + prompt favorites. POST takes the

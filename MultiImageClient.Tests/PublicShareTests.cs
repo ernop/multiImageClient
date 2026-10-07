@@ -309,22 +309,33 @@ public sealed class PublicShareTests
         var route = $"/public/{token}/reuse";
         try
         {
-            var anonymous = await http.GetStringAsync(route);
+            using var anonymousResponse = await http.GetAsync(route);
+            var anonymous = await anonymousResponse.Content.ReadAsStringAsync();
             Assert.Contains("Ask Ernie in Discord", anonymous);
             Assert.DoesNotContain("private-path", anonymous);
-            async Task<HttpResponseMessage> Login(string password, string origin)
+            Assert.Contains("<form id=\"login\" method=\"post\">", anonymous);
+            Assert.DoesNotContain("action=\"reuse\"", anonymous);
+            Assert.Contains("<script>" + UiWorkflow.ShareLinkLoginScript + "</script>", anonymous);
+            var policy = anonymousResponse.Headers.GetValues("Content-Security-Policy").Single();
+            Assert.Contains("connect-src 'self'; script-src 'sha256-" + Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(UiWorkflow.ShareLinkLoginScript))) + "'", policy);
+            async Task<HttpResponseMessage> Login(string password, string origin, bool loginHeader = true)
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, route) { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["username"] = "alice", ["password"] = password }) };
                 request.Headers.Add("Origin", origin);
+                if (loginHeader) request.Headers.Add("X-Mic-Login", "1");
                 return await http.SendAsync(request);
             }
             Assert.Equal(HttpStatusCode.Forbidden, (await Login("test-password", "https://other.test")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await Login("test-password", "null")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await Login("test-password", "https://example.test", loginHeader: false)).StatusCode);
             var wrong = await Login("wrong", "https://example.test");
             Assert.Equal(HttpStatusCode.Unauthorized, wrong.StatusCode);
             Assert.False(wrong.Headers.Contains("Set-Cookie"));
+            Assert.Contains("Ask Ernie in Discord", await wrong.Content.ReadAsStringAsync());
             var success = await Login("test-password", "https://example.test");
-            Assert.Equal(HttpStatusCode.Redirect, success.StatusCode);
-            Assert.Equal(settings.UiPublicBaseUrl + "/?shared=" + token, success.Headers.Location!.ToString());
+            Assert.Equal(HttpStatusCode.OK, success.StatusCode);
+            using (var destination = JsonDocument.Parse(await success.Content.ReadAsStringAsync()))
+                Assert.Equal(settings.UiPublicBaseUrl + "/?shared=" + token, destination.RootElement.GetProperty("destination").GetString());
             var cookie = success.Headers.GetValues("Set-Cookie").Single().Split(';')[0];
             using var loggedIn = new HttpRequestMessage(HttpMethod.Get, route);
             loggedIn.Headers.Add("Cookie", cookie);

@@ -1332,7 +1332,8 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 body:not(.show-costs) .job-cost,
 body:not(.show-costs) .cell-cost,
 body:not(.show-costs) #cost-summary { display: none !important; }
-.job-set-active {
+.job-set-active,
+.job-share-link {
   padding: 3px 9px;
   color: var(--accent-dark);
   background: var(--card);
@@ -1341,7 +1342,8 @@ body:not(.show-costs) #cost-summary { display: none !important; }
   font: 700 11px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif;
   cursor: pointer;
 }
-.job-set-active:hover { color: #fff; background: var(--accent); }
+.job-set-active:hover,
+.job-share-link:hover { color: #fff; background: var(--accent); }
 
 /* Running session spend, rebuilt from the job cards on every result. */
 #cost-summary {
@@ -2078,7 +2080,8 @@ body.image-viewer-open { overflow: hidden; }
   background: var(--err);
 }
 #image-viewer-hide:disabled { cursor: progress; }
-#image-viewer-vibecoders {
+#image-viewer-vibecoders,
+#image-viewer-share-link {
   padding: 3px 9px;
   color: var(--accent-dark);
   background: var(--card);
@@ -2089,7 +2092,9 @@ body.image-viewer-open { overflow: hidden; }
   cursor: pointer;
 }
 #image-viewer-vibecoders:hover,
-#image-viewer-vibecoders:focus-visible {
+#image-viewer-vibecoders:focus-visible,
+#image-viewer-share-link:hover,
+#image-viewer-share-link:focus-visible {
   color: #fff;
   background: var(--accent);
 }
@@ -3369,3 +3374,18 @@ body.image-viewer-open { overflow: hidden; }
 .share-actions button:disabled { opacity: .55; cursor: default; }
 .share-confirm { background: var(--accent); color: white; }
 .share-status { color: var(--err); }
+#share-link-dialog { width: min(640px, 94vw); max-height: 92vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; padding: 20px; color: var(--ink); background: var(--card); }
+#share-link-dialog::backdrop { background: #101525aa; }
+#share-link-dialog h2 { margin: 0 0 8px; font-size: 20px; }
+.share-link-scope { margin: 0 0 12px; }
+.share-link-target { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; padding: 10px; background: var(--paper); border-radius: 8px; }
+.share-link-thumb { flex: none; width: 96px; height: 96px; object-fit: contain; border-radius: 6px; background: var(--card); }
+.share-link-prompt { flex: 1; min-width: 0; max-height: 7.5em; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+#share-link-dialog label { display: block; margin-bottom: 4px; font-weight: 700; }
+.share-link-row { display: flex; gap: 8px; }
+#share-link-url { flex: 1; min-width: 0; padding: 8px 10px; color: var(--ink); background: var(--card); border: 1px solid var(--accent); border-radius: 6px; font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.share-link-copy { padding: 8px 14px; color: #fff; background: var(--accent); border: 1px solid var(--accent); border-radius: 6px; font: 700 14px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+.share-link-copy:disabled { color: var(--ink); background: var(--paper); border-color: var(--line); cursor: progress; }
+.share-link-note { margin: 10px 0 0; font-size: 14px; font-weight: 600; }
+.share-link-status { min-height: 1.4em; margin: 8px 0; font-weight: 700; color: var(--ok); }
+.share-link-status.error { color: var(--err); }

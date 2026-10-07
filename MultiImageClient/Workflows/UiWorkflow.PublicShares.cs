@@ -13,13 +13,14 @@ namespace MultiImageClient
     {
         private static readonly SemaphoreSlim PublicShareSendLimit = new(1, 1);
 
-        private static void ShareHeaders(HttpContext ctx)
+        private static void ShareHeaders(HttpContext ctx, bool loginScript = false)
         {
             ctx.Response.Headers.CacheControl = "no-store";
             ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
             ctx.Response.Headers["X-Robots-Tag"] = "noindex, nofollow, noarchive";
             ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
-            ctx.Response.Headers.ContentSecurityPolicy = "default-src 'none'; img-src 'self' https:; media-src 'self' https:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'self'; base-uri 'none'";
+            ctx.Response.Headers.ContentSecurityPolicy = "default-src 'none'; img-src 'self' https:; media-src 'self' https:; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'self'; base-uri 'none'"
+                + (loginScript ? "; connect-src 'self'; script-src '" + ShareLinkLoginScriptHash + "'" : "");
         }
 
         private static void MapPublicShares(WebApplication app, Settings settings, UiAuth? auth,
@@ -115,29 +116,32 @@ namespace MultiImageClient
                 if (record == null) return Results.NotFound();
                 if (auth == null || (auth.TryValidateCookie(ctx.Request.Cookies[auth.SessionCookieName], out var user) && Member(user)))
                     return Results.Redirect(ComposerUrl(token));
+                ShareHeaders(ctx, loginScript: true);
                 return Results.Content(UiPublicShares.Html(record, "asset/", null, login: true,
                     requestAccountUrl: AccountRequestUrl(record)), "text/html; charset=utf-8");
             });
+            // Browsers send "Origin: null" for native form posts from no-referrer pages, so the page logs in through fetch.
             app.MapPost("/public/{token}/reuse", async (string token, HttpContext ctx) =>
             {
                 ShareHeaders(ctx);
                 var record = Public(token);
                 if (record == null || auth == null) return Results.NotFound();
-                if (ctx.Request.Headers.Origin != new Uri(UiPublicShares.BaseUrl(settings)).GetLeftPart(UriPartial.Authority))
-                    return Results.StatusCode(403);
+                if (ctx.Request.Headers.Origin.ToString() != new Uri(UiPublicShares.BaseUrl(settings)).GetLeftPart(UriPartial.Authority)
+                    || ctx.Request.Headers["X-Mic-Login"] != "1")
+                    return Results.Json(new { error = "Reload this page and try again." }, statusCode: 403);
+                if (ctx.Request.ContentLength is null or > 4096 || !ctx.Request.HasFormContentType)
+                    return Results.Json(new { error = "The login request is invalid." }, statusCode: 400);
                 var form = await ctx.Request.ReadFormAsync(ctx.RequestAborted);
                 var username = form["username"].ToString().Trim();
                 if (!auth.TryLogin(username, form["password"].ToString(), ClientIpForThrottle(ctx), out var cookie, out _)
-                    || !Member(username))
-                    return Results.Content(UiPublicShares.Html(record, "asset/", null,
-                        "Login failed or this account lacks access. Ask Ernie in Discord.", true,
-                        AccountRequestUrl(record)), "text/html; charset=utf-8", statusCode: 401);
+                    || !auth.TryValidateCookie(cookie, out var login) || !Member(login))
+                    return Results.Json(new { error = "Login failed or this account lacks access. Ask Ernie in Discord." }, statusCode: 401);
                 ctx.Response.Cookies.Append(auth.SessionCookieName, cookie, new CookieOptions
                 {
                     HttpOnly = true, Secure = IsEffectivelyHttps(ctx), SameSite = SameSiteMode.Lax,
                     Path = auth.SessionCookiePath, MaxAge = TimeSpan.FromDays(3650),
                 });
-                return Results.Redirect(ComposerUrl(token));
+                return Results.Json(new { destination = ComposerUrl(token) });
             });
 
             app.MapGet("/api/public-shares/{token}/reuse", (string token, HttpContext ctx) =>
