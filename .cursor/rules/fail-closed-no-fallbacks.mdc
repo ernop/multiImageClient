@@ -13,3 +13,5 @@ alwaysApply: true
 - Exceptions and provider errors must remain failures through logs, archives, APIs, and UI state.
 - If an explicitly required fallback exists, document it at the call site and independently prove it cannot select unrelated data.
 - Defaults chosen before an operation starts are configuration. They must never be used to replace failed or missing output after execution begins.
+- Scope (owner, 2026-10-06): apply these checks at trust and version boundaries. These are provider and external replies, requests that reach the server, and stored records.
+- This server and its browser code ship together. Do not add page code that re-checks this server's own replies. Do not plan for this project's own code to break; fix shared code at its source.

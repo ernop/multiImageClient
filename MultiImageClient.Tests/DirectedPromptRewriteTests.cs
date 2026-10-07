@@ -31,8 +31,39 @@ public sealed class DirectedPromptRewriteTests
         Assert.All(DirectedPromptRewrite.Models, model => Assert.NotNull(DirectedPromptRewrite.AvailabilityProblem(model, openAiOnly)));
         var both = new Settings { AnthropicApiKey = "sk-ant-test", OpenAIApiKey = "sk-test" };
         var rejected = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            DirectedPromptRewrite.RewriteAsync("gpt-6-astra", "A red apple.", both, CancellationToken.None));
+            DirectedPromptRewrite.RewriteAsync("gpt-6-astra", DirectedPromptRewrite.Instruction, "A red apple.", both, CancellationToken.None));
         Assert.Equal("Unknown rewrite model.", rejected.Message);
+    }
+
+    [Fact]
+    public void AdviceUsesOpus55()
+    {
+        Assert.Equal("claude-opus-5-5", DirectedPromptRewrite.AdviceModel);
+        Assert.Contains(DirectedPromptRewrite.AdviceModel, DirectedPromptRewrite.Models);
+        Assert.Equal("Opus 5.5", ManagerCatalog.All.Single(m => m.Model == DirectedPromptRewrite.AdviceModel).Label);
+    }
+
+    [Fact]
+    public void EveryRewriteModelHasAShortCatalogLabel()
+        => Assert.Equal(new[] { "Opus 5.5", "Sonnet 5.5" },
+            DirectedPromptRewrite.Models.Select(model => ManagerCatalog.All.Single(m => m.Model == model).Label));
+
+    [Theory]
+    [InlineData(DirectedPromptRewrite.SonnetModel, DirectedPromptRewrite.Instruction)]
+    [InlineData(DirectedPromptRewrite.AdviceModel, "Fix spelling and obvious typos.")]
+    public void RequestCarriesTheInstructionWithoutTemperature(string model, string instruction)
+    {
+        var wire = ClaudeService.BuildPromptAdviceWirePrompt(instruction, "A red appel.");
+        using var request = JsonDocument.Parse(DirectedPromptRewrite.BuildRequestJson(model, wire));
+        var root = request.RootElement;
+        Assert.Equal(new[] { "model", "max_tokens", "system", "messages" }, root.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(model, root.GetProperty("model").GetString());
+        Assert.Equal(16000, root.GetProperty("max_tokens").GetInt32());
+        Assert.Equal(ClaudeService.PromptAdviceSystemPrompt, root.GetProperty("system").GetString());
+        var message = Assert.Single(root.GetProperty("messages").EnumerateArray());
+        Assert.Equal("user", message.GetProperty("role").GetString());
+        Assert.Equal(wire, message.GetProperty("content").GetString());
+        Assert.StartsWith("Editing instruction:\n" + instruction + "\n\n", wire);
     }
 
     [Theory]

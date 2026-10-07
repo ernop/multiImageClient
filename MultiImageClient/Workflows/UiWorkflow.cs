@@ -150,9 +150,7 @@ namespace MultiImageClient
             // outcome are persisted by UiCommunityStore for audit/history.
             var claudeAdviceProblem = ProviderKeyValidator.DescribeTextKeyProblem(
                 nameof(settings.AnthropicApiKey), settings.AnthropicApiKey);
-            var claudeService = claudeAdviceProblem == null
-                ? new ClaudeService(settings.AnthropicApiKey, maxConcurrency: 2, stats)
-                : null;
+            var claudeAdviceLabel = ManagerCatalog.All.Single(m => m.Model == DirectedPromptRewrite.AdviceModel).Label;
 
             // Goal loops: manager-model-driven iterative design → render →
             // review conversations. Each render is an ordinary UiJob (cards,
@@ -654,10 +652,13 @@ namespace MultiImageClient
                     {
                         available = claudeAdviceProblem == null,
                         availabilityProblem = claudeAdviceProblem,
+                        model = DirectedPromptRewrite.AdviceModel,
+                        label = claudeAdviceLabel,
                     },
                     promptRewrites = DirectedPromptRewrite.Models.Select(model => new
                     {
                         model,
+                        label = ManagerCatalog.All.Single(m => m.Model == model).Label,
                         available = DirectedPromptRewrite.AvailabilityProblem(model, settings) == null,
                         availabilityProblem = DirectedPromptRewrite.AvailabilityProblem(model, settings),
                     }),
@@ -2021,7 +2022,7 @@ namespace MultiImageClient
                 var problem = directed ? DirectedPromptRewrite.AvailabilityProblem(model, settings)
                     : restore ? null : claudeAdviceProblem;
                 if (problem != null) return Results.BadRequest(new { error = problem });
-                if (!directed && !restore) model = ClaudeService.PromptAdviceModel;
+                if (!directed && !restore) model = DirectedPromptRewrite.AdviceModel;
                 var prompt = form["prompt"].ToString();
                 var instruction = directed ? DirectedPromptRewrite.Instruction
                     : restore ? "Restore a saved prompt version." : form["instruction"].ToString().Trim();
@@ -2080,12 +2081,15 @@ namespace MultiImageClient
                 {
                     var result = restore
                         ? new ClaudePromptAdviceResult { ResultPrompt = restoredPrompt! }
-                        : directed
-                            ? await DirectedPromptRewrite.RewriteAsync(model, prompt, settings, request.HttpContext.RequestAborted)
-                            : await claudeService!.GetPromptAdviceAsync(instruction, prompt);
+                        : await DirectedPromptRewrite.RewriteAsync(model, instruction, prompt, settings, request.HttpContext.RequestAborted);
                     rawResponse = result.RawResponse;
                     replacement = result.ResultPrompt;
                     failure = result.Error;
+                    if (!directed && !restore && failure.Length == 0 && ClaudeService.DidClaudeRefuse(replacement))
+                    {
+                        failure = $"Claude refused to edit this prompt: {replacement}";
+                        replacement = "";
+                    }
                 }
                 catch (Exception ex)
                 {

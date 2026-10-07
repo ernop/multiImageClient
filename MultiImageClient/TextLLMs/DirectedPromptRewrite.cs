@@ -17,6 +17,7 @@ namespace MultiImageClient
         public const string SonnetModel = "claude-sonnet-5-5";
         // Anthropic Messages only; this area must not offer OpenAI models.
         public static readonly IReadOnlyList<string> Models = new[] { OpusModel, SonnetModel };
+        public const string AdviceModel = OpusModel;
         public const string Instruction =
             "Carefully consider the user's intent and flesh it out very well. "
             + "The replacement text will be sent to intelligent image-generation endpoints. "
@@ -36,24 +37,26 @@ namespace MultiImageClient
             ? ProviderKeyValidator.DescribeTextKeyProblem(nameof(settings.AnthropicApiKey), settings.AnthropicApiKey)
             : "Unknown rewrite model.";
 
-        public static async Task<ClaudePromptAdviceResult> RewriteAsync(string model, string prompt, Settings settings, CancellationToken ct)
+        // Claude 5.5 models reject `temperature` with HTTP 400; adaptive thinking keeps its default.
+        public static string BuildRequestJson(string model, string wirePrompt) => JsonSerializer.Serialize(new
+        {
+            model, max_tokens = 16000, system = ClaudeService.PromptAdviceSystemPrompt,
+            messages = new[] { new { role = "user", content = wirePrompt } },
+        });
+
+        public static async Task<ClaudePromptAdviceResult> RewriteAsync(string model, string instruction, string prompt, Settings settings, CancellationToken ct)
         {
             var problem = AvailabilityProblem(model, settings);
             if (problem != null) throw new InvalidOperationException(problem);
             if (!await Slots.WaitAsync(0, ct)) throw new InvalidOperationException("Two prompt rewrites are already running. Try again after one finishes.");
-            var wire = ClaudeService.BuildPromptAdviceWirePrompt(Instruction, prompt);
+            var wire = ClaudeService.BuildPromptAdviceWirePrompt(instruction, prompt);
             var raw = "";
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
                 request.Headers.Add("x-api-key", settings.AnthropicApiKey);
                 request.Headers.Add("anthropic-version", "2023-06-01");
-                var payload = new
-                {
-                    model, max_tokens = 16000, system = ClaudeService.PromptAdviceSystemPrompt,
-                    messages = new[] { new { role = "user", content = wire } },
-                };
-                request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                request.Content = new StringContent(BuildRequestJson(model, wire), Encoding.UTF8, "application/json");
                 using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
                 // Bound provider output before buffering JSON in the resident server.
                 await response.Content.LoadIntoBufferAsync(2 * 1024 * 1024, ct);

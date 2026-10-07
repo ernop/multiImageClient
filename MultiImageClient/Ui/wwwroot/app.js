@@ -7828,6 +7828,7 @@ const promptAdviceUndoBtn = el("prompt-advice-undo");
 const claudeAdviceDialog = el("claude-advice-dialog");
 const claudeAdviceForm = el("claude-advice-form");
 const claudeAdviceInstruction = el("claude-advice-instruction");
+const claudeAdviceSubmit = el("claude-advice-submit");
 const claudeAdviceWirePreview = el("claude-advice-wire-preview");
 const claudeAdviceStatus = el("claude-advice-status");
 const claudeAdviceHistory = el("claude-advice-history");
@@ -7835,25 +7836,31 @@ const claudeAdviceHistoryList = el("claude-advice-history-list");
 let claudeAdviceOriginalPrompt = "";
 let claudeAdviceHistoryLoaded = false;
 const promptRewrites = window.createPromptRewrites({
-  apiUrl, promptBox, username: currentUsername,
-  applyPrompt(text) {
-    promptBox.value = text;
-    promptBox.dispatchEvent(new Event("input", { bubbles: true }));
-    if (mcpheeCtl) mcpheeCtl.refresh();
-    if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
-    updatePromptLimitNotice();
-  },
+  apiUrl, promptBox, username: currentUsername, applyPrompt: applyClaudeEdit,
 });
 let promptAdviceExchangeId = null;
 const DefaultClaudeAdviceInstruction =
   "Fix spelling and obvious typos. Improve organization only where needed, while preserving the meaning and useful detail.";
+
+function applyClaudeEdit(text, exchangeId) {
+  promptBox.value = text;
+  promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+  if (mcpheeCtl) mcpheeCtl.refresh();
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+  updatePromptLimitNotice();
+  promptAdviceExchangeId = exchangeId;
+  promptAdviceUndoBtn.hidden = !exchangeId;
+}
 
 function applyClaudeAdviceAvailability() {
   promptAdviceBtn.disabled = !claudeAdvice.available;
   if (!claudeAdvice.available) {
     promptAdviceBtn.title =
       `Claude advice is unavailable: ${claudeAdvice.availabilityProblem || "not configured"}`;
+    return;
   }
+  promptAdviceBtn.title = `Give ${claudeAdvice.label} your own editing instruction, with this exact prompt appended as source text`;
+  claudeAdviceSubmit.textContent = `send to ${claudeAdvice.label}`;
 }
 
 function buildClaudeAdviceWirePreview() {
@@ -7957,10 +7964,9 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
   const original = claudeAdviceOriginalPrompt;
   const actor = currentUsername();
   const sourceRevision = promptRewrites.revision;
-  const submitButton = el("claude-advice-submit");
-  submitButton.disabled = true;
+  claudeAdviceSubmit.disabled = true;
   claudeAdviceStatus.className = "";
-  claudeAdviceStatus.textContent = "Claude is editing…";
+  claudeAdviceStatus.textContent = `${claudeAdvice.label} is editing…`;
   try {
     const form = new URLSearchParams();
     form.append("instruction", instruction);
@@ -7975,23 +7981,17 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
       failure.providerHintUrl = body.errorHintUrl || "";
       throw failure;
     }
-    if (typeof body.replacement !== "string" || !body.exchangeId || body.originalPrompt !== original)
-      throw new Error("The advice response does not match this request.");
     if (actor !== currentUsername()) { claudeAdviceDialog.close(); return; }
-    promptAdviceExchangeId = body.exchangeId;
     if (promptBox.value === original && sourceRevision === promptRewrites.revision) {
-      promptBox.value = body.replacement;
-      promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+      applyClaudeEdit(body.replacement, body.exchangeId);
+      el("prompt-rewrite-status").textContent = "";
     } else {
-      el("prompt-rewrite-status").textContent = "Your prompt changed. Restore the saved Claude replacement from history to apply it.";
+      el("prompt-rewrite-status").textContent =
+        "Your prompt changed during the request, so it was not replaced. The reply is saved in prompt history.";
     }
-    await promptRewrites.loadHistory(true);
-    promptAdviceUndoBtn.hidden = false;
     claudeAdviceDialog.close();
-    if (mcpheeCtl) mcpheeCtl.refresh();
-    if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
-    updatePromptLimitNotice();
     promptBox.focus();
+    await promptRewrites.refreshHistory();
   } catch (error) {
     claudeAdviceStatus.textContent = error instanceof Error ? error.message : String(error);
     if (error && error.providerHint) {
@@ -8008,7 +8008,7 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
     claudeAdviceStatus.className = "error";
     claudeAdviceHistoryLoaded = false;
   } finally {
-    submitButton.disabled = false;
+    claudeAdviceSubmit.disabled = false;
   }
 });
 

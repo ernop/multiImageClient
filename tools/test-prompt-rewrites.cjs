@@ -5,7 +5,7 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
 (async () => {
  const browser = await chromium.launch({headless:true});
  const page = await browser.newPage({viewport:{width:1280,height:1000}});
- let records = [], calls = [], hold = null, fail = false;
+ let records = [], calls = [], hold = null, fail = false, historyLoads = 0;
  const fixture = fs.readFileSync(root+'/index.html','utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '') + `
  <script src="prompt-rewrites.js"></script><script>
  const prompt = document.getElementById('prompt');
@@ -13,13 +13,14 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  prompt.value = '  A botanical library inside a greenhouse.\\nKeep the books dry.  ';
  window.controls = createPromptRewrites({apiUrl:p=>p, promptBox:prompt,
  username:()=>document.getElementById('username-input').value,
- applyPrompt:t=>{prompt.value=t;prompt.dispatchEvent(new Event('input'))}});
- controls.configure([{model:'claude-opus-5-5',available:true},{model:'claude-sonnet-5-5',available:true}]);
+ applyPrompt:(t,id)=>{prompt.value=t;window.appliedExchange=id;prompt.dispatchEvent(new Event('input'))}});
+ controls.configure([{model:'claude-opus-5-5',label:'Opus 5.5',available:true},{model:'claude-sonnet-5-5',label:'Sonnet 5.5',available:true}]);
  </script>`;
  await page.route('https://rewrite.test/**', async route=> {
   const path = new URL(route.request().url()).pathname;
   if(path === '/') return route.fulfill({contentType:'text/html',body:fixture});
   if(path === '/api/prompt/advice/history') {
+   historyLoads++;
    const q = new URL(route.request().url()).searchParams;
    const offset = q.get('beforeId') ? records.findIndex(x=>x.id===q.get('beforeId'))+1 : 0;
    return route.fulfill({json:{exchanges:records.slice(offset,offset+20)}});
@@ -45,10 +46,16 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  assert.deepEqual(await page.locator('[data-rewrite-model]').evaluateAll(b=>b.map(x=>[x.dataset.rewriteModel,x.textContent])),
   [['claude-opus-5-5','flesh out · Opus 5.5'],['claude-sonnet-5-5','flesh out · Sonnet 5.5']]);
  await page.getByRole('button',{name:'flesh out · Opus 5.5',exact:true}).click();
- await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent.startsWith('Expanded prompt applied'));
+ await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent==='Expanded prompt applied.');
  assert((await page.locator('#prompt').inputValue()).includes('claude-opus-5-5'));
- assert.equal(await page.locator('.prompt-rewrite-exchange pre').first().textContent(),'  A botanical library inside a greenhouse.\nKeep the books dry.  ');
+ assert(await page.locator('#prompt-rewrite-history').isHidden());
+ assert.equal(await page.locator('.prompt-rewrite-exchange').count(),0);
+ assert.equal(historyLoads,0);
+ assert.equal(await page.evaluate(()=>window.appliedExchange),'1');
  assert(await page.locator('#prompt').evaluate(e=>e.classList.contains('prompt-not-submitted')));
+ await page.locator('#prompt-history-toggle').click();
+ await page.waitForFunction(()=>document.querySelectorAll('.prompt-rewrite-exchange').length===1);
+ assert.equal(await page.locator('.prompt-rewrite-exchange pre').first().textContent(),'  A botanical library inside a greenhouse.\nKeep the books dry.  ');
  assert.equal(await page.locator('section.prompt-not-submitted').count(),1);
  await page.evaluate(()=>controls.submitted(document.getElementById('prompt').value.trim(), controls.revision));
  assert(!(await page.locator('#prompt').evaluate(e=>e.classList.contains('prompt-not-submitted'))));
@@ -62,9 +69,14 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  await page.locator('.prompt-rewrite-exchange').last().getByRole('button',{name:'restore this version'}).first().click();
  await page.waitForFunction(()=>document.querySelectorAll('.prompt-rewrite-exchange').length===3);
  assert((await page.locator('#prompt').inputValue()).includes('A botanical library inside'));
+ assert.equal(await page.evaluate(()=>window.appliedExchange),null);
  assert(records[0].originalPrompt.includes('claude-sonnet-5-5'));
+ await page.locator('#prompt-history-toggle').click();
+ assert(await page.locator('#prompt-rewrite-history').isHidden());
+ const loadsWhileClosed = historyLoads;
  let release; hold=new Promise(resolve=>release=resolve);
  await page.getByRole('button',{name:'flesh out · Opus 5.5',exact:true}).click();
+ await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent==='Opus 5.5 is expanding the prompt…');
  await page.locator('#prompt').fill('My edit during the request');
  release(); hold=null;
  await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent.includes('changed during'));
@@ -73,9 +85,11 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  await page.getByRole('button',{name:'flesh out · Sonnet 5.5',exact:true}).click();
  await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent.includes('refused'));
  assert.equal(await page.locator('#prompt').inputValue(),'My edit during the request');
+ assert.equal(historyLoads,loadsWhileClosed);
+ assert(await page.locator('#prompt-rewrite-history').isHidden());
  fail=false;
  for(let i=0;i<25;i++) records.push({...records[0],id:'old'+i});
- await page.getByRole('button',{name:'refresh history',exact:true}).click();
+ await page.locator('#prompt-history-toggle').click();
  await page.waitForFunction(()=>document.querySelectorAll('.prompt-rewrite-exchange').length===20);
  await page.getByRole('button',{name:'older changes',exact:true}).click();
  await page.waitForFunction(()=>document.querySelectorAll('.prompt-rewrite-exchange').length===9);
@@ -93,6 +107,6 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  assert(await page.locator('#prompt-rewrite-history').isHidden());
  assert.equal(await page.locator('.prompt-rewrite-exchange').count(),0);
  assert.deepEqual([...new Set(calls)].sort(),['claude-opus-5-5','claude-sonnet-5-5','restore']);
- console.log('PASS: Opus 5.5 and Sonnet 5.5 only, exact history, restore preservation, stale reply, failure, pagination, mobile control layout, identity clearing.');
+ console.log('PASS: in-place rewrite without opening history, undo identity, history only from its button, restore preservation, stale reply, failure, pagination, mobile control layout, identity clearing.');
  await browser.close();
 })().catch(error=>{console.error(error);process.exit(1)});

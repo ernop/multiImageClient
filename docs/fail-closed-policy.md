@@ -25,3 +25,13 @@ Fallback recovery is prohibited across MultiImageClient unless the user has expl
 A fallback may exist only when the user explicitly defines that exact fallback as a product requirement. It must be documented at its call site and independently validated so that it cannot select unrelated data.
 
 Defaults chosen before execution begins are configuration, not recovery. Once execution starts, failed or missing output must never be replaced with different output.
+
+## Scope (2026-10-06)
+
+The owner clarified where these checks belong.
+Apply them at trust and version boundaries.
+These boundaries are provider and external replies, requests that reach the server, and stored records.
+The server and its browser code ship together in one release.
+Page code does not re-check replies from this server.
+Do not write code that plans for this project's own code to break.
+Fix a defect in shared code at its source.

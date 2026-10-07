@@ -36,8 +36,7 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
     promptBox.title = originalTitle;
     list.replaceChildren();
     status.textContent = "";
-    panel.hidden = true;
-    toggle.setAttribute("aria-expanded", "false");
+    hide();
     cursors = [null]; page = 0; nextCursor = null;
   });
 
@@ -65,6 +64,11 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
     toggle.setAttribute("aria-expanded", "true");
   }
 
+  function hide() {
+    panel.hidden = true;
+    toggle.setAttribute("aria-expanded", "false");
+  }
+
   function version(text, label, exchangeId, side) {
     const section = document.createElement("section");
     const heading = document.createElement("div");
@@ -84,7 +88,6 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
   }
 
   async function loadHistory(reset = false) {
-    show();
     if (reset) { cursors = [null]; page = 0; }
     const request = ++historyRequest;
     const actor = username();
@@ -98,7 +101,6 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
     try {
       const body = await readResponse(await fetch(apiUrl(`api/prompt/advice/history?${query}`)));
       if (request !== historyRequest || actor !== username()) return;
-      if (!Array.isArray(body.exchanges)) throw new Error("The prompt history response is incomplete.");
       list.replaceChildren();
       for (const exchange of body.exchanges) {
         const article = document.createElement("article");
@@ -134,6 +136,10 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
     }
   }
 
+  async function refreshHistory() {
+    if (!panel.hidden) await loadHistory(true);
+  }
+
   async function run(model, extra = {}) {
     if (busy) return;
     const original = promptBox.value;
@@ -144,38 +150,37 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
     const actor = username(), sourceRevision = revision;
     busy = true;
     configure(catalog);
-    show();
-    status.textContent = model === "restore" ? "Restoring saved text…" : `${model} is expanding the prompt…`;
+    status.textContent = model === "restore"
+      ? "Restoring saved text…"
+      : `${catalog.find(item => item.model === model).label} is expanding the prompt…`;
     try {
       const form = new URLSearchParams();
       Object.entries({ model, prompt: original, user: actor, ...extra }).forEach(([key, value]) => form.append(key, value));
       const body = await readResponse(await fetch(apiUrl("api/prompt/advice"), { method: "POST", body: form }));
-      if (typeof body.replacement !== "string" || !body.exchangeId || body.model !== model || body.originalPrompt !== original)
-        throw new Error("The rewrite response does not match this request.");
       if (actor !== username()) return;
       if (promptBox.value === original && sourceRevision === revision) {
-        applyPrompt(body.replacement);
+        applyPrompt(body.replacement, model === "restore" ? null : body.exchangeId);
         revision++;
-        status.textContent = model === "restore" ? "Saved version restored." : "Expanded prompt applied. Every saved version remains below.";
+        status.textContent = model === "restore" ? "Saved version restored." : "Expanded prompt applied.";
       } else {
-        status.textContent = "Your prompt changed during the request. The saved replacement is below; restore it to apply.";
+        status.textContent = "Your prompt changed during the request, so it was not replaced. The reply is saved in prompt history.";
       }
     } catch (error) {
       if (actor === username()) status.textContent = error.message;
     } finally {
       busy = false;
       configure(catalog);
-      if (actor === username()) await loadHistory(true);
+      if (actor === username()) await refreshHistory();
     }
   }
 
   for (const button of buttons) button.addEventListener("click", () => run(button.dataset.rewriteModel));
   toggle.addEventListener("click", () => {
-    if (panel.hidden) loadHistory(true);
-    else { panel.hidden = true; toggle.setAttribute("aria-expanded", "false"); }
+    if (panel.hidden) { show(); loadHistory(true); }
+    else hide();
   });
   document.getElementById("prompt-history-refresh").addEventListener("click", () => loadHistory(true));
   newer.addEventListener("click", () => { if (page > 0) { page--; loadHistory(); } });
   older.addEventListener("click", () => { if (nextCursor) { cursors[++page] = nextCursor; loadHistory(); } });
-  return { configure, loadHistory, run, submitted, get busy() { return busy; }, get revision() { return revision; } };
+  return { configure, refreshHistory, run, submitted, get busy() { return busy; }, get revision() { return revision; } };
 };
