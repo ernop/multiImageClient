@@ -225,8 +225,8 @@ Only these two approved instances are accepted by the installer.
 
 Public sharing GET routes allow only the page, listed asset slots, and reuse handoff.
 The sharing POST route accepts only login for that exact published share.
-The separate signup routes below also use the explicit public allowlist.
-Require same-origin login forms, existing credential validation/throttling, and environment membership.
+The separate signup routes and members-only share link routes below also use the explicit public allowlist.
+Require the exact-origin `fetch` login described below, existing credential validation/throttling, and environment membership.
 Return the private composer address only after successful authentication and membership checks.
 The composer receives a share token, resolves its published prompt and inputs through authenticated routes, and removes the query.
 Loading a shared prompt does not generate anything automatically.
@@ -252,6 +252,71 @@ Never put account tokens in channel posts, image captions, public HTML, or appli
 Private site prefixes remain prohibited everywhere in Discord.
 The setting defaults to off and requires compatible code in both approved instances before activation.
 
+## Members-only share links — 2026-10-06
+
+The owner asked for a link that logs a person in again, per image and per prompt.
+Nothing is sent automatically; the owner shares the link manually.
+The owner chose one group link that carries no login.
+This feature publishes nothing. It is separate from public prompt pages.
+
+| Requirement | Behavior |
+|---|---|
+| Placement | Each job card has **share link**. The image viewer has **share link** for the visible image or description. |
+| Nothing sent | The dialog shows a copyable link. It posts nothing to Discord or any other service. |
+| No credential | The link contains no login token. Forwarding it grants no access. |
+| Signed-in members | A member with a valid session goes directly to the prompt. A result link also opens that exact result in the viewer. |
+| Other visitors | Visitors see a username and password form on the public route. After login and the membership check, they reach the same target. |
+| Private boundary | The login page shows no prompt text, images, or private site address. |
+| Both sites | The original (AVE) and Vibecoders instances each make links for their own public route. |
+
+A link has the form `<UiPublicShareBaseUrl>/prompt/<12-hex job id>`.
+A result link adds `?gen=<generator>&n=<index>`.
+nginx maps the link to loopback `/public/prompt/<job id>`. The existing public route needs no change.
+The destination is `<UiPublicBaseUrl>/?job=<job id>`, with the same `gen` and `n` values.
+The server returns this private address only to an authenticated environment member.
+
+The feature needs site login, a valid HTTPS `UiPublicShareBaseUrl`, and an absolute HTTPS `UiPublicBaseUrl`.
+`/api/config` reports `shareLinks.available`. The buttons stay hidden when it is false.
+
+A result link must match exactly one successful result record.
+Deleted, failed, missing, or duplicate records produce an error instead of a link.
+A description result matches by the index of its described input.
+Videos have no viewer entry. Share a video through its prompt link.
+Deleting the prompt or the result disables the link.
+
+The composer page scrolls to the linked card.
+A missing result shows "the linked result is no longer available". The page never opens a different result.
+The visitor's night filter or people filter can hide the card. The page then names that filter.
+
+The login page uses one hash-pinned inline script and no external resources.
+The script posts with `fetch` and the `X-Mic-Login: 1` header.
+The server also requires the exact public origin.
+Browsers send `Origin: null` for native form posts from `no-referrer` pages. Chromium 149 confirmed this.
+The existing per-IP login throttle applies.
+Wrong passwords and non-members receive no session.
+A signed-in account without membership sees the form with an explanation.
+Login sets the normal site session. The link itself grants nothing.
+
+**Make your own** on public prompt pages had the same `Origin: null` defect.
+Every login from that form failed with HTTP 403.
+It now uses the same `fetch` login, header, and origin check.
+The server returns the composer address as JSON.
+The server normalizes both login scripts to LF line breaks before hashing.
+Browsers hash the parsed script, where line breaks are LF.
+A CRLF checkout would otherwise break the content security policy hash.
+
+Each dialog opening clears the previous link, prompt, and thumbnail before showing.
+Closing the dialog clears them again.
+Viewer keyboard shortcuts stay inactive while any dialog is open.
+
+Verify with `ShareLinkTests` and `PublicShareTests`.
+Run `tools/test-share-links.cjs` after `dotnet build MultiImageClient/MultiImageClient.csproj`.
+It drives a real server through proxied public and private routes.
+It checks dialogs, copying, logins, exact landing, and errors.
+Set `MIC_UI_TEST_BROWSER_CHANNEL=bundled` when Chrome is not installed.
+Test hosts disable configuration reload watchers.
+Parallel test hosts otherwise exhausted the user's 128 inotify instances.
+
 ## API
 
 | Method and route | Contract |
@@ -263,7 +328,10 @@ The setting defaults to off and requires compatible code in both approved instan
 | `GET /public/{token}/` | Anonymous stable published page, with optional browser-only `#output-<asset-slot>` selection. |
 | `GET /public/{token}/asset/{slot}` | Anonymous allowlisted original or `?thumb=1` preview. |
 | `GET /public/{token}/reuse` | Authenticated composer redirect or compact login form. |
-| `POST /public/{token}/reuse` | Validate login and membership, then redirect to the composer. |
+| `POST /public/{token}/reuse` | Requires the exact public origin and `X-Mic-Login: 1`. Validates login and membership, then returns the composer `destination` as JSON. |
+| `GET /api/share-link` | Authenticated. `jobId`, optionally with both `generator` and `imageIndex`. Returns the members-only `url` and `siteName`. Sends nothing. |
+| `GET /public/prompt/{jobId}` | Members with a session receive a redirect to the private composer target. Others receive the login form. |
+| `POST /public/prompt/{jobId}` | Requires the exact public origin and `X-Mic-Login: 1`. Validates login and membership, then returns the `destination` as JSON. |
 | `GET /public/signup`, `GET /public/signup/claim` | Original controller's optional account-request and explicit-confirmation forms. |
 | `GET /public/signup/request`, `GET /public/signup/preview` | Form recovery and harmless owner-test page; neither sends messages nor authenticates. |
 | `POST /public/signup/request`, `POST /public/signup/claim` | Limited owner-review requests and reusable account login without expiry. See the global-account contract. |
@@ -286,6 +354,11 @@ The setting defaults to off and requires compatible code in both approved instan
 - `MultiImageClient.Tests/PublicShareTests.cs`: privacy, URL rejection, unpublished drafts, confirmation, successful and uncertain delivery, login, and membership revocation.
 - `tools/test-public-share-dialog.cjs`: visual preview, cancellation, exact confirmation, and blocked retries.
 - `tools/test-public-share-page.cjs`: actual C# HTML, selected output, delayed images, prompt navigation, and desktop/mobile layout.
+- `Workflows/UiWorkflow.ShareLinks.cs`: members-only share link API, public login route, and login script.
+- `Ui/wwwroot/share-link-dialog.js`: copyable share link dialog for job cards and the viewer.
+- `MultiImageClient.Tests/ShareLinkTests.cs`: link format, exact targets, login, membership, and deleted content.
+- `MultiImageClient.Tests/TestHost.cs`: disables configuration reload watchers in test hosts.
+- `tools/test-share-links.cjs`: real-server dialogs, logins, landing, and **Make your own** login.
 
 Live verification must not post to Discord or publish a real private prompt without a separate explicit posting instruction.
 
