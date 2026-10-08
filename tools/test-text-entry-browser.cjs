@@ -29,6 +29,14 @@ async function geometry(field) {
         visibleBottom = Math.min(visibleBottom, parentRect.top + parent.clientTop + parent.clientHeight);
       }
     }
+    // The phone Generate row, or any other bar stuck to the bottom edge, hides the text behind it.
+    for (const bar of document.querySelectorAll('#send-row, [data-text-entry-inset="bottom"]')) {
+      const position = getComputedStyle(bar).position;
+      const barRect = bar.getBoundingClientRect();
+      if ((position === 'sticky' || position === 'fixed') && barRect.top < innerHeight && barRect.bottom >= innerHeight - 1) {
+        visibleBottom = Math.min(visibleBottom, barRect.top);
+      }
+    }
     return { bottom, visibleTop, visibleBottom, lineHeight, height: rect.height,
       spare: rect.bottom - bottom, scrollTop: field.scrollTop,
       clientHeight: field.clientHeight, scrollHeight: field.scrollHeight, pageScroll: scrollY };
@@ -107,6 +115,11 @@ async function typeAtBottom(field) {
       await page.setViewportSize({ width: 390, height: 640 });
       await prompt.fill('A wrapping prompt with café, emoji 🐈, and tabs\t'.repeat(40) + '\n\n');
       await typeAtBottom(prompt);
+      const sendRow = await page.locator('#send-row').evaluate(row => ({
+        position: getComputedStyle(row).position, bottom: row.getBoundingClientRect().bottom, innerHeight }));
+      assert.equal(sendRow.position, 'sticky');
+      assert.ok(Math.abs(sendRow.bottom - sendRow.innerHeight) <= 1,
+        'The phone Generate row must cover the bottom edge while typing: ' + JSON.stringify(sendRow));
       await page.screenshot({ path: `/tmp/mic-text-entry-${name}.png` });
       await page.reload();
       await prompt.focus();
@@ -148,7 +161,7 @@ async function typeAtBottom(field) {
       await page.locator('#text-entry-dialog-test').evaluate(panel => panel.remove());
       assert.deepEqual(await page.evaluate(() => textEntryOverflow), [], 'Growth must finish during the input event.');
       assert.deepEqual(errors, []);
-      console.log(`PASS ${name}: Enter, wrapping, paste, spare lines, page/panel scrolling, undo, drafts, resize, spelling, dynamic and hidden fields.`);
+      console.log(`PASS ${name}: Enter, wrapping, paste, spare lines, page/panel scrolling, sticky bottom bar, undo, drafts, resize, spelling, dynamic and hidden fields.`);
     } finally {
       await browser.close();
     }

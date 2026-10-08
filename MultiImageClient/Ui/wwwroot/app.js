@@ -9398,11 +9398,21 @@ imageViewerSetPrompt.addEventListener("click", () => setViewedPromptActive());
 // Callers pair this with same-item stage pixels only — never with another
 // item's media.
 function paintImageViewerChrome(target) {
+  const previous = imageViewerPaintedItem;
   imageViewerPaintedItem = {
     jobId: target.item.jobId,
     generator: target.item.generator,
     imageIndex: target.item.imageIndex,
   };
+  // A different item's chrome starts at its top, where the generator and place
+  // in the list identify it. The same item keeps the reader's scroll position
+  // when its original replaces the preview.
+  if (previous?.jobId !== target.item.jobId || previous?.generator !== target.item.generator
+      || previous?.imageIndex !== target.item.imageIndex) {
+    imageViewerStatus.scrollTop = 0;
+    imageViewerPrompt.scrollTop = 0;
+    imageViewerDescribe.scrollTop = 0;
+  }
   scheduleImageViewerPreloadHud();
   imageViewerPrompt.textContent = target.prompt.prompt;
   renderImageViewerGuidance(target);
@@ -9807,6 +9817,14 @@ const ImageViewerCommands = [
     run: () => {},
   },
   {
+    id: "swipeStep",
+    keys: ["Swipe left", "Swipe right"],
+    name: "Touch swipe stepping",
+    match: () => false,
+    help: "On a touch screen, swipe the image left for the next item or right for the previous item. Pinch zoom works normally. While the page is zoomed in, a swipe pans instead.",
+    run: () => {},
+  },
+  {
     id: "previous",
     keys: ["Left", "Up"],
     name: "Single-step traversal",
@@ -9954,6 +9972,14 @@ const ImageViewerCommands = [
     run: () => toggleImageViewerHelp(),
   },
   {
+    id: "historyBack",
+    keys: ["Back"],
+    name: "Back-button exit",
+    match: () => false,
+    help: "The phone or browser Back control closes the viewer. The page stays open at the same place.",
+    run: () => {},
+  },
+  {
     id: "close",
     keys: ["Escape"],
     name: "Layered exit",
@@ -10005,13 +10031,25 @@ function sizeImageViewerWindow() {
 // column when that draws the image larger — typical for wide images and for
 // compare mode, where the doubled stage makes height the binding constraint.
 const ImageViewerSideStatusWidth = 280; // matches the .side-status grid column in style.css
+// Must match the phone media query in style.css.
+const PhoneLayoutQuery = window.matchMedia("(max-width: 700px), (pointer: coarse) and (max-height: 500px)");
+
+// Phone screens are smaller than the desktop minimum window. Matches the
+// #image-viewer-window minimums in style.css.
+function imageViewerMinimumSize() {
+  return PhoneLayoutQuery.matches ? { width: 300, height: 260 } : { width: 440, height: 320 };
+}
 
 function fitImageViewerWindow() {
   if (imageViewer.hidden || imageViewerWindow.dataset.userSized || !imageViewerContentAr) return;
   const margin = 16;
   const gap = 4; // matches #image-viewer-stage.compare gap
-  const availWidth = Math.max(440, window.innerWidth - margin * 2);
-  const availHeight = Math.max(320, window.innerHeight - margin * 2);
+  // The window never extends past the screen.
+  const minimum = imageViewerMinimumSize();
+  const minWidth = Math.min(minimum.width, window.innerWidth - margin * 2);
+  const minHeight = Math.min(minimum.height, window.innerHeight - margin * 2);
+  const availWidth = Math.max(minWidth, window.innerWidth - margin * 2);
+  const availHeight = Math.max(minHeight, window.innerHeight - margin * 2);
   const stageSizeWithin = (maxWidth, maxHeight) => {
     if (imageViewerStage.classList.contains("compare")) {
       // Both orientations are computed and the larger drawn image wins —
@@ -10038,8 +10076,8 @@ function fitImageViewerWindow() {
     const statusHeight = imageViewerStatus.offsetHeight;
     bottomStage = stageSizeWithin(availWidth, Math.max(120, availHeight - statusHeight));
     placeWindow(
-      Math.max(440, Math.min(availWidth, Math.round(bottomStage.width))),
-      Math.max(320, Math.min(availHeight, Math.round(bottomStage.height + statusHeight))));
+      Math.max(minWidth, Math.min(availWidth, Math.round(bottomStage.width))),
+      Math.max(minHeight, Math.min(availHeight, Math.round(bottomStage.height + statusHeight))));
   }
 
   // Side-column candidate: fixed-width info column, full-height stage.
@@ -10052,8 +10090,8 @@ function fitImageViewerWindow() {
     chosen = sideStage;
     imageViewerWindow.classList.add("side-status");
     placeWindow(
-      Math.max(440, Math.min(availWidth, Math.round(sideStage.width + ImageViewerSideStatusWidth))),
-      Math.max(320, Math.min(availHeight, Math.round(sideStage.height))));
+      Math.max(minWidth, Math.min(availWidth, Math.round(sideStage.width + ImageViewerSideStatusWidth))),
+      Math.max(minHeight, Math.min(availHeight, Math.round(sideStage.height))));
   }
   imageViewerStage.classList.toggle("stacked", !!chosen.stacked);
 }
@@ -10078,6 +10116,40 @@ function getImageViewerFocusables() {
   )].filter((node) => !node.closest("[hidden]") && node.offsetParent !== null);
 }
 
+// Android Back, the iOS edge swipe, and the browser Back button close the
+// viewer instead of leaving the page. Opening adds one same-URL history entry,
+// and closing any other way removes it again. Scroll restoration stays manual
+// until that entry is gone, so returning to the page entry cannot undo the
+// close handback scroll.
+let imageViewerHistoryEntry = false;
+let imageViewerSavedScrollRestoration = null;
+
+function addImageViewerHistoryEntry() {
+  if (imageViewerHistoryEntry) return;
+  if (imageViewerSavedScrollRestoration === null) {
+    imageViewerSavedScrollRestoration = history.scrollRestoration;
+  }
+  history.scrollRestoration = "manual";
+  history.pushState({ micImageViewer: true }, "");
+  imageViewerHistoryEntry = true;
+}
+
+function releaseImageViewerHistoryEntry() {
+  if (!imageViewerHistoryEntry) return;
+  imageViewerHistoryEntry = false;
+  if (history.state?.micImageViewer) history.back();
+}
+
+window.addEventListener("popstate", () => {
+  if (imageViewerSavedScrollRestoration !== null && !history.state?.micImageViewer) {
+    history.scrollRestoration = imageViewerSavedScrollRestoration;
+    imageViewerSavedScrollRestoration = null;
+  }
+  if (!imageViewerHistoryEntry) return;
+  imageViewerHistoryEntry = false;
+  if (!imageViewer.hidden) closeImageViewer();
+});
+
 function openImageViewer(link) {
   imageViewerFocusBeforeOpen =
     document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -10094,6 +10166,7 @@ function openImageViewer(link) {
   imageViewerWheelAccumulator = 0;
   imageViewer.hidden = false;
   document.body.classList.add("image-viewer-open");
+  addImageViewerHistoryEntry();
   // A manual drag-resize takes over until reload. Otherwise the very first
   // open pre-sizes to the viewport (content unknown while loading); later
   // opens keep the previous shrink-wrapped size until the new image decodes
@@ -10114,6 +10187,7 @@ function closeImageViewer() {
   const departedAnchor = findViewerAnchor(imageViewerState);
   imageViewer.hidden = true;
   document.body.classList.remove("image-viewer-open");
+  releaseImageViewerHistoryEntry();
   imageViewerState = null;
   imageViewerRenderVersion++;
   imageViewerWheelAccumulator = 0;
@@ -10221,9 +10295,9 @@ document.addEventListener("pointerout", (event) => {
   }
 });
 
-// Navigation uses keys, normalized wheel intent, and optional mouse thumb
-// buttons (see ImageViewerCommands; ? shows the named interaction glossary).
-// Closing is Escape or a click outside the window.
+// Navigation uses keys, normalized wheel intent, optional mouse thumb
+// buttons, and touch swipes (see ImageViewerCommands; ? shows the named
+// interaction glossary). Closing is Escape, a click outside the window, or Back.
 el("image-viewer-help-toggle").addEventListener("click", () => toggleImageViewerHelp());
 
 imageViewer.addEventListener("click", (event) => {
@@ -10319,6 +10393,37 @@ imageViewer.addEventListener("auxclick", (event) => {
   if (!imageViewer.hidden && isImageViewerSideButton(event)) event.preventDefault();
 });
 
+// A quick, mostly horizontal one-finger swipe on the stage steps one image.
+// The listeners are passive, so pinch zoom and panning stay with the browser,
+// and a zoomed-in page pans instead of stepping.
+const ImageViewerSwipeMinDistance = 48;
+const ImageViewerSwipeMaxMs = 700;
+let imageViewerSwipe = null;
+imageViewerStage.addEventListener("touchstart", (event) => {
+  imageViewerSwipe = event.touches.length === 1
+    ? { x: event.touches[0].clientX, y: event.touches[0].clientY, at: event.timeStamp }
+    : null;
+}, { passive: true });
+imageViewerStage.addEventListener("touchmove", (event) => {
+  if (event.touches.length !== 1) imageViewerSwipe = null;
+}, { passive: true });
+imageViewerStage.addEventListener("touchcancel", () => {
+  imageViewerSwipe = null;
+}, { passive: true });
+imageViewerStage.addEventListener("touchend", (event) => {
+  const start = imageViewerSwipe;
+  imageViewerSwipe = null;
+  if (!start || imageViewer.hidden || event.touches.length !== 0) return;
+  if ((window.visualViewport?.scale ?? 1) > 1.01) return;
+  if (event.timeStamp - start.at > ImageViewerSwipeMaxMs) return;
+  const touch = event.changedTouches[0];
+  const dx = touch.clientX - start.x;
+  const dy = touch.clientY - start.y;
+  if (Math.abs(dx) < ImageViewerSwipeMinDistance || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+  if (imageViewerHelpOpen) hideImageViewerHelp();
+  navigateImageViewerImage(dx < 0 ? 1 : -1);
+}, { passive: true });
+
 document.addEventListener("keydown", (event) => {
   if (imageViewer.hidden) return;
   // A modal/form layered over the viewer owns its keyboard completely. This
@@ -10384,15 +10489,14 @@ imageViewerResize.addEventListener("pointerdown", (event) => {
 });
 imageViewerResize.addEventListener("pointermove", (event) => {
   if (!imageViewerResizeStart || !imageViewerResize.hasPointerCapture(event.pointerId)) return;
-  const minimumWidth = window.innerWidth <= 700 ? 300 : 440;
-  const minimumHeight = window.innerWidth <= 700 ? 260 : 320;
+  const minimum = imageViewerMinimumSize();
   const maximumWidth = window.innerWidth - imageViewerResizeStart.left - 8;
   const maximumHeight = window.innerHeight - imageViewerResizeStart.top - 8;
   const width = Math.max(
-    Math.min(minimumWidth, maximumWidth),
+    Math.min(minimum.width, maximumWidth),
     Math.min(maximumWidth, imageViewerResizeStart.width + event.clientX - imageViewerResizeStart.pointerX));
   const height = Math.max(
-    Math.min(minimumHeight, maximumHeight),
+    Math.min(minimum.height, maximumHeight),
     Math.min(maximumHeight, imageViewerResizeStart.height + event.clientY - imageViewerResizeStart.pointerY));
   imageViewerWindow.style.width = `${width}px`;
   imageViewerWindow.style.height = `${height}px`;
@@ -10750,6 +10854,26 @@ async function setActiveFromJob(id, card) {
   }
 }
 
+// Phone layouts clamp long job prompts to six lines in style.css. Each toggle
+// shows only while its clamp hides text, or while its prompt is expanded.
+const jobPromptToggles = new WeakMap();
+const jobPromptClampObserver = new ResizeObserver(entries => {
+  for (const { target } of entries) {
+    if (target.isConnected) updateJobPromptToggle(target);
+    else jobPromptClampObserver.unobserve(target);
+  }
+});
+
+function updateJobPromptToggle(prompt) {
+  const toggle = jobPromptToggles.get(prompt);
+  if (!toggle) return;
+  const expanded = prompt.classList.contains("prompt-expanded");
+  toggle.hidden = !PhoneLayoutQuery.matches
+    || (!expanded && prompt.scrollHeight <= prompt.clientHeight + 1);
+  toggle.textContent = expanded ? "show less" : "show full prompt";
+  toggle.setAttribute("aria-expanded", String(expanded));
+}
+
 // opts: { user, container }. user is the creator display name (shared-site
 // attribution + filter target); container is where the card renders — the
 // live feed by default, an archive day section otherwise.
@@ -10827,6 +10951,24 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
   promptDiv.textContent = prompt;
   head.appendChild(promptDiv);
   if (prompt) {
+    promptDiv.id = `job-prompt-${id}`;
+    const promptToggle = document.createElement("button");
+    promptToggle.type = "button";
+    promptToggle.className = "job-prompt-toggle";
+    promptToggle.hidden = true;
+    promptToggle.setAttribute("aria-controls", promptDiv.id);
+    promptToggle.addEventListener("click", () => {
+      const expanded = promptDiv.classList.toggle("prompt-expanded");
+      updateJobPromptToggle(promptDiv);
+      if (expanded) return;
+      // Collapsing a long prompt can leave its start above the screen.
+      const headerBottom = document.querySelector("body > header")?.getBoundingClientRect().bottom ?? 0;
+      const top = promptDiv.getBoundingClientRect().top;
+      if (top < headerBottom) window.scrollBy(0, top - headerBottom - 8);
+    });
+    jobPromptToggles.set(promptDiv, promptToggle);
+    head.appendChild(promptToggle);
+    jobPromptClampObserver.observe(promptDiv);
     // Copy-prompt affordance (the familiar two-overlapping-squares icon):
     // copies the exact prompt text and flashes "prompt copied". Deliberately
     // OUTSIDE .job-prompt, whose textContent is read verbatim elsewhere

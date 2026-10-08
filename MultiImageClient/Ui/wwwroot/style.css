@@ -20,6 +20,8 @@ body {
   background: var(--paper);
   color: var(--ink);
 }
+/* Browsers draw placeholder text in gray. Hue separates it from typed text. */
+::placeholder { color: var(--accent-dark); opacity: 1; }
 
 header {
   position: sticky;
@@ -101,22 +103,22 @@ header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
 #build-info a { color: inherit; text-decoration: none; }
 #build-info a:hover { color: var(--accent); text-decoration: underline; }
 
-/* Deliberately quiet: a small moon that only asserts itself while active. */
+/* Deliberately quiet: small borderless text that only asserts itself while
+   active. No opacity: faded text reads as gray. */
 #night-toggle {
   margin-left: auto;
   padding: 4px 9px;
   font: inherit;
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.2;
   color: var(--accent-dark);
   background: transparent;
   border: none;
   border-radius: 6px;
-  opacity: 0.45;
   cursor: pointer;
 }
-#night-toggle:hover { opacity: 1; background: #eef0fa; }
-#night-toggle.on { opacity: 1; color: #fff; background: var(--ink); }
+#night-toggle:hover { background: #eef0fa; }
+#night-toggle.on { color: #fff; background: var(--ink); }
 
 /* ---------- settings panel ---------- */
 
@@ -639,6 +641,7 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
   overflow-y: auto;
 }
 #paste-hint { text-align: center; font-size: 14px; line-height: 1.7; color: var(--accent-dark); padding: 10px; }
+.paste-hint-touch { display: none; }
 #input-thumbs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1333,7 +1336,8 @@ body:not(.show-costs) .job-cost,
 body:not(.show-costs) .cell-cost,
 body:not(.show-costs) #cost-summary { display: none !important; }
 .job-set-active,
-.job-share-link {
+.job-share-link,
+.job-prompt-toggle {
   padding: 3px 9px;
   color: var(--accent-dark);
   background: var(--card);
@@ -1343,7 +1347,8 @@ body:not(.show-costs) #cost-summary { display: none !important; }
   cursor: pointer;
 }
 .job-set-active:hover,
-.job-share-link:hover { color: #fff; background: var(--accent); }
+.job-share-link:hover,
+.job-prompt-toggle:hover { color: #fff; background: var(--accent); }
 
 /* Running session spend, rebuilt from the job cards on every result. */
 #cost-summary {
@@ -1376,7 +1381,7 @@ body:not(.show-costs) #cost-summary { display: none !important; }
 
 .job-cells {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 8px;
   margin-top: 8px;
 }
@@ -3276,43 +3281,6 @@ body.image-viewer-open { overflow: hidden; }
 .archive-day-jobs[hidden] { display: none; }
 .archive-day-error { margin: 4px 0; color: var(--err); font-size: 13px; font-weight: 700; }
 
-@media (max-width: 700px) {
-  #environment-name { display: block; font-size: 11px; letter-spacing: 0; }
-  #people-bar, #favorites-bar { width: calc(100% - 20px); margin: 8px auto 0; }
-  #compose-top { flex-direction: column; }
-  #compose-left { flex: 0 0 auto; width: 100%; }
-  #compose-right { width: 100%; }
-  #generator-config-shown,
-  #generator-config-defaults { grid-template-columns: 1fr; }
-  .generator-config-choice-grid { grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); }
-  .generator-config-subhead { align-items: flex-start; }
-  .generator-endpoint-layout { grid-template-columns: 1fr; }
-  #generator-config-endpoint-list {
-    max-height: 180px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-  #logs-columns, .log-row {
-    grid-template-columns: 92px minmax(90px, 125px) 34px minmax(0, 1fr);
-    column-gap: 7px;
-    padding-right: 10px;
-    padding-left: 10px;
-  }
-  .video-dialog-body { grid-template-columns: 1fr; }
-  #video-source-preview { max-height: 260px; }
-  .video-resolution { display: none; }
-  .video-volume { flex-basis: 55px; width: 55px; }
-  #image-viewer-window { min-width: 300px; min-height: 260px; }
-  #image-viewer-prompt { max-height: 64px; }
-  #activity-panel {
-    right: 10px;
-    bottom: 10px;
-    width: calc(100vw - 20px);
-    max-width: calc(100vw - 20px);
-  }
-}
-
-
 /* Full prompt text stays readable without inner scroll boxes or collapsed versions. */
 #prompt-rewrite-status:empty { display: none; }
 #prompt-rewrite-status { margin: 8px 0; color: var(--accent-dark); }
@@ -3389,3 +3357,233 @@ body.image-viewer-open { overflow: hidden; }
 .share-link-note { margin: 10px 0 0; font-size: 14px; font-weight: 600; }
 .share-link-status { min-height: 1.4em; margin: 8px 0; font-weight: 700; color: var(--ok); }
 .share-link-status.error { color: var(--err); }
+
+/* ---------- phones ---------- */
+/* Phone use cases: write a prompt and press Generate, watch the results
+   arrive, and step through them in the viewer. No row may be wider than the
+   screen: the browser widens the layout viewport to fit the widest row, and
+   fixed panels and the viewer then sit partly off-screen. These rules stay
+   last so they override the base rules above.
+   The first block applies to phones in both orientations: a landscape phone
+   is wide but only about 400px tall. app.js PhoneLayoutQuery must match its
+   media query. The second block adds the single-column portrait layout. */
+@media (max-width: 700px), (pointer: coarse) and (max-height: 500px) {
+  :root { --header-height: 46px; }
+
+  /* One header row that scrolls sideways: navigation first, diagnostics
+     last. The height is fixed because the logs panel opens exactly at
+     --header-height. */
+  body.composer-page > header {
+    height: var(--header-height);
+    gap: 6px;
+    padding: 0 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+  }
+  body.composer-page > header > * { flex: 0 0 auto; white-space: nowrap; }
+  body.composer-page > header h1 { font-size: 15px; letter-spacing: 0; }
+  #goal-loops-link, #settings-toggle, #logs-toggle, #activity-toggle, #people-link {
+    order: 1;
+    padding: 5px 9px;
+  }
+  #night-toggle, #ram-status, #build-info { order: 2; }
+  /* The switcher shows the current environment name, so it replaces the title. */
+  body.composer-page > header:has(#environment-switcher) > h1 { display: none; }
+  body.composer-page > header > label:has(#environment-switcher) { font-size: 0; }
+  #environment-switcher {
+    max-width: 62vw !important;
+    font: 700 14px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  }
+
+  #getting-started { margin: 6px 10px; }
+  /* Creator and favorites filters: one sideways-scrolling row each. */
+  #people-bar, #favorites-bar {
+    flex-wrap: nowrap;
+    width: auto;
+    margin: 6px 8px 0;
+    padding: 5px 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  #user-filters, #favorite-user-filters { flex-wrap: nowrap; }
+  #people-bar > *, #favorites-bar > *, #user-filters > *, #favorite-user-filters > * {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  main { padding: 10px 8px 60px; }
+  #composer { gap: 10px; padding: 10px; }
+  /* Landscape keeps the paste zone beside the prompt, at the prompt's height. */
+  #compose-left { grid-template-rows: minmax(100px, 1fr) auto; }
+  #paste-zone { min-height: 100px; }
+  /* Prompt at phone reading size: six lines when short, and text-entry.js
+     grows it with the text. */
+  #prompt {
+    min-height: 0;
+    height: calc(8.4em + 18px);
+    padding: 8px 10px;
+    font-size: 16px;
+    line-height: 1.4;
+  }
+  /* Generate stays at the bottom of the screen while any part of the
+     composer is visible. display: contents gives the sticky row the whole
+     composer as its range instead of only the endpoint picker. */
+  #endpoint-picker { display: contents; }
+  #send-row {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    margin: 0 -10px -10px;
+    padding: 8px 10px;
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    border-radius: 0 0 4px 4px;
+  }
+  #send-error { order: -1; flex-basis: 100%; }
+  #send-error:empty { display: none; }
+  /* Popovers anchored to small buttons would extend past the screen edge. */
+  #input-library-panel, #inspiration-panel, #opts-help-panel {
+    position: fixed;
+    z-index: 1003;
+    top: calc(var(--header-height) + 8px);
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-height: calc(100vh - var(--header-height) - 24px);
+    max-height: calc(100dvh - var(--header-height) - 24px);
+  }
+
+  /* Job cards: the prompt gets the whole first line beside the input thumb;
+     prompt actions and job status wrap onto the line below. */
+  #jobs { gap: 8px; margin-top: 12px; }
+  .job { padding: 8px; }
+  .job-head { flex-wrap: wrap; column-gap: 8px; row-gap: 0; }
+  .job-head::after { content: ""; order: 1; flex-basis: 100%; height: 6px; }
+  .job-input-thumb { max-width: 64px; max-height: 64px; }
+  .job-prompt { flex: 1 1 0; min-width: 0; }
+  /* Six lines keep the results near the top of the screen. The toggle under
+     a long prompt shows the rest. */
+  .job-head > .job-prompt:not(.prompt-expanded) {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 6;
+  }
+  .job-prompt-toggle { order: 2; }
+  .copy-prompt-wrap { order: 2; }
+  .job-meta {
+    order: 2;
+    flex: 1 1 auto;
+    flex-flow: row wrap;
+    align-items: center;
+    gap: 4px 10px;
+    white-space: normal;
+  }
+  .job-meta > * { white-space: nowrap; }
+  .job-cells { gap: 6px; }
+  .cell { padding: 6px; }
+
+  #image-viewer-window {
+    min-width: min(300px, calc(100vw - 16px));
+    min-height: min(260px, calc(100vh - 16px));
+  }
+  /* The bottom bar takes at most about a third of the screen, so the image
+     keeps most of the window. It scrolls as one region, like the side column:
+     nested scroll boxes are hard to use with a finger. */
+  #image-viewer-window:not(.side-status) #image-viewer-status {
+    max-height: 36vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  #image-viewer-window:not(.side-status) #image-viewer-prompt,
+  #image-viewer-window:not(.side-status) #image-viewer-describe,
+  #image-viewer-window:not(.side-status) #image-viewer-guidance {
+    max-height: none;
+    overflow-y: visible;
+  }
+  #image-viewer-actions { flex-wrap: wrap; }
+  /* The viewer backdrop already covers the bar; hiding it keeps the preload
+     ticks in the same corner legible. */
+  body.image-viewer-open #activity-panel { visibility: hidden; }
+  #activity-panel { right: 8px; bottom: 8px; }
+  /* Collapsed, the activity bar keeps to the right corner beside Generate. */
+  #activity-panel.collapsed { width: min(55vw, 260px) !important; min-width: 0; }
+  #activity-panel.collapsed #activity-head { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+  #activity-panel.collapsed #activity-options-toggle { display: none; }
+}
+
+/* Portrait phones: one column. */
+@media (max-width: 700px) {
+  #compose-top { flex-direction: column; gap: 8px; }
+  #compose-left { flex: 0 0 auto; width: 100%; grid-template-rows: auto auto; }
+  #compose-right { width: 100%; }
+  #paste-zone { min-height: 64px; }
+  #paste-hint { padding: 8px; line-height: 1.45; }
+  #input-thumbs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #prompt-tools { justify-content: flex-start; width: 100%; margin-left: 0; }
+  #prompt-tools > button { flex: 1 1 auto; }
+  #gens-row, #describe-row { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+  #opts-row { gap: 8px 12px; }
+  #settings-panel { right: 8px; width: calc(100vw - 16px); }
+
+  #generator-config-shown,
+  #generator-config-defaults { grid-template-columns: 1fr; }
+  .generator-config-choice-grid { grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); }
+  .generator-config-subhead { align-items: flex-start; }
+  .generator-endpoint-layout { grid-template-columns: 1fr; }
+  #generator-config-endpoint-list {
+    max-height: 180px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  #logs-columns, .log-row {
+    grid-template-columns: 92px minmax(90px, 125px) 34px minmax(0, 1fr);
+    column-gap: 7px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+  .video-dialog-body { grid-template-columns: 1fr; }
+  #video-source-preview { max-height: 260px; }
+  .video-resolution { display: none; }
+  .video-volume { flex-basis: 55px; width: 55px; }
+  #activity-panel { width: calc(100vw - 16px); max-width: calc(100vw - 16px); }
+}
+
+/* ---------- touch screens ---------- */
+@media (hover: none) and (pointer: coarse) {
+  .paste-hint-pointer { display: none; }
+  .paste-hint-touch { display: inline; }
+  /* iOS Safari zooms the page into any focused field whose text is smaller
+     than 16px. */
+  #username-input, #opts-row input, #opts-row select, #inspiration-search,
+  #night-words, .config-transfer-field textarea, #global-append-text,
+  .generator-config-preset-head input, .generator-endpoint-field textarea,
+  #claude-advice-instruction, #video-prompt, .video-options select,
+  .video-options input, .sketch-color-row input, .sketch-config-row select,
+  #share-link-url { font-size: 16px; }
+  /* Finger-sized tap targets. */
+  header button, header a, #gen-controls button, #prompt-tools button,
+  #input-library-toggle, #sketch-open, #inspiration-toggle, #describe-head button,
+  .user-chip, .favorite-user-chip, .job-set-active, .job-share-link, .job-prompt-toggle,
+  .prompt-favorite, .hide-prompt, #cost-toggle, .archive-day-toggle { min-height: 36px; }
+  /* Unlike a button, a link keeps its text at the top of a taller box. */
+  header a { display: inline-flex; align-items: center; }
+  .gen-toggle { min-height: 40px; }
+  .copy-prompt { width: 36px; height: 36px; }
+  .opts-help { width: 32px; height: 32px; }
+  .input-thumb-remove { width: 30px; height: 30px; }
+  #send { padding: 11px 30px; font-size: 16px; }
+  #image-viewer-actions button, #image-viewer-active-actions button {
+    min-height: 34px;
+    padding-right: 11px;
+    padding-left: 11px;
+    font-size: 13px;
+  }
+  #image-viewer-help-toggle { width: 34px; height: 34px; font-size: 15px; }
+  /* Touch-sized action buttons are wider than the side column's two-column grid. */
+  #image-viewer-window.side-status #image-viewer-actions { display: flex; flex-wrap: wrap; }
+  #image-viewer-window.side-status #image-viewer-actions button { flex: 1 1 auto; }
+}

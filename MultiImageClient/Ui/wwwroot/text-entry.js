@@ -3,7 +3,11 @@
   "use strict";
   const selector = 'textarea:not([readonly]):not([data-text-entry="fixed"])';
   const fields = new Map();
-  const pending = new Set();
+  // Field -> whether this pass may scroll to the caret. Only editing and caret
+  // movement reveal. Passive layout changes must not pull the page back while
+  // the user scrolls away from a focused field (mobile address bars resize the
+  // viewport during every scroll).
+  const pending = new Map();
   let frame = 0;
   const metrics = [
     "fontFamily", "fontSize", "fontWeight", "fontStyle", "fontStretch", "fontVariant",
@@ -67,12 +71,21 @@
     }
     const viewport = window.visualViewport;
     let top = viewport ? viewport.offsetTop : 0;
-    const bottom = top + (viewport ? viewport.height : window.innerHeight);
+    let bottom = top + (viewport ? viewport.height : window.innerHeight);
     for (const header of document.querySelectorAll("header")) {
       const position = getComputedStyle(header).position;
       const rect = header.getBoundingClientRect();
       if ((position === "sticky" || position === "fixed") && rect.top <= top && rect.bottom > top) {
         top = rect.bottom;
+      }
+    }
+    // Pages mark bars that stick to the bottom edge, such as a phone Generate row.
+    // A soft keyboard covers such a bar, so only a bar inside the visible area counts.
+    for (const bar of document.querySelectorAll('[data-text-entry-inset="bottom"]')) {
+      const position = getComputedStyle(bar).position;
+      const rect = bar.getBoundingClientRect();
+      if ((position === "sticky" || position === "fixed") && rect.top < bottom && rect.bottom >= bottom - 1) {
+        bottom = Math.max(top, rect.top);
       }
     }
     const delta = adjustment(top, bottom);
@@ -111,18 +124,19 @@
     caretMirror.replaceChildren();
   }
 
-  function schedule(field) {
-    pending.add(field);
+  function schedule(field, keepVisible) {
+    pending.set(field, pending.get(field) || keepVisible);
     if (frame) return;
     frame = requestAnimationFrame(() => {
       frame = 0;
-      for (const field of pending) update(field, document.activeElement === field);
+      const work = [...pending];
       pending.clear();
+      for (const [field, keepVisible] of work) update(field, keepVisible);
     });
   }
 
   const resize = new ResizeObserver(entries => {
-    for (const entry of entries) schedule(entry.target);
+    for (const entry of entries) schedule(entry.target, false);
   });
   function attach(field) {
     if (fields.has(field)) return;
@@ -162,17 +176,21 @@
     // The input handler runs before paint, including Enter, paste, and IME input.
     update(field, true);
     // Reconcile any native caret scrolling that follows the event's default action.
-    schedule(field);
+    schedule(field, true);
   }
   for (const type of ["input", "focusin", "keyup", "select", "compositionend"]) {
     document.addEventListener(type, edited, true);
   }
-  document.addEventListener("selectionchange", () => {
+  document.addEventListener("selectionchange", event => {
     const field = document.activeElement;
-    if (fields.has(field)) schedule(field);
+    if (!fields.has(field)) return;
+    // Chromium also fires selectionchange at sizeMirror whenever update() writes its
+    // value. Reacting to that would rerun update on every frame.
+    if (event.target !== field && event.target !== document) return;
+    schedule(field, true);
   });
   function resized() {
-    for (const field of fields.keys()) schedule(field);
+    for (const field of fields.keys()) schedule(field, false);
   }
   window.addEventListener("resize", resized);
   window.visualViewport?.addEventListener("resize", resized);

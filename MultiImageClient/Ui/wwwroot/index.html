@@ -8,10 +8,10 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261006-share-links">
+<link rel="stylesheet" href="style.css?v=20261008-job-prompt-clamp">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261006-mcphee-3-12-0">
 </head>
-<body>
+<body class="composer-page">
 <header>
   <h1><span id="environment-name">MultiImageClient</span></h1>
   <button id="night-toggle" type="button" aria-pressed="false"
@@ -204,8 +204,9 @@
       <div id="compose-left">
         <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse. Up to 4 images; the gpt-image family (gpt-image-2 and 2.5) receives all, other generators only the first.">
           <div id="paste-hint">
-            <strong>Ctrl+V</strong> to paste an image<br>
-            or drop / click to browse
+            <span class="paste-hint-pointer"><strong>Ctrl+V</strong> to paste an image<br>
+            or drop / click to browse</span>
+            <span class="paste-hint-touch"><strong>tap</strong> to choose an image</span>
           </div>
           <div id="input-thumbs" hidden></div>
           <p id="multi-input-hint" hidden>
@@ -352,7 +353,7 @@
         <div id="describe-row"><!-- describe checkboxes injected here --></div>
       </div>
 
-      <div id="send-row">
+      <div id="send-row" data-text-entry-inset="bottom">
         <button id="send" type="button">Generate</button>
         <span id="send-error"></span>
       </div>
@@ -813,7 +814,7 @@
 </dialog>
 
 <script src="text-drafts.js?v=20260912"></script>
-<script src="text-entry.js?v=20260920"></script>
+<script src="text-entry.js?v=20261008-bottom-inset"></script>
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20261006-mcphee-3-12-0"></script>
 <script src="personal-config.js?v=20260917-global-append"></script>
@@ -848,6 +849,6 @@
 </dialog>
 <script src="public-share-dialog.js?v=20260917-daily-threads"></script>
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
-<script src="app.js?v=20261006-share-links"></script>
+<script src="app.js?v=20261008-job-prompt-clamp"></script>
 </body>
 </html>
