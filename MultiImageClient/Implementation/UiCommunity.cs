@@ -237,6 +237,11 @@ namespace MultiImageClient
                     );
                     CREATE INDEX IF NOT EXISTS ix_ui_claude_prompt_exchanges_identity_time
                         ON ui_claude_prompt_exchanges(identity_key, requested_at_unix_ms DESC);
+
+                    CREATE TABLE IF NOT EXISTS ui_migrations (
+                        id TEXT PRIMARY KEY,
+                        applied_at_unix_ms INTEGER NOT NULL
+                    );
                     """;
                 command.ExecuteNonQuery();
                 EnsureColumn(connection, "ui_generator_preferences", "default_view", "TEXT NOT NULL DEFAULT 'all'");
@@ -345,6 +350,102 @@ namespace MultiImageClient
                 command.Parameters.AddWithValue("$updated", preferences.UpdatedAtUnixMs);
                 command.ExecuteNonQuery();
             }
+        }
+
+        // Adds key to every saved account default list once per database. The
+        // recorded migration keeps a later removal by the user in place. Lists
+        // that hide the key or already select it stay unchanged.
+        public int AddDefaultSelectedKeyOnce(string migrationId, string key, long appliedAtUnixMs)
+        {
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var transaction = connection.BeginTransaction();
+                if (MigrationApplied(connection, transaction, migrationId))
+                {
+                    return 0;
+                }
+                var updates = new List<(string Login, List<string> Selected)>();
+                using (var read = connection.CreateCommand())
+                {
+                    read.Transaction = transaction;
+                    read.CommandText =
+                        "SELECT login, hidden_generator_keys_json, default_selected_keys_json FROM ui_generator_preferences;";
+                    using var reader = read.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        var login = reader.GetString(0);
+                        List<string> hidden, selected;
+                        try
+                        {
+                            hidden = DeserializeList(reader.GetString(1));
+                            selected = DeserializeList(reader.GetString(2));
+                        }
+                        catch (JsonException ex)
+                        {
+                            throw new InvalidDataException(
+                                $"Stored generator preferences for '{login}' are malformed.", ex);
+                        }
+                        if (hidden.Contains(key, StringComparer.Ordinal) || selected.Contains(key, StringComparer.Ordinal))
+                        {
+                            continue;
+                        }
+                        selected.Add(key);
+                        updates.Add((login, selected));
+                    }
+                }
+                foreach (var (login, selected) in updates)
+                {
+                    using var update = connection.CreateCommand();
+                    update.Transaction = transaction;
+                    update.CommandText =
+                        "UPDATE ui_generator_preferences SET default_selected_keys_json = $selected WHERE login = $login;";
+                    update.Parameters.AddWithValue("$selected", JsonSerializer.Serialize(selected));
+                    update.Parameters.AddWithValue("$login", login);
+                    update.ExecuteNonQuery();
+                }
+                RecordMigration(connection, transaction, migrationId, appliedAtUnixMs);
+                transaction.Commit();
+                return updates.Count;
+            }
+        }
+
+        public bool MigrationApplied(string migrationId)
+        {
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                return MigrationApplied(connection, null, migrationId);
+            }
+        }
+
+        public void RecordMigration(string migrationId, long appliedAtUnixMs)
+        {
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                RecordMigration(connection, null, migrationId, appliedAtUnixMs);
+            }
+        }
+
+        private static bool MigrationApplied(SqliteConnection connection, SqliteTransaction? transaction, string migrationId)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "SELECT COUNT(*) FROM ui_migrations WHERE id = $id;";
+            command.Parameters.AddWithValue("$id", migrationId);
+            return Convert.ToInt64(command.ExecuteScalar()) != 0;
+        }
+
+        private static void RecordMigration(
+            SqliteConnection connection, SqliteTransaction? transaction, string migrationId, long appliedAtUnixMs)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "INSERT INTO ui_migrations(id, applied_at_unix_ms) VALUES($id, $at);";
+            command.Parameters.AddWithValue("$id", migrationId);
+            command.Parameters.AddWithValue("$at", appliedAtUnixMs);
+            command.ExecuteNonQuery();
         }
 
         public UiClaudePromptExchangeRecord StartClaudePromptExchange(

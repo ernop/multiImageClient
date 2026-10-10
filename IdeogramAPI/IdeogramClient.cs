@@ -40,8 +40,47 @@ namespace IdeogramAPIClient
             "512x1536", "1536x512",
         };
 
+        private const string IdeogramV45GeneratePath = "/v2/image/generate/ideogram-4-5";
+        private const string IdeogramV45PreciseEditPath = "/v2/image/precise-edit/ideogram-4-5";
+        public const int IdeogramV45MaxPromptChars = 10_000;
+        public const int IdeogramV45MaxNumImages = 8;
+        public const int IdeogramV45MaxReferenceImages = 4;
+        public const long IdeogramV45MaxImageBytes = 50_000_000;
+
+        // Text-only Generate accepts only these exact presets; 4.0's 512x1536
+        // pair is rejected by 4.5. Source-image sizes follow other rules.
+        private static readonly HashSet<string> IdeogramV45TextSizes = new(StringComparer.Ordinal)
+        {
+            "2048x2048",
+            "1792x2240", "2240x1792",
+            "1728x2304", "2304x1728",
+            "1664x2496", "2496x1664",
+            "1440x2560", "2560x1440",
+            "1600x2560", "2560x1600",
+            "1440x2880", "2880x1440",
+            "1280x3072", "3072x1280",
+            "1248x3328", "3328x1248",
+            "1152x2944", "2944x1152",
+            "1296x3168", "3168x1296",
+            "1024x3072", "3072x1024",
+            "1024x1024",
+            "896x1120", "1120x896",
+            "864x1152", "1152x864",
+            "832x1248", "1248x832",
+            "800x1280", "1280x800",
+            "720x1280", "1280x720",
+            "720x1440", "1440x720",
+        };
+
+        public static bool IsIdeogramV45TextSize(string size) => IdeogramV45TextSizes.Contains(size);
+
         public IdeogramClient(string apiKey)
             : this(apiKey, new HttpClient())
+        {
+        }
+
+        public IdeogramClient(string apiKey, TimeSpan timeout)
+            : this(apiKey, new HttpClient { Timeout = timeout })
         {
         }
 
@@ -337,6 +376,179 @@ namespace IdeogramAPIClient
             }
         }
 
+        /// Ideogram 4.5 text-to-image Generate. The reply must contain exactly
+        /// one data entry per requested image.
+        public async Task<IdeogramV45Response> GenerateImageV45Async(IdeogramV45GenerateRequest request)
+        {
+            if (request == null)
+                throw new ArgumentNullException(nameof(request));
+
+            ValidateV45Common(request.Prompt, request.NumImages, request.Seed);
+            if (request.Size != null && !IdeogramV45TextSizes.Contains(request.Size))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    request.Size,
+                    "Ideogram 4.5 text-to-image size must be one of the published 1K/2K presets, or omitted for auto.");
+            }
+            if (request.Quality == IdeogramV45Quality.very_low)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    request.Quality,
+                    "Ideogram 4.5 accepts quality=very_low only with source images.");
+            }
+
+            using var formData = new MultipartFormDataContent();
+            formData.Add(new StringContent(request.Prompt), "prompt");
+            AddStringPart(formData, "size", request.Size);
+            AddEnumPart(formData, "quality", request.Quality);
+            AddIntPart(formData, "num_images", request.NumImages);
+            AddIntPart(formData, "seed", request.Seed);
+
+            var traceRequest = new Dictionary<string, object>
+            {
+                ["prompt"] = request.Prompt,
+            };
+            AddTraceV45Options(traceRequest, request.Size, request.Quality, request.NumImages, request.Seed);
+
+            return await PostV45Async(
+                IdeogramV45GeneratePath,
+                formData,
+                traceRequest,
+                "generate-image",
+                request.NumImages ?? 1,
+                requireGenerationId: true);
+        }
+
+        /// Ideogram 4.5 Precise Edit. The edited image and each reference are
+        /// sent as uploaded files; the trace records their metadata only.
+        public async Task<IdeogramV45Response> PreciseEditImageV45Async(IdeogramV45PreciseEditRequest request)
+        {
+            if (request == null)
+                throw new ArgumentNullException(nameof(request));
+            if (request.Image == null)
+                throw new ArgumentException("Image is required for Ideogram 4.5 Precise Edit.", nameof(request));
+
+            var referenceImages = request.ReferenceImages ?? Array.Empty<IdeogramFile>();
+            ValidateV45Common(request.Prompt, request.NumImages, request.Seed);
+            if (referenceImages.Count > IdeogramV45MaxReferenceImages)
+            {
+                throw new ArgumentException(
+                    $"Ideogram 4.5 Precise Edit accepts at most {IdeogramV45MaxReferenceImages} reference images; received {referenceImages.Count}.",
+                    nameof(request));
+            }
+            ValidateV45Image(request.Image, "edit image");
+            for (var i = 0; i < referenceImages.Count; i++)
+            {
+                ValidateV45Image(referenceImages[i], $"reference image {i + 1}");
+            }
+
+            using var formData = new MultipartFormDataContent();
+            formData.Add(new StringContent(request.Prompt), "prompt");
+            AddFilePart(formData, "image", request.Image);
+            foreach (var reference in referenceImages)
+            {
+                AddFilePart(formData, "reference_images", reference);
+            }
+            AddEnumPart(formData, "quality", request.Quality);
+            AddIntPart(formData, "num_images", request.NumImages);
+            AddIntPart(formData, "seed", request.Seed);
+
+            var traceRequest = new Dictionary<string, object>
+            {
+                ["prompt"] = request.Prompt,
+                ["image"] = DescribeFiles(new[] { request.Image }).Single(),
+            };
+            if (referenceImages.Count > 0)
+            {
+                traceRequest["reference_images"] = DescribeFiles(referenceImages);
+            }
+            AddTraceV45Options(traceRequest, size: null, request.Quality, request.NumImages, request.Seed);
+
+            return await PostV45Async(
+                IdeogramV45PreciseEditPath,
+                formData,
+                traceRequest,
+                "precise-edit-image",
+                request.NumImages ?? 1,
+                requireGenerationId: false);
+        }
+
+        private async Task<IdeogramV45Response> PostV45Async(
+            string endpoint,
+            HttpContent content,
+            object traceRequest,
+            string operation,
+            int expectedImageCount,
+            bool requireGenerationId)
+        {
+            var startedAtUtc = DateTime.UtcNow;
+            HttpResponseMessage? response = null;
+            string? responseContent = null;
+            Exception? error = null;
+            try
+            {
+                response = await _httpClient.PostAsync(endpoint, content);
+                responseContent = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException(
+                        $"API request failed with status code {response.StatusCode}. Response: {responseContent}",
+                        null,
+                        response.StatusCode);
+                }
+
+                IdeogramV45Response? parsed;
+                try
+                {
+                    parsed = JsonConvert.DeserializeObject<IdeogramV45Response>(responseContent);
+                }
+                catch (JsonException ex)
+                {
+                    throw new InvalidDataException(
+                        $"Ideogram 4.5 response does not match the published contract: {ex.Message}",
+                        ex);
+                }
+                if (parsed == null)
+                {
+                    throw new InvalidDataException("Ideogram 4.5 returned an empty response body.");
+                }
+                if (requireGenerationId && string.IsNullOrWhiteSpace(parsed.GenerationId))
+                {
+                    throw new InvalidDataException("Ideogram 4.5 Generate response has no generation_id.");
+                }
+                var count = parsed.Data?.Count ?? 0;
+                if (count != expectedImageCount)
+                {
+                    throw new InvalidDataException(
+                        $"Ideogram 4.5 returned {count} image entries for a request of {expectedImageCount}.");
+                }
+
+                return parsed;
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+                throw;
+            }
+            finally
+            {
+                GenerationTrace.RecordProviderCall(
+                    "ideogram",
+                    "http-multipart",
+                    "POST",
+                    BaseUrl + endpoint,
+                    startedAtUtc,
+                    request: traceRequest,
+                    response: responseContent,
+                    statusCode: response == null ? null : (int)response.StatusCode,
+                    error: error,
+                    metadata: new { operation, apiVersion = "v2", model = "ideogram-4-5" });
+                response?.Dispose();
+            }
+        }
+
         public async Task<IdeogramDescribeResponse> DescribeImageAsync(IdeogramDescribeRequest request)
         {
             using (var formData = new MultipartFormDataContent())
@@ -516,26 +728,117 @@ namespace IdeogramAPIClient
                     $"Ideogram 4.0 remix only accepts PNG, JPEG, or WEBP; received '{image.ContentType}'.",
                     nameof(image));
             }
-            var bytes = image.Content;
-            var matchesDeclaredType = image.ContentType switch
-            {
-                "image/png" => bytes.Length >= 8
-                    && bytes[0] == 0x89 && bytes[1] == 0x50
-                    && bytes[2] == 0x4E && bytes[3] == 0x47,
-                "image/jpeg" => bytes.Length >= 3
-                    && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF,
-                "image/webp" => bytes.Length >= 12
-                    && bytes[0] == 'R' && bytes[1] == 'I'
-                    && bytes[2] == 'F' && bytes[3] == 'F'
-                    && bytes[8] == 'W' && bytes[9] == 'E'
-                    && bytes[10] == 'B' && bytes[11] == 'P',
-                _ => false,
-            };
-            if (!matchesDeclaredType)
+            if (DetectImageContentType(image.Content) != image.ContentType)
             {
                 throw new ArgumentException(
                     $"Ideogram 4.0 remix image bytes do not match declared type '{image.ContentType}'.",
                     nameof(image));
+            }
+        }
+
+        private static void ValidateV45Common(string prompt, int? numImages, int? seed)
+        {
+            if (string.IsNullOrWhiteSpace(prompt))
+            {
+                throw new ArgumentException("Ideogram 4.5 requires a non-blank prompt.", nameof(prompt));
+            }
+            // The published limit counts Unicode characters, not UTF-16 units.
+            var promptChars = prompt.EnumerateRunes().Count();
+            if (promptChars > IdeogramV45MaxPromptChars)
+            {
+                throw new ArgumentException(
+                    $"Ideogram 4.5 prompts are limited to {IdeogramV45MaxPromptChars:N0} characters; this prompt has {promptChars:N0}.",
+                    nameof(prompt));
+            }
+            if (numImages is < 1 or > IdeogramV45MaxNumImages)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(numImages),
+                    numImages,
+                    $"Ideogram 4.5 num_images must be between 1 and {IdeogramV45MaxNumImages}.");
+            }
+            if (seed is < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(seed), seed, "Ideogram 4.5 seed must be between 0 and 2147483647.");
+            }
+        }
+
+        private static void ValidateV45Image(IdeogramFile image, string role)
+        {
+            if (image?.Content == null || image.Content.Length == 0)
+            {
+                throw new ArgumentException($"Ideogram 4.5 {role} is empty.");
+            }
+            if (image.Content.LongLength > IdeogramV45MaxImageBytes)
+            {
+                throw new ArgumentException(
+                    $"Ideogram 4.5 {role} is {image.Content.LongLength:N0} bytes; the limit is {IdeogramV45MaxImageBytes:N0}.");
+            }
+            if (image.ContentType is not ("image/png" or "image/jpeg" or "image/webp"))
+            {
+                throw new ArgumentException(
+                    $"Ideogram 4.5 {role} must be PNG, JPEG, or WEBP; received '{image.ContentType}'.");
+            }
+            if (DetectImageContentType(image.Content) != image.ContentType)
+            {
+                throw new ArgumentException(
+                    $"Ideogram 4.5 {role} bytes do not match declared type '{image.ContentType}'.");
+            }
+        }
+
+        /// Returns image/png, image/jpeg, or image/webp from the file
+        /// signature, or null for any other content.
+        public static string? DetectImageContentType(byte[] bytes)
+        {
+            if (bytes == null)
+            {
+                return null;
+            }
+            if (bytes.Length >= 8
+                && bytes[0] == 0x89 && bytes[1] == 0x50
+                && bytes[2] == 0x4E && bytes[3] == 0x47)
+            {
+                return "image/png";
+            }
+            if (bytes.Length >= 3
+                && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            {
+                return "image/jpeg";
+            }
+            if (bytes.Length >= 12
+                && bytes[0] == 'R' && bytes[1] == 'I'
+                && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E'
+                && bytes[10] == 'B' && bytes[11] == 'P')
+            {
+                return "image/webp";
+            }
+            return null;
+        }
+
+        private static void AddFilePart(MultipartFormDataContent formData, string fieldName, IdeogramFile file)
+        {
+            var fileContent = new ByteArrayContent(file.Content);
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue(file.ContentType);
+            formData.Add(fileContent, fieldName, file.FileName);
+        }
+
+        private static void AddTraceV45Options(
+            Dictionary<string, object> traceRequest,
+            string? size,
+            IdeogramV45Quality? quality,
+            int? numImages,
+            int? seed)
+        {
+            AddTraceString(traceRequest, "size", size);
+            AddTraceString(traceRequest, "quality", quality?.ToString());
+            if (numImages.HasValue)
+            {
+                traceRequest["num_images"] = numImages.Value;
+            }
+            if (seed.HasValue)
+            {
+                traceRequest["seed"] = seed.Value;
             }
         }
     }

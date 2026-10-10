@@ -387,6 +387,10 @@ Separate server stores and membership checks provide the application data bounda
 Provider credentials can be reused through a provider-only configuration copy.
 Default provider selections remain independently configurable for each environment.
 Existing personal choices are not overwritten when defaults change.
+One owner-approved exception exists (2026-10-10).
+The release added Ideogram 4.5 once to every saved default list, including environment lists.
+Later removals stay removed.
+See [Ideogram 4.5 support](ideogram-45-support.md#one-time-addition-to-saved-lists-2026-10-10).
 B2 original images retain the established public capability-URL policy.
 A person holding a direct original-image URL can retrieve it independently of application membership.
 No old image URLs or image indexes are copied to the new environment.

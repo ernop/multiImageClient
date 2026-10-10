@@ -2579,6 +2579,21 @@ namespace MultiImageClient
             };
         }
 
+        /// Ideogram 4.5 text-to-image size. Auto omits the field, and Ideogram
+        /// picks a prompt-aware 2K size. Explicit shapes use published 2K
+        /// presets. Detail has no effect: 1K costs the same as 2K. Precise
+        /// Edit keeps the source size and never calls this.
+        public static string IdeogramV45Size(string shape)
+            => Norm(shape, Shapes) switch
+            {
+                "square" => "2048x2048",
+                "landscape" => "2496x1664",
+                "portrait" => "1664x2496",
+                "wide" => "2560x1440",
+                "tall" => "1440x2560",
+                _ => "",
+            };
+
         /// Ideogram v3 aspect enum (image-reference jobs route to v3).
         public static IdeogramAPIClient.IdeogramAspectRatio IdeogramV3Aspect(
             string shape,
@@ -2816,6 +2831,10 @@ namespace MultiImageClient
         public const string KeyGpt25Flare = "gpt25-flare";
         public const string KeyGpt1 = "gpt1";
         public const string KeyGpt1Mini = "gpt1-mini";
+        // Ideogram 4.5 (released 2026-09-30) is a separate target. The
+        // historical "ideogram" key stays Ideogram 4.0 so persisted jobs keep
+        // their exact producer identity.
+        public const string KeyIdeogramV45 = "ideogram-v45";
         public const string KeyIdeogram = "ideogram";
         public const string KeyIdeogramV3 = "ideogram-v3";
         public const string KeyIdeogramV2 = "ideogram-v2";
@@ -2885,6 +2904,7 @@ namespace MultiImageClient
             KeyGpt25Flare,
             KeyGpt1,
             KeyGpt1Mini,
+            KeyIdeogramV45,
             KeyIdeogram,
             KeyIdeogramV3,
             KeyIdeogramV2,
@@ -3178,6 +3198,7 @@ namespace MultiImageClient
             KeyKrea,
             KeyKreaTurbo,
             KeyKreaLarge,
+            KeyIdeogramV45,
             KeyIdeogram,
             KeyIdeogramV3,
             KeyRecraft,
@@ -3199,7 +3220,9 @@ namespace MultiImageClient
         // the sketch's flat-color look instead of treating it as layout
         // guidance (Recraft image-to-image, style-reference targets), or was
         // tested and did not interpret the sketch (including Nano Banana Pro
-        // and Ideogram 4.0 Remix). "FLUX.2 Pro" covers both the Preview and
+        // and Ideogram 4.0 Remix). Ideogram 4.5 Precise Edit copies unchanged
+        // source pixels exactly, so it keeps a sketch instead of repainting
+        // it. "FLUX.2 Pro" covers both the Preview and
         // pinned targets because they share one request contract. Exposed
         // per-generator as sketchCapable in /api/config; the composer uses it
         // for the sketch dialog's auto-deselect and the chip warning tint —
@@ -3488,6 +3511,7 @@ namespace MultiImageClient
                 or KeyBflKontextPro or KeyBflKontextMax => "edit/reference source",
             KeyBflFlux11Ultra or KeyBflFlux11 or KeyBflFluxDev => "image remix/reference source",
             KeyIdeogram => "image remix source",
+            KeyIdeogramV45 => "precise edit source (first image edited, later images references)",
             KeyGoogle or KeyGooglePro or KeyIdeogramV3
                 or KeyKrea or KeyKreaTurbo or KeyKreaLarge => "style/reference image",
             KeyGrokWebVideo => "video source",
@@ -3657,6 +3681,8 @@ namespace MultiImageClient
         {
             KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare or KeyGpt1 or KeyGpt1Mini
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GptImage2, _settings),
+            KeyIdeogramV45
+                => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV45, _settings),
             KeyIdeogram
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV4, _settings),
             KeyIdeogramV3
@@ -4644,7 +4670,7 @@ namespace MultiImageClient
                 KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
                     or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
                     or KeyRecraftV4Pro => 6,
-                KeyIdeogram or KeyIdeogramV3 => 8,
+                KeyIdeogramV45 or KeyIdeogram or KeyIdeogramV3 => 8,
                 _ => 10,
             };
             var want = Math.Clamp(spec.ImageCount, 1, maxImages);
@@ -5825,6 +5851,26 @@ namespace MultiImageClient
                             _stats,
                             name: $"{key} ui",
                             inputImagePath: job.HasInputImage ? job.InputImagePath : null);
+                    }
+
+                case KeyIdeogramV45:
+                    {
+                        // Ideogram 4.5 uses Generate without an input. With inputs
+                        // it uses Precise Edit: the first image is edited at its
+                        // own size and later images are references. Precise Edit
+                        // has no size field, so an explicit shape cannot apply.
+                        RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
+                        if (job.HasInputImage && !spec.Shape.Equals("auto", StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new NotSupportedException(
+                                "Ideogram 4.5 Precise Edit always keeps the source dimensions and cannot override output aspect ratio.");
+                        }
+                        return new IdeogramV45Generator(
+                            _settings.IdeogramApiKey, maxConcurrency: 1,
+                            job.HasInputImage ? "" : UiShapeMapping.IdeogramV45Size(spec.Shape),
+                            IdeogramV45Generator.QualityFromOption(spec.Quality),
+                            _stats, $"{key} ui",
+                            inputImagePaths: job.HasInputImage ? job.InputImagePaths : null);
                     }
 
                 case KeyIdeogram:

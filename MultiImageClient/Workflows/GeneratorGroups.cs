@@ -181,7 +181,7 @@ namespace MultiImageClient
             {
                 "gpt2", "gpt25-sunburst", "gpt25-flare",
                 "grok-api", "grok-api-pro", "grok-web", "meta-web",
-                "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
+                "ideogram-v45", "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
                 "recraft", "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
                 "bfl-klein9-preview", "bfl-klein9", "bfl-kontext-pro", "bfl-kontext-max",
                 "bfl-1.1-ultra", "bfl-1.1", "bfl-flux-pro", "bfl-dev",
@@ -198,6 +198,7 @@ namespace MultiImageClient
                 case "gpt25-flare": case "flare": return GptImage25Flare_Square();
                 case "grok-api": case "grok": return GrokImagine_Square();
                 case "grok-api-pro": case "grokpro": return GrokImaginePro_Square();
+                case "ideogram-v45": return IdeogramV45_Square();
                 case "ideogram": case "ideogram-v4": return IdeogramV4_Square();
                 case "ideogram-v3": return IdeogramV3_Square();
                 case "ideogram-v2": return IdeogramV2_Square();
@@ -429,6 +430,10 @@ namespace MultiImageClient
         private IdeogramV4Generator IdeogramV4_Wide_Quality() =>
             new IdeogramV4Generator(_settings.IdeogramApiKey, _concurrency,
                 "2560x1440", IdeogramRenderingSpeed.QUALITY, _stats, "");
+
+        private IdeogramV45Generator IdeogramV45_Square() =>
+            new IdeogramV45Generator(_settings.IdeogramApiKey, _concurrency,
+                "2048x2048", IdeogramV45Quality.high, _stats, "");
 
         // ---------- Black Forest Labs (Flux) ----------
 

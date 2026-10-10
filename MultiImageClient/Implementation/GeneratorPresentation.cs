@@ -14,6 +14,7 @@ namespace MultiImageClient
             UiJobRunner.KeyGpt25Flare => "gpt-image-2.5 flare",
             UiJobRunner.KeyGpt1 => "gpt-image-1",
             UiJobRunner.KeyGpt1Mini => "gpt-image-1-mini",
+            UiJobRunner.KeyIdeogramV45 => "Ideogram 4.5",
             UiJobRunner.KeyIdeogram => "Ideogram 4.0",
             UiJobRunner.KeyIdeogramV3 => "Ideogram V3",
             UiJobRunner.KeyIdeogramV2 => "Ideogram V2",
@@ -76,8 +77,9 @@ namespace MultiImageClient
                 UiJobRunner.KeyGoogle => "Google · gemini-3.1-flash-image",
                 UiJobRunner.KeyGooglePro => "Google · gemini-3-pro-image",
                 UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyLayoutMap => "Google",
-                UiJobRunner.KeyIdeogram or UiJobRunner.KeyIdeogramV3
-                    or UiJobRunner.KeyIdeogramV2 or UiJobRunner.KeyDescribeIdeogram => "Ideogram",
+                UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
+                    or UiJobRunner.KeyIdeogramV3 or UiJobRunner.KeyIdeogramV2
+                    or UiJobRunner.KeyDescribeIdeogram => "Ideogram",
                 UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Utility
                     or UiJobRunner.KeyRecraftV41Pro or UiJobRunner.KeyRecraftV41Vector
                     or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4
@@ -163,6 +165,7 @@ namespace MultiImageClient
             ImageGeneratorApiType.GrokImaginePro => "Grok Imagine 2.0",
             ImageGeneratorApiType.GrokImagineVideo => "Grok Imagine Video",
             ImageGeneratorApiType.IdeogramV4 => "Ideogram 4.0",
+            ImageGeneratorApiType.IdeogramV45 => "Ideogram 4.5",
             ImageGeneratorApiType.RecraftV41 => "Recraft V4.1",
             ImageGeneratorApiType.RecraftV41Pro => "Recraft V4.1 Pro",
             ImageGeneratorApiType.GoogleNanoBananaPro => "Nano Banana Pro",
@@ -215,7 +218,7 @@ namespace MultiImageClient
             ImageGeneratorApiType.LocalFlux2Klein => "Black Forest Labs model via local ComfyUI",
             ImageGeneratorApiType.LocalZImage => "Tongyi-MAI model via local ComfyUI",
             ImageGeneratorApiType.Ideogram or ImageGeneratorApiType.IdeogramV3
-                or ImageGeneratorApiType.IdeogramV4 => "Ideogram",
+                or ImageGeneratorApiType.IdeogramV4 or ImageGeneratorApiType.IdeogramV45 => "Ideogram",
             ImageGeneratorApiType.Recraft or ImageGeneratorApiType.RecraftV4
                 or ImageGeneratorApiType.RecraftV4Pro or ImageGeneratorApiType.RecraftV41
                 or ImageGeneratorApiType.RecraftV41Pro or ImageGeneratorApiType.RecraftV41Utility

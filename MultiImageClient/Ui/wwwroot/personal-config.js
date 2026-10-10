@@ -9,7 +9,11 @@
   }
 })(typeof globalThis === "object" ? globalThis : this, function createPersonalConfigurationSchema() {
   const Format = "MultiImageClient personalized configuration";
-  const Version = 3;
+  const Version = 4;
+  // Owner decision 2026-10-10: version 4 adds Ideogram 4.5 once to each saved
+  // default list. The version records that the addition happened, so a later
+  // removal stays removed. See docs/ideogram-45-support.md.
+  const Version4DefaultKey = "ideogram-v45";
   const StorageKey = "mic_personal_configuration_v2";
   const Scopes = new Set(["browser", "account", "hybrid"]);
 
@@ -98,6 +102,7 @@
       throw new Error(`stored personal configuration format must be exactly "${Format}"`);
     }
     if (parsed.version === 2) parsed = migrateVersion2(parsed);
+    if (parsed.version === 3) parsed = migrateVersion3(parsed);
     if (parsed.version !== Version) {
       throw new Error(
         `stored personal configuration version ${String(parsed.version)} is unsupported; expected ${Version}`);
@@ -112,7 +117,27 @@
         typeof raw.promptTools.claudeAdviceInstruction !== "string") {
       throw new Error("invalid version 2 prompt tools");
     }
-    return { ...raw, version: Version, promptTools: { ...raw.promptTools, globalAppendText: "" } };
+    return { ...raw, version: 3, promptTools: { ...raw.promptTools, globalAppendText: "" } };
+  }
+
+  function addVersion4DefaultKey(preferences) {
+    if (!preferences || typeof preferences !== "object" || Array.isArray(preferences) ||
+        !Array.isArray(preferences.defaultSelectedKeys) ||
+        !Array.isArray(preferences.hiddenGeneratorKeys)) {
+      throw new Error("saved generator preferences lack the default or hidden list");
+    }
+    if (preferences.defaultSelectedKeys.includes(Version4DefaultKey) ||
+        preferences.hiddenGeneratorKeys.includes(Version4DefaultKey)) {
+      return preferences;
+    }
+    return { ...preferences, defaultSelectedKeys: [...preferences.defaultSelectedKeys, Version4DefaultKey] };
+  }
+
+  function migrateVersion3(raw) {
+    if (raw?.format !== Format || raw?.version !== 3) {
+      throw new Error("invalid version 3 configuration");
+    }
+    return { ...raw, version: Version, generatorPreferences: addVersion4DefaultKey(raw.generatorPreferences) };
   }
 
   // A first visit can start on the goal page before the composer writes its
@@ -191,6 +216,8 @@
     normalize,
     parseStored,
     migrateVersion2,
+    migrateVersion3,
+    addVersion4DefaultKey,
     browserFields,
     saveGeneratorPreferences,
   });

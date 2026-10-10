@@ -12,9 +12,11 @@ namespace MultiImageClient
         public int IdeogramRequestCount { get; set; }
         public int IdeogramV3RequestCount { get; set; }
         public int IdeogramV4RequestCount { get; set; }
+        public int IdeogramV45RequestCount { get; set; }
         public int IdeogramRefusedCount { get; set; }
         public int IdeogramV3RefusedCount { get; set; }
         public int IdeogramV4RefusedCount { get; set; }
+        public int IdeogramV45RefusedCount { get; set; }
         
         public int ClaudeRequestCount { get; set; }
         public int ClaudeWouldRefuseCount { get; set; }
@@ -88,6 +90,10 @@ namespace MultiImageClient
                 nonZeroStats.Add($"Ideogram 4.0 Requests:{IdeogramV4RequestCount}");
             if (IdeogramV4RefusedCount > 0)
                 nonZeroStats.Add($"Ideogram 4.0 Refused:{IdeogramV4RefusedCount}");
+            if (IdeogramV45RequestCount > 0)
+                nonZeroStats.Add($"Ideogram 4.5 Requests:{IdeogramV45RequestCount}");
+            if (IdeogramV45RefusedCount > 0)
+                nonZeroStats.Add($"Ideogram 4.5 Refused:{IdeogramV45RefusedCount}");
 
             if (GptImageOneRequestCount > 0)
                 nonZeroStats.Add($"GPT Image One Requests:{GptImageOneRequestCount}");

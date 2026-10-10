@@ -29,6 +29,7 @@ namespace MultiImageClient
                 ImageGeneratorApiType.GoogleImagen4 => ".png",
                 ImageGeneratorApiType.IdeogramV3 => ".png",
                 ImageGeneratorApiType.IdeogramV4 => ".png",
+                ImageGeneratorApiType.IdeogramV45 => ".png",
                 ImageGeneratorApiType.BFLFlux2Pro => ".png",
                 ImageGeneratorApiType.BFLFlux2ProPreview => ".png",
                 ImageGeneratorApiType.BFLFlux2Max => ".png",

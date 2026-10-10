@@ -78,7 +78,7 @@ namespace MultiImageClient
         private static readonly string[] KnownGenerators =
             {
                 "gpt2", "gpt25-sunburst", "gpt25-flare", "grok-api", "grok-api-pro",
-                "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
+                "ideogram-v45", "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
                 "recraft", "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
                 "bfl-klein9-preview", "bfl-klein9", "bfl-kontext-pro", "bfl-kontext-max",
                 "bfl-1.1-ultra", "bfl-1.1", "bfl-flux-pro", "bfl-dev",
@@ -792,6 +792,13 @@ namespace MultiImageClient
                         aspectRatio: "1:1", quality: "medium", resolution: "2k", settings: _settings);
 
                 // "dalle3" removed: OpenAI retired dall-e-3 on 2026-05-12.
+
+                case "ideogram-v45":
+                    RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", "ideogram-v45");
+                    return new IdeogramV45Generator(
+                        _settings.IdeogramApiKey, _concurrency,
+                        "2048x2048", IdeogramV45Quality.high,
+                        _stats, "repl");
 
                 case "ideogram":
                 case "ideogram-v4":

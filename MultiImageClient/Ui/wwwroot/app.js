@@ -1361,8 +1361,11 @@ function normalizeImportedVideoAudio(raw) {
 }
 
 function migratePersonalConfiguration(raw, targetVersion) {
+  if (raw?.version === 3 && targetVersion === ConfigTransferVersion) {
+    return PersonalConfigurationSchema.migrateVersion3(raw);
+  }
   if (raw?.version === 2 && targetVersion === ConfigTransferVersion) {
-    return PersonalConfigurationSchema.migrateVersion2(raw);
+    return PersonalConfigurationSchema.migrateVersion3(PersonalConfigurationSchema.migrateVersion2(raw));
   }
   if (raw?.version !== 1 || targetVersion !== ConfigTransferVersion) {
     throw new Error(
@@ -1399,12 +1402,12 @@ function migratePersonalConfiguration(raw, targetVersion) {
   const portable = { ...raw };
   delete portable.gptImage2Guidance;
   delete portable.version;
-  return {
+  return PersonalConfigurationSchema.migrateVersion3({
     ...portable,
-    version: targetVersion,
+    version: 3,
     generatorPreferences: preferences,
     promptTools: { ...raw.promptTools, globalAppendText: "" },
-  };
+  });
 }
 
 function normalizeImportedPersonalConfiguration(raw) {

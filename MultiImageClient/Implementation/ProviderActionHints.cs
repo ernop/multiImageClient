@@ -108,8 +108,9 @@ namespace MultiImageClient
                     "https://platform.openai.com/settings/organization/billing/overview",
                     "https://platform.openai.com/api-keys",
                     "add API credits or enable auto-recharge"),
-            UiJobRunner.KeyIdeogram or UiJobRunner.KeyIdeogramV3
-                or UiJobRunner.KeyIdeogramV2 or UiJobRunner.KeyDescribeIdeogram =>
+            UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
+                or UiJobRunner.KeyIdeogramV3 or UiJobRunner.KeyIdeogramV2
+                or UiJobRunner.KeyDescribeIdeogram =>
                 new(
                     "Ideogram",
                     nameof(Settings.IdeogramApiKey),

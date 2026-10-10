@@ -11,6 +11,7 @@ public sealed class ProviderActionHintsTests
             [UiJobRunner.KeyGpt1] = "https://platform.openai.com/settings/organization/billing/overview",
             [UiJobRunner.KeyGpt1Mini] = "https://platform.openai.com/settings/organization/billing/overview",
             [UiJobRunner.KeyDescribeOpenAi] = "https://platform.openai.com/settings/organization/billing/overview",
+            [UiJobRunner.KeyIdeogramV45] = "https://ideogram.ai/manage-api",
             [UiJobRunner.KeyIdeogram] = "https://ideogram.ai/manage-api",
             [UiJobRunner.KeyIdeogramV3] = "https://ideogram.ai/manage-api",
             [UiJobRunner.KeyIdeogramV2] = "https://ideogram.ai/manage-api",

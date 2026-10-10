@@ -77,14 +77,63 @@ test("stored document parsing fails closed", () => {
 test("version 2 migration preserves endpoint settings and declares empty global directives", () => {
   const old = { format: schema.Format, version: 2,
     promptTools: { claudeAdviceInstruction: "Keep my instruction" },
-    generatorPreferences: { endpointConfigurations: [{ key: "gpt2", extraText: "", notes: "Private" }] } };
+    generatorPreferences: { hiddenGeneratorKeys: [], defaultSelectedKeys: ["gpt2"],
+      endpointConfigurations: [{ key: "gpt2", extraText: "", notes: "Private" }] } };
   const migrated = schema.parseStored(JSON.stringify(old));
   assert.equal(migrated.version, schema.Version);
   assert.deepEqual(migrated.promptTools, { claudeAdviceInstruction: "Keep my instruction", globalAppendText: "" });
-  assert.deepEqual(migrated.generatorPreferences, old.generatorPreferences);
+  assert.deepEqual(migrated.generatorPreferences,
+    { ...old.generatorPreferences, defaultSelectedKeys: ["gpt2", "ideogram-v45"] });
   assert.equal(old.version, 2);
+  assert.equal(schema.migrateVersion2(old).version, 3);
   assert.throws(() => schema.migrateVersion2({ ...old, promptTools: { ...old.promptTools, surprise: true } }), /invalid/);
   assert.throws(() => schema.migrateVersion2({ ...old, promptTools: {} }), /invalid/);
+});
+
+function version3Document(generatorPreferences) {
+  return { format: schema.Format, version: 3, creatingAs: "ernie",
+    promptTools: { claudeAdviceInstruction: "Keep my instruction", globalAppendText: "" },
+    generatorPreferences };
+}
+
+test("version 3 migration adds Ideogram 4.5 once to the saved default list", () => {
+  const old = version3Document({ defaultView: "only-sota", hiddenGeneratorKeys: ["recraft"],
+    defaultSelectedKeys: ["gpt2", "ideogram"], presets: [], endpointConfigurations: [] });
+  const migrated = schema.parseStored(JSON.stringify(old));
+  assert.equal(migrated.version, 4);
+  assert.deepEqual(migrated, { ...old, version: 4,
+    generatorPreferences: { ...old.generatorPreferences, defaultSelectedKeys: ["gpt2", "ideogram", "ideogram-v45"] } });
+  assert.deepEqual(old.generatorPreferences.defaultSelectedKeys, ["gpt2", "ideogram"]);
+  const empty = schema.migrateVersion3(version3Document({ hiddenGeneratorKeys: [], defaultSelectedKeys: [] }));
+  assert.deepEqual(empty.generatorPreferences.defaultSelectedKeys, ["ideogram-v45"]);
+});
+
+test("version 3 migration leaves a present or hidden Ideogram 4.5 unchanged", () => {
+  const present = { hiddenGeneratorKeys: [], defaultSelectedKeys: ["ideogram-v45", "gpt2"] };
+  assert.deepEqual(schema.migrateVersion3(version3Document(present)).generatorPreferences, present);
+  const hidden = { hiddenGeneratorKeys: ["ideogram-v45"], defaultSelectedKeys: ["gpt2"] };
+  assert.deepEqual(schema.migrateVersion3(version3Document(hidden)).generatorPreferences, hidden);
+});
+
+test("a removal after the version 4 migration stays removed", () => {
+  const storage = memoryStorage([[schema.StorageKey, JSON.stringify(version3Document(
+    { hiddenGeneratorKeys: [], defaultSelectedKeys: ["gpt2"] }))]]);
+  const migrated = schema.parseStored(storage.getItem(schema.StorageKey));
+  assert.deepEqual(migrated.generatorPreferences.defaultSelectedKeys, ["gpt2", "ideogram-v45"]);
+  schema.saveGeneratorPreferences(storage, { hiddenGeneratorKeys: [], defaultSelectedKeys: ["gpt2"] });
+  const saved = schema.parseStored(storage.getItem(schema.StorageKey));
+  assert.equal(saved.version, 4);
+  assert.deepEqual(saved.generatorPreferences.defaultSelectedKeys, ["gpt2"]);
+});
+
+test("version 3 migration rejects documents without default or hidden lists", () => {
+  for (const preferences of [undefined, [], { defaultSelectedKeys: ["gpt2"] }, { hiddenGeneratorKeys: [] }]) {
+    assert.throws(() => schema.parseStored(JSON.stringify(version3Document(preferences))), /lack the default or hidden list/);
+  }
+  assert.throws(() => schema.migrateVersion3({ ...version3Document({ hiddenGeneratorKeys: [], defaultSelectedKeys: [] }),
+    version: 2 }), /invalid version 3/);
+  assert.throws(() => schema.migrateVersion3({ ...version3Document({ hiddenGeneratorKeys: [], defaultSelectedKeys: [] }),
+    format: "other" }), /invalid version 3/);
 });
 
 function memoryStorage(entries = []) {

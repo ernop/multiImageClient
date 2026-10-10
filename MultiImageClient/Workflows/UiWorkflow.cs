@@ -68,7 +68,8 @@ namespace MultiImageClient
             UiJobRunner runner,
             string key)
             => runner.IsImageCapableForCurrentSettings(key)
-                && !UiJobRunner.IsRecraftKey(key);
+                && !UiJobRunner.IsRecraftKey(key)
+                && key != UiJobRunner.KeyIdeogramV45;
 
         // Default anti-murk guidance appended to every gpt-image-2 prompt while
         // the composer's toggle is on (which it is by default). gpt-image-2
@@ -118,6 +119,11 @@ namespace MultiImageClient
                 favorites = new UiFavoriteStore(settings);
                 visibility = new UiVisibilityStore(settings);
                 community = new UiCommunityStore(settings);
+                var accountLists = AddIdeogram45ToAccountDefaultsOnce(community);
+                if (accountLists > 0)
+                {
+                    Logger.Log($"UI defaults: added Ideogram 4.5 to {accountLists} saved account default lists.");
+                }
                 vibecoders = new UiDiscordVibecodersStore(settings);
                 if (auth != null)
                 {
@@ -220,6 +226,19 @@ namespace MultiImageClient
                 });
             var environments = string.IsNullOrWhiteSpace(settings.UiEnvironmentRegistryPath) ? null : new UiEnvironmentRegistry(settings.UiEnvironmentRegistryPath);
             if (environments != null) environments.Get(settings.UiEnvironmentId);
+            try
+            {
+                var environmentLists = AddIdeogram45ToEnvironmentDefaultsOnce(settings, community, environments, auth?.LoginLinks);
+                if (environmentLists > 0)
+                {
+                    Logger.Log($"UI defaults: added Ideogram 4.5 to {environmentLists} environment default lists.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"UI aborted: environment default lists could not be migrated: {ex.Message}");
+                return;
+            }
             // Browser-window state is disposable. Every process instance gets
             // a new token; stale and pre-token clients receive 401 from the
             // always-running job poll, whose established response is a full
@@ -426,6 +445,7 @@ namespace MultiImageClient
                             UiJobRunner.KeyGpt25Flare,
                             UiJobRunner.KeyGrokWeb,
                             UiJobRunner.KeyGrokApiPro,
+                            UiJobRunner.KeyIdeogramV45,
                             UiJobRunner.KeyIdeogram,
                         },
                     },
@@ -481,6 +501,7 @@ namespace MultiImageClient
                             UiJobRunner.KeyRecraft,
                             UiJobRunner.KeyIdeogramV3,
                             UiJobRunner.KeyIdeogram,
+                            UiJobRunner.KeyIdeogramV45,
                         },
                     },
                 };
@@ -501,6 +522,7 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyKrea, label = "Krea 2 Medium", detail = "Krea's own foundation image model, not an aggregated third-party model. Best for expressive illustration and stable general use. An attached image is sent as a 0.6-strength style reference; auto matches its nearest native aspect ratio. The API currently accepts 1K only, so detail has no effect. n runs separate generations." },
                     new { key = UiJobRunner.KeyKreaTurbo, label = "Krea 2 Medium Turbo", detail = "Krea's fastest and least expensive Krea 2 variant. An attached image is sent as a 0.6-strength style reference. The API currently accepts 1K only; n runs separate generations." },
                     new { key = UiJobRunner.KeyKreaLarge, label = "Krea 2 Large", detail = "Krea's highest-fidelity Krea 2 variant, strongest for photorealism, raw texture, grain, and expressive styles. An attached image is sent as a 0.6-strength style reference. The API currently accepts 1K only; n runs separate generations." },
+                    new { key = UiJobRunner.KeyIdeogramV45, label = "Ideogram 4.5", detail = "Ideogram 4.5, released 2026-09-30. Without an attachment it uses Generate. Auto lets Ideogram choose a 2K size from the prompt. Explicit shapes use published 2K sizes. With attachments it uses Precise Edit. The first image is edited at its own size, and unchanged pixels stay exact. Up to four more images are sent as references. Explicit AR is unavailable for image jobs. Quality sends low, medium, or high; xhigh and max send high. Detail has no effect. n runs separate generations." },
                     new { key = UiJobRunner.KeyIdeogram, label = "Ideogram 4.0", detail = "Ideogram 4.0. Without an attachment it uses Generate; with one it uses Remix and lets Ideogram choose source influence from the instruction. Auto matches the source to the nearest published 2K resolution; explicit shape overrides it. Detail has no effect. n runs separate generations." },
                     new { key = UiJobRunner.KeyIdeogramV3, label = "Ideogram V3", detail = "Ideogram 3.0. A pasted image is used as a style reference and the default AR matches the source; explicit AR choices and n up to 8 are honored. Without an image it runs text-to-image (auto = square)." },
                     new { key = UiJobRunner.KeyIdeogramV2, label = "Ideogram V2", detail = "Ideogram 2.0 through the legacy text-to-image endpoint. Shape and Magic Prompt are honored; detail and n have no effect. An attached image is not sent." },
@@ -599,10 +621,12 @@ namespace MultiImageClient
                         : "",
                     defaultNotes = "",
                     // Default-on set for new windows: gpt-image-2, Recraft V4.1,
-                    // grok-web pro, Ideogram 4.0, FLUX.2 Pro Preview, Nano Banana 2.
+                    // grok-web pro, Ideogram 4.5, Ideogram 4.0, FLUX.2 Pro
+                    // Preview, Nano Banana 2.
                     defaultOn = environmentDefaults != null ? environmentDefaults.Contains(g.key) : g.key is UiJobRunner.KeyGpt2
                         or UiJobRunner.KeyRecraft
                         or UiJobRunner.KeyGrokWeb
+                        or UiJobRunner.KeyIdeogramV45
                         or UiJobRunner.KeyIdeogram
                         or UiJobRunner.KeyBfl
                         or UiJobRunner.KeyGoogle,

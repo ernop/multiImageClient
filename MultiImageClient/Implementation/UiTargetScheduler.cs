@@ -154,8 +154,8 @@ namespace MultiImageClient
                     or UiJobRunner.KeyBflFluxDev => LaneBfl,
                 UiJobRunner.KeyKrea or UiJobRunner.KeyKreaTurbo
                     or UiJobRunner.KeyKreaLarge => LaneKrea,
-                UiJobRunner.KeyIdeogram or UiJobRunner.KeyIdeogramV3
-                    or UiJobRunner.KeyIdeogramV2 => LaneIdeogram,
+                UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
+                    or UiJobRunner.KeyIdeogramV3 or UiJobRunner.KeyIdeogramV2 => LaneIdeogram,
                 UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Utility
                     or UiJobRunner.KeyRecraftV41Pro or UiJobRunner.KeyRecraftV41Vector
                     or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4

@@ -222,7 +222,9 @@ function loadGeneratorPreferences(cfg) {
     const canonical = storedPersonalField("generatorPreferences");
     if (canonical !== undefined) return normalizeGeneratorPreferences(canonical);
     const stored = localStorage.getItem(GeneratorPreferencesLocalKey);
-    if (stored !== null) return normalizeGeneratorPreferences(JSON.parse(stored));
+    if (stored !== null) {
+      return PersonalConfigurationSchema.addVersion4DefaultKey(normalizeGeneratorPreferences(JSON.parse(stored)));
+    }
   }
   return defaultGeneratorPreferences();
 }

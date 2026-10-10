@@ -1033,7 +1033,9 @@ Partly superseded on 2026-10-06; see the preceding section.
 Group buttons no longer switch views, and **all models** is removed.
 
 New users start with the **only SOTA** view in the composer and goal setup.
-This view contains exactly six image generators:
+This view contains exactly seven image generators.
+Ideogram 4.5 joined on 2026-10-08; see [Ideogram 4.5 support](ideogram-45-support.md).
+On 2026-10-10 the release added it once to every saved default list.
 
 | Display name | Catalog key |
 |---|---|
@@ -1042,7 +1044,8 @@ This view contains exactly six image generators:
 | GPT Image 2.5 Flare | `gpt25-flare` |
 | grok-web | `grok-web` |
 | grok-api 2.0 | `grok-api-pro` |
-| Ideogram V4 | `ideogram` |
+| Ideogram 4.5 | `ideogram-v45` |
+| Ideogram 4.0 | `ideogram` |
 
 The owner narrowed Grok membership to grok-web and grok-api 2.0.
 The view reduces the choices that new users must inspect.

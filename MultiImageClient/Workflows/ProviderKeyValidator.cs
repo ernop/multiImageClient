@@ -55,6 +55,7 @@ namespace MultiImageClient
                     or ImageGeneratorApiType.GptImage25SunburstEdit or ImageGeneratorApiType.GptImage25FlareEdit
                     => ("OpenAIApiKey", settings.OpenAIApiKey),
                 ImageGeneratorApiType.Ideogram or ImageGeneratorApiType.IdeogramV3 or ImageGeneratorApiType.IdeogramV4
+                    or ImageGeneratorApiType.IdeogramV45
                     => ("IdeogramApiKey", settings.IdeogramApiKey),
                 ImageGeneratorApiType.BFLv11 or ImageGeneratorApiType.BFLv11Ultra
                     or ImageGeneratorApiType.BFLFluxPro or ImageGeneratorApiType.BFLFluxDev

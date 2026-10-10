@@ -124,6 +124,10 @@ namespace MultiImageClient
         GptImage25SunburstEdit = 50,
         GptImage25FlareEdit = 51,
 
+        // Ideogram 4.5 (released 2026-09-30): v2 Generate for text prompts and
+        // Precise Edit for attached images. Distinct from IdeogramV4.
+        IdeogramV45 = 52,
+
         WorkflowMock = 1000,
     }
 }
