@@ -63,19 +63,20 @@ namespace MultiImageClient
                 return null;
             }
 
-            // Browser-free signing is preferred when a complete, validated
-            // deployment pair is configured. Otherwise CLI browser modes keep
-            // their existing real-control transport.
-            GrokWebStatsigSigner.TryCreateFromSettings(
-                settings,
-                out var statsigSigner,
-                out _);
             // Image edit and video submit through the same method + app-chat
-            // path, which are the complete inputs to x-statsig-id. Prefer the
-            // direct signer for either payload; without current material the
-            // explicit CLI modes retain their Playwright transport.
+            // path, which are the complete inputs to x-statsig-id. Browser-free
+            // signing (page keys, or a valid pinned pair) serves both payloads.
+            // Only an unusable pinned pair sends the explicit CLI modes to
+            // their Playwright transport.
+            using var statsigSource = GrokWebStatsigSource.FromSettings(settings);
             var needsBrowser = (mode is "video" or "video-from-image" or "edit")
-                && statsigSigner == null;
+                && statsigSource.Problem != null;
+            if (mode is "video" or "video-from-image" or "edit")
+            {
+                Logger.Log(needsBrowser
+                    ? $"{statsigSource.DescribeMode()} Using the Playwright transport for {mode}."
+                    : statsigSource.DescribeMode());
+            }
             await using var browserClient = needsBrowser
                 ? new GrokWebBrowserClient(GrokWebBrowserClient.BuildOptions(
                     settings,
@@ -85,7 +86,7 @@ namespace MultiImageClient
             using var client = GrokWebClient.FromCookieFile(
                 cookiePath,
                 browserClient,
-                statsigSigner);
+                needsBrowser ? null : statsigSource);
             IImageGenerator generator;
             string sheetHeader;
 

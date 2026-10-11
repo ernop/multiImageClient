@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -43,6 +44,9 @@ namespace MultiImageClient
     public sealed class GrokWebBrowserClient : IAsyncDisposable, IDisposable
     {
         public const string ImagineUrl = "https://grok.com/imagine";
+
+        private const string OpenDialogOverlaySelector = "[data-dialog-overlay][data-state=\"open\"]";
+        private const string CookieBannerSelector = "[data-cookie-banner=\"true\"][aria-label=\"Cookie notice\"]";
 
         private readonly GrokWebBrowserClientOptions _options;
         private readonly SemaphoreSlim _gate = new(1, 1);
@@ -314,6 +318,7 @@ namespace MultiImageClient
                         + "retry with --grok-web-headed.");
                 }
 
+                await CloseBlockingOverlaysAsync();
                 await editButton.ClickAsync(new LocatorClickOptions { Force = true });
 
                 IResponse response;
@@ -411,14 +416,7 @@ namespace MultiImageClient
                     throw new GrokWebException(
                         "Grok web Edit control stayed disabled during statsig capture.");
                 }
-                // The notice can cover Edit. A forced click would hit the
-                // notice instead of sending the signing request.
-                var cookieNotice = _page.GetByRole(AriaRole.Button,
-                    new PageGetByRoleOptions { Name = "Dismiss cookie notice", Exact = true });
-                if (await cookieNotice.IsVisibleAsync())
-                {
-                    await cookieNotice.ClickAsync();
-                }
+                await CloseBlockingOverlaysAsync();
                 await editButton.ClickAsync();
 
                 string header;
@@ -462,6 +460,79 @@ namespace MultiImageClient
             {
                 await _page.UnrouteAsync(endpointPattern, routeHandler);
             }
+        }
+
+        // grok.com can open announcement dialogs (2026-10-07: "Your Bots are
+        // in Grok") and a consent banner over the post page, at any time.
+        // Both intercept clicks. Locator handlers close them before
+        // non-forced actions; forced clicks skip handlers and call this first.
+        // The close clicks below are forced too: otherwise a handler closes
+        // the same overlay first and the click waits for a removed button.
+        // An open dialog marks the banner aria-hidden, so role queries miss
+        // it. Close or dismiss only; never accept optional cookies.
+        private async Task CloseBlockingOverlaysAsync()
+        {
+            await CloseOpenDialogsAsync();
+            await CloseCookieBannerAsync();
+        }
+
+        private async Task CloseOpenDialogsAsync()
+        {
+            var overlay = _page!.Locator(OpenDialogOverlaySelector).First;
+            var openDialogs = _page.Locator("[role=\"dialog\"][data-state=\"open\"]");
+            for (var closed = 0; await overlay.IsVisibleAsync(); closed++)
+            {
+                var count = await openDialogs.CountAsync();
+                var closeDialog = openDialogs.Last.Locator("button[aria-label=\"Close\"]");
+                if (closed == 3 || count == 0 || await closeDialog.CountAsync() == 0)
+                {
+                    var text = count == 0
+                        ? ""
+                        : await openDialogs.Last.InnerTextAsync(new LocatorInnerTextOptions { Timeout = 5_000 });
+                    throw new GrokWebException(
+                        "A grok.com dialog covers the page and could not be closed: \""
+                        + string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+                        + "\".");
+                }
+                await closeDialog.First.ClickAsync(new LocatorClickOptions { Force = true });
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                while (await openDialogs.CountAsync() >= count)
+                {
+                    if (DateTime.UtcNow > deadline)
+                    {
+                        throw new GrokWebException(
+                            "A grok.com dialog stayed open after its Close button was clicked.");
+                    }
+                    await Task.Delay(100);
+                }
+            }
+        }
+
+        private async Task CloseCookieBannerAsync()
+        {
+            var banner = _page!.Locator(CookieBannerSelector).First;
+            if (!await banner.IsVisibleAsync())
+            {
+                return;
+            }
+            var closeBanner = banner.Locator("button")
+                .Filter(new LocatorFilterOptions
+                {
+                    HasTextRegex = new Regex(@"^\s*reject all\b", RegexOptions.IgnoreCase),
+                })
+                .Or(banner.Locator("button[aria-label=\"Dismiss cookie notice\"]"));
+            if (await closeBanner.CountAsync() == 0)
+            {
+                throw new GrokWebException(
+                    "grok.com's cookie banner covers the page and shows no Reject All "
+                    + "or dismiss button.");
+            }
+            await closeBanner.First.ClickAsync(new LocatorClickOptions { Force = true });
+            await banner.WaitForAsync(new LocatorWaitForOptions
+            {
+                State = WaitForSelectorState.Hidden,
+                Timeout = 10_000,
+            });
         }
 
         private async Task<GrokWebBrowserResponse> TriggerVideoAppChatFromPageAsync(
@@ -510,6 +581,7 @@ namespace MultiImageClient
                 // API client computes x-statsig-id for this path and method.
                 // Route interception preserves those integrity headers while
                 // replacing only the request body with our requested options.
+                await CloseBlockingOverlaysAsync();
                 await makeVideo.ClickAsync(new LocatorClickOptions { Force = true });
                 var firstWait = await Task.WhenAny(
                     responseSource.Task,
@@ -749,6 +821,12 @@ namespace MultiImageClient
                 Secure = true,
             }));
             _page = await _context.NewPageAsync();
+            await _page.AddLocatorHandlerAsync(
+                _page.Locator(OpenDialogOverlaySelector).First,
+                _ => CloseOpenDialogsAsync());
+            await _page.AddLocatorHandlerAsync(
+                _page.Locator(CookieBannerSelector).First,
+                _ => CloseCookieBannerAsync());
             NoteBrowserActivity();
             ArmIdleTimer();
         }

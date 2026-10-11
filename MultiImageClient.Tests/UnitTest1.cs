@@ -745,7 +745,7 @@ public class GrokWebVideoAvailabilityTests
     }
 
     [Fact]
-    public async Task VideoFailsClosedWithoutSigningPair()
+    public async Task VideoUsesPageKeysWhenNoPairIsPinned()
     {
         var root = Path.Combine(
             Path.GetTempPath(),
@@ -763,9 +763,38 @@ public class GrokWebVideoAvailabilityTests
                 new MultiClientRunStats(),
                 new RunOptions());
 
+            Assert.Null(runner.DescribeAvailabilityProblem(UiJobRunner.KeyGrokWebVideo));
+            Assert.Null(runner.DescribeAvailabilityProblem(UiJobRunner.KeyGrokWebChat));
+            Assert.True(runner.IsImageCapableForCurrentSettings(UiJobRunner.KeyGrokWeb));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task VideoFailsClosedWithIncompletePinnedPair()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "multi-image-client-grok-video-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var cookiePath = Path.Combine(root, "cookies.json");
+        await File.WriteAllTextAsync(cookiePath, "[]");
+        try
+        {
+            var settings = CreateSettings(root, cookiePath);
+            settings.GrokWebStatsigAnimationKey = "";
+            await using var runner = new UiJobRunner(
+                settings,
+                new MultiClientRunStats(),
+                new RunOptions());
+
             Assert.Contains(
-                "not configured",
+                "incomplete",
                 runner.DescribeAvailabilityProblem(UiJobRunner.KeyGrokWebVideo));
+            Assert.False(runner.IsImageCapableForCurrentSettings(UiJobRunner.KeyGrokWeb));
         }
         finally
         {

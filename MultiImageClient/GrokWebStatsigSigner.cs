@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 
 namespace MultiImageClient
 {
@@ -13,6 +14,12 @@ namespace MultiImageClient
     {
         public required string VerificationKeyBase64 { get; init; }
         public required string AnimationKey { get; init; }
+    }
+
+    public enum GrokWebStatsigOrigin
+    {
+        Pinned = 0,
+        Page = 1,
     }
 
     // Generates grok.com's x-statsig-id client-integrity header without a
@@ -26,11 +33,18 @@ namespace MultiImageClient
         private const int VerificationKeyLength = 48;
         private const int DigestPrefixLength = 16;
         private const byte Trailer = 3;
+        private const double AnimationDurationMs = 4096.0;
 
         private readonly byte[] _verificationKey;
         private readonly string _animationKey;
+        private int _rejected;
+        private string? _rejectionReason;
 
-        public GrokWebStatsigSigner(string verificationKeyBase64, string animationKey)
+        public GrokWebStatsigSigner(
+            string verificationKeyBase64,
+            string animationKey,
+            GrokWebStatsigOrigin origin = GrokWebStatsigOrigin.Pinned,
+            DateTimeOffset? obtainedAtUtc = null)
         {
             if (string.IsNullOrWhiteSpace(verificationKeyBase64))
             {
@@ -67,43 +81,71 @@ namespace MultiImageClient
                     nameof(animationKey));
             }
 
+            if (origin == GrokWebStatsigOrigin.Page && obtainedAtUtc == null)
+            {
+                throw new ArgumentException(
+                    "A page-sourced Grok web signing key must record when it was fetched.",
+                    nameof(obtainedAtUtc));
+            }
+
             _animationKey = animationKey.ToLowerInvariant();
+            Origin = origin;
+            ObtainedAtUtc = obtainedAtUtc;
+            KeyFingerprint = Convert
+                .ToHexString(SHA256.HashData(_verificationKey), 0, 4)
+                .ToLowerInvariant();
         }
 
-        public static bool TryCreateFromSettings(
-            Settings settings,
-            out GrokWebStatsigSigner? signer,
-            out string? problem)
+        public GrokWebStatsigOrigin Origin { get; }
+
+        // Page keys: fetch time. Pinned keys: capture time when settings record it.
+        public DateTimeOffset? ObtainedAtUtc { get; }
+
+        // First four bytes of SHA-256(verification key), safe to log and to
+        // correlate refreshes with rejections. Never log the key itself.
+        public string KeyFingerprint { get; }
+
+        public bool IsRejected => Volatile.Read(ref _rejected) != 0;
+
+        public string? RejectionReason => Volatile.Read(ref _rejectionReason);
+
+        public void MarkRejected(string reason)
         {
-            ArgumentNullException.ThrowIfNull(settings);
-            signer = null;
-            problem = null;
+            Volatile.Write(ref _rejectionReason, reason);
+            Volatile.Write(ref _rejected, 1);
+        }
 
-            var verificationKey = settings.GrokWebStatsigVerificationKey?.Trim() ?? "";
-            var animationKey = settings.GrokWebStatsigAnimationKey?.Trim() ?? "";
-            if (verificationKey.Length == 0 && animationKey.Length == 0)
+        public string DescribeProvenance(DateTimeOffset nowUtc)
+        {
+            if (Origin == GrokWebStatsigOrigin.Page)
             {
-                problem =
-                    "GrokWebStatsigVerificationKey and GrokWebStatsigAnimationKey are not configured";
-                return false;
+                return $"page key {KeyFingerprint}, fetched {FormatAge(nowUtc - ObtainedAtUtc!.Value)} ago";
             }
-            if (verificationKey.Length == 0 || animationKey.Length == 0)
-            {
-                problem =
-                    "Grok web statsig settings are incomplete; capture and configure both values together";
-                return false;
-            }
+            return ObtainedAtUtc is { } captured
+                ? $"pinned key {KeyFingerprint}, captured {captured.UtcDateTime:yyyy-MM-dd HH:mm} UTC "
+                    + $"({FormatAge(nowUtc - captured)} ago)"
+                : $"pinned key {KeyFingerprint}, capture time not recorded";
+        }
 
-            try
+        public static string FormatAge(TimeSpan age)
+        {
+            if (age < TimeSpan.Zero)
             {
-                signer = new GrokWebStatsigSigner(verificationKey, animationKey);
-                return true;
+                age = TimeSpan.Zero;
             }
-            catch (ArgumentException ex)
+            if (age < TimeSpan.FromMinutes(2))
             {
-                problem = $"Grok web statsig settings are malformed: {ex.Message}";
-                return false;
+                return $"{(int)age.TotalSeconds} s";
             }
+            if (age < TimeSpan.FromHours(2))
+            {
+                return $"{(int)age.TotalMinutes} min";
+            }
+            if (age < TimeSpan.FromDays(2))
+            {
+                return string.Create(CultureInfo.InvariantCulture, $"{age.TotalHours:0.0} h");
+            }
+            return string.Create(CultureInfo.InvariantCulture, $"{age.TotalDays:0.0} d");
         }
 
         public string Generate(string method, string path)
@@ -149,10 +191,10 @@ namespace MultiImageClient
         }
 
         // The caller supplies the 16-row animation table selected from the
-        // current grok.com frontend assets. This method performs the same
-        // deterministic cubic-bezier/color/rotation derivation as the site's
-        // signing middleware. Asset discovery remains a separate fail-closed
-        // operation because deployment bundle layouts can change.
+        // current grok.com frontend assets. The page samples a CSS animation
+        // (cubic-bezier easing, color blend, rotation matrix) at the derived
+        // frame time and reads the computed style; this reproduces Chromium's
+        // result. Asset discovery is GrokWebStatsigSource's fail-closed job.
         public static string DeriveAnimationKey(
             byte[] verificationKey,
             IReadOnlyList<IReadOnlyList<int>> frameTable,
@@ -180,16 +222,7 @@ namespace MultiImageClient
                     nameof(frameTimeByteIndices));
             }
 
-            long frameTime = 1;
-            foreach (var index in frameTimeByteIndices)
-            {
-                ValidateKeyByteIndex(index, nameof(frameTimeByteIndices));
-                checked
-                {
-                    frameTime *= verificationKey[index] % 16;
-                }
-            }
-
+            var frameTime = FrameTime(verificationKey, frameTimeByteIndices);
             var rowIndex = verificationKey[rowIndexByteIndex] % 16;
             var frame = frameTable[rowIndex]
                 ?? throw new ArgumentException(
@@ -203,8 +236,26 @@ namespace MultiImageClient
                     nameof(frameTable));
             }
 
-            var targetTime = frameTime / 4096.0;
-            return Animate(frame, targetTime);
+            return Animate(frame, frameTime / AnimationDurationMs);
+        }
+
+        // Milliseconds into the 4096 ms animation at which the page samples it.
+        public static long FrameTime(byte[] verificationKey, IReadOnlyList<int> frameTimeByteIndices)
+        {
+            ArgumentNullException.ThrowIfNull(verificationKey);
+            ArgumentNullException.ThrowIfNull(frameTimeByteIndices);
+            long product = 1;
+            foreach (var index in frameTimeByteIndices)
+            {
+                ValidateKeyByteIndex(index, nameof(frameTimeByteIndices));
+                checked
+                {
+                    product *= verificationKey[index] % 16;
+                }
+            }
+            // The page applies JavaScript Math.round(product / 10) * 10, which
+            // rounds halves up (165 -> 170).
+            return (long)Math.Floor(product / 10.0 + 0.5) * 10;
         }
 
         public static void RunSelfTest()
@@ -212,11 +263,11 @@ namespace MultiImageClient
             const string verificationKeyBase64 =
                 "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v";
             const string expectedAnimationKey =
-                "01290087ae147ae147b0d99999999999980d9999999999998087ae147ae147b00";
+                "0ff0087ae147ae147b0d99999999999980d9999999999998087ae147ae147b00";
             const string expectedTokenSalt0 =
-                "AAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uL4BuUQbDmOCd6AL6YO0zES/r6Yy3Aw";
+                "AAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uL4BuUQZjM4WirnPOArZjCcewuYXMAw";
             const string expectedTokenSalt255 =
-                "///+/fz7+vn49/b19PPy8fDv7u3s6+rp6Ofm5eTj4uHg397d3Nva2djX1tXU09LR0D+vrPk1OqZ2b+u7hJ2B7vQrTdCc/A";
+                "///+/fz7+vn49/b19PPy8fDv7u3s6+rp6Ofm5eTj4uHg397d3Nva2djX1tXU09LR0D+vrPnnwTKlXV7r12Etzafk3ZON/A";
 
             var verificationKey = Convert.FromBase64String(verificationKeyBase64);
             IReadOnlyList<int> frame = new[]
@@ -233,6 +284,32 @@ namespace MultiImageClient
                 rowIndexByteIndex: 2,
                 frameTimeByteIndices: new[] { 12, 14, 7 });
             RequireSelfTestEqual("animation key", expectedAnimationKey, animationKey);
+
+            // Chromium produced these animation keys on grok.com on 2026-10-07
+            // for frame rows of two deployments. They cover frame-time rounding
+            // (22 -> 20), a half tie (165 -> 170), a color within 1e-4 of a
+            // rounding boundary (300), and easing overshoot that pushes red and
+            // green past 255 (60, 240).
+            RequireBrowserAnimationKey(
+                new[] { 224, 217, 73, 107, 90, 136, 254, 75, 157, 133, 233 },
+                frameTimeFactors: (1, 2, 11),
+                "e0d94910051eb851eb851ec0051eb851eb851ec100");
+            RequireBrowserAnimationKey(
+                new[] { 207, 173, 91, 35, 137, 200, 241, 182, 76, 170, 51 },
+                frameTimeFactors: (1, 11, 15),
+                "d3ae580fd70a3d70a3d7023d70a3d70a3d8023d70a3d70a3d80fd70a3d70a3d700");
+            RequireBrowserAnimationKey(
+                new[] { 88, 102, 226, 47, 41, 68, 213, 129, 16, 191, 240 },
+                frameTimeFactors: (10, 5, 6),
+                "5c6df30d47ae147ae147808f5c28f5c28f608f5c28f5c28f60d47ae147ae147800");
+            RequireBrowserAnimationKey(
+                new[] { 244, 255, 104, 72, 111, 228, 219, 41, 49, 18, 70 },
+                frameTimeFactors: (3, 2, 10),
+                "feff610f33333333333304f5c28f5c28f5c04f5c28f5c28f5c0f33333333333300");
+            RequireBrowserAnimationKey(
+                new[] { 244, 255, 104, 72, 111, 228, 219, 41, 49, 18, 70 },
+                frameTimeFactors: (6, 4, 10),
+                "ffff4d0570a3d70a3d70c0f0a3d70a3d70a0f0a3d70a3d70a0570a3d70a3d70c00");
 
             var signer = new GrokWebStatsigSigner(verificationKeyBase64, animationKey);
             const string path = "/rest/app-chat/conversations/new";
@@ -399,6 +476,25 @@ namespace MultiImageClient
             }
         }
 
+        private static void RequireBrowserAnimationKey(
+            int[] frame,
+            (int A, int B, int C) frameTimeFactors,
+            string expected)
+        {
+            var key = new byte[VerificationKeyLength];
+            key[1] = (byte)frameTimeFactors.A;
+            key[2] = (byte)frameTimeFactors.B;
+            key[3] = (byte)frameTimeFactors.C;
+            var table = Enumerable.Range(0, 16).Select(_ => (IReadOnlyList<int>)frame).ToArray();
+            var actual = DeriveAnimationKey(
+                key,
+                table,
+                rowIndexByteIndex: 0,
+                frameTimeByteIndices: new[] { 1, 2, 3 });
+            var product = frameTimeFactors.A * frameTimeFactors.B * frameTimeFactors.C;
+            RequireSelfTestEqual($"browser animation key (frame-time product {product})", expected, actual);
+        }
+
         private static string Animate(IReadOnlyList<int> frame, double targetTime)
         {
             var fromColor = new[] { (double)frame[0], frame[1], frame[2], 1.0 };
@@ -433,9 +529,11 @@ namespace MultiImageClient
             var result = new StringBuilder();
             for (var i = 0; i < color.Length - 1; i++)
             {
-                var channel = Math.Max(0.0, color[i]);
+                // Computed-style colors clamp to 0-255 and round halves up.
+                // Easing curves overshoot both ways, so channels leave that range.
+                var channel = Math.Clamp(color[i], 0.0, 255.0);
                 result.Append(
-                    ((long)Math.Round(channel, MidpointRounding.ToEven))
+                    ((long)Math.Round(channel, MidpointRounding.AwayFromZero))
                     .ToString("x", CultureInfo.InvariantCulture));
             }
 
@@ -496,18 +594,16 @@ namespace MultiImageClient
                 return 1.0 + endGradient * (time - 1.0);
             }
 
+            // Solve x(u) = time to full double precision. Browser samples put
+            // color channels within 5e-5 of a rounding boundary, so a loose
+            // tolerance changes the key. x(u) is monotonic because both x
+            // control points lie in [0, 1].
             var start = 0.0;
             var end = 1.0;
-            var midpoint = 0.0;
-            while (start < end)
+            for (var i = 0; i < 80; i++)
             {
-                midpoint = (start + end) / 2.0;
-                var estimate = CubicBezierPoint(curve[0], curve[2], midpoint);
-                if (Math.Abs(time - estimate) < 0.00001)
-                {
-                    return CubicBezierPoint(curve[1], curve[3], midpoint);
-                }
-                if (estimate < time)
+                var midpoint = (start + end) / 2.0;
+                if (CubicBezierPoint(curve[0], curve[2], midpoint) < time)
                 {
                     start = midpoint;
                 }
@@ -516,7 +612,7 @@ namespace MultiImageClient
                     end = midpoint;
                 }
             }
-            return CubicBezierPoint(curve[1], curve[3], midpoint);
+            return CubicBezierPoint(curve[1], curve[3], (start + end) / 2.0);
         }
 
         private static double CubicBezierPoint(double a, double b, double position)

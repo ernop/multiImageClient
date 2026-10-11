@@ -3472,12 +3472,12 @@ namespace MultiImageClient
             => IsImageCapable(key)
                 || ((key.Equals(KeyGrokWeb, StringComparison.OrdinalIgnoreCase)
                         || key.Equals(KeyGrokWebChat, StringComparison.OrdinalIgnoreCase))
-                    && _grokWebStatsigSigner != null);
+                    && _grokWebStatsig.Problem == null);
 
         public string? DescribeImageCapabilityProblem(string key)
             => key.Equals(KeyGrokWeb, StringComparison.OrdinalIgnoreCase)
                     || key.Equals(KeyGrokWebChat, StringComparison.OrdinalIgnoreCase)
-                ? _grokWebStatsigProblem
+                ? _grokWebStatsig.Problem
                 : null;
 
         public static bool IsRecraftKey(string key)
@@ -3500,7 +3500,7 @@ namespace MultiImageClient
         {
             KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare
                 or KeyGrokApi or KeyGrokApiPro => "edit source",
-            KeyGrokWeb when _grokWebStatsigSigner != null => "edit source",
+            KeyGrokWeb when _grokWebStatsig.Problem == null => "edit source",
             KeyGrokWebChat => "edit source (chat door)",
             KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
                 or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
@@ -3532,8 +3532,7 @@ namespace MultiImageClient
         private readonly RunOptions _options;
         private readonly ImageManager _imageManager;
         private readonly GeneratorGroups _generatorGroups;
-        private readonly GrokWebStatsigSigner? _grokWebStatsigSigner;
-        private readonly string? _grokWebStatsigProblem;
+        private readonly GrokWebStatsigSource _grokWebStatsig;
         private const string MetaWebDisabledProblem =
             "Chromium-backed meta-web is disabled in the UI";
         private readonly object _comfyProbeLock = new();
@@ -3566,10 +3565,8 @@ namespace MultiImageClient
             _settings = settings;
             _stats = stats;
             _options = options;
-            GrokWebStatsigSigner.TryCreateFromSettings(
-                settings,
-                out _grokWebStatsigSigner,
-                out _grokWebStatsigProblem);
+            _grokWebStatsig = GrokWebStatsigSource.FromSettings(settings);
+            Logger.Log(_grokWebStatsig.DescribeMode());
             _b2 = settings.EnableB2ImageHosting ? new B2StorageClient(settings) : null;
             _finalizationLimit = new SemaphoreSlim(ValidateUiConcurrency(
                 nameof(settings.UiMaxConcurrentJobs), settings.UiMaxConcurrentJobs));
@@ -3716,12 +3713,12 @@ namespace MultiImageClient
                 : null,
             KeyGrokWebVideo => ResolveGrokWebCookiePath() == null
                 ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
-                : _grokWebStatsigProblem,
+                : _grokWebStatsig.Problem,
             // Chat-door image path: always signed app-chat, so it needs both
-            // the cookie file and current statsig signing material.
+            // the cookie file and a usable signing source.
             KeyGrokWebChat => ResolveGrokWebCookiePath() == null
                 ? "grok-web cookie file not found (Settings.GrokWebCookiePath or --grok-web-cookies)"
-                : _grokWebStatsigProblem,
+                : _grokWebStatsig.Problem,
             KeyGrokApi or KeyGrokApiPro
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GrokImagine, _settings),
             KeyMetaWeb => MetaWebDisabledProblem,
@@ -4709,12 +4706,12 @@ namespace MultiImageClient
                             ?? throw new InvalidOperationException("grok-web cookie file not found (settings.json GrokWebCookiePath or --grok-web-cookies)");
                         grokWebClient = GrokWebClient.FromCookieFile(
                             cookiePath,
-                            statsigSigner: _grokWebStatsigSigner);
+                            statsigSource: _grokWebStatsig);
                         generator = key switch
                         {
                             KeyGrokWebVideo => await BuildGrokWebVideoAsync(grokWebClient, job, spec),
                             KeyGrokWebChat => await BuildGrokWebChatEditAsync(grokWebClient, spec, job),
-                            _ => job.HasInputImage && _grokWebStatsigSigner != null
+                            _ => job.HasInputImage && _grokWebStatsig.Problem == null
                                 ? await BuildGrokWebEditAsync(grokWebClient, spec, job)
                                 : BuildGrokWeb(grokWebClient, spec),
                         };
@@ -5505,12 +5502,11 @@ namespace MultiImageClient
             UiJobSpec spec,
             UiJob job)
         {
-            if (_grokWebStatsigSigner == null)
+            if (_grokWebStatsig.Problem != null)
             {
-                throw new InvalidOperationException(
-                    _grokWebStatsigProblem
-                    ?? "Grok web browser-free image editing is not configured.");
+                throw new InvalidOperationException(_grokWebStatsig.Problem);
             }
+            await client.GetStatsigSignerAsync();
 
             // Empty means inherit/derive from the submitted source image.
             var aspectRatio = UiShapeMapping.GrokAspect(spec.Shape);
@@ -5531,17 +5527,16 @@ namespace MultiImageClient
             UiJobSpec spec,
             UiJob job)
         {
-            if (_grokWebStatsigSigner == null)
+            if (_grokWebStatsig.Problem != null)
             {
-                throw new InvalidOperationException(
-                    _grokWebStatsigProblem
-                    ?? "Grok web chat-door image path is not configured.");
+                throw new InvalidOperationException(_grokWebStatsig.Problem);
             }
             if (!job.HasInputImage || string.IsNullOrWhiteSpace(job.InputImagePath))
             {
                 throw new InvalidOperationException(
                     "grok-web-chat requires an attached image; it edits the image through a chat message.");
             }
+            await client.GetStatsigSignerAsync();
 
             // Empty means inherit/derive from the submitted source image.
             var aspectRatio = UiShapeMapping.GrokAspect(spec.Shape);
@@ -5559,17 +5554,16 @@ namespace MultiImageClient
             UiJob job,
             UiJobSpec spec)
         {
-            if (_grokWebStatsigSigner == null)
+            if (_grokWebStatsig.Problem != null)
             {
-                throw new InvalidOperationException(
-                    _grokWebStatsigProblem
-                    ?? "Grok web browser-free video generation is not configured.");
+                throw new InvalidOperationException(_grokWebStatsig.Problem);
             }
             if (!job.HasInputImage)
             {
                 throw new InvalidOperationException(
                     "grok-web image-to-video requires a source image");
             }
+            await client.GetStatsigSignerAsync();
 
             var aspectRatio = spec.VideoAspectRatio == "source"
                 ? UiShapeMapping.GrokAspectForInput(
@@ -6046,6 +6040,7 @@ namespace MultiImageClient
         public ValueTask DisposeAsync()
         {
             _finalizationLimit.Dispose();
+            _grokWebStatsig.Dispose();
             return ValueTask.CompletedTask;
         }
 

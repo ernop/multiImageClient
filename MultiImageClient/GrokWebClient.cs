@@ -61,10 +61,19 @@ namespace MultiImageClient
                                   || !string.IsNullOrWhiteSpace(ErrorMessage);
     }
 
+    public enum GrokWebAppChatRejection
+    {
+        None = 0,
+        StaleSigningKey = 1,
+        AntiBot = 2,
+    }
+
     public sealed class GrokWebClient : IDisposable
     {
         public const string Origin = "https://grok.com";
         public const string ImagineListenWebSocket = "wss://grok.com/ws/imagine/listen";
+        public const string BrowserUserAgent =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
         /// Hard prompt-length cap of the consumer imagine WebSocket, verified
         /// empirically 2026-07-30: an 8192-char prompt generated normally while
@@ -96,12 +105,12 @@ namespace MultiImageClient
         private readonly HttpClient _http;
         private readonly string _cookieHeader;
         private readonly GrokWebBrowserClient? _appChatBrowser;
-        private readonly GrokWebStatsigSigner? _statsigSigner;
+        private readonly GrokWebStatsigSource? _statsigSource;
 
         public GrokWebClient(
             string cookieHeader,
             GrokWebBrowserClient? appChatBrowser = null,
-            GrokWebStatsigSigner? statsigSigner = null)
+            GrokWebStatsigSource? statsigSource = null)
         {
             if (string.IsNullOrWhiteSpace(cookieHeader))
             {
@@ -110,14 +119,13 @@ namespace MultiImageClient
 
             _cookieHeader = cookieHeader.Trim();
             _appChatBrowser = appChatBrowser;
-            _statsigSigner = statsigSigner;
+            _statsigSource = statsigSource;
             _http = new HttpClient
             {
                 BaseAddress = new Uri(Origin),
                 Timeout = TimeSpan.FromMinutes(15),
             };
-            _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36");
+            _http.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", BrowserUserAgent);
             _http.DefaultRequestHeaders.TryAddWithoutValidation("Origin", Origin);
             _http.DefaultRequestHeaders.TryAddWithoutValidation("Referer", Origin + "/imagine");
             _http.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", _cookieHeader);
@@ -126,11 +134,37 @@ namespace MultiImageClient
         public static GrokWebClient FromCookieFile(
             string cookieFilePath,
             GrokWebBrowserClient? appChatBrowser = null,
-            GrokWebStatsigSigner? statsigSigner = null)
+            GrokWebStatsigSource? statsigSource = null)
             => new(
                 GrokWebCookieLoader.LoadCookieHeader(cookieFilePath),
                 appChatBrowser,
-                statsigSigner);
+                statsigSource);
+
+        // Signed app-chat callers fetch the key before uploading, so a key
+        // failure costs no upload or post.
+        public Task<GrokWebStatsigSigner> GetStatsigSignerAsync(CancellationToken cancellationToken = default)
+            => _statsigSource == null
+                ? throw new GrokWebException("Grok web signing is not configured for this client.")
+                : _statsigSource.GetSignerAsync(_cookieHeader, cancellationToken);
+
+        public static GrokWebAppChatRejection ClassifyAppChatRejection(int statusCode, string? body)
+        {
+            if (statusCode != 403 || string.IsNullOrEmpty(body))
+            {
+                return GrokWebAppChatRejection.None;
+            }
+            // Both bodies carry gRPC code 7 (permission denied); only the
+            // message tells them apart.
+            if (body.Contains("This page is out of date", StringComparison.OrdinalIgnoreCase))
+            {
+                return GrokWebAppChatRejection.StaleSigningKey;
+            }
+            if (body.Contains("rejected by anti-bot rules", StringComparison.OrdinalIgnoreCase))
+            {
+                return GrokWebAppChatRejection.AntiBot;
+            }
+            return GrokWebAppChatRejection.None;
+        }
 
         public async Task<GrokWebImageGenerationResult> GenerateImageAsync(
             string prompt,
@@ -155,8 +189,7 @@ namespace MultiImageClient
             using var ws = new ClientWebSocket();
             ws.Options.SetRequestHeader("Cookie", _cookieHeader);
             ws.Options.SetRequestHeader("Origin", Origin);
-            ws.Options.SetRequestHeader("User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36");
+            ws.Options.SetRequestHeader("User-Agent", BrowserUserAgent);
 
             var requestId = Guid.NewGuid().ToString();
             await using var capture = !string.IsNullOrWhiteSpace(captureBaseFolder)
@@ -896,10 +929,10 @@ namespace MultiImageClient
             string videoMode = "normal",
             CancellationToken cancellationToken = default)
         {
-            if (_appChatBrowser == null && _statsigSigner == null)
+            if (_appChatBrowser == null && _statsigSource == null)
             {
                 throw new GrokWebException(
-                    "Grok web video requires current x-statsig-id signing material "
+                    "Grok web video requires x-statsig-id signing "
                     + "or the Playwright browser transport.");
             }
             if (string.IsNullOrWhiteSpace(parentPostId))
@@ -989,10 +1022,10 @@ namespace MultiImageClient
             GrokWebAsset sourceAsset,
             CancellationToken cancellationToken = default)
         {
-            if (_appChatBrowser == null && _statsigSigner == null)
+            if (_appChatBrowser == null && _statsigSource == null)
             {
                 throw new GrokWebException(
-                    "Grok web image edit requires current x-statsig-id signing material "
+                    "Grok web image edit requires x-statsig-id signing "
                     + "or the Playwright browser transport.");
             }
             if (string.IsNullOrWhiteSpace(sourceAsset.AssetId))
@@ -1060,10 +1093,10 @@ namespace MultiImageClient
             string? chatModel = null,
             CancellationToken cancellationToken = default)
         {
-            if (_appChatBrowser == null && _statsigSigner == null)
+            if (_appChatBrowser == null && _statsigSource == null)
             {
                 throw new GrokWebException(
-                    "Grok web chat image path requires current x-statsig-id signing material "
+                    "Grok web chat image path requires x-statsig-id signing "
                     + "or the Playwright browser transport.");
             }
             if (string.IsNullOrWhiteSpace(sourceAsset.AssetId))
@@ -1304,12 +1337,7 @@ namespace MultiImageClient
             object payload,
             CancellationToken cancellationToken = default)
         {
-            if (_statsigSigner == null)
-            {
-                throw new GrokWebException(
-                    "grok-web chat probe requires configured x-statsig-id signing material.");
-            }
-
+            var signer = await GetStatsigSignerAsync(cancellationToken);
             const string path = "/rest/app-chat/conversations/new";
             using var request = new HttpRequestMessage(HttpMethod.Post, path)
             {
@@ -1326,7 +1354,7 @@ namespace MultiImageClient
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
-            request.Headers.TryAddWithoutValidation("x-statsig-id", _statsigSigner.Generate("POST", path));
+            request.Headers.TryAddWithoutValidation("x-statsig-id", signer.Generate("POST", path));
             request.Headers.TryAddWithoutValidation("x-xai-request-id", Guid.NewGuid().ToString());
 
             using var response = await _http.SendAsync(
@@ -1347,12 +1375,20 @@ namespace MultiImageClient
             {
                 return await RunAppChatInBrowserAsync(payload, triggerPostId, trigger, cancellationToken);
             }
-            if (trigger != GrokWebAppChatTrigger.None && _statsigSigner == null)
+            if (trigger != GrokWebAppChatTrigger.None && _statsigSource == null)
             {
                 throw new GrokWebException(
-                    "Grok web app-chat requires either current x-statsig-id signing material "
+                    "Grok web app-chat requires either x-statsig-id signing "
                     + $"or the Playwright browser transport for {trigger}.");
             }
+
+            var operation = trigger == GrokWebAppChatTrigger.ImageEdit
+                ? "image-edit"
+                : "video-generation";
+            var signer = trigger == GrokWebAppChatTrigger.None
+                ? null
+                : await _statsigSource!.GetSignerAsync(_cookieHeader, cancellationToken);
+            var metadata = new { operation, statsig = DescribeSignerForTrace(signer) };
 
             const string path = "/rest/app-chat/conversations/new";
             using var request = new HttpRequestMessage(HttpMethod.Post, "/rest/app-chat/conversations/new")
@@ -1372,11 +1408,11 @@ namespace MultiImageClient
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
             request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
-            if (trigger != GrokWebAppChatTrigger.None)
+            if (signer != null)
             {
                 request.Headers.TryAddWithoutValidation(
                     "x-statsig-id",
-                    _statsigSigner!.Generate("POST", path));
+                    signer.Generate("POST", path));
                 request.Headers.TryAddWithoutValidation(
                     "x-xai-request-id",
                     Guid.NewGuid().ToString());
@@ -1401,7 +1437,7 @@ namespace MultiImageClient
                     startedAtUtc,
                     request: payload,
                     error: ex,
-                    metadata: new { operation = "video-generation" });
+                    metadata: metadata);
                 throw;
             }
 
@@ -1425,12 +1461,12 @@ namespace MultiImageClient
                             request: payload,
                             statusCode: (int)response.StatusCode,
                             error: ex,
-                            metadata: new { operation = "video-generation" });
+                            metadata: metadata);
                         throw;
                     }
 
                     var error = new GrokWebException(
-                        $"Grok web app-chat failed ({(int)response.StatusCode}).",
+                        HandleAppChatFailure((int)response.StatusCode, err, signer, operation),
                         (int)response.StatusCode,
                         err);
                     GenerationTrace.RecordProviderCall(
@@ -1443,7 +1479,7 @@ namespace MultiImageClient
                         response: err,
                         statusCode: (int)response.StatusCode,
                         error: error,
-                        metadata: new { operation = "video-generation" });
+                        metadata: metadata);
                     throw error;
                 }
 
@@ -1498,7 +1534,7 @@ namespace MultiImageClient
                         },
                         statusCode: (int)response.StatusCode,
                         error: ex,
-                        metadata: new { operation = "video-generation" });
+                        metadata: metadata);
                     throw;
                 }
 
@@ -1512,7 +1548,7 @@ namespace MultiImageClient
                 };
                 var logicalError = string.IsNullOrWhiteSpace(result.ErrorMessage)
                     ? null
-                    : new GrokWebException($"Grok web video generation failed: {result.ErrorMessage}");
+                    : new GrokWebException($"Grok web {operation} failed: {result.ErrorMessage}");
                 GenerationTrace.RecordProviderCall(
                     "grok-web",
                     "http-stream",
@@ -1530,10 +1566,67 @@ namespace MultiImageClient
                     },
                     statusCode: (int)response.StatusCode,
                     error: logicalError,
-                    metadata: new { operation = "video-generation" });
+                    metadata: metadata);
                 return result;
             }
         }
+
+        private static string HandleAppChatFailure(
+            int statusCode,
+            string? body,
+            GrokWebStatsigSigner? signer,
+            string operation)
+        {
+            var failure = $"Grok web app-chat failed ({statusCode})";
+            if (signer == null)
+            {
+                return failure + ".";
+            }
+
+            var provenance = signer.DescribeProvenance(DateTimeOffset.UtcNow);
+            var pageKey = signer.Origin == GrokWebStatsigOrigin.Page;
+            switch (ClassifyAppChatRejection(statusCode, body))
+            {
+                case GrokWebAppChatRejection.StaleSigningKey:
+                    signer.MarkRejected("out of date");
+                    var staleNext = pageKey
+                        ? "The next signed request fetches a new key."
+                        : "Clear both GrokWebStatsig keys from settings to fetch keys from the grok.com page, "
+                            + "or pin a new pair with --grok-web-capture-statsig --grok-web-statsig-pin, "
+                            + "then restart.";
+                    Logger.Log(
+                        $"Grok web signing: grok.com rejected {provenance} as out of date on {operation}. {staleNext}");
+                    return $"{failure}: grok.com rejected the signing key as out of date ({provenance}). {staleNext}";
+                case GrokWebAppChatRejection.AntiBot:
+                    // A page key may hit a derivation edge case; a new key costs
+                    // one page fetch. A pinned key cannot be replaced at runtime.
+                    if (pageKey)
+                    {
+                        signer.MarkRejected("anti-bot rules");
+                    }
+                    var antiBotNext = pageKey ? " The next signed request fetches a new key." : "";
+                    Logger.Log(
+                        $"Grok web signing: grok.com anti-bot rules rejected {operation} signed with "
+                        + $"{provenance}.{antiBotNext}");
+                    return $"{failure}: grok.com anti-bot rules rejected the request ({provenance}).{antiBotNext}";
+                default:
+                    return statusCode is 401 or 403
+                        ? $"{failure} ({provenance})."
+                        : failure + ".";
+            }
+        }
+
+        private static object? DescribeSignerForTrace(GrokWebStatsigSigner? signer)
+            => signer == null
+                ? null
+                : new
+                {
+                    origin = signer.Origin == GrokWebStatsigOrigin.Page ? "page" : "pinned",
+                    key = signer.KeyFingerprint,
+                    ageSeconds = signer.ObtainedAtUtc is { } obtained
+                        ? (long?)(DateTimeOffset.UtcNow - obtained).TotalSeconds
+                        : null,
+                };
 
         private async Task<GrokWebAppChatResult> RunAppChatInBrowserAsync(
             object payload,

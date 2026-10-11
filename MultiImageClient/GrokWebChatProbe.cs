@@ -30,11 +30,11 @@ namespace MultiImageClient
                     "--grok-web-chat-probe requires a valid GrokWebCookiePath or --grok-web-cookies.");
             }
 
-            if (!GrokWebStatsigSigner.TryCreateFromSettings(settings, out var signer, out var problem)
-                || signer == null)
+            using var statsigSource = GrokWebStatsigSource.FromSettings(settings);
+            if (statsigSource.Problem != null)
             {
                 throw new InvalidOperationException(
-                    $"--grok-web-chat-probe requires x-statsig-id signing material: {problem}");
+                    $"--grok-web-chat-probe requires x-statsig-id signing: {statsigSource.Problem}");
             }
 
             var message = string.IsNullOrWhiteSpace(options.OverridePrompt)
@@ -43,7 +43,7 @@ namespace MultiImageClient
 
             using var client = GrokWebClient.FromCookieFile(
                 Settings.ExpandPath(cookiePath),
-                statsigSigner: signer);
+                statsigSource: statsigSource);
 
             string? assetId = null;
             var inputPath = Settings.ExpandPath(options.InputImagePath);

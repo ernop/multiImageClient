@@ -46,6 +46,13 @@ namespace MultiImageClient
 
             var options = RunOptions.Parse(args);
 
+            if (options.GrokWebStatsigPin && !options.GrokWebCaptureStatsig)
+            {
+                Console.Error.WriteLine("--grok-web-statsig-pin requires --grok-web-capture-statsig.");
+                Environment.ExitCode = 2;
+                return;
+            }
+
             if (options.GrokWebStatsigSelfTest)
             {
                 GrokWebStatsigSigner.RunSelfTest();
@@ -111,11 +118,20 @@ namespace MultiImageClient
 
             if (options.GrokWebCaptureStatsig)
             {
-                await GrokWebStatsigCapture.RunAsync(
-                    settings,
-                    options,
-                    settingsFilePath,
-                    CancellationToken.None);
+                try
+                {
+                    await GrokWebStatsigCapture.RunAsync(
+                        settings,
+                        options,
+                        settingsFilePath,
+                        CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        $"grok-web-capture-statsig: FAIL; capture failed: {ex.GetType().Name}: {ex.Message}");
+                    Environment.ExitCode = 1;
+                }
                 return;
             }
 

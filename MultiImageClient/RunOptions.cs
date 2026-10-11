@@ -227,9 +227,14 @@ namespace MultiImageClient
 
         /// If true, use a real Grok image-post Edit control once to capture
         /// current x-statsig-id deployment inputs, abort the signed edit before
-        /// it reaches Grok, verify exact reproduction, write the pair to the
-        /// loaded settings file, and exit.
+        /// it reaches Grok, verify exact reproduction, check that the page-key
+        /// derivation reproduces the captured animation key, and exit.
         public bool GrokWebCaptureStatsig { get; set; }
+
+        /// With --grok-web-capture-statsig: also write the captured pair and its
+        /// capture time to the loaded settings file. A pinned pair replaces
+        /// page keys and stops working after about 7 days.
+        public bool GrokWebStatsigPin { get; set; }
 
         /// Dev-only: send a chat-door app-chat message (optionally with an
         /// --input-image attached) to discover/validate the exact grok-web chat
@@ -506,6 +511,9 @@ namespace MultiImageClient
                     case "--grok-web-capture-statsig":
                         o.GrokWebCaptureStatsig = true;
                         break;
+                    case "--grok-web-statsig-pin":
+                        o.GrokWebStatsigPin = true;
+                        break;
                     case "--grok-web-chat-probe":
                         o.GrokWebChatProbe = true;
                         break;
@@ -613,8 +621,9 @@ namespace MultiImageClient
             Console.WriteLine("  --meta-web-headed     Show the meta-web browser window. Run this once to log in to meta.ai; the persistent profile (MetaWebBrowserProfilePath) keeps the session for headless runs.");
             Console.WriteLine("  --meta-web-cookies fp Override settings.json MetaWebCookiePath with a Netscape cookies.txt or raw Cookie header export from https://www.meta.ai (needs datr + ecto_1_sess; full jar preferred). Alternative to the headed login.");
             Console.WriteLine("  --playwright-install  One-time setup: download Playwright's Chromium for --meta-web and grok-web video, then exit. Not needed when the corresponding BrowserExecutablePath points at Chrome/Chromium.");
-            Console.WriteLine("  --grok-web-statsig-self-test  One-shot offline test of the pure-C# x-statsig-id signer against fixed independent vectors; no settings, cookies, browser, network, or provider request.");
-            Console.WriteLine("  --grok-web-capture-statsig  One-shot: use --input-image to create a Grok post, capture current signing inputs from the real Edit control, abort before generation, verify, and update the loaded settings file.");
+            Console.WriteLine("  --grok-web-statsig-self-test  One-shot offline test of the pure-C# x-statsig-id signer against fixed independent and browser-recorded vectors; no settings, cookies, browser, network, or provider request.");
+            Console.WriteLine("  --grok-web-capture-statsig  One-shot diagnostic: use --input-image to create a Grok post, capture current signing inputs from the real Edit control, abort before generation, verify the header, and check that page-key derivation reproduces the captured animation key. Writes nothing unless --grok-web-statsig-pin is given.");
+            Console.WriteLine("  --grok-web-statsig-pin  With --grok-web-capture-statsig: write the captured pair and its capture time to the loaded settings file. A pinned pair replaces page keys and stops working after about 7 days.");
             Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low (pops open only with --open-images).");
             Console.WriteLine("  --provider-sample-file fp   Pair with --provider-sample-showcase to reuse a saved numbered/plain people-fixture prompt list.");
             Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok-api,recraft (grok-api-pro adds the pro tier).");
