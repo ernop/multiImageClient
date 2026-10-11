@@ -1,7 +1,7 @@
 # Separate workspaces and personal login links
 
 Date: 2026-09-08, America/Los_Angeles.
-Updated: 2026-09-21, America/Los_Angeles.
+Updated: 2026-10-11, America/Los_Angeles.
 Status: activated in production on 2026-09-09; both environments verified through the public hostname.
 
 A workspace is one isolated tenant, also called an image-making studio.
@@ -25,6 +25,7 @@ The new idea is a second tenant with its own membership and history.
 | R11 | Request an account through Discord (2026-09-20). | Enter an exact Discord username and verify #vibecoders access. Queue the request for owner review. **Test** sends Brouhahaha a harmless copy. **Confirmed, send to user** sends the recipient a reusable link with no expiry (updated 2026-09-21). Recipient confirmation creates a normal Vibecoders member. |
 | R12 | Keep login links reusable without expiry (2026-09-21). | Administration reset links already have no time limit. Discord DM links also support repeated logins without expiry. Preserve owner review, exact account identity, credential replacement, revocation, and membership checks. |
 | R13 | Separate account creation from issued credentials (2026-09-21). | Start creation with an empty new username and no destination selection. Show creation, conversion, and reissue results in a separate section naming the account, action, and environment. |
+| R14 | Publish to both instances (2026-10-11). | Deploying either the original (AVE) or Vibecoders always deploys the same commit to the other. Neither instance is released alone. See [Release targets](#release-targets-2026-10-11). |
 
 These requirements came from the owner during the review.
 The link grants the account's actual permissions; it does not merely select a display name.
@@ -100,8 +101,9 @@ The privileged helper copies that build into `/opt/multiimageclient` and restart
 Routine releases do not change nginx, TLS, the hostname, or the private path.
 Follow [deploy/README.md](../deploy/README.md) for the full release gate and local restart requirements.
 
-Adding a second service requires an explicit deployment extension.
-The current release helper cannot deploy a separately named instance.
+This helper installs only the original service.
+Since 2026-10-11, `deploy/update-vibecoders.sh` then installs the same build into Vibecoders.
+See [Release targets](#release-targets-2026-10-11).
 
 ### Live observations during this review
 
@@ -538,6 +540,7 @@ It never restarts neighboring services or changes the original private location.
 The original application receives its code through the normal release helper.
 Additional-instance updates use `create-environment.py update --id <id> --publish <verified-publish>`.
 An update verifies the selected service and loopback health and retains the previous binary for recovery.
+Since 2026-10-11, every release updates Vibecoders this way through `deploy/update-vibecoders.sh`.
 
 ## API and implementation map
 
@@ -673,3 +676,27 @@ Vibecoders remains enabled at boot and has no idle timeout.
 
 Tests: `UiIdleLifetimeTests` verifies request races, health probes, and background-work inhibition.
 `tools/test-ui-socket-activation.py` verifies Linux inherited-listener startup, clean idle exit, and reuse by a fresh process.
+
+## Release targets (2026-10-11)
+
+The owner decided that publishing means publishing to both instances.
+Deploying either the original (AVE) or Vibecoders always deploys the same commit to the other.
+A release is complete only when both instances run the identical build and pass verification.
+
+| Step | Command | Verification |
+|---|---|---|
+| 1 | `deploy/agent-redeploy.sh` as `tparkour` | Checkout commit, fresh original start, loopback health, private route |
+| 2 | `deploy/update-vibecoders.sh` as root | Identical installed tree, fresh Vibecoders start, loopback health 200, login gate 401 |
+
+Step 2 copies `/opt/multiimageclient`, the original's verified install, through `create-environment.py update`.
+If step 1 fails, step 2 does not run, and the release is reported as failed.
+Step 2 exits without changes while Vibecoders has unfinished jobs or goal loops.
+The release then stays incomplete until a rerun succeeds after that work finishes.
+Pushes that do not update `origin/master` skip both instances.
+Both instances read the shared account and environment records.
+An older version can reject fields that a newer version writes.
+
+Each update keeps the replaced build as a recovery copy of about 190 MB under `/opt`.
+Before the first two-instance release, ten copies used about 1.9 GB, with 26 GB free.
+Removing old copies remains an owner decision.
+Any further environment still updates only when explicitly selected.

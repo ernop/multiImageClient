@@ -1,15 +1,22 @@
 ---
-description: Pin releases to the private MultiImageClient production site only
+description: Release every production deploy to both MultiImageClient instances
 alwaysApply: true
 ---
 
-# Production release target
+# Production release targets
 
-- This repository has one production product target: the private shared
-  MultiImageClient image-making site at
-  `https://multiimageclient.alpha.fuseki.net/<private-path>/`.
-- The path segment is secret and must never be printed, committed, or exposed
-  in logs. An ordinary deploy must not rename DNS, TLS, the path, or nginx.
+- This repository has two production instances on
+  `https://multiimageclient.alpha.fuseki.net/`: the original private site,
+  AVE (`multiimageclient-ui.service`), and Vibecoders AI Generation
+  (`multiimageclient-env-vibecoders-ai-generation.service`). Each answers
+  under its own secret path segment.
+- **Publishing means both instances (owner, 2026-10-11).** Deploying either
+  instance always deploys the same commit to the other. Never release one
+  alone. A release is complete only when both run the identical build and
+  pass verification.
+- The path segments are secret and must never be printed, committed, or
+  exposed in logs. An ordinary deploy must not rename DNS, TLS, the paths, or
+  nginx.
 - `tpbeta` is only the colocated physical host. It is not the product/site
   identity, and its other services and vhosts are outside this repository's
   deployment scope.
@@ -18,21 +25,28 @@ alwaysApply: true
   excludes a step. Order: commit the requested files; run the
   [deploy/README.md](deploy/README.md) release gate; push the requested
   branch; rebuild and restart the local `--ui` on `127.0.0.1:5960`; if that
-  push updated `origin/master`, redeploy only `multiimageclient-ui.service`
-  through `deploy/agent-redeploy.sh`; verify local `/healthz`, remote commit,
-  fresh service start, loopback, and private vhost.
+  push updated `origin/master`, redeploy the original through
+  `deploy/agent-redeploy.sh` and verify its remote commit, fresh service
+  start, loopback, and private vhost; then run `deploy/update-vibecoders.sh`
+  as root, which installs that same build into Vibecoders and verifies it;
+  verify local `/healthz`.
+- If the original release or its verification fails, stop. Do not update
+  Vibecoders, and report the release as failed.
+- `deploy/update-vibecoders.sh` changes nothing while Vibecoders has
+  unfinished jobs or goal loops. Rerun it after they finish. Report the
+  release as incomplete until it succeeds.
 - Local restart: run `tools/restart-local-ui.sh`. Do not use
   `tools/start-ui.sh` (Surface/WSL launcher). In-flight local jobs die.
-- Skip production redeploy when the push did not update `origin/master`.
-  Feature-branch pushes still restart the local site.
+- Skip both production instances when the push did not update
+  `origin/master`. Feature-branch pushes still restart the local site.
 - On this workstation, the `tpbeta` SSH alias logs in as `subcreation`, which
-  does not own the checkout. Use the documented `tpbeta-root` command that
-  runs the release as the `tparkour` Unix checkout owner. That account name
-  does not make Terrain Parkour a deployment target. Never guess another
-  checkout or service, and never replace the standard release script with an
+  does not own the checkout. Use the documented `tpbeta-root` commands; the
+  original's release runs as the `tparkour` Unix checkout owner. That account
+  name does not make Terrain Parkour a deployment target. Never guess another
+  checkout or service, and never replace the standard release scripts with an
   ad hoc host-wide update.
-- Never print or disclose the site's secret path, credentials, cookies, or
-  provider keys.
+- Never print or disclose either instance's secret path, credentials,
+  cookies, or provider keys.
 
 ## Public prompt route migration (2026-09-17)
 
@@ -56,7 +70,7 @@ Never disclose private prefixes, reusable login links, passwords, or signup toke
 Create only normal accounts with membership in `vibecoders-ai-generation`.
 Never infer account ownership from a matching site name or restore revoked accounts or removed memberships.
 Keep the original controller as the sole writer of global accounts, memberships, and signup tickets.
-Deploy compatible code to the original and explicitly selected Vibecoders instance before enabling Discord account requests.
+Deploy compatible code to both the original and Vibecoders instances before enabling Discord account requests.
 Do not roll either instance back to a parser that rejects the new shared account or environment fields.
 The feature starts disabled and uses the existing public proxy route.
 
@@ -75,8 +89,8 @@ The owner authorized separate environments on this same hostname on 2026-09-08.
 Use `deploy/create-environment.py` for an explicitly selected new environment.
 Read `docs/workspaces-prd.md` before provisioning or updating one.
 Keep the existing service, route, accounts, and data intact.
-An ordinary master release still updates only `multiimageclient-ui.service`.
-Additional environments require explicit target selection and independent resource budgets.
+Every master release updates both the original and Vibecoders (2026-10-11).
+Any further environment still requires explicit target selection and an independent resource budget.
 
 ## Global administration contract (2026-09-09)
 

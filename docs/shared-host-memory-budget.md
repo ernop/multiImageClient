@@ -1,10 +1,11 @@
 # Shared-Host RAM Budget (MultiImageClient production on tpbeta)
 
-The product target is the owner's private image-making site at
-`https://multiimageclient.alpha.fuseki.net/<private-path>/`; the path segment
-is secret and never belongs in logs or commits. `tpbeta` is only the colocated
-physical host. Routine releases update `multiimageclient-ui.service` and do
-not touch the host's neighboring sites or services.
+The product targets are the owner's two image-making instances at
+`https://multiimageclient.alpha.fuseki.net/<private-path>/`: the original and
+Vibecoders. Each path segment is secret and never belongs in logs or commits.
+`tpbeta` is only the colocated physical host. Since 2026-10-11, every release
+updates both `multiimageclient-ui.service` and the Vibecoders service. Releases
+never touch the host's neighboring sites or services.
 
 **Update 2026-09-09:** the owner selected on-demand operation for the original environment.
 Its systemd socket remains listening while the application sleeps after 15 idle minutes.

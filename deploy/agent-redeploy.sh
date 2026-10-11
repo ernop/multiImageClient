@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Non-interactive release for the private MultiImageClient production site
+# Non-interactive release of the original (AVE) MultiImageClient instance
 # (currently multiimageclient.alpha.fuseki.net on host tpbeta). Pulls,
 # publishes to ~/multiimageclient-publish-staging, then installs via the
-# passwordless helper. It updates only multiimageclient-ui.service; the host's
-# other sites and services are outside this script's scope.
+# passwordless helper. It updates only multiimageclient-ui.service. Every
+# release then runs deploy/update-vibecoders.sh as root, which installs the
+# same build into Vibecoders. The host's other sites and services are outside
+# this script's scope.
 # Requires one-time: sudo bash deploy/install-agent-deploy.sh
 #
 # From the current development workstation:
@@ -40,3 +42,5 @@ rm -rf "$staging"
 if ! sudo -n "$helper"; then
     die "passwordless update failed — run once: ssh -t host 'sudo bash $repo/deploy/install-agent-deploy.sh'"
 fi
+
+printf 'Original updated. Next release step, as root: bash %s/deploy/update-vibecoders.sh\n' "$repo"

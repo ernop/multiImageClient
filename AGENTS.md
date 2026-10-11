@@ -20,11 +20,11 @@ C# desktop app that chains together image generation steps across multiple APIs 
 
 - [docs/grok-web-prompt-limits.md](docs/grok-web-prompt-limits.md) — **2026-09-09:** automatically truncate Grok-web image prompts to 8,192 UTF-8 bytes without splitting Unicode characters.
 
-- [docs/workspaces-prd.md](docs/workspaces-prd.md) — **2026-09-20:** exact-username Discord signup requires owner **Test** to Brouhahaha, then **Confirmed, send to user**. Use a harmless preview for tests; mint the reusable link without expiry only on confirmation (updated 2026-09-21). Administration reset links also never expire. Account creation starts empty; show issued credentials in a separate account-labelled section. Duplicate-account profile conflicts return a clear error; use the existing account row for resets. Only the original controller creates normal Vibecoders members. Bind permanent Discord IDs, preserve revocation, and deploy both readers before enabling. Also convert remaining password-file accounts to chosen login-link usernames (`victor` → `governorOfThings`, `austin` → `dallasVille`), then **Issue login details**. **2026-09-19:** administration **Issue login details** creates a new password and login link for an existing normal account and shows both once. Stored hashes cannot be recovered. **2026-09-10:** administration reuses the normal provider controls and compact grid. **2026-09-09:** one global account system, exactly admin/normal levels, existing `ernieMultiZone` as sole admin. Preserve the original environment and credentials. Add **Vibecoders AI Generation** at the chosen URL name `vibecoders-ai-generation`. Administration manages names, titles, membership, features, provider defaults, login links, and account activity. Separate data stores; normal members see shared environment activity, not raw logs or administration. Activated in production; existing credentials and history preserved. Header switching retains login. Administration controls Vibecoders sharing and night filter. Normal members do not see build/RAM diagnostics. The original sleeps after 15 idle minutes and wakes through its systemd socket; Vibecoders stays resident.
+- [docs/workspaces-prd.md](docs/workspaces-prd.md) — **2026-10-11:** every production release deploys the same commit to both the original (AVE) and Vibecoders; `deploy/update-vibecoders.sh` installs the verified original build into Vibecoders. **2026-09-20:** exact-username Discord signup requires owner **Test** to Brouhahaha, then **Confirmed, send to user**. Use a harmless preview for tests; mint the reusable link without expiry only on confirmation (updated 2026-09-21). Administration reset links also never expire. Account creation starts empty; show issued credentials in a separate account-labelled section. Duplicate-account profile conflicts return a clear error; use the existing account row for resets. Only the original controller creates normal Vibecoders members. Bind permanent Discord IDs, preserve revocation, and deploy both readers before enabling. Also convert remaining password-file accounts to chosen login-link usernames (`victor` → `governorOfThings`, `austin` → `dallasVille`), then **Issue login details**. **2026-09-19:** administration **Issue login details** creates a new password and login link for an existing normal account and shows both once. Stored hashes cannot be recovered. **2026-09-10:** administration reuses the normal provider controls and compact grid. **2026-09-09:** one global account system, exactly admin/normal levels, existing `ernieMultiZone` as sole admin. Preserve the original environment and credentials. Add **Vibecoders AI Generation** at the chosen URL name `vibecoders-ai-generation`. Administration manages names, titles, membership, features, provider defaults, login links, and account activity. Separate data stores; normal members see shared environment activity, not raw logs or administration. Activated in production; existing credentials and history preserved. Header switching retains login. Administration controls Vibecoders sharing and night filter. Normal members do not see build/RAM diagnostics. The original sleeps after 15 idle minutes and wakes through its systemd socket; Vibecoders stays resident.
 
 - [.cursorrules](.cursorrules) — communication style, XML docs policy, namespace rules, constants philosophy
 - [.cursor/rules/writing-register-ste100.mdc](.cursor/rules/writing-register-ste100.mdc) — **mandatory writing register for all agent output**: no praise; Simplified Technical English ASD-STE100; max 20 words per sentence; one fact per sentence; active voice; instructions start with a verb; no undefined jargon; DataColada/Gelman rigor over textbook consensus; 3Blue1Brown/Deutsch standard for math and natural science; Scott Alexander epistemics in succinct prose
-- [.cursor/rules/production-deploy-target.mdc](.cursor/rules/production-deploy-target.mdc) — **mandatory release identity**: this repo deploys only the private MultiImageClient production site; `tpbeta` is its shared physical host, never the product target
+- [.cursor/rules/production-deploy-target.mdc](.cursor/rules/production-deploy-target.mdc) — **mandatory release identity**: **2026-10-11:** publishing means both production instances, the original (AVE) and Vibecoders, at the same commit; never release one alone. `tpbeta` is their shared physical host, never the product target
 - [.cursor/rules/shared-site-resident-memory.mdc](.cursor/rules/shared-site-resident-memory.mdc) — **the private production `--ui` site is a resident daemon**: disk is source of truth, RAM/caches are bounded, and full image bytes never remain resident for process lifetime. Say **"shared-site resident"** or **"production UI memory"** to force this + clear the listed debt.
 - [docs/shared-host-memory-budget.md](docs/shared-host-memory-budget.md) — **2026-10-10:** Vibecoders froze for 22.6 hours after one 38-megapixel contact sheet pushed it past `MemoryHigh` on the swapless host. The owner deferred a systemd watchdog (not a final decision) and declined further in-process checks for now. Sheet memory options are recorded, not implemented. **2026-09-20:** owner stopped and disabled verified TP beta, preserving files and database. Changed log rotation to `try-restart`, preventing automatic reactivation and freeing about 456 MiB. Image-buffer and live-job retention fixes remain proposed. the private MultiImageClient site's RAM budget on physical host `tpbeta` and its reasoning framework (no-swap 4 GiB box, layered retention→intake→Chromium→self-heal fixes with commit references), plus per-tenant RAM surveys. **2026-09-09:** local and original production override Grok-web image concurrency to four, retaining aggregate caps. Current since 2026-08-05: MemoryHigh=2048M/MemoryMax=2560M/GC 50% after tpdiscord and tpbeta.uwsgi were retired and the app became the box's primary tenant. 2026-09-10: memory status and liveness use only the current process's control group.
 - [.cursor/rules/atomic-preloading-viewers.mdc](.cursor/rules/atomic-preloading-viewers.mdc) — **mandatory for every quick/preloading viewer**: never expose a previous item's media or metadata while a new selection loads; clear hidden presentation state and swap media + chrome atomically.
@@ -73,18 +73,22 @@ code. Chat transcripts are not a record.
 
 ## Production Release Identity
 
-The sole production product target for this repository is the owner's private
-shared image-making site at
-`https://multiimageclient.alpha.fuseki.net/<private-path>/`. The path segment
-is secret and must never be printed or committed. Changing the hostname, path,
-TLS, or nginx is a separate migration, never part of an ordinary release.
-`tpbeta` is only the colocated machine hosting it. A request to commit and
-push, including the Cursor diff-tab commit-and-push action, means: commit,
-run the [deploy/README.md](deploy/README.md) release gate, push the requested
-branch, restart the local `--ui` with `tools/restart-local-ui.sh`, and — when
-that push updated `origin/master` — redeploy only
-`multiimageclient-ui.service`. Never deploy or restart a neighboring site,
-vhost, or service.
+The production product consists of two instances on one hostname: the
+owner's original private image-making site (AVE) and Vibecoders AI
+Generation, each at `https://multiimageclient.alpha.fuseki.net/<private-path>/`
+with its own secret path segment. The path segments must never be printed or
+committed. Changing the hostname, paths, TLS, or nginx is a separate
+migration, never part of an ordinary release. `tpbeta` is only the colocated
+machine hosting them. A request to commit and push, including the Cursor
+diff-tab commit-and-push action, means: commit, run the
+[deploy/README.md](deploy/README.md) release gate, push the requested branch,
+restart the local `--ui` with `tools/restart-local-ui.sh`, and — when that
+push updated `origin/master` — redeploy the original
+(`multiimageclient-ui.service`) through `deploy/agent-redeploy.sh`, then
+Vibecoders through `deploy/update-vibecoders.sh`. Since 2026-10-11 (owner
+decision), publishing always means both instances at the same commit; never
+release one alone. Never deploy or restart a neighboring site, vhost, or
+service.
 
 Live production limits verified 2026-08-06 are 1 contact-sheet finalizer,
 14 aggregate provider requests, default 64 pending jobs, four concurrent Grok-web image requests, other scheduler-default

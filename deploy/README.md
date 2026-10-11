@@ -1,15 +1,18 @@
-# Production Deployment — Private MultiImageClient Site
+# Production Deployment — Private MultiImageClient Sites
 
-This repository has one production product target: the owner's private shared
-image-making site at
-`https://multiimageclient.alpha.fuseki.net/<private-path>/`. The path segment
-is secret and must never be printed or committed. Changing the hostname, path,
-TLS, or nginx is a separate migration, not a release step.
+This repository has two production instances on one hostname: the owner's
+original private image-making site (AVE) and Vibecoders AI Generation. Each
+answers at `https://multiimageclient.alpha.fuseki.net/<private-path>/` with
+its own secret path segment, which must never be printed or committed.
+Changing the hostname, paths, TLS, or nginx is a separate migration, not a
+release step.
 
-The site runs on the colocated machine `tpbeta` as
-`multiimageclient-ui.service`. `tpbeta` is host infrastructure, not the
-product target. Its other sites, vhosts, and services are outside this
-repository's deployment scope.
+The original runs on the colocated machine `tpbeta` as
+`multiimageclient-ui.service`; Vibecoders runs beside it as
+`multiimageclient-env-vibecoders-ai-generation.service`. Every release
+updates both instances to the same build (owner decision, 2026-10-11).
+`tpbeta` is host infrastructure, not the product target. Its other sites,
+vhosts, and services are outside this repository's deployment scope.
 
 The `--ui` web app lets everyone generate under a chosen username, see and
 iterate on shared work, and open older days through a lazy-loaded archive.
@@ -35,12 +38,14 @@ action, is a full local+production release unless the user excludes a step.
    `tools/restart-local-ui.sh`. That process listens on `127.0.0.1:5960`.
    In-flight local jobs die. Do not use `tools/start-ui.sh`; that file is
    the Surface/WSL launcher.
-5. If the push updated `origin/master`, redeploy production with the
-   `tpbeta-root` command below. Skip production when the push did not
-   update `origin/master`. Feature-branch pushes still restart the local
-   site.
+5. If the push updated `origin/master`, release both production instances:
+   redeploy the original with the `tpbeta-root` command below and verify
+   it, then update Vibecoders with `deploy/update-vibecoders.sh`. Never
+   release one instance alone. If the original fails, do not update
+   Vibecoders. Skip production when the push did not update
+   `origin/master`. Feature-branch pushes still restart the local site.
 6. Verify local `http://127.0.0.1:5960/healthz`, then the production
-   checks listed after the redeploy command.
+   checks listed after each command.
 
 ## Local server restart
 
@@ -83,6 +88,7 @@ rsyncs only into `/opt/multiimageclient` and restarts only
 `multiimageclient-ui.service`. It does not edit nginx or any neighboring
 service during a routine release. Use this automation for normal releases;
 do not substitute host-wide rsync, service restarts, or nginx changes.
+The release then continues with the Vibecoders update below.
 
 After it returns, require all of the following:
 
@@ -94,22 +100,34 @@ After it returns, require all of the following:
 Never print the secret path, login credentials, cookies, or provider keys in
 deployment output.
 
-## Updating an additional environment
+## Updating Vibecoders (every release)
 
-Additional environments (for example `vibecoders-ai-generation`) update only when explicitly selected.
+Since 2026-10-11, publishing always means both instances. After the original
+passes the checks above, install the same build into Vibecoders:
+
+```bash
+ssh tpbeta-root \
+  'bash /home/tparkour/multiImageClient/deploy/update-vibecoders.sh'
+```
+
 `update-shared-host.sh` deletes `~/multiimageclient-publish-staging` after installing the original service.
 After a verified original-service release, the verified publish is `/opt/multiimageclient` itself.
 The service writes only under `/var/lib/multiimageclient`, and the update skips `settings.json`.
 
-`create-environment.py update` refuses to run while `/opt/multiimageclient-env-<id>.previous` exists.
-Keep that recovery copy by renaming it with the date of the release it came from, for example `.previous-20260921`.
+The script performs these steps and prints no private path:
 
-```bash
-ssh tpbeta-root 'mv /opt/multiimageclient-env-<id>.previous /opt/multiimageclient-env-<id>.previous-<yyyymmdd> &&
-  python3 /home/tparkour/multiImageClient/deploy/create-environment.py update --id <id> --publish /opt/multiimageclient'
-```
+1. It exits without changes while Vibecoders has unfinished jobs or goal loops.
+   Rerun it after they finish; the release stays incomplete until then.
+2. `create-environment.py update` refuses to run while `.previous` exists.
+   The script renames that recovery copy to `.previous-<build time>`.
+3. It runs `create-environment.py update --id vibecoders-ai-generation --publish /opt/multiimageclient`.
+   That command restarts only the Vibecoders service and waits for its loopback `/healthz`.
+4. It verifies that the installed tree equals `/opt/multiimageclient`.
+5. It prints the service start time. It requires loopback `/healthz` 200 and the login gate's 401 through the manifest `privatePath`.
 
-Then verify the service start time, loopback `/healthz` on the manifest port, the route through its manifest `privatePath`, and that its `MultiImageClient.dll` matches `/opt/multiimageclient`.
+Each update keeps one recovery copy of about 190 MB under `/opt`.
+Removing old recovery copies is an owner decision.
+Any further environment updates only when explicitly selected, through the same `create-environment.py update` command.
 
 ## Passwordless redeploy helper installation
 
@@ -248,7 +266,7 @@ Configure a valid bot token before enabling sends.
 The installer adds only the selected instance's `/shared/<environment>/` route and sharing settings.
 It backs up the existing configuration, validates nginx, and reloads nginx.
 The private route and other services remain unchanged.
-Then run the normal original-service redeploy above.
+Then run the normal release above, which updates both instances.
 Verify anonymous unknown tokens return 404 without revealing the private address.
 Do not publish existing private prompts or post test messages during release checks.
 
@@ -262,7 +280,7 @@ The controller uses its existing Vibecoders bot credential and webhook destinati
 1. Pause **Discord account requests** before upgrading an existing automatic-delivery installation.
 2. Configure `DiscordAccountReviewerId` with Brouhahaha's verified permanent Discord ID on the original controller.
 3. Run the normal release gate and original-service release.
-4. Update the selected `vibecoders-ai-generation` instance through `create-environment.py update --id vibecoders-ai-generation --publish <verified-publish>`.
+4. Update Vibecoders through `deploy/update-vibecoders.sh`.
 5. Verify both selected services run compatible code before changing the shared registry or accepting Discord accounts.
 6. Enable **Discord account requests** for Vibecoders AI Generation in administration, then select **Save configuration**.
 7. Verify both public image pages link to the controller's public signup form.
@@ -297,7 +315,7 @@ See [the environment setup guide](../docs/workspaces-prd.md#operator-setup-and-r
 Use `create-environment.py` to prepare, install, or update an explicitly selected additional instance.
 It creates another private path under the existing hostname.
 It preserves the original service and its data.
-Routine releases above continue targeting only `multiimageclient-ui.service`.
+Routine releases above update the original and Vibecoders; any further instance updates only when explicitly selected.
 
 
 ### Global administration bootstrap (2026-09-09)
