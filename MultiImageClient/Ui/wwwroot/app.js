@@ -45,6 +45,8 @@ function setImageElementCardThumb(img, originalUrl, recordedThumb) {
 }
 
 const PersonalConfigurationSchema = MultiImagePersonalConfiguration;
+const tabActivity = MultiImageTabActivity;
+const IdlePausedText = "updates paused while idle";
 let storedPersonalConfiguration = null;
 let storedPersonalConfigurationError = null;
 try {
@@ -430,11 +432,16 @@ let logsPollInFlight = false;
 
 async function pollLogs() {
   if (logsPanel.hidden || logsPollInFlight) return;
-  logsPollInFlight = true;
   if (logsPollTimer) {
     clearTimeout(logsPollTimer);
     logsPollTimer = null;
   }
+  if (!tabActivity.shouldPoll()) {
+    logsConnection.textContent = IdlePausedText;
+    logsConnection.className = "";
+    return;
+  }
+  logsPollInFlight = true;
   try {
     const resp = await fetch(apiUrl(`api/logs/poll?after=${lastLogSequence}`));
     if (resp.status === 401) { location.reload(); return; }
@@ -2088,11 +2095,12 @@ function handleSharedActivity(entry) {
 
 async function pollActivity() {
   if (activityPollInFlight) return;
-  activityPollInFlight = true;
   if (activityPollTimer) {
     clearTimeout(activityPollTimer);
     activityPollTimer = null;
   }
+  if (!tabActivity.shouldPoll()) return;
+  activityPollInFlight = true;
   try {
     const query = activityCursor == null ? "" : `?after=${activityCursor}`;
     const response = await fetch(apiUrl(`api/activity/poll${query}`));
@@ -7301,7 +7309,7 @@ async function loadFavorites() {
 
 function pollFavorites() {
   if (document.hidden && Date.now() - favoritesLastRefreshAt < 30000) return;
-  loadFavorites();
+  return loadFavorites();
 }
 
 function renderImageViewerFavorite(item) {
@@ -11116,23 +11124,51 @@ let jobsPollCursor = 0;
 let jobsPollTimer = null;
 let jobsPollInFlight = false;
 let jobsPollFailing = false;
+let jobsPollPaused = false;
 
-function setAllJobConnections(text, isError) {
+function setAllJobConnections(text, stateClass = "") {
   for (const card of jobsSection.querySelectorAll(".job")) {
     if (card.dataset.state === "done") continue;
     const connection = card.querySelector(".job-connection");
     connection.textContent = text;
-    connection.classList.toggle("err", isError);
+    connection.classList.toggle("err", stateClass === "err");
+    connection.classList.toggle("paused", stateClass === "paused");
   }
 }
 
+// Completion notifications for this user's own generations need the event
+// poll, so an idle tab keeps polling until they finish (within the limit in
+// tab-activity.js).
+function hasOwnUnfinishedJob() {
+  for (const id of ownedJobIds) {
+    const card = el(`job-${id}`);
+    if (card && card.dataset.state !== "done") return true;
+  }
+  return false;
+}
+
+tabActivity.keepPollingWhile(hasOwnUnfinishedJob);
+tabActivity.onResume(() => {
+  pollJobEvents();
+  pollActivity();
+  pollLogs();
+});
+
 async function pollJobEvents() {
   if (jobsPollInFlight) return;
-  jobsPollInFlight = true;
   if (jobsPollTimer) {
     clearTimeout(jobsPollTimer);
     jobsPollTimer = null;
   }
+  if (!tabActivity.shouldPoll()) {
+    if (!jobsPollPaused) {
+      jobsPollPaused = true;
+      jobsPollFailing = false;
+      setAllJobConnections(IdlePausedText, "paused");
+    }
+    return;
+  }
+  jobsPollInFlight = true;
   try {
     const visibilityQuery = visibilityServerVersion
       ? `&visibilityVersion=${encodeURIComponent(visibilityServerVersion)}`
@@ -11169,14 +11205,15 @@ async function pollJobEvents() {
       }
     }
     jobActivityHydrated = true;
-    if (jobsPollFailing) {
+    if (jobsPollFailing || jobsPollPaused) {
       jobsPollFailing = false;
-      setAllJobConnections("live", false);
+      jobsPollPaused = false;
+      setAllJobConnections("live");
     }
   } catch {
     if (!jobsPollFailing) {
       jobsPollFailing = true;
-      setAllJobConnections("server disconnected — retrying", true);
+      setAllJobConnections("server disconnected — retrying", "err");
     }
   } finally {
     jobsPollInFlight = false;
@@ -11241,7 +11278,7 @@ function applyJobEvent(id, card, evt) {
   if (card.dataset.state !== "done") {
     const connection = card.querySelector(".job-connection");
     connection.textContent = "live";
-    connection.classList.remove("err");
+    connection.classList.remove("err", "paused");
   }
 
   if (evt.type === "accepted" || evt.type === "job-queued") {
@@ -11851,6 +11888,24 @@ async function openSharedJobFromUrl() {
 
 // ---------- boot ----------
 
+// A refresh skips its tick while the tab is idle or while its previous
+// request is unfinished; otherwise a stalled server collects one request per
+// tick from every open tab.
+function refreshEvery(ms, refresh) {
+  let inFlight = false;
+  const run = async () => {
+    if (inFlight || !tabActivity.shouldPoll()) return;
+    inFlight = true;
+    try {
+      await refresh();
+    } finally {
+      inFlight = false;
+    }
+  };
+  setInterval(run, ms);
+  tabActivity.onResume(run);
+}
+
 // Every window is a view over durable server-side job history. The first
 // poll (cursor=0) hydrates TODAY's jobs: they are announced chronologically
 // (prepend => newest on top) and each job's full event history replays, so
@@ -11869,10 +11924,10 @@ loadConfig()
     openSharedJobFromUrl().catch((error) => {
       sendError.textContent = `shared job link failed: ${error}`;
     });
-    setInterval(() => { loadVibecodersSent().catch(() => {}); }, 5000);
-    setInterval(pollFavorites, 5000);
-    setInterval(pollProfiles, 5000);
-    setInterval(pollRamStatus, 15000);
+    refreshEvery(5000, () => loadVibecodersSent().catch(() => {}));
+    refreshEvery(5000, pollFavorites);
+    refreshEvery(5000, pollProfiles);
+    refreshEvery(15000, pollRamStatus);
   })
   .catch((err) => {
     sendError.textContent = `config load failed: ${err}`;

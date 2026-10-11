@@ -644,6 +644,8 @@ The owner selected on-demand operation for the original environment to reduce id
 Vibecoders remains continuously available as a resident application process.
 The original service sleeps after 15 minutes without browser requests or background work.
 An open browser that continues polling keeps its environment awake.
+Since 2026-10-10, tabs stop polling after 10 minutes without input, so an idle open tab no longer prevents sleep.
+See [UI polling](ui-polling-prd.md).
 Queued jobs, running jobs, contact-sheet finalization, and running goal loops prevent sleep.
 Finishing work starts a fresh idle interval. Health probes do not extend that interval.
 

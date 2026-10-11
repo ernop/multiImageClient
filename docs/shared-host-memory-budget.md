@@ -37,6 +37,51 @@ to
 (the design rule) and [deploy/README.md](../deploy/README.md) (the install
 procedure).
 
+## Vibecoders freeze and owner decisions — 2026-10-10
+
+The Vibecoders process stopped serving at about 19:04 UTC on October 9.
+A release restart killed it at 17:40:45 UTC on October 10, 22.6 hours later.
+nginx logged 23,718 HTTP 504 responses on the Vibecoders route during that time.
+
+Trigger: the contact sheet of one job with a 179-line prompt.
+Mixed result shapes produced a three-column grid 4,095 pixels wide.
+The prompt panel measured 7,142 pixels high, 76% of the 4,095 × 9,358 sheet.
+That sheet holds 38.3 megapixels.
+`CreateBatchLayoutImageSquareAsync` keeps three canvases alive at once.
+They hold about 36 MB (grid), 117 MB (panel), and 153 MB (combined sheet).
+With text-rendering scratch memory, the peak added roughly 500 MiB.
+
+Mechanism: the process exceeded its 1 GiB `MemoryHigh`.
+The host has no swap, so the kernel throttled and reclaimed instead of killing the process.
+`UiLivenessGuard` logged nothing, so its thread stalled as well.
+A plausible cause is a stop-the-world garbage collection slowed by throttling.
+No memory dump exists to prove it.
+
+Local reproduction rendered a sheet with the same dimensions and labels:
+
+- No memory limit: 3.7 s.
+- About 90 MiB over a scoped `MemoryHigh`: 114.5 s.
+- About 240 MiB over: unfinished after 150 s.
+
+Text layout is not the cause. Measuring took 0.6 s, and panel rendering took 2.6 s.
+
+Owner decisions, 2026-10-10:
+
+- No systemd watchdog for now. This is not a final decision.
+- No further in-process checks at this point, such as pressure-stall monitoring.
+- Idle browser tabs stop polling. See [UI polling](ui-polling-prd.md).
+
+Options identified, not implemented:
+
+- Draw the grid and prompt panel directly into the final canvas. This removes about 150 MB of duplicate pixels.
+- Render the sheet in horizontal strips and stream PNG rows to disk.
+  ImageSharp saves only whole images, so this needs a custom PNG writer.
+  Estimated peak: one strip plus downscaled sources, about 50–80 MiB.
+  Pixel output must match the current renderer exactly.
+- Use 24-bit RGB canvases instead of 32-bit RGBA. Canvas memory falls by 25%.
+- Lay long prompts out in several columns. About 80% of this panel was empty space beside short lines.
+  This changes the sheet's appearance and needs an owner decision.
+
 ## Beta standby approved and applied — 2026-09-20
 
 At 17:52 Pacific, the owner explicitly requested stopping beta without removing its files or database.

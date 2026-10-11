@@ -28,6 +28,7 @@ applyEnvironmentBranding();
 // Authenticated creation and forks use the server's signed-in account.
 // Local mode reuses the name saved by the composer, without a second name editor.
 const PersonalConfigurationSchema = globalThis.MultiImagePersonalConfiguration;
+const tabActivity = globalThis.MultiImageTabActivity;
 
 function appendLocalCreator(form) {
   if (authInfo.enabled) return;
@@ -410,10 +411,32 @@ async function pollList() {
   }
 }
 
+// Background refreshes share one request. Actions call pollList directly so
+// their list includes what they just created.
+let listRefreshInFlight = null;
+
+function refreshList() {
+  if (!listRefreshInFlight) {
+    listRefreshInFlight = pollList().finally(() => { listRefreshInFlight = null; });
+  }
+  return listRefreshInFlight;
+}
+
+// The next list poll replaces this text through updateRunningCount.
+function showIdlePause() {
+  const span = el("goal-running-count");
+  span.textContent = "updates paused while idle";
+  span.classList.remove("active");
+}
+
 function scheduleListPoll() {
   clearTimeout(listPollTimer);
   listPollTimer = setTimeout(async () => {
-    await pollList();
+    if (!tabActivity.shouldPoll()) {
+      showIdlePause();
+      return;
+    }
+    await refreshList();
     scheduleListPoll();
   }, document.hidden ? 15000 : 4000);
 }
@@ -634,7 +657,10 @@ async function pollLoopOnce() {
   if (version !== selectedVersion) return;
   const running = loopState && loopState.running;
   clearTimeout(loopPollTimer);
-  loopPollTimer = setTimeout(pollLoop, document.hidden ? 5000 : (running ? 1000 : 3000));
+  loopPollTimer = setTimeout(() => {
+    if (tabActivity.shouldPoll()) pollLoop();
+    else showIdlePause();
+  }, document.hidden ? 5000 : (running ? 1000 : 3000));
 }
 
 // ---------- loop head ----------
@@ -2375,11 +2401,20 @@ async function submitFork(entryIndex, text, maxTurns, button, errorBox) {
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
-    pollList();
+    refreshList();
     if (selectedLoopId) {
       clearTimeout(loopPollTimer);
       pollLoop();
     }
+  }
+});
+
+tabActivity.onResume(() => {
+  scheduleListPoll();
+  refreshList();
+  if (selectedLoopId) {
+    clearTimeout(loopPollTimer);
+    pollLoop();
   }
 });
 
