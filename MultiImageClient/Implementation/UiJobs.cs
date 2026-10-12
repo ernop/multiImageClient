@@ -3650,7 +3650,7 @@ namespace MultiImageClient
             return File.Exists(expanded) ? expanded : null;
         }
 
-        private static RecraftModel RecraftModelForKey(string key) => key switch
+        internal static RecraftModel RecraftModelForKey(string key) => key switch
         {
             KeyRecraft => RecraftModel.recraftv4_1,
             KeyRecraftV41Utility => RecraftModel.recraftv4_1_utility,
@@ -4690,9 +4690,15 @@ namespace MultiImageClient
             decimal totalCost = 0m;
             long createMs = 0, downloadMs = 0;
             string label = null;
-            string firstError = null;
+            // The job POST refuses these prompts first; goal-loop renders reach
+            // this point without it, so the provider call is never made here.
+            spec.GeneratorExtraTexts.TryGetValue(key, out var targetExtraText);
+            var promptOverrun = UiPromptLimits.FindRejection(key, pd.Prompt, targetExtraText);
+            string firstError = promptOverrun == null
+                ? null
+                : UiPromptLimits.DescribeTargetRejection(promptOverrun);
 
-            for (var attempt = 0; attempt < want; attempt++)
+            for (var attempt = 0; promptOverrun == null && attempt < want; attempt++)
             {
                 GrokWebClient? grokWebClient = null;
                 PromptDetails? copy = null;
@@ -5045,7 +5051,9 @@ namespace MultiImageClient
 
             // Known payment/auth failures carry a "next step" hint + the URL
             // where it gets fixed; the card renders it under the error text.
-            var actionHint = ok ? null : ProviderActionHints.For(key, merged.ErrorMessage);
+            var actionHint = ok || promptOverrun != null
+                ? null
+                : ProviderActionHints.For(key, merged.ErrorMessage);
             job.Emit(new
             {
                 type = "gen-result",
@@ -5148,7 +5156,7 @@ namespace MultiImageClient
             if (spec.GeneratorExtraTexts.TryGetValue(key, out var extraText)
                 && !string.IsNullOrWhiteSpace(extraText))
             {
-                var suffixed = $"{copy.Prompt}\n\n{extraText.Trim()}";
+                var suffixed = UiPromptLimits.ComposeWirePrompt(copy.Prompt, extraText);
                 copy.ReplacePrompt(suffixed, suffixed, TransformationType.ManualSuffixation);
             }
             else if (key is KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare)

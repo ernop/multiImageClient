@@ -606,11 +606,9 @@ namespace MultiImageClient
                     // path in this UI.
                     requiresImage = UiJobRunner.IsAnalysisKey(g.key)
                         || g.key == UiJobRunner.KeyGrokWebChat,
-                    // Known hard prompt-length caps, surfaced so the composer can
-                    // warn before submit; the server truncates over-limit prompts
-                    // at the provider send stage (grok-web: GrokWebClient).
-                    maxPromptChars = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptChars : null,
-                    maxPromptUtf8Bytes = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptUtf8Bytes : null,
+                    // The composer measures the same wire prompt as the server
+                    // against this limit (null when none is published).
+                    promptLimit = UiPromptLimits.Publish(g.key),
                     // The anti-murk daylight suffix applies to the whole OpenAI
                     // gpt-image family: 2.5 shares gpt-image-2's drift toward
                     // dark cinematic output without it.
@@ -1139,6 +1137,11 @@ namespace MultiImageClient
                 catch (InvalidDataException ex)
                 {
                     return Results.BadRequest(new { error = ex.Message });
+                }
+                var promptOverruns = UiPromptLimits.FindRejections(genKeys, prompt, generatorExtraTexts);
+                if (promptOverruns.Count > 0)
+                {
+                    return Results.BadRequest(new { error = UiPromptLimits.DescribeJobRejection(promptOverruns) });
                 }
 
                 // Uploaded images (clipboard paste / drag-drop / file picker)

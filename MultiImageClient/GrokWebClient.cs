@@ -78,9 +78,9 @@ namespace MultiImageClient
         /// Hard prompt-length cap of the consumer imagine WebSocket, verified
         /// empirically 2026-07-30: an 8192-char prompt generated normally while
         /// 8193 chars was rejected instantly (pre-generation, free) with
-        /// "Prompt is too long (invalid_parameter)". Note this differs from the
-        /// official api.x.ai limit of 4096 — that does not apply here.
-        public const int MaxPromptChars = 8192;
+        /// "Prompt is too long (invalid_parameter)". How Grok counts non-ASCII
+        /// text is unverified, so the local truncation budget is 8,192 UTF-8
+        /// bytes (2026-09-09). App-chat edit, chat, and video send the full prompt.
         public const int MaxPromptUtf8Bytes = 8192;
 
         public static string TruncateImagePrompt(string prompt)

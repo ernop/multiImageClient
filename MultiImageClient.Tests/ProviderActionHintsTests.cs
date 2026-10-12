@@ -165,8 +165,24 @@ public sealed class ProviderActionHintsTests
     [Theory]
     [InlineData("Prompt dimensions are invalid.")]
     [InlineData("HTTP 429 RESOURCE_EXHAUSTED")]
+    [InlineData("Invalid 'prompt': string too long. Expected a string with maximum length 32000, but got a string with length 34020 instead.")]
+    [InlineData("Invalid 'prompt': string too long. Expected a string with maximum length 32000, but got a string with length 40123 instead.")]
+    [InlineData("Prompt too long for gpt-image-2: 1,402 characters; the limit is 1,000.")]
+    [InlineData("Upload of 402,000 bytes timed out.")]
     public void UnrelatedProviderFailureDoesNotClaimBillingWasTheCause(string error)
     {
         Assert.Null(ProviderActionHints.For(UiJobRunner.KeyGpt2, error));
+    }
+
+    [Theory]
+    [InlineData("Response status code does not indicate success: 402.", "https://platform.openai.com/settings/organization/billing/overview")]
+    [InlineData("API request failed (402)", "https://platform.openai.com/settings/organization/billing/overview")]
+    [InlineData("Response status code does not indicate success: 401.", "https://platform.openai.com/api-keys")]
+    public void StandaloneStatusCodesStillProduceHints(string error, string expectedUrl)
+    {
+        var hint = ProviderActionHints.For(UiJobRunner.KeyGpt2, error);
+
+        Assert.NotNull(hint);
+        Assert.Equal(expectedUrl, hint.Url);
     }
 }

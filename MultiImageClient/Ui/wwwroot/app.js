@@ -636,6 +636,7 @@ function renderComposerGeneratorPicker(checkedKeys = allGeneratorInputs().filter
     // their configuration problem so users can manage future availability.
     if (!g.available || !generatorShownByPreferences(g)) continue;
     const chip = buildGenChip(g);
+    chip.dataset.compatibilityTitle = chip.title;
     chip.querySelector("input").checked = selected.has(g.key);
     chip.classList.toggle("checked", selected.has(g.key));
     (g.kind === "describe" ? describeRow : gensRow).appendChild(chip);
@@ -763,6 +764,8 @@ function updateGeneratorCompatibility() {
         : `${g?.detail || cb.value} — NOT AVAILABLE: ${g?.availabilityProblem || "missing configuration"}`;
       label.title = generatorChooserTitle(cb.value, baseTitle);
     }
+    // updatePromptLimitNotice appends the prompt-length state to this title.
+    label.dataset.compatibilityTitle = label.title;
   }
   updateGeneratorCount();
 }
@@ -790,12 +793,14 @@ function updateGeneratorCount() {
   updatePromptLimitNotice();
 }
 
-// ---------- prompt length limits (non-blocking) ----------
+// ---------- prompt length limits ----------
 
-// Grok-web uses a finite UTF-8 byte budget. /api/config carries limits per
-// generator; an over-limit prompt still submits — the server truncates it at
-// the send-to-provider stage — this notice just says so before the fact.
+// /api/config publishes each generator's prompt limit (promptLimit). A
+// selected model over a "reject" limit blocks Generate, and the server
+// refuses the job as well. grok-web's "truncate" limit only warns: the server
+// cuts that prompt to fit when it sends it. See docs/prompt-length-limits.md.
 const promptLimitNotice = el("prompt-limit-notice");
+const PromptLimitUnitNames = { characters: "characters", utf8Bytes: "UTF-8 bytes" };
 const globalAppendText = el("global-append-text");
 globalAppendText.value = storedPersonalField("promptTools")?.globalAppendText ?? "";
 globalAppendText.addEventListener("input", () => {
@@ -813,36 +818,110 @@ function combinedEndpointExtraText(key) {
     .filter(Boolean).join("\n\n");
 }
 
-function updatePromptLimitNotice() {
-  const promptLength = promptBox.value.trim().length;
-  const affected = [...gensRow.querySelectorAll("input:checked")]
-    .map((cb) => {
-      const generator = generators.find((g) => g.key === cb.value);
-      const extraLength = combinedEndpointExtraText(cb.value).length;
-      const wireLength = promptLength + (promptLength && extraLength ? 2 : 0) + extraLength;
-      const wireText = [promptBox.value.trim(), combinedEndpointExtraText(cb.value)]
-        .filter(Boolean).join("\n\n");
-      const wireBytes = new TextEncoder().encode(wireText).length;
-      return { generator, wireLength, wireBytes };
-    })
-    .filter(({ generator, wireLength, wireBytes }) =>
-      generator && (generator.maxPromptUtf8Bytes
-        ? wireBytes > generator.maxPromptUtf8Bytes
-        : generator.maxPromptChars && wireLength > generator.maxPromptChars));
-  if (affected.length === 0) {
-    promptLimitNotice.hidden = true;
-    promptLimitNotice.textContent = "";
-    return;
+// Every composer chip with its prompt overrun (null when the model receives
+// the whole prompt). A target sending an attached image through its edit path
+// is outside a text-to-image-only limit.
+function promptLimitStates() {
+  const hasImage = hasInputImages();
+  return allGeneratorInputs().map((cb) => {
+    const generator = generators.find((g) => g.key === cb.value);
+    const overrun = MultiImagePromptLimits.evaluate(
+      generator.promptLimit,
+      promptBox.value,
+      combinedEndpointExtraText(cb.value),
+      { runsTextToImage: !hasImage || cb.dataset.imageCapable !== "true" });
+    return { cb, generator, overrun };
+  });
+}
+
+function selectedPromptLimitRejections() {
+  return promptLimitStates().filter(({ cb, overrun }) => cb.checked && overrun?.policy === "reject");
+}
+
+function describePromptOverrun(overrun) {
+  return `${overrun.measured.toLocaleString()} of ${overrun.max.toLocaleString()} `
+    + PromptLimitUnitNames[overrun.unit]
+    + (overrun.includesExtraText ? " with its extra text" : "");
+}
+
+function promptLimitRow({ generator, overrun }) {
+  const row = document.createElement("li");
+  const measured = document.createElement("b");
+  measured.className = "prompt-limit-measured";
+  measured.textContent = overrun.measured.toLocaleString();
+  const max = document.createElement("b");
+  max.className = "prompt-limit-max";
+  max.textContent = overrun.max.toLocaleString();
+  row.append(
+    `${generator.label} `,
+    measured,
+    " / ",
+    max,
+    ` ${PromptLimitUnitNames[overrun.unit]}${overrun.includesExtraText ? " with its extra text" : ""}`);
+  return row;
+}
+
+function promptLimitGroup(kind, heading, entries) {
+  const group = document.createElement("div");
+  group.className = `prompt-limit-group ${kind}`;
+  const head = document.createElement("strong");
+  head.className = "prompt-limit-head";
+  head.textContent = heading;
+  const rows = document.createElement("ul");
+  rows.className = "prompt-limit-rows";
+  rows.append(...entries.map(promptLimitRow));
+  group.append(head, rows);
+  return group;
+}
+
+function deselectPromptLimitRejections() {
+  for (const { cb } of selectedPromptLimitRejections()) {
+    cb.checked = false;
+    cb.closest(".gen-toggle").classList.toggle("checked", cb.checked);
   }
-  const parts = affected.map(({ generator, wireLength, wireBytes }) =>
-    generator.maxPromptUtf8Bytes
-      ? `${generator.label} (${wireBytes.toLocaleString()} UTF-8 bytes; max ${generator.maxPromptUtf8Bytes.toLocaleString()})`
-      : `${generator.label} (${wireLength.toLocaleString()} chars; max ${generator.maxPromptChars.toLocaleString()})`);
-  promptLimitNotice.textContent =
-    `Prompt plus endpoint extra text is over the limit for ${parts.join(", ")}. ` +
-    `You can still generate; the combined prompt will be sent truncated to ` +
-    `${affected.length === 1 ? "that target" : "those targets"} (other targets get the full text).`;
-  promptLimitNotice.hidden = false;
+  sendError.textContent = "";
+  updateGeneratorCount();
+}
+
+function updatePromptLimitNotice() {
+  const rejected = [];
+  const truncated = [];
+  for (const state of promptLimitStates()) {
+    const { cb, overrun } = state;
+    const label = cb.closest(".gen-toggle");
+    const tooLong = !cb.disabled && overrun?.policy === "reject";
+    label.classList.toggle("prompt-too-long", tooLong);
+    label.title = tooLong
+      ? `${label.dataset.compatibilityTitle}\n\nPROMPT TOO LONG: ${describePromptOverrun(overrun)}. `
+        + "Shorten the prompt to use this model."
+      : label.dataset.compatibilityTitle;
+    if (!cb.checked || !overrun) continue;
+    (overrun.policy === "reject" ? rejected : truncated).push(state);
+  }
+  promptLimitNotice.replaceChildren();
+  if (rejected.length > 0) {
+    const group = promptLimitGroup(
+      "reject",
+      rejected.length === 1
+        ? "Prompt too long for 1 selected model. Shorten the prompt or deselect it to generate."
+        : `Prompt too long for ${rejected.length} selected models. Shorten the prompt or deselect them to generate.`,
+      rejected);
+    const deselect = document.createElement("button");
+    deselect.type = "button";
+    deselect.className = "prompt-limit-deselect";
+    deselect.textContent = rejected.length === 1 ? "deselect it" : `deselect these ${rejected.length}`;
+    deselect.addEventListener("click", deselectPromptLimitRejections);
+    group.append(deselect);
+    promptLimitNotice.append(group);
+  }
+  if (truncated.length > 0) {
+    promptLimitNotice.append(promptLimitGroup(
+      "truncate",
+      `The server cuts the prompt to fit ${truncated.length === 1 ? "this model" : "these models"}. `
+        + "Other models get the full prompt.",
+      truncated));
+  }
+  promptLimitNotice.hidden = rejected.length === 0 && truncated.length === 0;
 }
 
 promptBox.addEventListener("input", updatePromptLimitNotice);
@@ -7771,6 +7850,13 @@ async function submit() {
   }
   if (gens.some(isDescribeGenKey) && !hasInputImages()) {
     sendError.textContent = "describe endpoints need an attached image";
+    return;
+  }
+  const promptTooLong = selectedPromptLimitRejections();
+  if (promptTooLong.length > 0) {
+    sendError.textContent = "Prompt too long for "
+      + promptTooLong.map(({ generator, overrun }) => `${generator.label} (${describePromptOverrun(overrun)})`).join(", ")
+      + ". Shorten the prompt or deselect these models. Nothing was sent.";
     return;
   }
   const user = currentUsername();

@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Text.RegularExpressions;
 
 namespace MultiImageClient
 {
@@ -29,14 +30,19 @@ namespace MultiImageClient
             "insufficient credit", "not enough credit", "out of credit",
             "credit balance", "billing_error", "billing error", "billing",
             "recharge", "exceeded your current quota", "usage limit",
-            "spend limit", "402",
+            "spend limit",
         };
 
         private static readonly string[] AuthMarkers =
         {
             "unauthorized", "api token", "api key", "access denied",
-            "invalid_api_key", "authentication", "401",
+            "invalid_api_key", "authentication",
         };
+
+        // A status code counts only as a whole number: "HTTP 402" and "(401)"
+        // match, but lengths and counts such as "34020" or "1,402" do not.
+        private static readonly Regex BillingStatusCode = new(@"(?<!\d[.,]?)402(?![.,]?\d)", RegexOptions.CultureInvariant);
+        private static readonly Regex AuthStatusCode = new(@"(?<!\d[.,]?)401(?![.,]?\d)", RegexOptions.CultureInvariant);
 
         public static Hint? For(string generatorKey, string errorMessage)
         {
@@ -52,8 +58,8 @@ namespace MultiImageClient
                     "grok.com rejected automated consumer-web access — use grok-api or grok-api 2.0 through the official api.x.ai image-edit endpoint, or use grok.com interactively",
                     "https://docs.x.ai/developers/model-capabilities/images/editing");
             }
-            var billing = ContainsAny(error, BillingMarkers);
-            var auth = !billing && ContainsAny(error, AuthMarkers);
+            var billing = ContainsAny(error, BillingMarkers) || BillingStatusCode.IsMatch(error);
+            var auth = !billing && (ContainsAny(error, AuthMarkers) || AuthStatusCode.IsMatch(error));
             if (!billing && !auth)
             {
                 return null;
