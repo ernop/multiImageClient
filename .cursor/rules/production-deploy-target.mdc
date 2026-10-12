@@ -32,9 +32,11 @@ alwaysApply: true
   verify local `/healthz`.
 - If the original release or its verification fails, stop. Do not update
   Vibecoders, and report the release as failed.
-- `deploy/update-vibecoders.sh` changes nothing while Vibecoders has
-  unfinished jobs or goal loops. Rerun it after they finish. Report the
-  release as incomplete until it succeeds.
+- Both release steps change nothing while an instance they restart has
+  unfinished jobs or goal loops (owner, 2026-10-12). Each then exits with
+  status 75. Rerun it after the work finishes, or pass `--wait-minutes N`
+  to wait. Never bypass the check or restart a busy instance by hand.
+  Report the release as incomplete until both steps succeed.
 - Never keep recovery copies of builds: not locally, not on either
   instance, and not on any other site (owner, 2026-10-11). The repository
   is the recovery source; rebuild and redeploy from it. Updates delete the

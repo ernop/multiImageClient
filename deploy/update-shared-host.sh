@@ -4,10 +4,12 @@ set -Eeuo pipefail
 # Redeploy a pre-built publish staging tree into /opt and restart the UI.
 # Run after: git pull && dotnet publish … -o ~/multiimageclient-publish-staging
 # Usage (as root, or via passwordless sudo after install-agent-deploy.sh):
-#   sudo /usr/local/sbin/multiimageclient-update
+#   sudo /usr/local/sbin/multiimageclient-update [--wait-minutes N]
+#   sudo /usr/local/sbin/multiimageclient-update busy-check [--wait-minutes N]
 #   sudo bash deploy/update-shared-host.sh
 #
 # Agents: publish staging first (or run deploy/agent-redeploy.sh), then this.
+# Both modes exit 75 while work is unfinished; --wait-minutes polls until idle.
 
 die() {
     printf 'ERROR: %s\n' "$*" >&2
@@ -44,6 +46,26 @@ if [[ "${1:-}" == "disk-report" ]]; then
     exit 0
 fi
 
+checker="$(dirname "${BASH_SOURCE[0]}")/check-unfinished-work.py"
+mode=install
+if [[ "${1:-}" == "busy-check" ]]; then
+    mode=busy-check
+    shift
+fi
+wait_minutes=0
+if [[ "${1:-}" == "--wait-minutes" && "${2:-}" =~ ^[0-9]+$ ]]; then
+    wait_minutes=$2
+    shift 2
+fi
+(( $# == 0 )) || die "usage: multiimageclient-update [busy-check|disk-report] [--wait-minutes N]"
+
+# Read-only release pre-check, run before publishing. Every release updates
+# both instances, so it refuses while either has unfinished work.
+if [[ $mode == busy-check ]]; then
+    exec python3 "$checker" --wait-minutes "$wait_minutes" \
+        multiimageclient-ui multiimageclient-env-vibecoders-ai-generation
+fi
+
 owner=${SUDO_USER:-tparkour}
 owner_home=$(getent passwd "$owner" | cut -d: -f6)
 [[ -n $owner_home && -d $owner_home ]] || die "cannot resolve deploying user's home"
@@ -55,6 +77,18 @@ publish_staging="$owner_home/multiimageclient-publish-staging"
     || die "staged publish is missing Ui/wwwroot"
 grep -q ram-status "$publish_staging/Ui/wwwroot/index.html" \
     || die "staged publish is missing ram-status marker — wrong build?"
+
+# A restart kills in-flight work. Check again right before /opt changes, since
+# jobs can start while the build publishes. A refused release keeps no build.
+checked=0
+python3 "$checker" --wait-minutes "$wait_minutes" multiimageclient-ui || checked=$?
+if (( checked != 0 )); then
+    rm -rf "$publish_staging"
+    if (( checked == 75 )); then
+        exit 75
+    fi
+    die "cannot confirm the original is idle; nothing changed"
+fi
 
 printf 'Installing staged publish into /opt/multiimageclient …\n'
 rsync -a --delete "$publish_staging/" /opt/multiimageclient/
