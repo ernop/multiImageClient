@@ -251,6 +251,7 @@ Use 4-space indentation and .NET naming: PascalCase for public types/methods, ca
 - Keep consumer-web session recovery separate from API credit recovery. Local generators have no API billing link.
 - Do not describe validation, moderation, transport, or provider outages as billing failures.
 - `ProviderActionHintsTests.EveryApiBackedUiTargetHasAResearchedBillingRecoveryLink` must cover the complete remote UI catalog and fail when a target lacks a mapping.
+- Match HTTP status codes in provider text only as whole numbers. A length such as `34020` must not trigger the 402 billing hint (2026-10-12).
 
 ## Visual & Typography Policy (combined-image output, labels, UI text)
 - **Shared textarea behavior (2026-09-20).** Load `Ui/wwwroot/text-entry.js` on every page with editable multiline fields. Reuse it for future prompt editors. Keep sizing and caret visibility in application code, independently of McPhee. Dispatch a bubbling `input` event after programmatic replacement in visible fields. Never scroll to the caret on passive resizes; mobile address bars resize the viewport during every scroll. Mark sticky bottom bars with `data-text-entry-inset="bottom"`. See [docs/ui-composer-layout.md](docs/ui-composer-layout.md).
