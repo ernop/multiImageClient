@@ -101,3 +101,87 @@ test('a direct download that is not an image attaches nothing', async () => {
   assert.equal(h.setImage.textContent, 'set active failed');
   assert.match(h.setImage.title, /text\/html/);
 });
+
+function fakeNode() {
+  return {
+    className: '', hidden: false, children: [],
+    set textContent(value) { this.children = [String(value)]; },
+    get textContent() {
+      return this.children.map(child => typeof child === 'string' ? child : child.textContent).join('');
+    },
+    append(...nodes) { this.children.push(...nodes); },
+    appendChild(node) { this.children.push(node); return node; },
+    replaceChildren(...nodes) { this.children = nodes; },
+  };
+}
+
+const routingCatalog = [
+  { key: 'gpt25-sunburst', label: 'GPT Image 2.5 Sunburst', inputImageLimit: 4 },
+  { key: 'grok-api-pro', label: 'grok-api 2.0', inputImageLimit: 5 },
+  { key: 'google', label: 'Nano Banana 2', inputImageLimit: 1 },
+  { key: 'gpt1', label: 'gpt-image-1', inputImageLimit: 0 },
+  { key: 'describe-claude', label: 'Claude describe', inputImageLimit: 5, kind: 'describe' },
+];
+
+function routingHarness(imageCount, checkedKeys) {
+  const hint = fakeNode();
+  hint.textContent = 'stale note';
+  const context = vm.createContext({
+    el: id => { assert.equal(id, 'multi-input-hint'); return hint; },
+    document: { createElement: () => fakeNode() },
+    inputImageItems: Array.from({ length: imageCount }, () => ({})),
+    generators: routingCatalog,
+    genLabel: key => routingCatalog.find(entry => entry.key === key).label,
+    allGeneratorInputs: () => routingCatalog.map(entry => ({
+      value: entry.key,
+      checked: checkedKeys.includes(entry.key),
+      dataset: { kind: entry.kind || 'image' },
+    })),
+  });
+  vm.runInContext(slice('function generatorInputImageLimit(key)', '// ---------- prompt length limits'), context);
+  context.renderMultiInputHint();
+  return { context, hint, lines: hint.children.map(child => typeof child === 'string' ? child : child.textContent) };
+}
+
+test('the routing note lists each selected generator under the images it receives', () => {
+  const { hint, lines } = routingHarness(5, routingCatalog.map(entry => entry.key));
+  assert.equal(hint.hidden, false);
+  assert.deepEqual(lines, [
+    'All 5 images: grok-api 2.0',
+    'Images 1–4: GPT Image 2.5 Sunburst',
+    'Image 1 only: Nano Banana 2',
+    'No image (text only): gpt-image-1',
+    'One call per image: Claude describe',
+    'Images arrive in the order shown. Say in the prompt how to use each one.',
+  ]);
+});
+
+test('a share at or above the attachment count reads as all images', () => {
+  const { lines } = routingHarness(2, ['gpt25-sunburst', 'grok-api-pro', 'google']);
+  assert.deepEqual(lines, [
+    'All 2 images: GPT Image 2.5 Sunburst, grok-api 2.0',
+    'Image 1 only: Nano Banana 2',
+    'Images arrive in the order shown. Say in the prompt how to use each one.',
+  ]);
+});
+
+test('the routing note omits ordering advice when no generator receives two images', () => {
+  const { lines } = routingHarness(3, ['google', 'gpt1']);
+  assert.deepEqual(lines, ['Image 1 only: Nano Banana 2', 'No image (text only): gpt-image-1']);
+});
+
+test('the routing note hides below two attachments and reports an empty selection', () => {
+  const single = routingHarness(1, ['google']);
+  assert.equal(single.hint.hidden, true);
+  assert.deepEqual(single.lines, []);
+  const none = routingHarness(2, []);
+  assert.equal(none.hint.hidden, false);
+  assert.deepEqual(none.lines, ['No generator selected.']);
+});
+
+test('chip tooltips state each generator share of the attachments', () => {
+  const { context } = routingHarness(1, []);
+  assert.equal(context.inputImageShareText(5, 3), 'will receive all 3 attached images, in order');
+  assert.equal(context.inputImageShareText(4, 5), 'will receive only the first 4 of 5 attached images');
+  assert.equal(context.inputImageShareText(1, 3), 'will receive only the first of 3 attached images');
+});

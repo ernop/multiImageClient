@@ -85,8 +85,8 @@ hydrateMcpheeStorageMirrors();
 
 // ---------- state ----------
 
-// Ordered composer attachments. gpt-image-2 /edits receives every entry;
-// every other generator receives only index 0. Cap comes from /api/config.
+// Ordered composer attachments. /api/config supplies the cap and, per
+// generator, inputImageLimit: how many leading entries that target receives.
 let inputImageItems = [];    // [{ file: Blob, url: objectURL }]
 let maxInputImages = 4;
 let generators = [];         // from /api/config
@@ -112,9 +112,8 @@ let generatorEndpointConfiguration = {
 let describeConfig = { defaultInstruction: "" };
 let notificationConfig = { isDeveloper: false, maxRequestChars: 4000, returnAfterHours: 6 };
 const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
-// The OpenAI gpt-image family (gpt-image-2 and 2.5): /edits accepts every attached input
-// image; every other generator receives only the first. Mirrors the server's
-// multi-input dispatch in UiJobs.cs.
+// The OpenAI gpt-image family (gpt-image-2 and 2.5) shares the default
+// anti-murk extra text, so the viewer reports when it was left blank.
 const GptImageFamilyKeys = ["gpt2", "gpt25-sunburst", "gpt25-flare"];
 // Legacy per-browser keys are migrated into the gpt-image-2 endpoint
 // configuration so an existing explicit off-switch or custom suffix survives.
@@ -544,6 +543,8 @@ async function loadConfig() {
   if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
     maxInputImages = cfg.maxInputImages;
   }
+  pasteZone.title = `Paste (Ctrl+V), drop a file, or click to browse. Up to ${maxInputImages} images. `
+    + "With two or more, the note under them lists which selected generators receive each image.";
   authInfo = cfg.auth || authInfo;
   generatorPreferences = loadGeneratorPreferences(cfg);
   migrateLegacyGpt2GuidancePreference(generatorPreferences);
@@ -660,7 +661,7 @@ function updateGeneratorCompatibility() {
   // prompt alone (user-specified behavior) — so the only hard disable left
   // is the AR-override gap on targets that actually consume the image
   // (Recraft image-to-image can't override output AR). Multi-image jobs do
-  // not lock generator chips: non-gpt2 targets simply receive image 0.
+  // not lock generator chips: each target receives its leading share.
   const hasImage = hasInputImages();
   const gainedFirstImage = hasImage && !compatibilityPreviouslyHadImage;
   compatibilityPreviouslyHadImage = hasImage;
@@ -743,11 +744,11 @@ function updateGeneratorCompatibility() {
         cb.value,
         `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`);
     }
-    else if (hasImage && inputImageItems.length > 1 && !GptImageFamilyKeys.includes(cb.value) && imageCapable && !isDescribe)
+    else if (hasImage && inputImageItems.length > 1 && imageCapable && !isDescribe)
     {
       label.title = generatorChooserTitle(
         cb.value,
-        `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (the gpt-image family receives all)`);
+        `${genLabel(cb.value)} ${inputImageShareText(generatorInputImageLimit(cb.value), inputImageItems.length)}`);
     }
     else if (hasImage && inputImageItems.length > 1 && isDescribe)
     {
@@ -785,9 +786,70 @@ function updateShapeOptionLabel() {
 
 function updateGeneratorCount() {
   // The visible "N of M enabled" counter was removed (2026-07-31), but every
-  // generator-selection change still funnels through here, so this remains
-  // the recompute point for the prompt-length notice.
+  // generator-selection and attachment change still funnels through here, so
+  // this remains the recompute point for the prompt-length notice and the
+  // multi-image routing note.
   updatePromptLimitNotice();
+  renderMultiInputHint();
+}
+
+function generatorInputImageLimit(key) {
+  return generators.find((entry) => entry.key === key).inputImageLimit;
+}
+
+function inputImageShareText(limit, count) {
+  if (limit >= count) return `will receive all ${count} attached images, in order`;
+  if (limit === 1) return `will receive only the first of ${count} attached images`;
+  return `will receive only the first ${limit} of ${count} attached images`;
+}
+
+// Lists which selected generators receive which attached images. Each share
+// is the target's inputImageLimit, the same count the server sends it.
+function renderMultiInputHint() {
+  const hint = el("multi-input-hint");
+  const count = inputImageItems.length;
+  hint.replaceChildren();
+  hint.hidden = count < 2;
+  if (hint.hidden) return;
+  const sharedNames = new Map();
+  const perImageNames = [];
+  for (const cb of allGeneratorInputs()) {
+    if (!cb.checked) continue;
+    if (cb.dataset.kind === "describe") {
+      perImageNames.push(genLabel(cb.value));
+      continue;
+    }
+    const share = Math.min(generatorInputImageLimit(cb.value), count);
+    if (!sharedNames.has(share)) sharedNames.set(share, []);
+    sharedNames.get(share).push(genLabel(cb.value));
+  }
+  const shares = [...sharedNames.keys()].sort((a, b) => b - a);
+  const lines = shares.map((share) => [
+    share === count ? `All ${count} images:`
+      : share > 1 ? `Images 1–${share}:`
+      : share === 1 ? "Image 1 only:"
+      : "No image (text only):",
+    sharedNames.get(share).join(", "),
+  ]);
+  if (perImageNames.length > 0) lines.push(["One call per image:", perImageNames.join(", ")]);
+  if (lines.length === 0) {
+    hint.textContent = "No generator selected.";
+    return;
+  }
+  for (const [heading, names] of lines) {
+    const line = document.createElement("span");
+    line.className = "multi-input-line";
+    const strong = document.createElement("strong");
+    strong.textContent = heading;
+    line.append(strong, ` ${names}`);
+    hint.appendChild(line);
+  }
+  if (shares.some((share) => share > 1)) {
+    const advice = document.createElement("span");
+    advice.className = "multi-input-line";
+    advice.textContent = "Images arrive in the order shown. Say in the prompt how to use each one.";
+    hint.appendChild(advice);
+  }
 }
 
 // ---------- prompt length limits (non-blocking) ----------
@@ -2326,7 +2388,6 @@ el("opt-shape").addEventListener("change", updateGeneratorCompatibility);
 // ---------- image attach: paste / drop / browse (up to maxInputImages) ----------
 
 const inputThumbs = el("input-thumbs");
-const multiInputHint = el("multi-input-hint");
 
 function renderInputThumbs() {
   inputThumbs.replaceChildren();
@@ -2371,7 +2432,6 @@ function renderInputThumbs() {
   inputThumbs.hidden = !hasImage;
   pasteHint.hidden = hasImage;
   clearBtn.hidden = !hasImage;
-  multiInputHint.hidden = inputImageItems.length < 2;
   pasteZone.classList.toggle("has-image", hasImage);
   updateShapeOptionLabel();
   updateGeneratorCompatibility();
@@ -10952,7 +11012,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
       const countBadge = document.createElement("span");
       countBadge.className = "job-input-count";
       countBadge.textContent = `×${resolvedInputCount}`;
-      countBadge.title = `${resolvedInputCount} input images (the gpt-image family received all; others received the first)`;
+      countBadge.title = `${resolvedInputCount} input images were attached. The thumbnail shows image 1.`;
       thumbLink.appendChild(countBadge);
     }
     head.appendChild(thumbLink);
@@ -11349,7 +11409,7 @@ function applyJobEvent(id, card, evt) {
         const countBadge = document.createElement("span");
         countBadge.className = "job-input-count";
         countBadge.textContent = `×${evt.inputCount}`;
-        countBadge.title = `${evt.inputCount} input images (the gpt-image family received all; others received the first)`;
+        countBadge.title = `${evt.inputCount} input images were attached. The thumbnail shows image 1.`;
         thumbLink.appendChild(countBadge);
       }
     }

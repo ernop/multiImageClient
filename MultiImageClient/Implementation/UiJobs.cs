@@ -34,8 +34,8 @@ namespace MultiImageClient
     ///
     /// Multiple input images (up to UiJobRunner.MaxInputImages) are ordered;
     /// index 0 is the primary used for AR matching, compare-with-input, and
-    /// the job-card thumb. gpt-image-2 /edits receives the full list; every
-    /// other generator receives only the primary.
+    /// the job-card thumb. UiJobRunner.InputImageLimit sets how many leading
+    /// inputs each generator receives.
     public class UiJob
     {
         public string Id { get; init; } = Guid.NewGuid().ToString("N")[..12];
@@ -2803,10 +2803,12 @@ namespace MultiImageClient
     {
         // Generator keys exposed to the browser. Availability is checked at
         // /api/config time and again defensively at build time.
-        // Composer + /api/jobs accept at most this many ordered input images.
-        // gpt-image-2 /edits allows up to 16; four is enough for the A+B(+…)
-        // gesture without turning the paste zone into a contact sheet.
+        // Composer + /api/jobs accept at most this many ordered input images:
+        // grok-api 2.0 takes five references, and Ideogram 4.5 takes an edit
+        // source plus four references. InputImageLimit gives each target's share.
         public const int MaxInputImages = 5;
+        // gpt-image /edits accepts up to 16 inputs; this UI sends the first four.
+        public const int GptImageEditInputLimit = 4;
         public const int SketchComposerStateVersion = 2;
         public const int SketchComposerStateVersionMin = 1;
         public const int SketchComposerMeaningCount = 8;
@@ -3474,6 +3476,34 @@ namespace MultiImageClient
                         || key.Equals(KeyGrokWebChat, StringComparison.OrdinalIgnoreCase))
                     && _grokWebStatsig.Problem == null);
 
+        // How many of a job's ordered input images a target receives, counted
+        // from the first. The multi-input routes in BuildGenerator take exactly
+        // this many, and /api/config publishes it so the composer can show it.
+        // Analysis targets read every input, one call per image.
+        public int InputImageLimit(string key)
+        {
+            if (IsAnalysisKey(key)) return MaxInputImages;
+            if (!IsImageCapableForCurrentSettings(key)) return 0;
+            return key switch
+            {
+                KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare => GptImageEditInputLimit,
+                KeyGrokApiPro or KeyIdeogramV45 => MaxInputImages,
+                _ => 1,
+            };
+        }
+
+        private string[] InputImagesFor(UiJob job, string key)
+            => job.InputImagePaths.Take(InputImageLimit(key)).ToArray();
+
+        private string DescribeInputImageRouting(string key, int inputCount)
+        {
+            if (IsAnalysisKey(key)) return $"each of {inputCount}, one call per image";
+            var limit = InputImageLimit(key);
+            if (limit == 0) return "none (text only)";
+            if (limit >= inputCount) return $"all {inputCount}";
+            return limit == 1 ? "first only" : $"first {limit}";
+        }
+
         public string? DescribeImageCapabilityProblem(string key)
             => key.Equals(KeyGrokWeb, StringComparison.OrdinalIgnoreCase)
                     || key.Equals(KeyGrokWebChat, StringComparison.OrdinalIgnoreCase)
@@ -3804,31 +3834,11 @@ namespace MultiImageClient
                 Logger.Log($"[ui #{job.Id}] START ({spec.GeneratorKeys.Count} gen(s), image={imageLabel}): {job.Prompt}");
                 if (job.InputImageCount > 1)
                 {
-                    // The gpt-image family's /edits endpoint takes every attached
-                    // input; every other generator receives only the first.
-                    var multiInputKeys = new[] { KeyGpt2, KeyGpt25Sunburst, KeyGpt25Flare };
-                    var receivers = spec.GeneratorKeys
-                        .Where(k => multiInputKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
-                        .ToList();
-                    var others = spec.GeneratorKeys
-                        .Where(k => !multiInputKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
-                        .ToList();
-                    var receiverText = receivers.Count > 0
-                        ? $"{string.Join(", ", receivers)} received all {job.InputImageCount}"
-                        : "no selected generator accepts multiple inputs";
-                    if (others.Count > 0)
-                    {
-                        Logger.Log(
-                            $"[ui #{job.Id}] {job.InputImageCount} input images attached; "
-                            + $"{receiverText}; "
-                            + $"other generators ({string.Join(", ", others)}) received only the first.");
-                    }
-                    else
-                    {
-                        Logger.Log(
-                            $"[ui #{job.Id}] {job.InputImageCount} input images attached; "
-                            + $"{receiverText}.");
-                    }
+                    var routing = spec.GeneratorKeys
+                        .Select(k => $"{k}: {DescribeInputImageRouting(k, job.InputImageCount)}");
+                    Logger.Log(
+                        $"[ui #{job.Id}] {job.InputImageCount} input images attached; "
+                        + $"images sent per generator - {string.Join("; ", routing)}.");
                 }
 
                 var pd = new PromptDetails();
@@ -5657,7 +5667,7 @@ namespace MultiImageClient
                         {
                             return new GptImage2EditGenerator(
                                 _settings.OpenAIApiKey, maxConcurrency: 2,
-                                job.InputImagePaths.Take(4).ToArray(),
+                                InputImagesFor(job, key),
                                 size, quality, _stats, "ui",
                                 imageCount: 1,
                                 modelId: modelId,
@@ -5745,7 +5755,7 @@ namespace MultiImageClient
                                 pro: pro,
                                 aspectRatio: mappedAr,
                                 quality: pro ? spec.Quality : "",
-                                inputImages: pro ? job.InputImagePaths : new[] { job.InputImagePath });
+                                inputImages: InputImagesFor(job, key));
                         }
                         return new GrokImagineGenerator(
                             _settings.XAIGrokApiKey, 1,
@@ -5864,7 +5874,7 @@ namespace MultiImageClient
                             job.HasInputImage ? "" : UiShapeMapping.IdeogramV45Size(spec.Shape),
                             IdeogramV45Generator.QualityFromOption(spec.Quality),
                             _stats, $"{key} ui",
-                            inputImagePaths: job.HasInputImage ? job.InputImagePaths : null);
+                            inputImagePaths: job.HasInputImage ? InputImagesFor(job, key) : null);
                     }
 
                 case KeyIdeogram:

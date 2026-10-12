@@ -29,7 +29,7 @@ namespace MultiImageClient
     ///
     /// API surface:
     ///   GET  /api/config                      generator availability + defaults
-    ///   POST /api/jobs                        multipart: prompt, generators, options, images? (up to 4) -> {id}
+    ///   POST /api/jobs                        multipart: prompt, generators, options, images? (up to 5) -> {id}
     ///   POST /api/video-jobs                  grok-web image result -> video job
     ///   GET  /api/events/poll?cursor=N&clientInstance=...  cursor-based poll over every job's envelope log
     ///                                          (cursor=0 replays the full history, so refresh-safe;
@@ -510,7 +510,7 @@ namespace MultiImageClient
                 // sink to the end via the stable OrderBy below.
                 var generators = new[]
                 {
-                    new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise. Accepts up to 4 ordered input images (other selected generators only receive the first). The default output AR matches the primary attached source; explicit AR choices override it." },
+                    new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise. Accepts up to 4 ordered input images. The default output AR matches the primary attached source; explicit AR choices override it." },
                     new { key = UiJobRunner.KeyGpt25Sunburst, label = "gpt-image-2.5 sunburst", detail = "OpenAI's most capable image model (released 2026-09-08): strongest editing precision, instruction following, and text rendering. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
                     new { key = UiJobRunner.KeyGpt25Flare, label = "gpt-image-2.5 flare", detail = "OpenAI's fast everyday GPT Image 2.5 tier (released 2026-09-08): quicker and cheaper than sunburst with the same API surface. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
                     new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = runner.IsImageCapableForCurrentSettings(UiJobRunner.KeyGrokWeb)
@@ -588,6 +588,7 @@ namespace MultiImageClient
                     // image-only bulk actions.
                     imageCapable = runner.IsImageCapableForCurrentSettings(g.key) || UiJobRunner.IsAnalysisKey(g.key),
                     imageCapabilityProblem = runner.DescribeImageCapabilityProblem(g.key),
+                    inputImageLimit = runner.InputImageLimit(g.key),
                     imageAspectOverride = SupportsImageAspectOverride(runner, g.key),
                     // Live-validated composition-sketch followers (see
                     // UiJobRunner.SketchCapableKeys). The composer's sketch
