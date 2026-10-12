@@ -9318,7 +9318,7 @@ async function setViewedImageActive(includePrompt) {
         cache: "force-cache",
       });
       if (!response.ok) throw new Error(`image fetch returned HTTP ${response.status}`);
-      blob = await blobResponse.blob();
+      blob = await response.blob();
       if (!blob.type.startsWith("image/")) {
         throw new Error(`image fetch returned ${blob.type || "an unknown content type"}`);
       }
