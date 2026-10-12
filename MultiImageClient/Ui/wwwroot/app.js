@@ -2509,15 +2509,38 @@ function setImagesFromBlobs(blobs, { restoredSketch = null, sketchNotice = "" } 
 // Paste works anywhere on the page: grabbing the clipboard image is the
 // core gesture, so don't make the user click the zone first. Additional
 // pastes append until the cap. While the sketch editor is open, the same
-// clipboard image goes onto that canvas instead of the composer.
+// clipboard image goes onto that canvas instead of the composer. Office
+// suites copy a picture of selected text beside the text itself, so a text
+// field receives only the text of such a copy. The viewer and the other
+// dialogs hide the composer, so a paste there attaches nothing.
+const TextPasteInputTypes = new Set(["text", "search", "url", "email", "tel", "password", "number"]);
+
+function pasteTargetTakesText(target) {
+  if (!target || target.disabled || target.readOnly) return false;
+  if (target.isContentEditable || target.tagName === "TEXTAREA") return true;
+  return target.tagName === "INPUT" && TextPasteInputTypes.has(target.type);
+}
+
+// Browser "copy image" puts at most a URL or an <img> tag beside the
+// picture. Copied document text arrives as RTF or as HTML with body text.
+function clipboardHasDocumentText(clipboardData) {
+  if (!clipboardData.getData("text/plain").trim()) return false;
+  if (Array.from(clipboardData.types || []).includes("text/rtf")) return true;
+  const html = clipboardData.getData("text/html");
+  return !!html && new DOMParser().parseFromString(html, "text/html").body.textContent.trim() !== "";
+}
+
 document.addEventListener("paste", (e) => {
   const file = clipboardImageFile(e.clipboardData);
   if (!file) return;
-  e.preventDefault();
+  if (pasteTargetTakesText(e.target) && clipboardHasDocumentText(e.clipboardData)) return;
   if (sketchDialog.open) {
+    e.preventDefault();
     importImageIntoSketch(file);
     return;
   }
+  if (!imageViewer.hidden || document.querySelector("dialog[open]")) return;
+  e.preventDefault();
   appendImage(file);
 });
 

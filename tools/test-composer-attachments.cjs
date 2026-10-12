@@ -179,6 +179,102 @@ test('the routing note hides below two attachments and reports an empty selectio
   assert.deepEqual(none.lines, ['No generator selected.']);
 });
 
+const clipImage = { type: 'image/png', name: 'clip.png' };
+
+function clipboard({ text = '', html = '', rtf = false }) {
+  const types = [];
+  if (text) types.push('text/plain');
+  if (html) types.push('text/html');
+  if (rtf) types.push('text/rtf');
+  types.push('Files');
+  const data = { 'text/plain': text, 'text/html': html, 'text/rtf': rtf ? '{\\rtf1 copied}' : '' };
+  return { types, files: [clipImage], items: [], getData: type => data[type] || '' };
+}
+
+const officeCopy = () => clipboard({
+  text: 'Quarterly totals',
+  html: '<html><body><!--StartFragment--><p>Quarterly totals</p><!--EndFragment--></body></html>',
+  rtf: true,
+});
+const textarea = { tagName: 'TEXTAREA' };
+const body = { tagName: 'BODY' };
+
+function pasteHarness({ viewerOpen = false, sketchOpen = false, openDialog = null } = {}) {
+  let listener = null;
+  const appended = [];
+  const sketched = [];
+  const context = vm.createContext({
+    document: {
+      addEventListener: (type, handler) => { assert.equal(type, 'paste'); listener = handler; },
+      querySelector: selector => { assert.equal(selector, 'dialog[open]'); return openDialog; },
+    },
+    DOMParser: class {
+      parseFromString(html) {
+        const bodyText = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(html)?.[1] ?? html)
+          .replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]*>/g, '');
+        return { body: { textContent: bodyText } };
+      }
+    },
+    imageViewer: { hidden: !viewerOpen },
+    sketchDialog: { open: sketchOpen },
+    appendImage: file => { appended.push(file); return true; },
+    importImageIntoSketch: file => { sketched.push(file); },
+  });
+  vm.runInContext(slice('function clipboardImageFile(clipboardData)', 'function cloneSketchImageData'), context);
+  vm.runInContext(slice('// Paste works anywhere on the page', 'pasteZone.addEventListener("click"'), context);
+  const paste = (target, clipboardData) => {
+    const event = { target, clipboardData, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    listener(event);
+    return event;
+  };
+  return { paste, appended, sketched };
+}
+
+test('an office copy pasted into a text field pastes only its text', () => {
+  const h = pasteHarness();
+  for (const target of [textarea, { tagName: 'INPUT', type: 'text' }, { tagName: 'DIV', isContentEditable: true }]) {
+    assert.equal(h.paste(target, officeCopy()).defaultPrevented, false);
+  }
+  const htmlOnly = clipboard({ text: 'Quarterly totals', html: '<p>Quarterly totals</p>' });
+  assert.equal(h.paste(textarea, htmlOnly).defaultPrevented, false);
+  assert.deepEqual(h.appended, []);
+});
+
+test('browser image copies pasted into the prompt still attach the image', () => {
+  const h = pasteHarness();
+  const chrome = clipboard({ html: '<meta charset="utf-8"><img src="https://example.com/a.png">' });
+  const firefox = clipboard({ text: 'https://example.com/a.png', html: '<img src="https://example.com/a.png">' });
+  const screenshot = clipboard({});
+  for (const copy of [chrome, firefox, screenshot]) {
+    assert.equal(h.paste(textarea, copy).defaultPrevented, true);
+  }
+  assert.deepEqual(h.appended, [clipImage, clipImage, clipImage]);
+});
+
+test('an office copy pasted outside a text field attaches its picture', () => {
+  const h = pasteHarness();
+  assert.equal(h.paste(body, officeCopy()).defaultPrevented, true);
+  assert.equal(h.paste({ tagName: 'TEXTAREA', readOnly: true }, officeCopy()).defaultPrevented, true);
+  assert.equal(h.paste({ tagName: 'INPUT', type: 'checkbox' }, officeCopy()).defaultPrevented, true);
+  assert.deepEqual(h.appended, [clipImage, clipImage, clipImage]);
+});
+
+test('a paste behind the viewer or another dialog attaches nothing', () => {
+  for (const state of [{ viewerOpen: true }, { openDialog: { id: 'video-dialog' } }]) {
+    const h = pasteHarness(state);
+    assert.equal(h.paste(body, clipboard({})).defaultPrevented, false);
+    assert.deepEqual(h.appended, []);
+  }
+});
+
+test('the open sketch editor takes a pasted image but leaves legend text alone', () => {
+  const h = pasteHarness({ sketchOpen: true, openDialog: { id: 'sketch-dialog' } });
+  assert.equal(h.paste(body, clipboard({})).defaultPrevented, true);
+  assert.equal(h.paste({ tagName: 'INPUT', type: 'text' }, officeCopy()).defaultPrevented, false);
+  assert.deepEqual(h.sketched, [clipImage]);
+  assert.deepEqual(h.appended, []);
+});
+
 test('chip tooltips state each generator share of the attachments', () => {
   const { context } = routingHarness(1, []);
   assert.equal(context.inputImageShareText(5, 3), 'will receive all 3 attached images, in order');
