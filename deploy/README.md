@@ -118,15 +118,14 @@ The script performs these steps and prints no private path:
 
 1. It exits without changes while Vibecoders has unfinished jobs or goal loops.
    Rerun it after they finish; the release stays incomplete until then.
-2. `create-environment.py update` refuses to run while `.previous` exists.
-   The script renames that recovery copy to `.previous-<build time>`.
-3. It runs `create-environment.py update --id vibecoders-ai-generation --publish /opt/multiimageclient`.
+2. It runs `create-environment.py update --id vibecoders-ai-generation --publish /opt/multiimageclient`.
    That command restarts only the Vibecoders service and waits for its loopback `/healthz`.
-4. It verifies that the installed tree equals `/opt/multiimageclient`.
-5. It prints the service start time. It requires loopback `/healthz` 200 and the login gate's 401 through the manifest `privatePath`.
+   It deletes the replaced build during the swap, even when the new build fails to start.
+3. It verifies that the installed tree equals `/opt/multiimageclient`.
+4. It prints the service start time. It requires loopback `/healthz` 200 and the login gate's 401 through the manifest `privatePath`.
 
-Each update keeps one recovery copy of about 190 MB under `/opt`.
-Removing old recovery copies is an owner decision.
+No site keeps a recovery copy of any build (owner decision, 2026-10-11).
+Recover from a failed release by rebuilding and redeploying from the repository.
 Any further environment updates only when explicitly selected, through the same `create-environment.py update` command.
 
 ## Passwordless redeploy helper installation

@@ -34,7 +34,7 @@ The launcher requires .NET 10, `ss`, and Python with Linux process-descriptor su
 | Probe timeout | Bound each HTTP probe to two seconds and startup polling to 60 seconds. |
 | Failed startup | Stop the new child and report failure. Do not claim success from another listener. |
 | Concurrent restarts | Lock each checkout's configured port during publishing, shutdown, and startup. |
-| Generated files | Remove failed releases and obsolete releases for that port. Keep the active published directory. |
+| Generated files | Keep only the active published directory. A startup failure after shutdown removes every release for that port. A build failure keeps the running server's release. |
 | Process record | Store the verified process identifier in `.local-ui/<port>/server.pid`. Never use a saved identifier as authority to kill. |
 | Logs | Use `/tmp/mic-ui-local.log`, or `/tmp/mic-ui-local-<port>.log` for other ports. `MIC_UI_LOCAL_LOG` overrides the path. |
 
@@ -42,6 +42,8 @@ The launcher recognizes the repository's former apphost launch and its new direc
 Both use `--ui`, optional explicit `--ui-port`, and optional `--ui-no-open`, in that order.
 Unrecognized commands require inspection instead of broad process matching.
 
+The launcher keeps no recovery copy of a release (owner decision, 2026-10-11).
+Recovery means rebuilding from the repository.
 Settings, saved images, history, and source files remain outside generated release cleanup.
 The app retains its existing settings lookup and source-tree static-file selection.
 The runtime remains framework-dependent, so workstation runtime replacement still requires a restart.
@@ -111,6 +113,6 @@ curl --fail --max-time 5 http://127.0.0.1:5960/healthz
 curl --fail --max-time 5 http://127.0.0.1:5960/api/status
 ```
 
-The restart tests cover build failure, changed port ownership, unrelated processes, and exact process termination.
+The restart tests cover build failure, startup failure after shutdown, changed port ownership, unrelated processes, and exact process termination.
 `UiProcessMemoryTests` covers process identity and missing or invalid control-group membership.
 The RAM-header tests distinguish desktop process memory from a limited service's total memory.

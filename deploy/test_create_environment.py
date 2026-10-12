@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 spec = importlib.util.spec_from_file_location("environments", Path(__file__).with_name("create-environment.py"))
 environments = importlib.util.module_from_spec(spec)
@@ -72,6 +72,31 @@ server { listen 443 ssl; server_name other.test; location / { return 404; } }
     def test_rejects_paths_as_environment_ids(self):
         for ident in ("../old", "studio/../../old", "UPPER", "a" * 25):
             with self.assertRaises(ValueError): environments.validate_id(ident)
+
+    def replace_builds(self, root, run):
+        service = "multiimageclient-env-studio"
+        for name, build in ((service, "old"), (service + ".staged", "new"), (service + ".previous", "older")):
+            (root / name).mkdir()
+            (root / name / "MultiImageClient.dll").write_text(build)
+        with patch.object(environments, "run", side_effect=run) as mock:
+            try:
+                environments.replace_install(service, root / service, root / (service + ".staged"))
+            finally:
+                self.assertEqual([path.name for path in root.iterdir()], [service])
+                self.assertEqual((root / service / "MultiImageClient.dll").read_text(), "new")
+        return mock
+
+    def test_update_keeps_no_copy_of_replaced_builds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            mock = self.replace_builds(Path(folder), lambda *args: None)
+            service = "multiimageclient-env-studio"
+            self.assertEqual(mock.call_args_list, [call("systemctl", "stop", service), call("systemctl", "start", service)])
+
+    def test_failed_start_still_keeps_no_copy_of_the_replaced_build(self):
+        def run(*args):
+            if args[1] == "start": raise ValueError("Command failed: systemctl.")
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError): self.replace_builds(Path(folder), run)
 
 
 if __name__ == "__main__": unittest.main()

@@ -74,6 +74,8 @@ class RestartTests(unittest.TestCase):
                     ui.listener_pid(5960)
 
     def test_build_failure_leaves_existing_process_running(self):
+        running = self.root / ".local-ui/5960/release-running"
+        (running / "app").mkdir(parents=True)
         with patch.object(ui, "listener_pid", return_value=123), \
              patch.object(ui.os, "pidfd_open", return_value=77), \
              patch.object(ui.os, "close"), \
@@ -85,19 +87,35 @@ class RestartTests(unittest.TestCase):
                 ui.restart(self.root, 5960, "dotnet", self.root / "server.log")
             stop.assert_not_called()
             start.assert_not_called()
+        self.assertEqual(list((self.root / ".local-ui/5960").glob("release-*")), [running])
+
+    def test_failed_start_after_stop_keeps_no_release(self):
+        (self.root / ".local-ui/5960/release-stopped/app").mkdir(parents=True)
+        with patch.object(ui, "listener_pid", side_effect=[123, 123, None]), \
+             patch.object(ui.os, "pidfd_open", return_value=77), \
+             patch.object(ui.os, "close"), \
+             patch.object(ui, "validate_process"), \
+             patch.object(ui, "stop_process") as stop, \
+             patch.object(ui.subprocess, "Popen", return_value=Mock(poll=Mock(return_value=1), returncode=1)), \
+             patch.object(ui.subprocess, "run", side_effect=self.publish):
+            with self.assertRaisesRegex(RuntimeError, "exited with code 1"):
+                ui.restart(self.root, 5960, "dotnet", self.root / "server.log")
+            stop.assert_called_once_with(77)
         self.assertEqual(list((self.root / ".local-ui/5960").glob("release-*")), [])
 
+    @staticmethod
+    def publish(args, **kwargs):
+        app = Path(args[args.index("--output") + 1])
+        app.mkdir()
+        (app / "MultiImageClient.dll").touch()
+
     def test_changed_port_owner_during_build_is_not_stopped(self):
-        def publish(args, **kwargs):
-            app = Path(args[args.index("--output") + 1])
-            app.mkdir()
-            (app / "MultiImageClient.dll").touch()
         with patch.object(ui, "listener_pid", side_effect=[123, 456]), \
              patch.object(ui.os, "pidfd_open", return_value=77), \
              patch.object(ui.os, "close"), \
              patch.object(ui, "validate_process"), \
              patch.object(ui, "stop_process") as stop, \
-             patch.object(ui.subprocess, "run", side_effect=publish):
+             patch.object(ui.subprocess, "run", side_effect=self.publish):
             with self.assertRaisesRegex(RuntimeError, "owner changed"):
                 ui.restart(self.root, 5960, "dotnet", self.root / "server.log")
             stop.assert_not_called()

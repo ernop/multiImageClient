@@ -308,16 +308,29 @@ WantedBy=multi-user.target
     print("Installed the new environment. The original service was not restarted. Managed environments use the existing global login.")
 
 
+def replace_install(service, target, staged):
+    # Recovery means rebuilding from the repository, so no copy of a replaced build may survive.
+    previous = target.with_name(target.name + ".previous")
+    if previous.exists():
+        shutil.rmtree(previous)
+    run("systemctl", "stop", service)
+    target.rename(previous)
+    try:
+        staged.rename(target)
+        run("systemctl", "start", service)
+    finally:
+        shutil.rmtree(previous)
+
+
 def update(args):
     require(sys.platform == "linux" and os.geteuid() == 0, "Updating requires Linux root.")
     ident = validate_id(args.id)
     service = "multiimageclient-env-" + ident
     target = Path("/opt") / service
-    previous = target.with_name(service + ".previous")
     staged = target.with_name(service + ".staged")
     manifest = json.loads((Path("/etc") / service / "manifest.json").read_text())
     require(manifest["id"] == ident and manifest["service"] == service, "Environment identity mismatch.")
-    require(target.is_dir() and not previous.exists() and not staged.exists(), "Resolve an existing previous/staged release before updating.")
+    require(target.is_dir() and not staged.exists(), "Resolve an existing staged release before updating.")
     publish = Path(args.publish).resolve()
     require((publish / "MultiImageClient.dll").is_file() and (publish / "Ui/wwwroot/people.html").is_file(), "Missing environment-enabled publish.")
     require(shutil.disk_usage(target).free >= 4 * 1024**3, "Updating requires at least 4 GiB free disk.")
@@ -325,10 +338,7 @@ def update(args):
     os.chmod(staged, 0o755)
     for file in staged.rglob("*"):
         os.chmod(file, 0o755 if file.is_dir() or os.access(file, os.X_OK) else 0o644)
-    run("systemctl", "stop", service)
-    target.rename(previous)
-    staged.rename(target)
-    run("systemctl", "start", service)
+    replace_install(service, target, staged)
     run("systemctl", "is-active", service)
     ready = False
     for _ in range(30):
@@ -338,8 +348,8 @@ def update(args):
         except OSError: pass
         if ready: break
         time.sleep(1)
-    require(ready, "The selected environment failed its health check. Its previous binary remains available for recovery.")
-    print("Updated only the selected environment. The previous binary remains in its .previous directory for operator recovery.")
+    require(ready, "The selected environment failed its health check. Rebuild and redeploy it from the repository.")
+    print("Updated only the selected environment. No copy of the replaced build was kept.")
 
 
 def main():

@@ -539,8 +539,9 @@ Both sites-enabled and sites-available layouts are supported because the live en
 It never restarts neighboring services or changes the original private location.
 The original application receives its code through the normal release helper.
 Additional-instance updates use `create-environment.py update --id <id> --publish <verified-publish>`.
-An update verifies the selected service and loopback health and retains the previous binary for recovery.
-Since 2026-10-11, every release updates Vibecoders this way through `deploy/update-vibecoders.sh`.
+An update verifies the selected service and loopback health.
+Since 2026-10-11, it keeps no copy of the replaced binary.
+Every release updates Vibecoders this way through `deploy/update-vibecoders.sh`.
 
 ## API and implementation map
 
@@ -696,7 +697,24 @@ Pushes that do not update `origin/master` skip both instances.
 Both instances read the shared account and environment records.
 An older version can reject fields that a newer version writes.
 
-Each update keeps the replaced build as a recovery copy of about 190 MB under `/opt`.
-Before the first two-instance release, ten copies used about 1.9 GB, with 26 GB free.
-Removing old copies remains an owner decision.
 Any further environment still updates only when explicitly selected.
+
+### Replaced builds (2026-10-11)
+
+The owner decided that no site keeps recovery copies of builds.
+The code repository is the recovery source.
+Recovery means rebuilding and redeploying from it.
+`create-environment.py update` moves the replaced build, about 190 MB of program files, aside only for the swap.
+It deletes that build when the new service start returns, even when the start fails.
+It also deletes a `.previous` folder that an older version of the tool left.
+A failed update therefore leaves no old build; release again from the repository.
+The original instance overwrites its install in place and never kept a copy.
+The local launcher also keeps no old release after a failed startup; see [local-ui-server.md](local-ui-server.md).
+Restoring an old copy on one instance alone would also break the same-build release rule.
+The policy covers program files only.
+Data, settings, and history live outside `/opt` and are not affected.
+
+Before this decision, each update renamed `.previous` to a dated copy.
+Thirteen copies (2.5 GB) accumulated; all were deleted on 2026-10-11.
+A 193 MiB copy named `.backup-before-957d5a9`, from 2026-09-18, was deleted the same day.
+The host's other backup folders hold databases and configuration for other projects; this policy does not cover them.

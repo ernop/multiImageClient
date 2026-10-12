@@ -35,6 +35,10 @@ alwaysApply: true
 - `deploy/update-vibecoders.sh` changes nothing while Vibecoders has
   unfinished jobs or goal loops. Rerun it after they finish. Report the
   release as incomplete until it succeeds.
+- Never keep recovery copies of builds: not locally, not on either
+  instance, and not on any other site (owner, 2026-10-11). The repository
+  is the recovery source; rebuild and redeploy from it. Updates delete the
+  replaced build during the swap, even when the new build fails.
 - Local restart: run `tools/restart-local-ui.sh`. Do not use
   `tools/start-ui.sh` (Surface/WSL launcher). In-flight local jobs die.
 - Skip both production instances when the push did not update

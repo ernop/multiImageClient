@@ -96,6 +96,13 @@ def healthy(port):
         return False
 
 
+def remove_releases(state, keep=None):
+    # Only generated releases for this port are disposable.
+    for release in state.glob("release-*"):
+        if release != keep and release.is_dir() and not release.is_symlink():
+            shutil.rmtree(release)
+
+
 def restart(root, port, dotnet, log):
     state = root / ".local-ui" / str(port)
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -108,6 +115,7 @@ def restart(root, port, dotnet, log):
         old_fd = os.pidfd_open(old_pid) if old_pid is not None else None
         release = None
         child = None
+        old_stopped = False
         succeeded = False
         try:
             if old_pid is not None:
@@ -129,6 +137,7 @@ def restart(root, port, dotnet, log):
                 if old_fd is not None:
                     validate_process(old_pid, root, port)
                     stop_process(old_fd)
+                old_stopped = True
                 if listener_pid(port) is not None:
                     raise RuntimeError("The local UI port is still occupied.")
                 child = subprocess.Popen([
@@ -149,11 +158,8 @@ def restart(root, port, dotnet, log):
                 time.sleep(0.25)
             if not succeeded:
                 raise RuntimeError(f"The local UI did not become healthy; see {log}.")
-            # Only generated releases for this port are disposable.
             shutil.rmtree(release / "build")
-            for previous in state.glob("release-*"):
-                if previous != release and previous.is_dir() and not previous.is_symlink():
-                    shutil.rmtree(previous)
+            remove_releases(state, keep=release)
             print(f"local UI listening on 127.0.0.1:{port} pid={child.pid}")
         finally:
             if old_fd is not None:
@@ -166,7 +172,9 @@ def restart(root, port, dotnet, log):
                     except subprocess.TimeoutExpired:
                         child.kill()
                         child.wait(timeout=5)
-                if release is not None:
+                if old_stopped:
+                    remove_releases(state)
+                elif release is not None:
                     shutil.rmtree(release)
 
 

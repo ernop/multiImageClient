@@ -50,15 +50,6 @@ if busy:
 print("pre-check: no unfinished jobs or goal loops")
 PY
 
-# create-environment.py refuses to run while .previous exists. Keep that
-# recovery copy, named by the build time of the release it holds.
-if [[ -e $install.previous ]]; then
-    kept=$install.previous-$(date -u -r "$install.previous/MultiImageClient.dll" +%Y%m%dT%H%MZ)
-    [[ ! -e $kept ]] || die "${kept##*/} already exists"
-    mv "$install.previous" "$kept"
-    printf 'kept recovery copy %s\n' "${kept##*/}"
-fi
-
 python3 "$repo/deploy/create-environment.py" update --id "$id" --publish "$publish"
 
 if ! differences=$(diff -rq --exclude=settings.json "$publish" "$install" 2>&1); then

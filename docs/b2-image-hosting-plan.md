@@ -20,7 +20,8 @@ Concurrent maintenance in the sharing release removed three obsolete NuGet packa
 
 That release checked project references, published dependency manifests, and process mappings before removal.
 The three removals account for approximately 1.43 GiB; subsequent release activity also changed available space.
-This incident record does not authorize general deletion of unpacked dependencies or rollback backups.
+This incident record does not authorize general deletion of unpacked dependencies.
+Since 2026-10-11, no site keeps recovery copies of builds; see [workspaces-prd.md](workspaces-prd.md#replaced-builds-2026-10-11).
 
 At 18:10 Pacific, both environments had 6,221 MiB available, leaving 3,149 MiB above the reserve.
 Authenticated blank-goal probes passed the disk guard on both running applications.
