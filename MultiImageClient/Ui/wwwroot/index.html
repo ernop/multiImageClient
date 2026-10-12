@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261010-idle-polling">
+<link rel="stylesheet" href="style.css?v=20261012-composer-attachments">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261006-mcphee-3-12-0">
 </head>
 <body class="composer-page">
@@ -202,17 +202,14 @@
   <section id="composer">
     <div id="compose-top">
       <div id="compose-left">
-        <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse. Up to 4 images; the gpt-image family (gpt-image-2 and 2.5) receives all, other generators only the first.">
+        <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse.">
           <div id="paste-hint">
             <span class="paste-hint-pointer"><strong>Ctrl+V</strong> to paste an image<br>
             or drop / click to browse</span>
             <span class="paste-hint-touch"><strong>tap</strong> to choose an image</span>
           </div>
           <div id="input-thumbs" hidden></div>
-          <p id="multi-input-hint" hidden>
-            The gpt-image family (2 and 2.5) gets these in order — say how to
-            use each in the prompt. Other generators only receive the first.
-          </p>
+          <p id="multi-input-hint" hidden></p>
           <button id="clear-image" type="button" hidden>&times; clear all</button>
           <input id="file-input" type="file" accept="image/*" hidden>
         </div>
@@ -238,7 +235,7 @@
 
       <div id="compose-right">
         <textarea id="prompt" rows="8" data-text-draft="composer-prompt"
-          placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (the gpt-image family sees all of them in order); without one it's plain text-to-image."></textarea>
+          placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction; without one it's plain text-to-image."></textarea>
         <div id="prompt-limit-notice" hidden></div>
         <div id="spelling-panel" hidden>
           <label id="spelling-enabled-control">
@@ -850,6 +847,6 @@
 </dialog>
 <script src="public-share-dialog.js?v=20260917-daily-threads"></script>
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
-<script src="app.js?v=20261010-idle-polling"></script>
+<script src="app.js?v=20261012-composer-attachments"></script>
 </body>
 </html>

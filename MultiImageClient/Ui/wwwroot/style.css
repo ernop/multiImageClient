@@ -716,6 +716,7 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
   color: var(--accent-dark);
 }
 #multi-input-hint[hidden] { display: none; }
+.multi-input-line { display: block; }
 #clear-image {
   position: static;
   align-self: flex-end;

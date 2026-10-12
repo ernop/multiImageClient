@@ -24,6 +24,11 @@ without scrolling past the prompt.
 - Missing prompt text hides copy and disables prompt-only activation. The
   viewer does not copy or apply an empty or guessed prompt.
 - These controls are item-specific chrome. They swap with the visible image.
+- Image activation reuses the viewer's original loader. When navigation
+  discards that entry, the action downloads the original once, directly
+  (fixed 2026-10-12). See
+  [composer-attachments-prd.md](composer-attachments-prd.md) for every
+  attachment entry point.
 
 ## Rationale
 
