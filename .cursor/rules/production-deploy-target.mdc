@@ -41,6 +41,12 @@ alwaysApply: true
   replaced build during the swap, even when the new build fails.
 - Local restart: run `tools/restart-local-ui.sh`. Do not use
   `tools/start-ui.sh` (Surface/WSL launcher). In-flight local jobs die.
+  On hostname `PC`, the systemd user unit `multi-image-client.service`
+  (from mybrowser's `infrastructure/dev-app-services/`) is the sole owner of
+  `:5960`: run `systemctl --user restart multi-image-client.service`, which
+  rebuilds with `dotnet run -c Release`. Do not run
+  `tools/restart-local-ui.sh` there; it would start a second copy beside
+  the unit (2026-10-12).
 - Skip both production instances when the push did not update
   `origin/master`. Feature-branch pushes still restart the local site.
 - On this workstation, the `tpbeta` SSH alias logs in as `subcreation`, which

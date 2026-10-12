@@ -37,7 +37,12 @@ action, is a full local+production release unless the user excludes a step.
 4. Rebuild and restart the workstation local `--ui` with
    `tools/restart-local-ui.sh`. That process listens on `127.0.0.1:5960`.
    In-flight local jobs die. Do not use `tools/start-ui.sh`; that file is
-   the Surface/WSL launcher.
+   the Surface/WSL launcher. On hostname `PC`, the systemd user unit
+   `multi-image-client.service` (from mybrowser's
+   `infrastructure/dev-app-services/`) owns `:5960`: run
+   `systemctl --user restart multi-image-client.service` instead, which
+   rebuilds with `dotnet run -c Release`. `tools/restart-local-ui.sh` would
+   start a second copy beside the unit.
 5. If the push updated `origin/master`, release both production instances:
    redeploy the original with the `tpbeta-root` command below and verify
    it, then update Vibecoders with `deploy/update-vibecoders.sh`. Never
