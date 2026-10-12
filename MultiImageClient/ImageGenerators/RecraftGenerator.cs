@@ -201,12 +201,6 @@ namespace MultiImageClient
             {
                 _stats.RecraftImageGenerationRequestCount++;
                 var usingPrompt = promptDetails.Prompt;
-                if (usingPrompt.Length > 1000)
-                {
-                    usingPrompt = usingPrompt.Substring(0, 990);
-                    Logger.Log("Truncating the prompt for Recraft.");
-                }
-
 
                 var usingSubstyle = "";
                 if (_style == RecraftStyle.digital_illustration)

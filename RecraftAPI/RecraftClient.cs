@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using MultiImageClient;
+using System.Globalization;
 using System.Text;
 
 namespace RecraftAPIClient
@@ -17,6 +18,32 @@ namespace RecraftAPIClient
             _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
         }
 
+        // Recraft API "Limits and sizes" appendix, checked 2026-10-12: V4 and
+        // newer (including Pro and Vector) accept 10,000 prompt characters;
+        // V3 and V2 accept 1,000.
+        public static int MaxPromptChars(RecraftModel model) => model switch
+        {
+            RecraftModel.recraftv2 or RecraftModel.recraftv3 => 1_000,
+            RecraftModel.recraftv4 or RecraftModel.recraftv4_pro
+                or RecraftModel.recraftv4_1 or RecraftModel.recraftv4_1_pro
+                or RecraftModel.recraftv4_1_vector or RecraftModel.recraftv4_1_utility => 10_000,
+            _ => throw new ArgumentOutOfRangeException(nameof(model), model, "Unknown Recraft model."),
+        };
+
+        private static void ValidatePrompt(string prompt, RecraftModel model)
+        {
+            var max = MaxPromptChars(model);
+            var promptChars = prompt.EnumerateRunes().Count();
+            if (promptChars > max)
+            {
+                throw new ArgumentException(
+                    string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"Recraft {model} prompts are limited to {max:N0} characters; this prompt has {promptChars:N0}."),
+                    nameof(prompt));
+            }
+        }
+
 
         /// size: "WxH" (e.g. "1024x1024") or aspect "w:h" (e.g. "16:9"); null/empty
         /// omits the field entirely and Recraft auto-selects a size from the prompt.
@@ -24,6 +51,7 @@ namespace RecraftAPIClient
         /// reject or ignore them, so callers should pass "any"/empty for those.
         public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, string size, RecraftModel model = RecraftModel.recraftv3, string styleId = null, int n = 1, int? randomSeed = null)
         {
+            ValidatePrompt(prompt, model);
             var body = new Dictionary<string, object>
             {
                 ["prompt"] = prompt,
@@ -88,6 +116,7 @@ namespace RecraftAPIClient
         /// The output size follows the input image; the endpoint takes no size.
         public async Task<GenerationResponse> ImageToImageAsync(byte[] imageData, string prompt, float strength, RecraftModel model = RecraftModel.recraftv4_1, int n = 1, int? randomSeed = null)
         {
+            ValidatePrompt(prompt, model);
             using var content = new MultipartFormDataContent();
             content.Add(new ByteArrayContent(imageData), "image", "image.png");
             content.Add(new StringContent(prompt), "prompt");

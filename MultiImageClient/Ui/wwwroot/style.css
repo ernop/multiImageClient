@@ -962,6 +962,13 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 .gen-toggle.sketch-unsupported.checked { border-color: #b26a00; background: #ffe3a8; }
 .gen-toggle.sketch-unsupported.checked:hover:not(.unavailable) { background: #fdd88a; }
 .gen-toggle.sketch-unsupported input { accent-color: #b26a00; }
+/* The prompt is over this model's published limit. Red overrides the sketch
+   amber because a selected red chip blocks Generate. */
+.gen-toggle.prompt-too-long { color: var(--err); border-color: var(--err); background: #fdecea; }
+.gen-toggle.prompt-too-long:hover:not(.unavailable) { border-color: var(--err); background: #fbdcd8; }
+.gen-toggle.prompt-too-long.checked { border-color: var(--err); background: #f8c9c4; font-weight: 600; }
+.gen-toggle.prompt-too-long.checked:hover:not(.unavailable) { background: #f5b8b1; }
+.gen-toggle.prompt-too-long input { accent-color: var(--err); }
 /* Image-capability flag: capable targets always show the tiny picture icon;
    text-only targets show the slashed one only while an image is attached
    (that's when "your attachment won't be sent here" matters). */
@@ -1222,18 +1229,46 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 #send:disabled { opacity: 0.5; cursor: default; }
 #send-error { color: var(--err); font-size: 13px; font-weight: 600; }
 
-/* Non-blocking amber notice that the prompt exceeds a selected target's
-   hard cap and will be truncated for that target. */
+/* Prompt-length notice under the prompt. Red: selected models reject a
+   prompt this long, so Generate is blocked. Amber: grok-web runs with the
+   prompt cut to fit. */
 #prompt-limit-notice {
-  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   font-size: 13px;
-  font-weight: 600;
-  line-height: 1.5;
-  color: #7a4d00;
-  background: #fff7e0;
-  border: 1px solid #d9a521;
+  line-height: 1.45;
+}
+#prompt-limit-notice[hidden] { display: none; }
+.prompt-limit-group {
+  padding: 6px 12px;
+  color: #000;
+  border: 1px solid;
   border-radius: 4px;
 }
+.prompt-limit-group.reject { border-color: var(--err); background: #fdecea; }
+.prompt-limit-group.truncate { border-color: #d9a521; background: #fff7e0; }
+.prompt-limit-head { display: block; font-weight: 700; }
+.prompt-limit-group.reject .prompt-limit-head { color: var(--err); }
+.prompt-limit-group.truncate .prompt-limit-head { color: #7a4d00; }
+.prompt-limit-rows { margin: 2px 0 0; padding: 0; list-style: none; }
+.prompt-limit-rows li { overflow-wrap: anywhere; }
+.prompt-limit-measured,
+.prompt-limit-max { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.prompt-limit-group.reject .prompt-limit-measured { color: var(--err); }
+.prompt-limit-deselect {
+  margin-top: 4px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.prompt-limit-deselect:hover { color: #fff; background: var(--accent); }
 
 /* ---------- jobs ---------- */
 
@@ -3569,7 +3604,8 @@ body.image-viewer-open { overflow: hidden; }
   header button, header a, #gen-controls button, #prompt-tools button,
   #input-library-toggle, #sketch-open, #inspiration-toggle, #describe-head button,
   .user-chip, .favorite-user-chip, .job-set-active, .job-share-link, .job-prompt-toggle,
-  .prompt-favorite, .hide-prompt, #cost-toggle, .archive-day-toggle { min-height: 36px; }
+  .prompt-favorite, .hide-prompt, #cost-toggle, .archive-day-toggle,
+  .prompt-limit-deselect { min-height: 36px; }
   /* Unlike a button, a link keeps its text at the top of a taller box. */
   header a { display: inline-flex; align-items: center; }
   .gen-toggle { min-height: 40px; }

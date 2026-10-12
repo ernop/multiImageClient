@@ -16,9 +16,20 @@ The July 30 boundary observation did not establish how Grok counts Unicode text.
 This byte budget is a local policy, not a newly verified provider limit.
 Further provider rejections remain visible errors without automatic retries.
 
+## Scope — 2026-10-12
+
+The byte budget applies only to text-to-image requests over the imagine WebSocket.
+With an attached image, grok-web edits through grok.com app-chat and sends the full prompt.
+The composer then shows no truncation notice for grok-web.
+Every other target with a published limit now refuses longer prompts instead of truncating them.
+See [prompt-length limits](prompt-length-limits.md).
+
 ## Contract and files
 
-`GET /api/config` exposes `maxPromptUtf8Bytes` alongside the existing `maxPromptChars` field.
+`GET /api/config` publishes this budget as the grok-web `promptLimit`:
+`{ "max": 8192, "unit": "utf8Bytes", "policy": "truncate", "textToImageOnly": true }`.
+That field replaced `maxPromptChars` and `maxPromptUtf8Bytes` on 2026-10-12.
+`UiPromptLimits.For` declares it from `GrokWebClient.MaxPromptUtf8Bytes`.
 `GrokWebClient.TruncateImagePrompt` applies the byte budget to WebSocket image requests.
-`Ui/wwwroot/app.js` measures UTF-8 bytes for the notice.
+`Ui/wwwroot/prompt-limits.js` measures UTF-8 bytes for the amber notice.
 `MultiImageClient.Tests/GrokWebPromptTests.cs` checks ASCII, accented text, CJK text, emoji, and prefix boundaries.
