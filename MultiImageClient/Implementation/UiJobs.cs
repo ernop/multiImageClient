@@ -1377,6 +1377,30 @@ namespace MultiImageClient
             return entries;
         }
 
+        public static string? TryReadJobPrompt(string root, string folderOrJobId)
+        {
+            if (string.IsNullOrWhiteSpace(folderOrJobId) || !Directory.Exists(root))
+            {
+                return null;
+            }
+            var metadataPath = Path.Combine(root, folderOrJobId, "job.json");
+            if (!File.Exists(metadataPath))
+            {
+                return null;
+            }
+            try
+            {
+                var metadata = JsonSerializer.Deserialize<UiPersistedJob>(
+                    File.ReadAllText(metadataPath), JsonOptions);
+                return metadata?.Prompt;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"UI history: could not read prompt from {metadataPath}: {ex.Message}");
+                return null;
+            }
+        }
+
         public static UiJob? TryLoad(string root, string folderOrJobId)
         {
             if (string.IsNullOrWhiteSpace(folderOrJobId) || !Directory.Exists(root))
@@ -1996,6 +2020,75 @@ namespace MultiImageClient
         public List<UiJob> ListChronological()
         {
             lock (_orderLock) return _ordered.ToList();
+        }
+
+        public List<UiSubjectTagMatchedPrompt> SearchPrompts(
+            IReadOnlyList<string> terms,
+            UiVisibilityStore? visibility,
+            int limit = 40)
+        {
+            var normalizedTerms = (terms ?? Array.Empty<string>())
+                .Select(t => (t ?? "").Trim())
+                .Where(t => t.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (normalizedTerms.Count == 0)
+            {
+                return new List<UiSubjectTagMatchedPrompt>();
+            }
+            limit = Math.Clamp(limit, 1, 100);
+            List<UiHistoryIndexEntry> snapshot;
+            lock (_indexLock)
+            {
+                snapshot = _index.OrderByDescending(e => e.CreatedAt).ToList();
+            }
+
+            var matches = new List<UiSubjectTagMatchedPrompt>();
+            foreach (var entry in snapshot)
+            {
+                if (matches.Count >= limit)
+                {
+                    break;
+                }
+                if (visibility != null && visibility.IsPromptHidden(entry.Id))
+                {
+                    continue;
+                }
+                string? prompt = null;
+                if (_jobs.TryGetValue(entry.Id, out var resident))
+                {
+                    prompt = resident.Prompt;
+                }
+                else
+                {
+                    prompt = UiJobStorage.TryReadJobPrompt(_historyRoot, entry.FolderName);
+                }
+                if (string.IsNullOrWhiteSpace(prompt))
+                {
+                    continue;
+                }
+                var hit = false;
+                foreach (var term in normalizedTerms)
+                {
+                    if (prompt.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (!hit)
+                {
+                    continue;
+                }
+                matches.Add(new UiSubjectTagMatchedPrompt
+                {
+                    Source = "ui-history",
+                    RecordId = entry.Id,
+                    CreatedAtUtc = UiJobStorage.EnsureUtc(entry.CreatedAt).ToString("O"),
+                    Prompt = prompt,
+                });
+            }
+            return matches;
         }
 
         /// Card metadata for the frontend, shared by the live job-known

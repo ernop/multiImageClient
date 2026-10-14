@@ -9,7 +9,7 @@ const schema = require(path.join(root, 'personal-config.js'));
 
 function context(failedAsset) {
   const values = new Map();
-  const ctx = vm.createContext({ console, localStorage: {
+  const ctx = vm.createContext({ console, Event, localStorage: {
     getItem: key => values.get(key) ?? null,
     setItem: (key, value) => values.set(key, String(value)),
   }, fetch: async url => ({
@@ -89,3 +89,62 @@ test('invalid checker settings fail without removing valid stored settings', () 
     assert.equal(JSON.stringify(value), before);
   }
 });
+
+test('McPhee coordinates dynamic subject tags, suppresses unknown/misspelled flags, renders subject marks, and expands or keeps literal words', async () => {
+  const ctx = context();
+  const checker = await create(ctx);
+  checker.setSubjects([
+    {
+      name: 'Jing',
+      kind: 'character',
+      description: 'a 28-year-old East Asian woman with shoulder-length black hair, warm brown eyes, and a navy linen jacket',
+    },
+    {
+      name: 'Grandma House',
+      kind: 'location',
+      description: 'a sunlit two-story red-brick courtyard home in Tainan with terracotta roof tiles and potted bougainvillea',
+    },
+  ]);
+
+  const sample = 'Jenny and Jing visit Grandma House in the morning.';
+  const issues = checker.analyze(sample);
+  assert.ok(!issues.some(i => i.value.toLowerCase() === 'jing'), 'Jing must not be flagged as unknown or misspelled');
+
+  const matches = checker.findSubjectMatches(sample);
+  assert.equal(matches.length, 2);
+  assert.equal(matches[0].value, 'Jing');
+  assert.equal(matches[0].subject.kind, 'character');
+  assert.equal(matches[1].value, 'Grandma House');
+  assert.equal(matches[1].subject.kind, 'location');
+
+  const html = checker.renderHtml(sample);
+  assert.match(html, /class="mcphee-mark-subject"[^>]*data-subject="jing"[^>]*>Jing<\/mark>/);
+  assert.match(html, /class="mcphee-mark-subject"[^>]*data-subject="grandma house"[^>]*>Grandma House<\/mark>/);
+
+  const fakeTextarea = {
+    value: sample,
+    dispatched: 0,
+    focus() {},
+    setRangeText(rep, start, end) {
+      this.value = this.value.slice(0, start) + rep + this.value.slice(end);
+    },
+    dispatchEvent() { this.dispatched += 1; },
+    setSelectionRange(start, end) { this.sel = [start, end]; },
+  };
+  const expandResult = checker.expandSubjectInTextarea(fakeTextarea, matches[0], true);
+  assert.equal(expandResult.applied, true);
+  assert.match(expandResult.after, /Jing \(a 28-year-old East Asian woman/);
+  assert.equal(fakeTextarea.dispatched, 1);
+
+  const afterExpandMatches = checker.findSubjectMatches(expandResult.after);
+  assert.equal(afterExpandMatches.length, 1, 'already-expanded Jing must not re-trigger subject match');
+  assert.equal(afterExpandMatches[0].subjectKey, 'grandma house');
+
+  checker.ignoreSubject('Grandma House');
+  assert.equal(checker.findSubjectMatches(expandResult.after).length, 0, 'ignored subject kept as literal word');
+  assert.ok(!checker.analyze(expandResult.after).some(i => i.value.toLowerCase() === 'jing'));
+
+  checker.unignoreSubject('Grandma House');
+  assert.equal(checker.findSubjectMatches(expandResult.after).length, 1);
+});
+

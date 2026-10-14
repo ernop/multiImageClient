@@ -239,6 +239,7 @@
       <div id="compose-right">
         <textarea id="prompt" rows="8" data-text-draft="composer-prompt"
           placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (the gpt-image family sees all of them in order); without one it's plain text-to-image."></textarea>
+        <div id="prompt-subject-matches" hidden aria-live="polite"></div>
         <div id="prompt-limit-notice" hidden></div>
         <div id="spelling-panel" hidden>
           <label id="spelling-enabled-control">
@@ -252,6 +253,11 @@
           <div id="prompt-tools">
             <button id="mcphee-panel-toggle" type="button" disabled aria-expanded="false"
               aria-controls="spelling-panel" title="Open spelling suggestions and settings">spelling</button>
+            <button id="prompt-subjects-toggle" type="button" aria-expanded="false"
+              aria-controls="prompt-subjects-panel"
+              title="Search prompt history for a person, place, or object, synthesize a visual description, and manage dynamic McPhee subject tags">subjects &amp; memory</button>
+            <button id="prompt-subject-undo" type="button" hidden
+              title="Restore the exact prompt from before a subject description was expanded">undo subject expand</button>
             <button id="prompt-advice" type="button"
               title="Give Claude your own editing instruction, with this exact prompt appended as source text">get Claude's advice</button>
             <button type="button" data-rewrite-model="claude-opus-5-5" disabled>flesh out · Opus 5.5</button>
@@ -266,6 +272,68 @@
     </div>
 
     <p id="prompt-rewrite-status" role="status" aria-live="polite"></p>
+    <section id="prompt-subjects-panel" hidden aria-label="Prompt subjects and synthesized descriptions">
+      <div class="prompt-subjects-heading">
+        <h2>Subjects &amp; memory tags</h2>
+        <button id="prompt-subjects-refresh" type="button">refresh subjects</button>
+      </div>
+      <p class="prompt-subjects-intro">Search past prompts for a person, location, or object, synthesize a reusable visual description with an LLM, or save one directly. Stored subject names highlight in the prompt through McPhee so you can expand their visual description on click or keep them as plain words.</p>
+      <div class="prompt-subjects-form">
+        <div class="prompt-subjects-row">
+          <label class="prompt-subject-field">
+            <span class="prompt-subject-label">Name / tag</span>
+            <input id="prompt-subject-name" type="text" maxlength="80" autocomplete="off" placeholder="e.g. Jing, Grandma's house">
+          </label>
+          <label class="prompt-subject-field">
+            <span class="prompt-subject-label">Kind</span>
+            <select id="prompt-subject-kind">
+              <option value="character" selected>character</option>
+              <option value="location">location</option>
+              <option value="object">object</option>
+              <option value="general">general</option>
+            </select>
+          </label>
+          <label class="prompt-subject-field prompt-subject-field-wide">
+            <span class="prompt-subject-label">Extra search terms (optional)</span>
+            <input id="prompt-subject-query" type="text" maxlength="400" autocomplete="off" placeholder="e.g. cousin Jing, Taipei apartment">
+          </label>
+          <label class="prompt-subject-field">
+            <span class="prompt-subject-label">Synthesis model</span>
+            <select id="prompt-subject-model"></select>
+          </label>
+        </div>
+        <div class="prompt-subjects-row">
+          <label class="prompt-subject-field prompt-subject-field-full">
+            <span class="prompt-subject-label">Extra guidance / notes (optional)</span>
+            <input id="prompt-subject-notes" type="text" maxlength="2000" autocomplete="off" placeholder="Optional context to include or prioritize when synthesizing or editing">
+          </label>
+        </div>
+        <div class="prompt-subjects-row">
+          <label class="prompt-subject-field prompt-subject-field-full">
+            <span class="prompt-subject-label">Visual description (synthesized from history or written directly)</span>
+            <textarea id="prompt-subject-description" rows="3" maxlength="4000" placeholder="Run 'synthesize from history' to build from past prompts, or write the visual description directly…"></textarea>
+          </label>
+        </div>
+        <div class="prompt-subjects-actions">
+          <button id="prompt-subject-search-btn" type="button">search history</button>
+          <button id="prompt-subject-synthesize-btn" type="button">synthesize from history</button>
+          <button id="prompt-subject-save-btn" type="button">save subject tag</button>
+          <button id="prompt-subject-clear-btn" type="button">clear form</button>
+          <span id="prompt-subject-status" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+      <div id="prompt-subject-search-results" hidden>
+        <div class="prompt-subjects-Subhead">
+          <strong id="prompt-subject-search-summary">0 matching prompts</strong>
+          <button id="prompt-subject-search-close" type="button">hide matches</button>
+        </div>
+        <div id="prompt-subject-search-list"></div>
+      </div>
+      <div class="prompt-subjects-saved">
+        <h3>Stored subject tags (<span id="prompt-subjects-count">0</span>)</h3>
+        <div id="prompt-subjects-list"></div>
+      </div>
+    </section>
     <section id="prompt-rewrite-history" hidden aria-label="Saved prompt versions">
       <div class="prompt-history-heading">
         <h2>Prompt versions</h2>
