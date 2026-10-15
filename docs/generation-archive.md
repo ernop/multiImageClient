@@ -32,6 +32,13 @@ Credentials, cookies, authorization headers, base64 image bodies, and binary
 payloads are not stored. Signed URL query strings are stripped. Large values
 are replaced by length/hash metadata.
 
+`create_ms` holds the generator's own measurement of its provider work. When a
+generator reports none, the pipeline records the measured duration of the
+generator call (2026-10-12). Before that date, Nano Banana, Imagen 4, Ideogram
+2/3/4.0, Recraft, BFL, and Krea2 rows store 0. Their job-card and log times
+then showed only the later file save. `download_ms` remains the save or
+download time, and `wall_clock_ms` covers the whole attempt.
+
 ## Useful queries
 
 Recent attempts:

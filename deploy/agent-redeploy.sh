@@ -29,6 +29,11 @@ cd "$repo"
 git pull --ff-only
 git log -1 --oneline
 
+# The helper is a root-owned copy, so repository changes to the update script
+# take effect only after root reinstalls it. Never release through a stale copy.
+cmp -s "$helper" "$repo/deploy/update-shared-host.sh" \
+    || die "$helper differs from deploy/update-shared-host.sh — as root run: bash $repo/deploy/install-agent-deploy.sh, then rerun this script"
+
 rm -rf "$staging"
 "$dotnet" publish "$repo/MultiImageClient/MultiImageClient.csproj" \
     -c Release -r linux-x64 --self-contained false \

@@ -32,6 +32,11 @@ alwaysApply: true
   verify local `/healthz`.
 - If the original release or its verification fails, stop. Do not update
   Vibecoders, and report the release as failed.
+- Exception (2026-10-12): `agent-redeploy.sh` stops before publishing when
+  the root-owned helper differs from `deploy/update-shared-host.sh`. Read
+  that script's diff, run `deploy/install-agent-deploy.sh` as root through
+  `tpbeta-root`, then rerun `agent-redeploy.sh`. Never make the helper run a
+  file that the deploy user can edit.
 - `deploy/update-vibecoders.sh` changes nothing while Vibecoders has
   unfinished jobs or goal loops. Rerun it after they finish. Report the
   release as incomplete until it succeeds.

@@ -69,6 +69,26 @@ server { listen 443 ssl; server_name other.test; location / { return 404; } }
         with self.assertRaises(ValueError): environments.tls_include(result, include)
         with self.assertRaises(ValueError): environments.tls_include(old + old, include)
 
+    def test_gc_heap_limit_is_the_originals_share_of_memory_high(self):
+        self.assertEqual(environments.gc_heap_limit_override(1024 * 1024**2),
+                         "[Service]\nEnvironment=DOTNET_GCHeapHardLimit=0x28000000\n")
+        # The original's runtimeconfig gives 50% of its 2560 MiB MemoryMax.
+        self.assertIn(f"={1280 * 1024**2:#x}\n", environments.gc_heap_limit_override(2048 * 1024**2))
+        for invalid in (0, 255 * 1024**2, "1073741824", None):
+            with self.assertRaises(ValueError): environments.gc_heap_limit_override(invalid)
+
+    def test_gc_heap_limit_requires_a_numeric_live_memory_high(self):
+        def show(stdout, returncode=0):
+            return patch.object(environments.subprocess, "run",
+                return_value=environments.subprocess.CompletedProcess((), returncode, stdout=stdout, stderr=""))
+        with show("1073741824\n") as run:
+            self.assertEqual(environments.live_memory_high_bytes("multiimageclient-env-studio"), 1024 * 1024**2)
+            self.assertEqual(run.call_args.args[0],
+                ("systemctl", "show", "-p", "MemoryHigh", "--value", "multiimageclient-env-studio"))
+        for stdout, returncode in (("infinity\n", 0), ("", 0), ("1073741824\n", 1)):
+            with show(stdout, returncode), self.assertRaises(ValueError):
+                environments.live_memory_high_bytes("multiimageclient-env-studio")
+
     def test_rejects_paths_as_environment_ids(self):
         for ident in ("../old", "studio/../../old", "UPPER", "a" * 25):
             with self.assertRaises(ValueError): environments.validate_id(ident)

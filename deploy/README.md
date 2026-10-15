@@ -126,8 +126,10 @@ The script performs these steps and prints no private path:
 2. It runs `create-environment.py update --id vibecoders-ai-generation --publish /opt/multiimageclient`.
    That command restarts only the Vibecoders service and waits for its loopback `/healthz`.
    It deletes the replaced build during the swap, even when the new build fails to start.
+   Before staging, it writes the `gc-heap-limit.conf` drop-in: 62.5% of the unit's live `MemoryHigh` (2026-10-12).
 3. It verifies that the installed tree equals `/opt/multiimageclient`.
-4. It prints the service start time. It requires loopback `/healthz` 200 and the login gate's 401 through the manifest `privatePath`.
+4. It prints the service start time and the running process's `gc_heap_limit`, and stops when that value is absent.
+   It requires loopback `/healthz` 200 and the login gate's 401 through the manifest `privatePath`.
 
 No site keeps a recovery copy of any build (owner decision, 2026-10-11).
 Recover from a failed release by rebuilding and redeploying from the repository.
@@ -150,9 +152,19 @@ ssh tpbeta-root \
 ```
 
 That grants `NOPASSWD` only for `/usr/local/sbin/multiimageclient-update`
-(rsync staging → `/opt`, force-restart the unit). It does not allow arbitrary
-root commands. Re-run the installer after changing `update-shared-host.sh` so
-`/usr/local/sbin` stays in sync.
+(rsync staging → `/opt`, force-restart the unit). The installer copies
+`update-shared-host.sh` there as a root-owned file. The helper must never run
+a file that the deploy user can edit; that would give the deploy user
+passwordless root. The installer checks the sudo grant without running the
+helper, so it never deploys a staged build.
+
+`agent-redeploy.sh` stops before publishing when the installed helper differs
+from the pulled `deploy/update-shared-host.sh` (2026-10-12). Rerun the
+installer as root with the command above, then rerun the release. The
+2026-10-12 log review found the installed helper unchanged since 2026-08-04.
+It lacked the socket handling and the `disk-report` mode, so
+`multiimageclient-update disk-report` would run a full deploy whenever a staged
+build exists.
 
 ## Setup steps
 

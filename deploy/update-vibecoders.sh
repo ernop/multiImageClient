@@ -60,6 +60,11 @@ printf 'checkout=%s\n' "$(sudo -u tparkour -H git -C "$repo" rev-parse --short H
 printf 'build=%s, identical in both instances\n' "$(sha256sum "$install/MultiImageClient.dll" | cut -c1-12)"
 printf 'service=%s since %s\n' "$(systemctl is-active "$unit")" \
     "$(systemctl show "$unit" -p ActiveEnterTimestamp --value)"
+pid=$(systemctl show "$unit" -p MainPID --value)
+[[ $pid =~ ^[1-9][0-9]*$ ]] || die "$unit has no running process"
+gc_limit=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^DOTNET_GCHeapHardLimit=//p')
+[[ $gc_limit =~ ^0x[0-9a-f]+$ ]] || die "the running $unit has no GC heap limit"
+printf 'gc_heap_limit=%d MiB\n' "$(( gc_limit / 1048576 ))"
 
 python3 - "$manifest" <<'PY'
 import json, sys, urllib.error, urllib.request

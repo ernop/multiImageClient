@@ -44,6 +44,30 @@ namespace MultiImageClient
 
         public ImageGeneratorApiType ApiType => _apiType;
 
+        // Recraft's API appendix (checked 2026-10-12): V4 and V4.1 models,
+        // including Pro, Utility, and Vector, accept 10,000 prompt
+        // characters; V3 and V2 accept 1,000.
+        public static int MaxPromptChars(RecraftModel model) => model switch
+        {
+            RecraftModel.recraftv2 or RecraftModel.recraftv3 => 1_000,
+            RecraftModel.recraftv4
+                or RecraftModel.recraftv4_pro
+                or RecraftModel.recraftv4_1
+                or RecraftModel.recraftv4_1_pro
+                or RecraftModel.recraftv4_1_utility
+                or RecraftModel.recraftv4_1_vector => 10_000,
+            _ => throw new ArgumentOutOfRangeException(nameof(model), model, "No Recraft prompt limit is configured."),
+        };
+
+        public static string DescribePromptLimitProblem(RecraftModel model, string prompt)
+        {
+            var max = MaxPromptChars(model);
+            var count = prompt.EnumerateRunes().Count();
+            return count > max
+                ? $"{model} accepts at most {max:N0} prompt characters. This prompt has {count:N0}. Nothing was sent."
+                : null;
+        }
+
         private static ImageGeneratorApiType ApiTypeFor(RecraftModel model) => model switch
         {
             RecraftModel.recraftv4 => ImageGeneratorApiType.RecraftV4,
@@ -199,13 +223,13 @@ namespace MultiImageClient
             await _recraftSemaphore.WaitAsync();
             try
             {
-                _stats.RecraftImageGenerationRequestCount++;
                 var usingPrompt = promptDetails.Prompt;
-                if (usingPrompt.Length > 1000)
+                var promptLimitProblem = DescribePromptLimitProblem(_model, usingPrompt);
+                if (promptLimitProblem != null)
                 {
-                    usingPrompt = usingPrompt.Substring(0, 990);
-                    Logger.Log("Truncating the prompt for Recraft.");
+                    throw new ArgumentException(promptLimitProblem);
                 }
+                _stats.RecraftImageGenerationRequestCount++;
 
 
                 var usingSubstyle = "";

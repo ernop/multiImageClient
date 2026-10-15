@@ -3489,6 +3489,31 @@ namespace MultiImageClient
                 or KeyRecraftV4
                 or KeyRecraftV4Pro;
 
+        // Published provider prompt limits, in Unicode characters of the exact
+        // wire prompt (prompt, blank line, endpoint extra text). A provider that
+        // counts UTF-16 units or bytes never accepts more characters than this.
+        // imageSent selects the route: xAI's 1.0 limit is proven only for
+        // text-to-image. grok-web truncates to GrokWebClient.MaxPromptUtf8Bytes
+        // instead (owner requirement 2026-09-09). See docs/prompt-length-limits.md.
+        public static int? MaxPromptCharsFor(string key, bool imageSent) => key switch
+        {
+            KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare or KeyGpt1 or KeyGpt1Mini
+                => GptImage2Generator.MaxPromptChars,
+            KeyIdeogramV45 => IdeogramClient.IdeogramV45MaxPromptChars,
+            KeyGrokApi when !imageSent => GrokImagineGenerator.LegacyModelMaxPromptChars,
+            _ when IsRecraftKey(key) => RecraftGenerator.MaxPromptChars(RecraftModelForKey(key)),
+            _ => null,
+        };
+
+        public static string? DescribePromptLimitProblem(string key, string wirePrompt, bool imageSent)
+        {
+            if (MaxPromptCharsFor(key, imageSent) is not int max) return null;
+            var count = wirePrompt.EnumerateRunes().Count();
+            return count > max
+                ? $"{GeneratorPresentation.UiDisplayName(key)} accepts at most {max:N0} prompt characters. Its prompt has {count:N0}. Nothing was sent."
+                : null;
+        }
+
         // States, per selected generator, exactly what function the job's
         // input image served. Rendered under the INPUT cell of the combined
         // contact sheet. Must stay truthful to BuildGenerator's routing: edit
@@ -4730,6 +4755,14 @@ namespace MultiImageClient
                     // that endpoint's configured text and record the exact wire
                     // prompt in the normal transformation/archive pipeline.
                     ApplyEndpointExtraText(copy, spec, key, job.Id);
+                    var promptLimitProblem = DescribePromptLimitProblem(
+                        key, copy.Prompt, job.HasInputImage && IsImageCapableForCurrentSettings(key));
+                    if (promptLimitProblem != null)
+                    {
+                        Logger.Log($"[ui #{job.Id}]   {key}: {promptLimitProblem}");
+                        firstError ??= promptLimitProblem;
+                        break;
+                    }
                     if (key == KeyGrokWebVideo && !string.IsNullOrWhiteSpace(job.SourceGenerator))
                     {
                         copy.RuntimeMeta["sourceJobId"] = job.SourceJobId;

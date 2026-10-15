@@ -27,8 +27,16 @@ namespace MultiImageClient
         private const string AuthorizeUrl = "https://api.backblazeb2.com/b2api/v3/b2_authorize_account";
         private static readonly TimeSpan AuthMaxAge = TimeSpan.FromHours(20); // tokens last 24h
 
-        private static readonly HttpClient _http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        private static readonly HttpClient SharedHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
 
+        // A stalled connection otherwise holds its job until HttpClient's
+        // 10-minute timeout, while a fresh attempt usually succeeds in
+        // seconds. Body reads re-arm the window, so slow uploads that keep
+        // moving still finish.
+        public static readonly TimeSpan DefaultUploadStallTimeout = TimeSpan.FromSeconds(120);
+
+        private readonly HttpClient _http;
+        private readonly TimeSpan _uploadStallTimeout;
         private readonly Settings _settings;
         private readonly SemaphoreSlim _authLock = new SemaphoreSlim(1, 1);
         private string _authToken;
@@ -36,12 +44,23 @@ namespace MultiImageClient
         private DateTime _authAcquiredUtc;
 
         public B2StorageClient(Settings settings)
+            : this(settings, SharedHttp, DefaultUploadStallTimeout)
+        {
+        }
+
+        public B2StorageClient(Settings settings, HttpClient http, TimeSpan uploadStallTimeout)
         {
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
             if (!settings.EnableB2ImageHosting)
             {
                 throw new InvalidOperationException("B2StorageClient constructed while EnableB2ImageHosting is false.");
             }
+            _http = http ?? throw new ArgumentNullException(nameof(http));
+            if (uploadStallTimeout <= TimeSpan.Zero)
+            {
+                throw new ArgumentOutOfRangeException(nameof(uploadStallTimeout));
+            }
+            _uploadStallTimeout = uploadStallTimeout;
         }
 
         /// Public capability URL for an uploaded object key.
@@ -138,7 +157,37 @@ namespace MultiImageClient
             }
 
             var sha1Hex = await ComputeSha1Async(localPath, cancellationToken);
+
+            using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            void Rearm()
+            {
+                // A cancelled send can still read the body after this call ends.
+                try { stall.CancelAfter(_uploadStallTimeout); } catch (ObjectDisposedException) { }
+            }
+            Rearm();
+            try
+            {
+                return await UploadWithinStallWindowAsync(
+                    localPath, objectKey, contentType, downloadFilename, sha1Hex, Rearm, stall.Token);
+            }
+            catch (OperationCanceledException) when (stall.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"B2 upload of '{objectKey}' made no progress for {_uploadStallTimeout.TotalSeconds:0} s.");
+            }
+        }
+
+        private async Task<string> UploadWithinStallWindowAsync(
+            string localPath,
+            string objectKey,
+            string contentType,
+            string downloadFilename,
+            string sha1Hex,
+            Action rearm,
+            CancellationToken cancellationToken)
+        {
             var (apiUrl, authToken) = await GetAuthAsync(cancellationToken);
+            rearm();
 
             // b2_get_upload_url: per-call URL + token. One concurrent upload
             // per URL is a B2 rule; a fresh URL per upload keeps concurrent
@@ -163,8 +212,11 @@ namespace MultiImageClient
                 uploadUrl = doc.RootElement.GetProperty("uploadUrl").GetString();
                 uploadToken = doc.RootElement.GetProperty("authorizationToken").GetString();
             }
+            rearm();
 
-            using (var fileStream = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true))
+            using (var uploadBody = new ProgressReadStream(
+                new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true),
+                rearm))
             using (var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl))
             {
                 request.Headers.TryAddWithoutValidation("Authorization", uploadToken);
@@ -178,7 +230,7 @@ namespace MultiImageClient
                     var disposition = $"inline; filename=\"{SanitizeDownloadFilename(downloadFilename)}\"";
                     request.Headers.TryAddWithoutValidation("X-Bz-Info-b2-content-disposition", Uri.EscapeDataString(disposition));
                 }
-                request.Content = new StreamContent(fileStream);
+                request.Content = new StreamContent(uploadBody);
                 request.Content.Headers.ContentType = MediaTypeHeaderValue.Parse(contentType);
                 request.Content.Headers.ContentLength = new FileInfo(localPath).Length;
 
@@ -427,6 +479,62 @@ namespace MultiImageClient
         {
             if (string.IsNullOrEmpty(s)) return "";
             return s.Length <= 500 ? s : s.Substring(0, 500) + "...";
+        }
+
+        // The HTTP stack reads the next body chunk only after the previous one
+        // was sent, so each read is evidence of upload progress.
+        private sealed class ProgressReadStream : Stream
+        {
+            private readonly Stream _inner;
+            private readonly Action _onRead;
+
+            public ProgressReadStream(Stream inner, Action onRead)
+            {
+                _inner = inner;
+                _onRead = onRead;
+            }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => _inner.CanSeek;
+            public override bool CanWrite => false;
+            public override long Length => _inner.Length;
+
+            public override long Position
+            {
+                get => _inner.Position;
+                set => _inner.Position = value;
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                var read = _inner.Read(buffer, offset, count);
+                _onRead();
+                return read;
+            }
+
+            public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            {
+                var read = await _inner.ReadAsync(buffer, cancellationToken);
+                _onRead();
+                return read;
+            }
+
+            public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+                => ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+            public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+            public override void Flush() { }
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    _inner.Dispose();
+                }
+                base.Dispose(disposing);
+            }
         }
     }
 }

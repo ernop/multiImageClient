@@ -83,6 +83,83 @@ Options identified, not implemented:
 - Lay long prompts out in several columns. About 80% of this panel was empty space beside short lines.
   This changes the sheet's appearance and needs an owner decision.
 
+## Vibecoders memory-guard restarts — 2026-10-12
+
+The production log review on 2026-10-12 found repeated Vibecoders restarts.
+Since September 27, the Vibecoders process ended abnormally seven times.
+Six exits were `UiLivenessGuard` terminations after two samples above `memory.high`.
+The seventh was the October 10 kill of the frozen process described above.
+Three guard terminations occurred on October 12, at 18:40, 19:32, and 19:46 UTC.
+The original service had no guard termination in the preceding 45 days.
+The host stores no core files.
+
+Each termination stops every running request in that instance.
+The October 12 restarts interrupted nine generator calls in five jobs.
+One was a GPT Image 2.5 Sunburst xhigh result that the provider had already completed.
+
+Workload before each termination:
+
+- 18:40: two GPT Image 2.5 xhigh portraits finished 23 seconds apart.
+  Each was 2144×3216, about 12 MiB as PNG.
+  A 3392×5056 Nano Banana result of 12.7 MiB preceded them.
+- 19:32: four edit jobs overlapped on 3296×1280 inputs.
+  They used GPT Image 2.5, Grok API 2.0, and Nano Banana.
+- 19:46: the process built a contact sheet for a 34,874-character prompt.
+  GPT Image 2.5 and Ideogram 4.5 correctly rejected that prompt.
+  Their limits are 32,000 and 10,000 characters.
+
+At the terminations, `memory.current` measured 1,075–1,122 MiB against 1,024 MiB.
+After the restart, the service held 245 MiB anonymous and 67 MiB file-backed memory.
+File cache stays small, so process memory itself reached the limit.
+
+Configuration findings:
+
+- .NET derives its memory limits from `memory.max`, not from `memory.high`.
+- The Vibecoders garbage-collector (GC) heap limit is 768 MiB.
+  That is 50% of its 1,536 MiB `memory.max`, and 75% of its `memory.high`.
+- The original's GC heap limit is 1,280 MiB, 62.5% of its `memory.high`.
+- The GC becomes aggressive at 90% of `memory.max` by default.
+  That is 1,382 MiB for Vibecoders and 2,304 MiB for the original.
+  Both values are above `memory.high`, where the guard terminates the process.
+- Vibecoders permits 14 concurrent provider requests, the same as the original, with half the memory.
+
+Change made on 2026-10-12, effective at the next release:
+`ImageManager` releases each base64 image string immediately after decoding it.
+The UTF-16 text is about 2.7 times the image size.
+It previously stayed reachable until the attempt finished hosting upload and thumbnails.
+For a 12 MiB PNG, that is about 32 MiB per image.
+
+Owner decision, 2026-10-12: set each environment's GC heap limit to 62.5% of its `memory.high`.
+This is the original's ratio.
+Vibecoders changes from 768 MiB to 640 MiB at the next release.
+
+- `create-environment.py` writes the systemd drop-in `gc-heap-limit.conf`.
+  It sets `DOTNET_GCHeapHardLimit` in hexadecimal bytes.
+- `install` derives the value from the new unit's `MemoryHigh`.
+  `update` derives it from the unit's live `MemoryHigh` before staging the build.
+- An absolute `DOTNET_GCHeapHardLimit` overrides the runtimeconfig's `HeapHardLimitPercent`.
+  A local test under Vibecoders' cgroup limits measured 768 MiB without it and 640 MiB with it.
+- `update-vibecoders.sh` reads the restarted process's environment.
+  It prints `gc_heap_limit=640 MiB` and stops the release when the value is absent.
+- The original keeps its runtimeconfig limit of 1,280 MiB and gets no drop-in.
+
+Scope of the limit:
+
+- It bounds the managed heap: base64 text, encoded image bytes, JSON, and HTTP buffers.
+- ImageSharp pixel buffers come from unmanaged memory, outside this limit.
+- Room below `memory.high` for unmanaged memory and the runtime grows from 256 MiB to 384 MiB.
+- Near the limit, the GC runs full blocking collections first.
+- An allocation beyond the limit throws `OutOfMemoryException` in the allocating code.
+  The per-attempt handler records it as that generator's failure.
+  The same exception on a thread without a handler still ends the process.
+
+Not chosen on 2026-10-12:
+
+- The sheet options of 2026-10-10 above.
+- Lower Vibecoders' aggregate provider concurrency below 14.
+- Raise Vibecoders' memory limits.
+  The two services' hard limits already exceed physical memory together.
+
 ## Beta standby approved and applied — 2026-09-20
 
 At 17:52 Pacific, the owner explicitly requested stopping beta without removing its files or database.

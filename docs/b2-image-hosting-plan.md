@@ -4,6 +4,33 @@ First written 2026-08-04 targeting Bunny.net; requirements re-derived with the
 owner 2026-08-05 and the provider switched to **Backblaze B2** the same day
 (owner decision). Implementation started 2026-08-05.
 
+## Upload stall window — owner decision, 2026-10-12
+
+The production log review found five original-site uploads that waited the full 600-second `HttpClient` timeout.
+One occurred on 2026-08-22, three on 2026-09-15, and one on 2026-10-12.
+On 2026-10-12, a job waited ten minutes; its retry then succeeded in 2.5 seconds.
+Vibecoders recorded none.
+
+Decision: end an upload attempt after 120 seconds without progress or a reply.
+Keep the three attempts and the visible hard failure of decision 1 below.
+
+- The window covers authorization, `b2_get_upload_url`, the upload body, and each reply.
+- Every read of the upload body re-arms the window.
+  The HTTP stack reads the next chunk only after the network accepts the previous one.
+  A slow upload that keeps moving therefore still completes.
+- A stall raises `TimeoutException` with the text "made no progress for 120 s".
+  The existing retry log line records it before the next attempt.
+- Cancellation by the caller remains a cancellation, not a stall.
+- The 10-minute `HttpClient` timeout still caps each request in total.
+- Downloads, verification, and deletion keep their previous timeouts.
+- When every attempt stalls, the wait before the visible failure falls from 30 minutes to 6 minutes.
+- Retries reuse the same object key.
+  If B2 stored an attempt whose reply then stalled, the retry adds a second version under that key.
+  Hiding deletes only the recorded version, so B2 would then serve the earlier version at the same URL.
+  On 2026-10-12, each of the five logged stalls had exactly one version, the recorded one.
+  Those attempts stalled before B2 had the complete file.
+- `B2UploadStallTests` cover a stalled upload, a slow upload that outlasts one window, and caller cancellation.
+
 ## Disk-reserve incident — 2026-09-20
 
 The owner reported 2,935 MiB available against the unchanged 3,072 MiB job reserve.
@@ -518,6 +545,9 @@ URLs were left as-is. Videos (53 on dev) stay local per v1 scope.
 5. **Per-install retention — DECIDED:** dev keeps local raws
    (`B2KeepLocalRawImages: true`), production evicts them after verified
    upload + finalization (`false`).
+6. **Upload stall window — DECIDED 2026-10-12:** each upload attempt ends
+   after 120 seconds without progress or a reply. Decision 1's three attempts
+   and visible hard failure remain. See the dated section at the top.
 
 ## Open when implementing
 

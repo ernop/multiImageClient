@@ -4,8 +4,10 @@ set -Eeuo pipefail
 # Root installer: copies the update helper to a fixed path and grants the
 # deploy user passwordless sudo for THAT PATH ONLY. After this one interactive
 # sudo, agents can finish deploys with `sudo -n /usr/local/sbin/multiimageclient-update`.
+# Rerun it whenever deploy/update-shared-host.sh changes; agent-redeploy.sh
+# refuses to release while the installed copy differs from the repository.
 #
-# From the current development workstation (once):
+# From the current development workstation:
 #   ssh tpbeta-root \
 #     'bash /home/tparkour/multiImageClient/deploy/install-agent-deploy.sh'
 
@@ -19,16 +21,11 @@ owner_home=$(getent passwd "$owner" | cut -d: -f6)
 src_update="$owner_home/multiImageClient/deploy/update-shared-host.sh"
 [[ -f $src_update ]] || die "missing $src_update — git pull the repo first"
 
-# Thin wrapper: sudoers pins this path; body always execs the repo script so
-# agent git pulls pick up deploy fixes without re-running this installer.
+# sudoers lets the deploy user run this file as root, so it must be a
+# root-owned copy. Running a file that the deploy user can edit would give
+# that user unrestricted root.
 helper=/usr/local/sbin/multiimageclient-update
-cat >"$helper" <<EOF
-#!/usr/bin/env bash
-set -Eeuo pipefail
-exec bash "$src_update" "\$@"
-EOF
-chmod 0755 "$helper"
-chown root:root "$helper"
+install -o root -g root -m 0755 "$src_update" "$helper"
 
 sudoers_file=/etc/sudoers.d/multiimageclient-agent-deploy
 cat >"$sudoers_file" <<EOF
@@ -40,17 +37,12 @@ chmod 0440 "$sudoers_file"
 visudo -cf "$sudoers_file" >/dev/null \
     || { rm -f "$sudoers_file"; die "sudoers validation failed; removed $sudoers_file"; }
 
-# Smoke as the deploy user (staging may be present — then this finishes tonight's deploy).
-if sudo -u "$owner" -H sudo -n "$helper" >/tmp/mic-agent-deploy-smoke.out 2>/tmp/mic-agent-deploy-smoke.err; then
-    printf 'Smoke deploy succeeded.\n'
-    cat /tmp/mic-agent-deploy-smoke.out
-else
-    if grep -qi 'password is required' /tmp/mic-agent-deploy-smoke.err; then
-        die "NOPASSWD did not take effect"
-    fi
-    printf 'NOPASSWD is active (update exited non-zero — often missing staging; OK for install).\n'
-    printf 'stderr: %s\n' "$(head -5 /tmp/mic-agent-deploy-smoke.err)"
-fi
+# Check the grant without running the helper, which would deploy any staged
+# build. `sudo -l <command>` also succeeds for password-only grants, so match
+# the exact NOPASSWD entry in the listing.
+sudo -u "$owner" -H sudo -n -l | sed 's/^[[:space:]]*//' \
+    | grep -xF "(root) NOPASSWD: $helper" >/dev/null \
+    || die "NOPASSWD for $helper did not take effect for $owner"
 
 printf '\nInstalled.\n'
 printf '  helper:  %s\n' "$helper"

@@ -792,9 +792,9 @@ function updateGeneratorCount() {
 
 // ---------- prompt length limits (non-blocking) ----------
 
-// Grok-web uses a finite UTF-8 byte budget. /api/config carries limits per
-// generator; an over-limit prompt still submits — the server truncates it at
-// the send-to-provider stage — this notice just says so before the fact.
+// /api/config carries each target's published prompt limit. Submission stays
+// available: the server fails an over-limit target without sending it, and
+// grok-web alone gets a truncated prompt. This notice names both before the fact.
 const promptLimitNotice = el("prompt-limit-notice");
 const globalAppendText = el("global-append-text");
 globalAppendText.value = storedPersonalField("promptTools")?.globalAppendText ?? "";
@@ -814,35 +814,46 @@ function combinedEndpointExtraText(key) {
 }
 
 function updatePromptLimitNotice() {
-  const promptLength = promptBox.value.trim().length;
-  const affected = [...gensRow.querySelectorAll("input:checked")]
-    .map((cb) => {
-      const generator = generators.find((g) => g.key === cb.value);
-      const extraLength = combinedEndpointExtraText(cb.value).length;
-      const wireLength = promptLength + (promptLength && extraLength ? 2 : 0) + extraLength;
-      const wireText = [promptBox.value.trim(), combinedEndpointExtraText(cb.value)]
-        .filter(Boolean).join("\n\n");
-      const wireBytes = new TextEncoder().encode(wireText).length;
-      return { generator, wireLength, wireBytes };
+  const imageAttached = hasInputImages();
+  const over = [...gensRow.querySelectorAll("input:checked")]
+    .map((cb) => generators.find((g) => g.key === cb.value))
+    .filter(Boolean)
+    .map((generator) => {
+      const extraText = combinedEndpointExtraText(generator.key);
+      const status = MultiImagePromptLimits.check(
+        generator, promptBox.value, extraText, imageAttached && generator.imageCapable);
+      return { generator, status, hasExtraText: extraText.length > 0 };
     })
-    .filter(({ generator, wireLength, wireBytes }) =>
-      generator && (generator.maxPromptUtf8Bytes
-        ? wireBytes > generator.maxPromptUtf8Bytes
-        : generator.maxPromptChars && wireLength > generator.maxPromptChars));
-  if (affected.length === 0) {
-    promptLimitNotice.hidden = true;
-    promptLimitNotice.textContent = "";
-    return;
+    .filter(({ status }) => status);
+  const lines = [
+    promptLimitLine(over.filter(({ status }) => status.action === "fail"), "fail"),
+    promptLimitLine(over.filter(({ status }) => status.action === "truncate"), "truncate"),
+  ].filter(Boolean);
+  promptLimitNotice.replaceChildren(...lines);
+  promptLimitNotice.hidden = lines.length === 0;
+}
+
+function promptLimitLine(affected, action) {
+  if (affected.length === 0) return null;
+  const line = document.createElement("div");
+  line.className = `prompt-limit-line ${action}`;
+  line.append("Too long for ");
+  affected.forEach(({ generator, status }, index) => {
+    const count = document.createElement("strong");
+    count.textContent = status.count.toLocaleString();
+    line.append(index > 0 ? ", " : "", `${generator.label} (`, count,
+      ` / ${status.max.toLocaleString()} ${status.unit})`);
+  });
+  const one = affected.length === 1;
+  line.append(action === "fail"
+    ? `. ${one ? "This target" : "These targets"} will fail and receive nothing. ` +
+      `Shorten the prompt or deselect ${one ? "it" : "them"}.`
+    : `. ${one ? "This target" : "These targets"} will receive a shortened prompt. ` +
+      "Other targets receive the full text.");
+  if (affected.some(({ hasExtraText }) => hasExtraText)) {
+    line.append(" Counts include endpoint extra text.");
   }
-  const parts = affected.map(({ generator, wireLength, wireBytes }) =>
-    generator.maxPromptUtf8Bytes
-      ? `${generator.label} (${wireBytes.toLocaleString()} UTF-8 bytes; max ${generator.maxPromptUtf8Bytes.toLocaleString()})`
-      : `${generator.label} (${wireLength.toLocaleString()} chars; max ${generator.maxPromptChars.toLocaleString()})`);
-  promptLimitNotice.textContent =
-    `Prompt plus endpoint extra text is over the limit for ${parts.join(", ")}. ` +
-    `You can still generate; the combined prompt will be sent truncated to ` +
-    `${affected.length === 1 ? "that target" : "those targets"} (other targets get the full text).`;
-  promptLimitNotice.hidden = false;
+  return line;
 }
 
 promptBox.addEventListener("input", updatePromptLimitNotice);
@@ -2375,6 +2386,7 @@ function renderInputThumbs() {
   pasteZone.classList.toggle("has-image", hasImage);
   updateShapeOptionLabel();
   updateGeneratorCompatibility();
+  updatePromptLimitNotice();
 }
 
 function appendImage(fileOrBlob) {

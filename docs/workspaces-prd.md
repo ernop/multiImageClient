@@ -529,6 +529,13 @@ They copy the original provider request cap, pending capacity, and provider lane
 On 2026-09-09, these are 14 aggregate requests, 64 pending jobs, and scheduler-default lane limits.
 This supersedes the initial one-request cap and 384/512 MiB memory limits.
 The original service retains its existing limits.
+Since 2026-10-12, each additional instance has a GC heap limit of 62.5% of its MemoryHigh, 640 MiB at 1024 MiB.
+This matches the original's ratio; the shared runtimeconfig alone gave 75%.
+`create-environment.py` writes it as the `gc-heap-limit.conf` drop-in on install and on every update.
+See [shared-host-memory-budget.md](shared-host-memory-budget.md#vibecoders-memory-guard-restarts--2026-10-12).
+Controller-driven installs run the controller's own copy under `/usr/local/lib/multiimageclient-control`.
+Rerun `deploy/install-environment-controller.sh` as root before the controller provisions another environment.
+On 2026-10-12, that copy predated the October 11 and 12 changes to `create-environment.py`.
 The current host permits one additional instance until its capacity budget is increased.
 The UI can record further requests, but the controller reports insufficient capacity rather than starting more processes.
 Installation requires at least 4 GiB free disk, preserving the existing application's 3 GiB reserve.
@@ -687,7 +694,7 @@ A release is complete only when both instances run the identical build and pass 
 | Step | Command | Verification |
 |---|---|---|
 | 1 | `deploy/agent-redeploy.sh` as `tparkour` | Checkout commit, fresh original start, loopback health, private route |
-| 2 | `deploy/update-vibecoders.sh` as root | Identical installed tree, fresh Vibecoders start, loopback health 200, login gate 401 |
+| 2 | `deploy/update-vibecoders.sh` as root | Identical installed tree, fresh Vibecoders start, GC heap limit in the running process, loopback health 200, login gate 401 |
 
 Step 2 copies `/opt/multiimageclient`, the original's verified install, through `create-environment.py update`.
 If step 1 fails, step 2 does not run, and the release is reported as failed.

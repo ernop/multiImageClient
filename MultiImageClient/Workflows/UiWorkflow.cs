@@ -606,10 +606,13 @@ namespace MultiImageClient
                     // path in this UI.
                     requiresImage = UiJobRunner.IsAnalysisKey(g.key)
                         || g.key == UiJobRunner.KeyGrokWebChat,
-                    // Known hard prompt-length caps, surfaced so the composer can
-                    // warn before submit; the server truncates over-limit prompts
-                    // at the provider send stage (grok-web: GrokWebClient).
-                    maxPromptChars = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptChars : null,
+                    // Published prompt limits, so the composer can warn before
+                    // submit. The server fails an over-limit target without
+                    // sending it; maxImagePromptChars applies when the target
+                    // receives the attached image. grok-web alone truncates, to
+                    // maxPromptUtf8Bytes.
+                    maxPromptChars = UiJobRunner.MaxPromptCharsFor(g.key, imageSent: false),
+                    maxImagePromptChars = UiJobRunner.MaxPromptCharsFor(g.key, imageSent: true),
                     maxPromptUtf8Bytes = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptUtf8Bytes : null,
                     // The anti-murk daylight suffix applies to the whole OpenAI
                     // gpt-image family: 2.5 shares gpt-image-2's drift toward

@@ -110,7 +110,7 @@ namespace MultiImageClient
                 promptDetails,
                 async () =>
                 {
-                    var result = await generator.ProcessPromptAsync(generator, promptDetails);
+                    var result = await InvokeTimedAsync(generator, promptDetails);
                     await imageManager.ProcessAndSaveAsync(
                         result,
                         generator,
@@ -128,8 +128,24 @@ namespace MultiImageClient
             return await ExecuteCoreAsync(
                 generator,
                 promptDetails,
-                () => generator.ProcessPromptAsync(generator, promptDetails),
+                () => InvokeTimedAsync(generator, promptDetails),
                 context);
+        }
+
+        // Several generators (Nano Banana, Ideogram, Recraft, BFL, ...) never
+        // time their provider call. Without this, cards, logs, and the archive
+        // report only the later save time as the whole generation time.
+        private static async Task<TaskProcessResult> InvokeTimedAsync(
+            IImageGenerator generator,
+            PromptDetails promptDetails)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var result = await generator.ProcessPromptAsync(generator, promptDetails);
+            if (result.CreateTotalMs <= 0)
+            {
+                result.CreateTotalMs = stopwatch.ElapsedMilliseconds;
+            }
+            return result;
         }
 
         public static void RecordSyntheticResult(

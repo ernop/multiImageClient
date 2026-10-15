@@ -182,6 +182,30 @@ def create_configuration_directory(path, group):
     os.chmod(path, 0o750)
 
 
+def gc_heap_limit_override(memory_high_bytes):
+    # The liveness guard ends the process at MemoryHigh. The runtimeconfig's
+    # HeapHardLimitPercent=50 applies to MemoryMax, which gives environments
+    # 75% of MemoryHigh; the original runs at 62.5%. An absolute environment
+    # value overrides that percentage.
+    require(isinstance(memory_high_bytes, int) and memory_high_bytes >= 256 * 1024**2, "Invalid MemoryHigh.")
+    return f"[Service]\nEnvironment=DOTNET_GCHeapHardLimit={memory_high_bytes * 5 // 8:#x}\n"
+
+
+def write_gc_heap_limit(service, memory_high_bytes):
+    dropin = Path("/etc/systemd/system") / (service + ".service.d")
+    dropin.mkdir(exist_ok=True)
+    config = dropin / "gc-heap-limit.conf"
+    config.write_text(gc_heap_limit_override(memory_high_bytes))
+    os.chmod(config, 0o644)
+
+
+def live_memory_high_bytes(service):
+    result = subprocess.run(("systemctl", "show", "-p", "MemoryHigh", "--value", service), capture_output=True, text=True)
+    value = result.stdout.strip()
+    require(result.returncode == 0 and value.isdigit(), "The service has no numeric MemoryHigh to derive its GC heap limit from.")
+    return int(value)
+
+
 def install(args):
     require(sys.platform == "linux" and os.geteuid() == 0, "Installation requires Linux root.")
     import pwd
@@ -279,6 +303,7 @@ ReadWritePaths={data}
 WantedBy=multi-user.target
 """)
     os.chmod(unit, 0o644)
+    write_gc_heap_limit(service, high * 1024**2)
     run("systemctl", "daemon-reload")
     run("systemctl", "start", service)
     ready = False
@@ -334,6 +359,8 @@ def update(args):
     publish = Path(args.publish).resolve()
     require((publish / "MultiImageClient.dll").is_file() and (publish / "Ui/wwwroot/people.html").is_file(), "Missing environment-enabled publish.")
     require(shutil.disk_usage(target).free >= 4 * 1024**3, "Updating requires at least 4 GiB free disk.")
+    write_gc_heap_limit(service, live_memory_high_bytes(service))
+    run("systemctl", "daemon-reload")
     shutil.copytree(publish, staged, ignore=shutil.ignore_patterns("settings.json"))
     os.chmod(staged, 0o755)
     for file in staged.rglob("*"):

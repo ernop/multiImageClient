@@ -138,6 +138,10 @@ namespace MultiImageClient
                     foreach (var qq in result.Base64ImageDatas)
                     {
                         imageBytes = Convert.FromBase64String(qq.bytesBase64);
+                        // The UTF-16 base64 text is about 2.7x the image bytes
+                        // and nothing reads it after decoding. Otherwise it
+                        // stays reachable through hosting upload and thumbnails.
+                        qq.bytesBase64 = null;
                         result.SetImageBytes(ii, imageBytes);
                         var pd = result.PromptDetails.Copy();
                         

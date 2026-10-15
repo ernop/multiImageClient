@@ -16,7 +16,7 @@ An empty field adds nothing.
 | Persistence | Save each edit automatically in browser personal configuration, under `promptTools.globalAppendText`. Include configuration export/import. |
 | Limits | Limit the global field to 16,000 characters. Limit each combined suffix to 16,000 characters. |
 | Aggregate limit | Reject selected suffixes exceeding 64,000 characters in total. Count global text once per selected endpoint. |
-| Prompt limits | Include both additions in character and UTF-8 byte notices. Preserve existing provider truncation rules. |
+| Prompt limits | Count both additions in every prompt-limit check and notice. Only grok-web truncates; see [prompt-length-limits.md](prompt-length-limits.md). |
 | History | Snapshot the combined suffix in each selected `generatorExtraTexts` entry. Preserve the base composer prompt. |
 | Clearing | Clear the global field to disable general directives. Preserve endpoint settings. |
 

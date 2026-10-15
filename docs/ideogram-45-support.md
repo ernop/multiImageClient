@@ -112,7 +112,8 @@ Generate with attached images produced the same quotes as Precise Edit.
     The job records that text as an `IdeogramRewrite` step.
 11. **Prompt limit.** A prompt over 10,000 characters fails at this target with a clear error.
     The application does not truncate it.
-    The composer's prompt-limit notice promises truncation, so `/api/config` does not publish this limit there.
+    Since 2026-10-12, `/api/config` publishes the limit, and the composer lists this target as failing.
+    The server rejects the target before the request; see [prompt-length-limits.md](prompt-length-limits.md).
 12. **Labels.** The composer and job cards show **Ideogram 4.5**.
     Contact sheets show, for example, `Ideogram 4.5 — Ideogram · generate · quality high`.
     The label adds `auto size` only when Ideogram chose the size.

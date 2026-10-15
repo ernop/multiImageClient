@@ -22,6 +22,11 @@ namespace MultiImageClient
     /// retiring `grok-imagine-image-pro` alias.
     public class GrokImagineGenerator : IImageGenerator
     {
+        // xAI rejects longer grok-imagine-image (1.0) generation prompts with
+        // "maximum allowed length of 16000" (production replies, 2026-09-19
+        // and 2026-09-25). xAI publishes no limit for 1.0 edits or for 2.0.
+        public const int LegacyModelMaxPromptChars = 16_000;
+
         private readonly SemaphoreSlim _semaphore;
         private readonly XAIGrokClient _client;
         private readonly HttpClient _httpClient;

@@ -1222,17 +1222,36 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 #send:disabled { opacity: 0.5; cursor: default; }
 #send-error { color: var(--err); font-size: 13px; font-weight: 600; }
 
-/* Non-blocking amber notice that the prompt exceeds a selected target's
-   hard cap and will be truncated for that target. */
+/* Non-blocking prompt-length notice: red lines name targets that will fail
+   and receive nothing; amber lines name targets that get a shortened prompt. */
 #prompt-limit-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#prompt-limit-notice[hidden] { display: none; }
+.prompt-limit-line {
   padding: 6px 12px;
   font-size: 13px;
   font-weight: 600;
   line-height: 1.5;
+  border: 1px solid;
+  border-radius: 4px;
+}
+.prompt-limit-line strong {
+  font-size: 14px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.prompt-limit-line.fail {
+  color: #8a1c1c;
+  background: #fdecea;
+  border-color: var(--err);
+}
+.prompt-limit-line.truncate {
   color: #7a4d00;
   background: #fff7e0;
-  border: 1px solid #d9a521;
-  border-radius: 4px;
+  border-color: #d9a521;
 }
 
 /* ---------- jobs ---------- */

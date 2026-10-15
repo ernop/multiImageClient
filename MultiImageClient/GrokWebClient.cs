@@ -75,12 +75,11 @@ namespace MultiImageClient
         public const string BrowserUserAgent =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
-        /// Hard prompt-length cap of the consumer imagine WebSocket, verified
-        /// empirically 2026-07-30: an 8192-char prompt generated normally while
-        /// 8193 chars was rejected instantly (pre-generation, free) with
-        /// "Prompt is too long (invalid_parameter)". Note this differs from the
-        /// official api.x.ai limit of 4096 — that does not apply here.
-        public const int MaxPromptChars = 8192;
+        /// Prompt budget of the consumer imagine WebSocket. On 2026-07-30 an
+        /// 8192-char prompt generated normally while 8193 chars was rejected
+        /// instantly with "Prompt is too long (invalid_parameter)". That test
+        /// did not show how Grok counts non-ASCII text, so the owner-required
+        /// truncation uses this many UTF-8 bytes.
         public const int MaxPromptUtf8Bytes = 8192;
 
         public static string TruncateImagePrompt(string prompt)

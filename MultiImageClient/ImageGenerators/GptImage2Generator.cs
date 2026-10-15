@@ -44,6 +44,9 @@ namespace MultiImageClient
         public const string DefaultModelId = "gpt-image-2";
         public const string SunburstModelId = "gpt-image-2.5-sunburst";
         public const string FlareModelId = "gpt-image-2.5-flare";
+        // OpenAI's image API reference: 32,000 characters for every GPT image
+        // model, on generations and edits (checked 2026-10-12).
+        public const int MaxPromptChars = 32_000;
         private const string GenerationsUrl = "https://api.openai.com/v1/images/generations";
 
         private readonly string _modelId;
