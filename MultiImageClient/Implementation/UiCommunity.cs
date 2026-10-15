@@ -114,6 +114,33 @@ namespace MultiImageClient
         public string Error { get; init; } = "";
     }
 
+    public sealed class UiSubjectTagMatchedPrompt
+    {
+        public string Source { get; init; } = "";
+        public string RecordId { get; init; } = "";
+        public string CreatedAtUtc { get; init; } = "";
+        public string Prompt { get; init; } = "";
+    }
+
+    public sealed class UiSubjectTagRecord
+    {
+        public string Id { get; init; } = "";
+        public string IdentityKey { get; init; } = "";
+        public string ActorDisplay { get; init; } = "";
+        public string Name { get; init; } = "";
+        public string NormalizedName { get; init; } = "";
+        public string Kind { get; init; } = "character";
+        public string SearchQuery { get; init; } = "";
+        public string Model { get; init; } = "";
+        public string Description { get; init; } = "";
+        public string SourceSummary { get; init; } = "";
+        public int MatchedPromptsCount { get; init; }
+        public List<UiSubjectTagMatchedPrompt> MatchedPrompts { get; init; } = new();
+        public string RawResponse { get; init; } = "";
+        public long CreatedAtUnixMs { get; init; }
+        public long UpdatedAtUnixMs { get; init; }
+    }
+
     /// SQLite source of truth for low-volume shared-site social activity and
     /// user requests. Reads hydrate only bounded result pages; no activity or
     /// request history is retained in process memory.
@@ -242,6 +269,27 @@ namespace MultiImageClient
                         id TEXT PRIMARY KEY,
                         applied_at_unix_ms INTEGER NOT NULL
                     );
+
+                    CREATE TABLE IF NOT EXISTS ui_subject_tags (
+                        id TEXT PRIMARY KEY,
+                        identity_key TEXT NOT NULL,
+                        actor_display TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        normalized_name TEXT NOT NULL,
+                        subject_kind TEXT NOT NULL,
+                        search_query TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        source_summary TEXT NOT NULL,
+                        matched_prompts_count INTEGER NOT NULL,
+                        matched_prompts_json TEXT NOT NULL,
+                        raw_response TEXT NOT NULL,
+                        created_at_unix_ms INTEGER NOT NULL,
+                        updated_at_unix_ms INTEGER NOT NULL,
+                        UNIQUE(identity_key, normalized_name)
+                    );
+                    CREATE INDEX IF NOT EXISTS ix_ui_subject_tags_identity_updated
+                        ON ui_subject_tags(identity_key, updated_at_unix_ms DESC);
                     """;
                 command.ExecuteNonQuery();
                 EnsureColumn(connection, "ui_generator_preferences", "default_view", "TEXT NOT NULL DEFAULT 'all'");
@@ -605,6 +653,420 @@ namespace MultiImageClient
             }
         }
 
+        public const int MaxSubjectTagNameChars = 80;
+        public const int MaxSubjectTagDescriptionChars = 8000;
+        public const int MaxSubjectTagQueryChars = 400;
+        public const int MaxSubjectTagSummaryChars = 4000;
+
+        public static readonly string[] ValidSubjectKinds =
+        {
+            "character",
+            "location",
+            "object",
+            "general",
+        };
+
+        public static (string Display, string Normalized) NormalizeSubjectTagName(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new InvalidDataException("Subject tag name is required.");
+            }
+            foreach (var ch in name)
+            {
+                if (ch == '\r' || ch == '\n' || (char.IsControl(ch) && ch != ' ' && ch != '\t'))
+                {
+                    throw new InvalidDataException("Subject tag name cannot contain control characters or line breaks.");
+                }
+            }
+            var collapsed = System.Text.RegularExpressions.Regex.Replace(
+                name.Trim(),
+                @"\s+",
+                " ");
+            if (collapsed.Length == 0 || collapsed.Length > MaxSubjectTagNameChars)
+            {
+                throw new InvalidDataException(
+                    $"Subject tag name must be 1 to {MaxSubjectTagNameChars} characters.");
+            }
+            return (collapsed, collapsed.ToUpperInvariant());
+        }
+
+        public static string NormalizeSubjectKind(string? kind)
+        {
+            var normalized = (kind ?? "character").Trim().ToLowerInvariant();
+            if (normalized.Length == 0)
+            {
+                return "character";
+            }
+            if (!ValidSubjectKinds.Contains(normalized, StringComparer.Ordinal))
+            {
+                throw new InvalidDataException(
+                    $"Subject kind '{kind}' is invalid. Valid kinds: {string.Join(", ", ValidSubjectKinds)}.");
+            }
+            return normalized;
+        }
+
+        public UiSubjectTagRecord UpsertSubjectTag(
+            string identityKey,
+            string actorDisplay,
+            string name,
+            string kind,
+            string searchQuery,
+            string model,
+            string description,
+            string sourceSummary,
+            IReadOnlyList<UiSubjectTagMatchedPrompt>? matchedPrompts,
+            string rawResponse,
+            long nowUnixMs)
+        {
+            identityKey = (identityKey ?? "").Trim();
+            if (identityKey.Length == 0)
+            {
+                throw new InvalidDataException("Subject tags require an exact user identity.");
+            }
+            actorDisplay = (actorDisplay ?? "").Trim();
+            var (displayName, normalizedName) = NormalizeSubjectTagName(name);
+            var normalizedKind = NormalizeSubjectKind(kind);
+            searchQuery = (searchQuery ?? "").Trim();
+            if (searchQuery.Length > MaxSubjectTagQueryChars)
+            {
+                throw new InvalidDataException(
+                    $"Subject search query exceeds the {MaxSubjectTagQueryChars}-character limit.");
+            }
+            model = (model ?? "").Trim();
+            if (model.Length == 0)
+            {
+                model = "manual";
+            }
+            description = (description ?? "").Trim();
+            if (description.Length == 0)
+            {
+                throw new InvalidDataException("Subject description is required.");
+            }
+            if (description.Length > MaxSubjectTagDescriptionChars)
+            {
+                throw new InvalidDataException(
+                    $"Subject description exceeds the {MaxSubjectTagDescriptionChars}-character limit.");
+            }
+            sourceSummary = (sourceSummary ?? "").Trim();
+            if (sourceSummary.Length > MaxSubjectTagSummaryChars)
+            {
+                sourceSummary = sourceSummary.Substring(0, MaxSubjectTagSummaryChars);
+            }
+            var promptList = (matchedPrompts ?? Array.Empty<UiSubjectTagMatchedPrompt>())
+                .Take(50)
+                .ToList();
+            var matchedPromptsJson = JsonSerializer.Serialize(promptList);
+            rawResponse ??= "";
+
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var transaction = connection.BeginTransaction();
+
+                string existingId = "";
+                long createdAtUnixMs = nowUnixMs;
+                using (var find = connection.CreateCommand())
+                {
+                    find.Transaction = transaction;
+                    find.CommandText =
+                        """
+                        SELECT id, created_at_unix_ms
+                        FROM ui_subject_tags
+                        WHERE identity_key = $identity AND normalized_name = $normalized
+                        LIMIT 1;
+                        """;
+                    find.Parameters.AddWithValue("$identity", identityKey);
+                    find.Parameters.AddWithValue("$normalized", normalizedName);
+                    using var reader = find.ExecuteReader();
+                    if (reader.Read())
+                    {
+                        existingId = reader.GetString(0);
+                        createdAtUnixMs = reader.GetInt64(1);
+                    }
+                }
+
+                var id = existingId.Length > 0 ? existingId : Guid.NewGuid().ToString("N");
+                using (var upsert = connection.CreateCommand())
+                {
+                    upsert.Transaction = transaction;
+                    upsert.CommandText =
+                        """
+                        INSERT INTO ui_subject_tags(
+                            id, identity_key, actor_display, name, normalized_name,
+                            subject_kind, search_query, model, description,
+                            source_summary, matched_prompts_count, matched_prompts_json,
+                            raw_response, created_at_unix_ms, updated_at_unix_ms)
+                        VALUES(
+                            $id, $identity, $display, $name, $normalized,
+                            $kind, $query, $model, $description,
+                            $summary, $matchedCount, $matchedJson,
+                            $raw, $created, $updated)
+                        ON CONFLICT(identity_key, normalized_name) DO UPDATE SET
+                            actor_display = excluded.actor_display,
+                            name = excluded.name,
+                            subject_kind = excluded.subject_kind,
+                            search_query = excluded.search_query,
+                            model = excluded.model,
+                            description = excluded.description,
+                            source_summary = excluded.source_summary,
+                            matched_prompts_count = excluded.matched_prompts_count,
+                            matched_prompts_json = excluded.matched_prompts_json,
+                            raw_response = excluded.raw_response,
+                            updated_at_unix_ms = excluded.updated_at_unix_ms;
+                        """;
+                    upsert.Parameters.AddWithValue("$id", id);
+                    upsert.Parameters.AddWithValue("$identity", identityKey);
+                    upsert.Parameters.AddWithValue("$display", actorDisplay);
+                    upsert.Parameters.AddWithValue("$name", displayName);
+                    upsert.Parameters.AddWithValue("$normalized", normalizedName);
+                    upsert.Parameters.AddWithValue("$kind", normalizedKind);
+                    upsert.Parameters.AddWithValue("$query", searchQuery);
+                    upsert.Parameters.AddWithValue("$model", model);
+                    upsert.Parameters.AddWithValue("$description", description);
+                    upsert.Parameters.AddWithValue("$summary", sourceSummary);
+                    upsert.Parameters.AddWithValue("$matchedCount", promptList.Count);
+                    upsert.Parameters.AddWithValue("$matchedJson", matchedPromptsJson);
+                    upsert.Parameters.AddWithValue("$raw", rawResponse);
+                    upsert.Parameters.AddWithValue("$created", createdAtUnixMs);
+                    upsert.Parameters.AddWithValue("$updated", nowUnixMs);
+                    upsert.ExecuteNonQuery();
+                }
+
+                transaction.Commit();
+
+                return new UiSubjectTagRecord
+                {
+                    Id = id,
+                    IdentityKey = identityKey,
+                    ActorDisplay = actorDisplay,
+                    Name = displayName,
+                    NormalizedName = normalizedName,
+                    Kind = normalizedKind,
+                    SearchQuery = searchQuery,
+                    Model = model,
+                    Description = description,
+                    SourceSummary = sourceSummary,
+                    MatchedPromptsCount = promptList.Count,
+                    MatchedPrompts = promptList,
+                    RawResponse = rawResponse,
+                    CreatedAtUnixMs = createdAtUnixMs,
+                    UpdatedAtUnixMs = nowUnixMs,
+                };
+            }
+        }
+
+        public List<UiSubjectTagRecord> ListSubjectTags(string identityKey)
+        {
+            identityKey = (identityKey ?? "").Trim();
+            if (identityKey.Length == 0)
+            {
+                throw new InvalidDataException("Subject tags require an exact user identity.");
+            }
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText =
+                    """
+                    SELECT id, identity_key, actor_display, name, normalized_name,
+                           subject_kind, search_query, model, description,
+                           source_summary, matched_prompts_count, matched_prompts_json,
+                           raw_response, created_at_unix_ms, updated_at_unix_ms
+                    FROM ui_subject_tags
+                    WHERE identity_key = $identity
+                    ORDER BY updated_at_unix_ms DESC, name COLLATE NOCASE ASC;
+                    """;
+                command.Parameters.AddWithValue("$identity", identityKey);
+                var results = new List<UiSubjectTagRecord>();
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    results.Add(ReadSubjectTagRow(reader));
+                }
+                return results;
+            }
+        }
+
+        public UiSubjectTagRecord? GetSubjectTag(string identityKey, string idOrName)
+        {
+            identityKey = (identityKey ?? "").Trim();
+            idOrName = (idOrName ?? "").Trim();
+            if (identityKey.Length == 0 || idOrName.Length == 0)
+            {
+                return null;
+            }
+            var normalized = System.Text.RegularExpressions.Regex.Replace(idOrName, @"\s+", " ").ToUpperInvariant();
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText =
+                    """
+                    SELECT id, identity_key, actor_display, name, normalized_name,
+                           subject_kind, search_query, model, description,
+                           source_summary, matched_prompts_count, matched_prompts_json,
+                           raw_response, created_at_unix_ms, updated_at_unix_ms
+                    FROM ui_subject_tags
+                    WHERE identity_key = $identity
+                      AND (id = $id OR normalized_name = $normalized)
+                    LIMIT 1;
+                    """;
+                command.Parameters.AddWithValue("$identity", identityKey);
+                command.Parameters.AddWithValue("$id", idOrName);
+                command.Parameters.AddWithValue("$normalized", normalized);
+                using var reader = command.ExecuteReader();
+                return reader.Read() ? ReadSubjectTagRow(reader) : null;
+            }
+        }
+
+        public bool DeleteSubjectTag(string identityKey, string idOrName)
+        {
+            identityKey = (identityKey ?? "").Trim();
+            idOrName = (idOrName ?? "").Trim();
+            if (identityKey.Length == 0 || idOrName.Length == 0)
+            {
+                throw new InvalidDataException("Deleting a subject tag requires both user identity and tag id or name.");
+            }
+            var normalized = System.Text.RegularExpressions.Regex.Replace(idOrName, @"\s+", " ").ToUpperInvariant();
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText =
+                    """
+                    DELETE FROM ui_subject_tags
+                    WHERE identity_key = $identity
+                      AND (id = $id OR normalized_name = $normalized);
+                    """;
+                command.Parameters.AddWithValue("$identity", identityKey);
+                command.Parameters.AddWithValue("$id", idOrName);
+                command.Parameters.AddWithValue("$normalized", normalized);
+                return command.ExecuteNonQuery() > 0;
+            }
+        }
+
+        public List<UiSubjectTagMatchedPrompt> SearchClaudePromptExchanges(
+            string identityKey,
+            IReadOnlyList<string> terms,
+            int limit = 25)
+        {
+            if (terms == null || terms.Count == 0)
+            {
+                return new List<UiSubjectTagMatchedPrompt>();
+            }
+            var normalizedTerms = terms
+                .Select(t => (t ?? "").Trim())
+                .Where(t => t.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (normalizedTerms.Count == 0)
+            {
+                return new List<UiSubjectTagMatchedPrompt>();
+            }
+            limit = Math.Clamp(limit, 1, 100);
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var command = connection.CreateCommand();
+                var whereClauses = new List<string>();
+                for (var i = 0; i < normalizedTerms.Count; i++)
+                {
+                    var p = $"$term{i}";
+                    whereClauses.Add($"(INSTR(UPPER(original_prompt), {p}) > 0 OR INSTR(UPPER(result_prompt), {p}) > 0)");
+                    command.Parameters.AddWithValue(p, normalizedTerms[i].ToUpperInvariant());
+                }
+                var identityFilter = string.IsNullOrWhiteSpace(identityKey)
+                    ? ""
+                    : "AND identity_key = $identity";
+                command.CommandText =
+                    $"""
+                    SELECT id, requested_at_unix_ms, original_prompt, result_prompt
+                    FROM ui_claude_prompt_exchanges
+                    WHERE status = 'succeeded'
+                      {identityFilter}
+                      AND ({string.Join(" OR ", whereClauses)})
+                    ORDER BY requested_at_unix_ms DESC
+                    LIMIT $limit;
+                    """;
+                if (!string.IsNullOrWhiteSpace(identityKey))
+                {
+                    command.Parameters.AddWithValue("$identity", identityKey.Trim());
+                }
+                command.Parameters.AddWithValue("$limit", limit);
+
+                var matches = new List<UiSubjectTagMatchedPrompt>();
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    var id = reader.GetString(0);
+                    var atMs = reader.GetInt64(1);
+                    var original = reader.GetString(2);
+                    var result = reader.GetString(3);
+                    var createdIso = DateTimeOffset.FromUnixTimeMilliseconds(atMs).UtcDateTime.ToString("O");
+                    var text = result.Length > 0 && ContainsAnyTerm(result, normalizedTerms)
+                        ? result
+                        : original;
+                    if (text.Length > 0)
+                    {
+                        matches.Add(new UiSubjectTagMatchedPrompt
+                        {
+                            Source = "prompt-exchange",
+                            RecordId = id,
+                            CreatedAtUtc = createdIso,
+                            Prompt = text,
+                        });
+                    }
+                }
+                return matches;
+            }
+        }
+
+        private static bool ContainsAnyTerm(string text, IReadOnlyList<string> terms)
+        {
+            foreach (var term in terms)
+            {
+                if (text.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static UiSubjectTagRecord ReadSubjectTagRow(SqliteDataReader reader)
+        {
+            List<UiSubjectTagMatchedPrompt> matchedPrompts;
+            try
+            {
+                matchedPrompts = JsonSerializer.Deserialize<List<UiSubjectTagMatchedPrompt>>(
+                    reader.GetString(11)) ?? new List<UiSubjectTagMatchedPrompt>();
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException(
+                    $"Stored subject tag '{reader.GetString(3)}' has malformed matched_prompts_json.", ex);
+            }
+            return new UiSubjectTagRecord
+            {
+                Id = reader.GetString(0),
+                IdentityKey = reader.GetString(1),
+                ActorDisplay = reader.GetString(2),
+                Name = reader.GetString(3),
+                NormalizedName = reader.GetString(4),
+                Kind = reader.GetString(5),
+                SearchQuery = reader.GetString(6),
+                Model = reader.GetString(7),
+                Description = reader.GetString(8),
+                SourceSummary = reader.GetString(9),
+                MatchedPromptsCount = reader.GetInt32(10),
+                MatchedPrompts = matchedPrompts,
+                RawResponse = reader.GetString(12),
+                CreatedAtUnixMs = reader.GetInt64(13),
+                UpdatedAtUnixMs = reader.GetInt64(14),
+            };
+        }
+
         private static List<string> DeserializeList(string json)
             => JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
 
@@ -632,6 +1094,7 @@ namespace MultiImageClient
                 FailIfLoginExists(connection, transaction, "ui_profiles", "login", to);
                 FailIfLoginExists(connection, transaction, "ui_generator_preferences", "login", to);
                 FailIfValueExists(connection, transaction, "ui_creator_presence", "identity_key", toKey);
+                FailIfValueExists(connection, transaction, "ui_subject_tags", "identity_key", toKey);
                 Execute(connection, transaction,
                     "UPDATE ui_profiles SET login = $to, public_id = $publicId WHERE login = $from;",
                     ("$to", to), ("$publicId", publicId), ("$from", from));
@@ -643,6 +1106,9 @@ namespace MultiImageClient
                     ("$to", to), ("$from", from));
                 Execute(connection, transaction,
                     "UPDATE ui_claude_prompt_exchanges SET identity_key = $toKey WHERE identity_key = $fromKey;",
+                    ("$toKey", toKey), ("$fromKey", fromKey));
+                Execute(connection, transaction,
+                    "UPDATE ui_subject_tags SET identity_key = $toKey WHERE identity_key = $fromKey;",
                     ("$toKey", toKey), ("$fromKey", fromKey));
                 Execute(connection, transaction,
                     "UPDATE ui_creator_presence SET identity_key = $toKey WHERE identity_key = $fromKey;",

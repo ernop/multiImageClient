@@ -296,6 +296,15 @@ namespace MultiImageClient
         /// since live partial viewing is the whole point of that mode.
         public bool OpenImages { get; set; }
 
+        public bool SubjectList { get; set; }
+        public string SubjectSearchName { get; set; } = "";
+        public string SubjectSynthesizeName { get; set; } = "";
+        public string SubjectQuery { get; set; } = "";
+        public string SubjectKind { get; set; } = "";
+        public string SubjectModel { get; set; } = PromptSubjectSynthesis.DefaultModel;
+        public string SubjectNotes { get; set; } = "";
+        public string SubjectUser { get; set; } = "local";
+
         public static RunOptions Parse(string[] args)
         {
             var o = new RunOptions();
@@ -534,6 +543,30 @@ namespace MultiImageClient
                             Environment.Exit(2);
                         }
                         break;
+                    case "--subject-list":
+                        o.SubjectList = true;
+                        break;
+                    case "--subject-search":
+                        o.SubjectSearchName = args[++i];
+                        break;
+                    case "--subject-synthesize":
+                        o.SubjectSynthesizeName = args[++i];
+                        break;
+                    case "--subject-query":
+                        o.SubjectQuery = args[++i];
+                        break;
+                    case "--subject-kind":
+                        o.SubjectKind = args[++i];
+                        break;
+                    case "--subject-model":
+                        o.SubjectModel = args[++i];
+                        break;
+                    case "--subject-notes":
+                        o.SubjectNotes = args[++i];
+                        break;
+                    case "--subject-user":
+                        o.SubjectUser = args[++i];
+                        break;
                     case "--help":
                     case "-h":
                         PrintUsage();
@@ -630,6 +663,14 @@ namespace MultiImageClient
             Console.WriteLine("  --provider-sample-retry-failures N  Pair with --provider-sample-showcase to retry failed prompt slots N extra times before composing the sheet.");
             Console.WriteLine("  --grok-api-export [path]  One-shot: full grok-api history export OUTSIDE the repo. Runs --grok-api-sync first, then copies every known Grok image/video plus prompts.txt and grok_ledger.jsonl into [path] (default C:\\GrokArchive). Rerunnable; already-present files are skipped.");
             Console.WriteLine("  --grok-api-sync       One-shot: back-read/back-download the entire reachable grok-api history and exit. Sweeps the xAI Files API inventory, re-polls any ledger video request_ids whose local file is missing, backfills prompts from old JSON logs, and writes everything to grok_ledger.jsonl + saves\\GrokArchive\\. Idempotent — run it whenever to stay synced.");
+            Console.WriteLine("  --subject-list        List stored subject/character/location descriptions from ui-community.sqlite3 and exit.");
+            Console.WriteLine("  --subject-search NAME Search historical prompts across generation-history.sqlite3, UiHistory, and prompt exchanges for NAME (plus optional --subject-query terms) and exit.");
+            Console.WriteLine("  --subject-synthesize NAME  Search historical prompts for NAME, synthesize a reusable visual description via --subject-model (default claude-opus-5-5), store it in ui-community.sqlite3, and exit.");
+            Console.WriteLine("  --subject-query TERMS Optional comma/space-separated search terms or aliases paired with --subject-search or --subject-synthesize.");
+            Console.WriteLine("  --subject-kind KIND   Optional subject kind for --subject-synthesize: character | location | object | general.");
+            Console.WriteLine("  --subject-model MODEL Model for --subject-synthesize (default claude-opus-5-5; supports claude-sonnet-5-5, gpt-5.6-sol, gpt-6-astra, gemini-3.5-flash, grok-4.6, etc.).");
+            Console.WriteLine("  --subject-notes TEXT  Optional extra notes passed to --subject-synthesize.");
+            Console.WriteLine("  --subject-user USER   User identity for CLI subject commands (default: local).");
         }
     }
 }

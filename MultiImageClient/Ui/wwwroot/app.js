@@ -540,6 +540,7 @@ async function loadConfig() {
   claudeAdvice = cfg.claudeAdvice || claudeAdvice;
   applyClaudeAdviceAvailability();
   promptRewrites.configure(cfg.promptRewrites || []);
+  configurePromptSubjects(cfg.promptSubjects || null);
   describeConfig = cfg.describe || describeConfig;
   if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
     maxInputImages = cfg.maxInputImages;
@@ -555,6 +556,7 @@ async function loadConfig() {
   }
   notificationConfig = cfg.notifications || notificationConfig;
   applyAuthState();
+  loadPromptSubjects().catch(() => {});
   initializeActivityConfig();
 
   // Exact code identity of the running server, embedded at build time.
@@ -6533,6 +6535,7 @@ usernameInput.addEventListener("change", () => {
   favoriteMutationError = null;
   refreshFavoritePresentation();
   updateProfileNameControl();
+  loadPromptSubjects().catch(() => {});
 });
 
 function applyAuthState() {
@@ -8062,11 +8065,11 @@ promptAdviceUndoBtn.addEventListener("click", async () => {
   await promptRewrites.run("restore", { exchangeId: promptAdviceExchangeId, side: "original" });
 });
 
-// ---------- McPhee: local writing checks, corrections panel, and fixes ----------
+// ---------- McPhee: local writing checks, corrections panel, fixes, and dynamic subject tags ----------
 
 // McPhee stays entirely in the browser: its verified overlay marks spelling,
-// spacing, capitalization, and repetition issues, while its optional panel
-// explains each finding without crowding the prompt field.
+// spacing, capitalization, repetition issues, and dynamic subject tags, while
+// its optional panel explains each finding without crowding the prompt field.
 let mcphee = null;
 let mcpheeCtl = null;
 let mcpheePanel = null;
@@ -8075,6 +8078,639 @@ const mcpheePanelToggle = el("mcphee-panel-toggle");
 const spellingPanelContainer = el("spelling-panel");
 const mcpheePanelContainer = el("mcphee-panel");
 const mcpheeEnabledStorageKey = "mic_mcphee_enabled";
+
+const promptSubjectMatchesContainer = el("prompt-subject-matches");
+const promptSubjectsToggleBtn = el("prompt-subjects-toggle");
+const promptSubjectUndoBtn = el("prompt-subject-undo");
+const promptSubjectsPanel = el("prompt-subjects-panel");
+const promptSubjectsRefreshBtn = el("prompt-subjects-refresh");
+const promptSubjectNameInput = el("prompt-subject-name");
+const promptSubjectKindSelect = el("prompt-subject-kind");
+const promptSubjectQueryInput = el("prompt-subject-query");
+const promptSubjectModelSelect = el("prompt-subject-model");
+const promptSubjectNotesInput = el("prompt-subject-notes");
+const promptSubjectDescriptionInput = el("prompt-subject-description");
+const promptSubjectSearchBtn = el("prompt-subject-search-btn");
+const promptSubjectSynthesizeBtn = el("prompt-subject-synthesize-btn");
+const promptSubjectSaveBtn = el("prompt-subject-save-btn");
+const promptSubjectClearBtn = el("prompt-subject-clear-btn");
+const promptSubjectStatus = el("prompt-subject-status");
+const promptSubjectSearchResults = el("prompt-subject-search-results");
+const promptSubjectSearchSummary = el("prompt-subject-search-summary");
+const promptSubjectSearchCloseBtn = el("prompt-subject-search-close");
+const promptSubjectSearchList = el("prompt-subject-search-list");
+const promptSubjectsCount = el("prompt-subjects-count");
+const promptSubjectsListEl = el("prompt-subjects-list");
+
+let promptSubjectsConfig = {
+  defaultModel: "claude-opus-5-5",
+  kinds: ["character", "location", "object", "general"],
+  models: [],
+};
+let promptSubjectsList = [];
+let promptSubjectsIgnoredFallback = new Set();
+let promptSubjectUndoText = null;
+let promptSubjectsBusy = false;
+
+function configurePromptSubjects(cfg) {
+  if (!cfg || typeof cfg !== "object") return;
+  promptSubjectsConfig = {
+    ...promptSubjectsConfig,
+    ...cfg,
+    models: Array.isArray(cfg.models) ? cfg.models : [],
+  };
+  promptSubjectModelSelect.replaceChildren();
+  let selectedKey = "";
+  for (const model of promptSubjectsConfig.models) {
+    const opt = document.createElement("option");
+    opt.value = model.key;
+    opt.textContent = model.available
+      ? model.label
+      : `${model.label} (unavailable)`;
+    opt.disabled = !model.available;
+    if (!model.available && model.availabilityProblem) {
+      opt.title = model.availabilityProblem;
+    }
+    promptSubjectModelSelect.appendChild(opt);
+    if (model.available && (!selectedKey || model.key === promptSubjectsConfig.defaultModel)) {
+      selectedKey = model.key;
+    }
+  }
+  if (selectedKey) {
+    promptSubjectModelSelect.value = selectedKey;
+  }
+  const anyModelAvailable = promptSubjectsConfig.models.some((m) => m.available);
+  promptSubjectSynthesizeBtn.disabled = !anyModelAvailable;
+  if (!anyModelAvailable) {
+    promptSubjectSynthesizeBtn.title = "No synthesis LLM is configured in settings.json";
+  } else {
+    promptSubjectSynthesizeBtn.title = "Query prompt history and synthesize a visual description with the selected LLM";
+  }
+}
+
+function normalizePromptSubjectKey(raw) {
+  return String(raw || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function formatPromptSubjectExpansion(subject, matchedText) {
+  if (mcphee && typeof mcphee.formatSubjectExpansion === "function") {
+    return mcphee.formatSubjectExpansion(subject, matchedText);
+  }
+  const head = String(matchedText || subject.name).trim();
+  const desc = String(subject.description || "").trim();
+  if (!desc) return head;
+  if (desc.toLowerCase().startsWith(head.toLowerCase())) return desc;
+  return `${head} (${desc})`;
+}
+
+function findCurrentPromptSubjectMatches() {
+  const text = promptBox.value || "";
+  if (!text) return [];
+  if (mcphee && typeof mcphee.findSubjectMatches === "function") {
+    return mcphee.findSubjectMatches(text);
+  }
+  // Fallback scan if McPhee dictionary is still initializing.
+  const out = [];
+  const lower = text.toLowerCase();
+  const ordered = [...promptSubjectsList].sort((a, b) => b.name.length - a.name.length);
+  const used = [];
+  const isWordChar = (ch) => /[A-Za-z0-9'\u2019]/.test(ch || "");
+  for (const subj of ordered) {
+    const key = normalizePromptSubjectKey(subj.normalizedName || subj.name);
+    if (!key || promptSubjectsIgnoredFallback.has(key)) continue;
+    let pos = 0;
+    while (pos <= lower.length - key.length) {
+      const idx = lower.indexOf(key, pos);
+      if (idx < 0) break;
+      const end = idx + key.length;
+      const prev = idx > 0 ? text[idx - 1] : "";
+      const next = end < text.length ? text[end] : "";
+      if (!isWordChar(prev) && !isWordChar(next)) {
+        const after = text.slice(end).trimStart();
+        const descPrefix = subj.description.slice(0, Math.min(24, subj.description.length)).toLowerCase();
+        const alreadyExpanded = after.startsWith("(") && descPrefix.length > 0 &&
+          after.slice(1).trimStart().toLowerCase().startsWith(descPrefix);
+        const overlaps = used.some(([s, e]) => idx < e && end > s);
+        if (!alreadyExpanded && !overlaps) {
+          used.push([idx, end]);
+          const matchedText = text.slice(idx, end);
+          out.push({
+            kind: "subject",
+            classification: "subject",
+            start: idx,
+            end,
+            value: matchedText,
+            text: matchedText,
+            key,
+            subjectKey: key,
+            subject: subj,
+          });
+        }
+      }
+      pos = idx + 1;
+    }
+  }
+  out.sort((a, b) => a.start - b.start);
+  return out;
+}
+
+function recordSubjectExpansionUndo(previousText) {
+  promptSubjectUndoText = previousText;
+  promptSubjectUndoBtn.hidden = typeof previousText !== "string";
+}
+
+function expandSubjectInPrompt(matchOrKey, allOccurrences = true) {
+  const before = promptBox.value;
+  let next = before;
+  if (mcphee && typeof mcphee.expandSubjectInTextarea === "function") {
+    recordSubjectExpansionUndo(before);
+    const res = mcphee.expandSubjectInTextarea(promptBox, matchOrKey, allOccurrences);
+    next = res && typeof res === "object" ? (res.after ?? promptBox.value) : String(res || promptBox.value);
+  } else {
+    const key = typeof matchOrKey === "string"
+      ? normalizePromptSubjectKey(matchOrKey)
+      : normalizePromptSubjectKey(matchOrKey?.subjectKey || matchOrKey?.key || matchOrKey?.value || matchOrKey?.text || matchOrKey?.name);
+    const matches = findCurrentPromptSubjectMatches().filter((m) => (m.subjectKey || m.key) === key);
+    if (!matches.length) return before;
+    recordSubjectExpansionUndo(before);
+    for (let i = matches.length - 1; i >= 0; i--) {
+      const m = matches[i];
+      const replacement = formatPromptSubjectExpansion(m.subject, m.value || m.text);
+      next = next.slice(0, m.start) + replacement + next.slice(m.end);
+    }
+    promptBox.value = next;
+    promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  if (mcpheeCtl) mcpheeCtl.refresh(true);
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+  renderPromptSubjectMatches();
+  return next;
+}
+
+function ignoreSubjectInPrompt(nameOrKey) {
+  const key = normalizePromptSubjectKey(nameOrKey);
+  if (!key) return;
+  promptSubjectsIgnoredFallback.add(key);
+  if (mcphee && typeof mcphee.ignoreSubject === "function") {
+    mcphee.ignoreSubject(key);
+  }
+  if (mcpheeCtl) mcpheeCtl.refresh(true);
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+  renderPromptSubjectMatches();
+}
+
+function unignoreSubjectInPrompt(nameOrKey) {
+  const key = normalizePromptSubjectKey(nameOrKey);
+  if (!key) return;
+  promptSubjectsIgnoredFallback.delete(key);
+  if (mcphee && typeof mcphee.unignoreSubject === "function") {
+    mcphee.unignoreSubject(key);
+  }
+  if (mcpheeCtl) mcpheeCtl.refresh(true);
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+  renderPromptSubjectMatches();
+}
+
+function renderPromptSubjectMatches() {
+  if (!promptSubjectMatchesContainer) return;
+  const matches = findCurrentPromptSubjectMatches();
+  if (!matches.length) {
+    promptSubjectMatchesContainer.hidden = true;
+    promptSubjectMatchesContainer.replaceChildren();
+    return;
+  }
+  // Group by unique subject key, prioritizing whichever subject contains the caret.
+  const caret = typeof promptBox.selectionStart === "number" ? promptBox.selectionStart : -1;
+  const byKey = new Map();
+  for (const m of matches) {
+    const matchKey = m.subjectKey || m.key || normalizePromptSubjectKey(m.value || m.text);
+    const existing = byKey.get(matchKey);
+    const hasCaret = caret >= m.start && caret <= m.end;
+    if (!existing) {
+      byKey.set(matchKey, { match: m, count: 1, hasCaret });
+    } else {
+      existing.count += 1;
+      if (hasCaret) {
+        existing.hasCaret = true;
+        existing.match = m;
+      }
+    }
+  }
+  const entries = [...byKey.values()].sort((a, b) => (b.hasCaret ? 1 : 0) - (a.hasCaret ? 1 : 0));
+  promptSubjectMatchesContainer.replaceChildren();
+  for (const entry of entries) {
+    const { match, count } = entry;
+    const subj = match.subject;
+    const matchedWord = match.value || match.text || subj.name;
+    const row = document.createElement("div");
+    row.className = "prompt-subject-match-row";
+
+    const badge = document.createElement("span");
+    badge.className = "prompt-subject-match-badge";
+    badge.textContent = count > 1 ? `${subj.name} (×${count})` : subj.name;
+
+    const kind = document.createElement("span");
+    kind.className = "prompt-subject-match-kind";
+    kind.textContent = subj.kind || "character";
+
+    const desc = document.createElement("span");
+    desc.className = "prompt-subject-match-desc";
+    desc.textContent = subj.description;
+    desc.title = subj.description;
+
+    const actions = document.createElement("span");
+    actions.className = "prompt-subject-match-actions";
+
+    const useBtn = document.createElement("button");
+    useBtn.type = "button";
+    useBtn.className = "primary";
+    useBtn.textContent = `use ${subj.kind || "subject"} description`;
+    useBtn.title = `Replace "${matchedWord}" with: ${formatPromptSubjectExpansion(subj, matchedWord)}`;
+    useBtn.addEventListener("click", () => {
+      expandSubjectInPrompt(match, true);
+      promptBox.focus();
+    });
+
+    const keepBtn = document.createElement("button");
+    keepBtn.type = "button";
+    keepBtn.textContent = "keep as word";
+    keepBtn.title = `Keep "${subj.name}" as a literal word without expanding or flagging it`;
+    keepBtn.addEventListener("click", () => {
+      ignoreSubjectInPrompt(subj.name);
+      promptBox.focus();
+    });
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.textContent = "edit";
+    editBtn.title = `View or edit stored description for ${subj.name}`;
+    editBtn.addEventListener("click", () => {
+      setPromptSubjectsPanelOpen(true);
+      populatePromptSubjectForm(subj);
+    });
+
+    actions.append(useBtn, keepBtn, editBtn);
+    row.append(badge, kind, desc, actions);
+    promptSubjectMatchesContainer.appendChild(row);
+  }
+  promptSubjectMatchesContainer.hidden = false;
+}
+
+function syncSubjectsToMcphee() {
+  if (mcphee && typeof mcphee.setSubjects === "function") {
+    mcphee.setSubjects(promptSubjectsList);
+    for (const key of promptSubjectsIgnoredFallback) {
+      mcphee.ignoreSubject(key);
+    }
+  }
+  if (mcpheeCtl) mcpheeCtl.refresh(true);
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+  renderPromptSubjectMatches();
+  renderSavedPromptSubjectsList();
+}
+
+async function loadPromptSubjects() {
+  const user = currentUsername();
+  const query = new URLSearchParams();
+  if (user) query.set("user", user);
+  const resp = await fetch(apiUrl(`api/prompt/subjects?${query}`));
+  if (resp.status === 401) { location.reload(); return; }
+  const body = await resp.json();
+  if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+  promptSubjectsList = Array.isArray(body.subjects) ? body.subjects : [];
+  syncSubjectsToMcphee();
+}
+
+function populatePromptSubjectForm(subj) {
+  promptSubjectNameInput.value = subj.name || "";
+  promptSubjectKindSelect.value = subj.kind || "character";
+  promptSubjectQueryInput.value = subj.searchQuery || "";
+  promptSubjectNotesInput.value = subj.notes || "";
+  promptSubjectDescriptionInput.value = subj.description || "";
+  promptSubjectDescriptionInput.dispatchEvent(new Event("input", { bubbles: true }));
+  promptSubjectNameInput.focus();
+}
+
+function clearPromptSubjectForm() {
+  promptSubjectNameInput.value = "";
+  promptSubjectKindSelect.value = "character";
+  promptSubjectQueryInput.value = "";
+  promptSubjectNotesInput.value = "";
+  promptSubjectDescriptionInput.value = "";
+  promptSubjectDescriptionInput.dispatchEvent(new Event("input", { bubbles: true }));
+  promptSubjectStatus.textContent = "";
+  promptSubjectStatus.className = "";
+}
+
+function setPromptSubjectStatus(text, kind = "") {
+  promptSubjectStatus.textContent = text || "";
+  promptSubjectStatus.className = kind;
+}
+
+function renderSavedPromptSubjectsList() {
+  promptSubjectsCount.textContent = String(promptSubjectsList.length);
+  promptSubjectsListEl.replaceChildren();
+  if (!promptSubjectsList.length) {
+    const empty = document.createElement("div");
+    empty.className = "prompt-subject-saved-row";
+    empty.textContent = "No stored subject tags yet. Search history above to synthesize a character, location, or object description, or save one directly.";
+    promptSubjectsListEl.appendChild(empty);
+    return;
+  }
+  for (const subj of promptSubjectsList) {
+    const row = document.createElement("div");
+    row.className = "prompt-subject-saved-row";
+
+    const nameBadge = document.createElement("span");
+    nameBadge.className = "prompt-subject-saved-name";
+    nameBadge.textContent = subj.name;
+
+    const meta = document.createElement("span");
+    meta.className = "prompt-subject-saved-meta";
+    const promptCount = Number(subj.matchedPromptsCount ?? subj.sourcePromptCount ?? 0) || 0;
+    const countLabel = `${promptCount} prompt${promptCount === 1 ? "" : "s"}`;
+    const modelId = subj.model || subj.synthesizedByModel || "";
+    meta.textContent = modelId
+      ? `${subj.kind} · ${countLabel} · ${modelId}`
+      : `${subj.kind} · ${countLabel}`;
+
+    const desc = document.createElement("span");
+    desc.className = "prompt-subject-saved-desc";
+    desc.textContent = subj.description;
+    desc.title = subj.description;
+
+    const actions = document.createElement("span");
+    actions.className = "prompt-subject-saved-actions";
+
+    const useBtn = document.createElement("button");
+    useBtn.type = "button";
+    useBtn.textContent = "use description";
+    useBtn.title = `Expand "${subj.name}" in the prompt or insert its full description`;
+    useBtn.addEventListener("click", () => {
+      unignoreSubjectInPrompt(subj.name);
+      const key = normalizePromptSubjectKey(subj.normalizedName || subj.name);
+      const matches = findCurrentPromptSubjectMatches().filter((m) => (m.subjectKey || m.key) === key);
+      if (matches.length > 0) {
+        expandSubjectInPrompt(key, true);
+      } else {
+        const before = promptBox.value;
+        recordSubjectExpansionUndo(before);
+        const expanded = formatPromptSubjectExpansion(subj, subj.name);
+        const sep = before && !/\s$/.test(before) ? " " : "";
+        promptBox.value = before + sep + expanded;
+        promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+        if (mcpheeCtl) mcpheeCtl.refresh(true);
+        renderPromptSubjectMatches();
+      }
+      promptBox.focus();
+    });
+
+    const insertNameBtn = document.createElement("button");
+    insertNameBtn.type = "button";
+    insertNameBtn.textContent = "insert tag";
+    insertNameBtn.title = `Insert "${subj.name}" into the prompt so McPhee tags it`;
+    insertNameBtn.addEventListener("click", () => {
+      unignoreSubjectInPrompt(subj.name);
+      const before = promptBox.value;
+      const sep = before && !/\s$/.test(before) ? " " : "";
+      promptBox.value = before + sep + subj.name;
+      promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+      if (mcpheeCtl) mcpheeCtl.refresh(true);
+      renderPromptSubjectMatches();
+      promptBox.focus();
+    });
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.textContent = "edit";
+    editBtn.addEventListener("click", () => populatePromptSubjectForm(subj));
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "delete";
+    deleteBtn.addEventListener("click", async () => {
+      if (promptSubjectsBusy) return;
+      promptSubjectsBusy = true;
+      try {
+        const form = new URLSearchParams();
+        form.set("user", currentUsername());
+        form.set("id", subj.id || subj.name);
+        const resp = await fetch(apiUrl("api/prompt/subjects/delete"), { method: "POST", body: form });
+        if (resp.status === 401) { location.reload(); return; }
+        const body = await resp.json();
+        if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+        await loadPromptSubjects();
+        setPromptSubjectStatus(`Deleted subject tag "${subj.name}".`, "ok");
+      } catch (err) {
+        setPromptSubjectStatus(err.message || String(err), "error");
+      } finally {
+        promptSubjectsBusy = false;
+      }
+    });
+
+    actions.append(useBtn, insertNameBtn, editBtn, deleteBtn);
+    row.append(nameBadge, meta, desc, actions);
+    promptSubjectsListEl.appendChild(row);
+  }
+}
+
+function renderPromptSubjectSearchMatches(name, terms, matches) {
+  promptSubjectSearchSummary.textContent =
+    `${matches.length} matching prompt${matches.length === 1 ? "" : "s"} for "${name}" (${(terms || [name]).join(", ")})`;
+  promptSubjectSearchList.replaceChildren();
+  for (const m of matches) {
+    const row = document.createElement("div");
+    row.className = "prompt-subject-search-row";
+
+    const source = document.createElement("span");
+    source.className = "prompt-subject-search-source";
+    const stamp = m.createdAtUtc || m.timestamp || "";
+    const datePart = stamp ? ` · ${String(stamp).slice(0, 10)}` : "";
+    source.textContent = `${m.source}${datePart}`;
+
+    const textSpan = document.createElement("span");
+    textSpan.className = "prompt-subject-search-text";
+    textSpan.textContent = m.prompt;
+    textSpan.title = m.prompt;
+
+    const useBtn = document.createElement("button");
+    useBtn.type = "button";
+    useBtn.textContent = "copy to prompt";
+    useBtn.addEventListener("click", () => {
+      promptBox.value = m.prompt;
+      promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+      promptBox.focus();
+    });
+
+    row.append(source, textSpan, useBtn);
+    promptSubjectSearchList.appendChild(row);
+  }
+  promptSubjectSearchResults.hidden = false;
+}
+
+function setPromptSubjectsPanelOpen(open) {
+  promptSubjectsPanel.hidden = !open;
+  promptSubjectsToggleBtn.setAttribute("aria-expanded", String(open));
+  if (open) {
+    loadPromptSubjects().catch(() => {});
+  }
+}
+
+promptSubjectsToggleBtn.addEventListener("click", () => {
+  setPromptSubjectsPanelOpen(promptSubjectsPanel.hidden);
+});
+
+promptSubjectsRefreshBtn.addEventListener("click", () => {
+  loadPromptSubjects()
+    .then(() => setPromptSubjectStatus("Refreshed stored subjects.", "ok"))
+    .catch((err) => setPromptSubjectStatus(err.message || String(err), "error"));
+});
+
+promptSubjectClearBtn.addEventListener("click", clearPromptSubjectForm);
+promptSubjectSearchCloseBtn.addEventListener("click", () => {
+  promptSubjectSearchResults.hidden = true;
+});
+
+promptSubjectUndoBtn.addEventListener("click", () => {
+  if (typeof promptSubjectUndoText !== "string") return;
+  const restore = promptSubjectUndoText;
+  promptSubjectUndoText = null;
+  promptSubjectUndoBtn.hidden = true;
+  promptBox.value = restore;
+  promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+  if (mcpheeCtl) mcpheeCtl.refresh(true);
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+  renderPromptSubjectMatches();
+  promptBox.focus();
+});
+
+promptSubjectSearchBtn.addEventListener("click", async () => {
+  if (promptSubjectsBusy) return;
+  const name = promptSubjectNameInput.value.trim();
+  if (!name) {
+    setPromptSubjectStatus("Enter a subject name or tag first.", "error");
+    promptSubjectNameInput.focus();
+    return;
+  }
+  promptSubjectsBusy = true;
+  promptSubjectSearchBtn.disabled = true;
+  setPromptSubjectStatus(`Searching prompt history for "${name}"…`);
+  try {
+    const form = new URLSearchParams();
+    form.set("user", currentUsername());
+    form.set("name", name);
+    form.set("query", promptSubjectQueryInput.value.trim());
+    const resp = await fetch(apiUrl("api/prompt/subjects/search"), { method: "POST", body: form });
+    if (resp.status === 401) { location.reload(); return; }
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+    const matches = Array.isArray(body.matches) ? body.matches : [];
+    const matchedCount = Number(body.matchedPromptsCount ?? matches.length) || 0;
+    renderPromptSubjectSearchMatches(body.name || name, body.searchTerms || [name], matches);
+    setPromptSubjectStatus(
+      `Found ${matchedCount} matching prompt${matchedCount === 1 ? "" : "s"}.`,
+      matchedCount > 0 ? "ok" : "");
+  } catch (err) {
+    setPromptSubjectStatus(err.message || String(err), "error");
+  } finally {
+    promptSubjectsBusy = false;
+    promptSubjectSearchBtn.disabled = false;
+  }
+});
+
+promptSubjectSynthesizeBtn.addEventListener("click", async () => {
+  if (promptSubjectsBusy) return;
+  const name = promptSubjectNameInput.value.trim();
+  if (!name) {
+    setPromptSubjectStatus("Enter a subject name or tag first.", "error");
+    promptSubjectNameInput.focus();
+    return;
+  }
+  promptSubjectsBusy = true;
+  promptSubjectSynthesizeBtn.disabled = true;
+  const modelLabel = promptSubjectModelSelect.selectedOptions[0]?.textContent || "LLM";
+  setPromptSubjectStatus(`Searching history and synthesizing "${name}" with ${modelLabel}…`);
+  try {
+    const form = new URLSearchParams();
+    form.set("user", currentUsername());
+    form.set("name", name);
+    form.set("kind", promptSubjectKindSelect.value);
+    form.set("query", promptSubjectQueryInput.value.trim());
+    form.set("model", promptSubjectModelSelect.value);
+    form.set("notes", promptSubjectNotesInput.value.trim());
+    const resp = await fetch(apiUrl("api/prompt/subjects/synthesize"), { method: "POST", body: form });
+    if (resp.status === 401) { location.reload(); return; }
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+    unignoreSubjectInPrompt(name);
+    if (body.subject) {
+      populatePromptSubjectForm(body.subject);
+    }
+    const synthMatches = body.synthesized?.matchedPrompts || body.subject?.matchedPrompts || [];
+    const synthTerms = body.synthesized?.searchTerms || [name];
+    const matchedCount = Number(
+      body.synthesized?.matchedPromptsCount
+      ?? body.subject?.matchedPromptsCount
+      ?? synthMatches.length) || 0;
+    if (Array.isArray(synthMatches)) {
+      renderPromptSubjectSearchMatches(name, synthTerms, synthMatches);
+    }
+    await loadPromptSubjects();
+    setPromptSubjectStatus(
+      `Synthesized and saved "${body.subject?.name || name}" from ${matchedCount} historical prompt${matchedCount === 1 ? "" : "s"}.`,
+      "ok");
+  } catch (err) {
+    setPromptSubjectStatus(err.message || String(err), "error");
+  } finally {
+    promptSubjectsBusy = false;
+    const anyModelAvailable = promptSubjectsConfig.models.some((m) => m.available);
+    promptSubjectSynthesizeBtn.disabled = !anyModelAvailable;
+  }
+});
+
+promptSubjectSaveBtn.addEventListener("click", async () => {
+  if (promptSubjectsBusy) return;
+  const name = promptSubjectNameInput.value.trim();
+  const description = promptSubjectDescriptionInput.value.trim();
+  if (!name) {
+    setPromptSubjectStatus("Enter a subject name or tag first.", "error");
+    promptSubjectNameInput.focus();
+    return;
+  }
+  if (!description) {
+    setPromptSubjectStatus("Enter a visual description or run 'synthesize from history' first.", "error");
+    promptSubjectDescriptionInput.focus();
+    return;
+  }
+  promptSubjectsBusy = true;
+  promptSubjectSaveBtn.disabled = true;
+  setPromptSubjectStatus(`Saving "${name}"…`);
+  try {
+    const form = new URLSearchParams();
+    form.set("user", currentUsername());
+    form.set("name", name);
+    form.set("kind", promptSubjectKindSelect.value);
+    form.set("description", description);
+    form.set("query", promptSubjectQueryInput.value.trim());
+    form.set("summary", promptSubjectNotesInput.value.trim());
+    const resp = await fetch(apiUrl("api/prompt/subjects"), { method: "POST", body: form });
+    if (resp.status === 401) { location.reload(); return; }
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+    unignoreSubjectInPrompt(name);
+    await loadPromptSubjects();
+    setPromptSubjectStatus(`Saved subject tag "${body.subject.name}".`, "ok");
+  } catch (err) {
+    setPromptSubjectStatus(err.message || String(err), "error");
+  } finally {
+    promptSubjectsBusy = false;
+    promptSubjectSaveBtn.disabled = false;
+  }
+});
+
+promptBox.addEventListener("input", renderPromptSubjectMatches);
+promptBox.addEventListener("click", renderPromptSubjectMatches);
+promptBox.addEventListener("keyup", renderPromptSubjectMatches);
 
 // Provider/model jargon that appears in prompts constantly and must never
 // light up as a misspelling.
@@ -8109,6 +8745,30 @@ async function initMcphee() {
         return result;
       };
     }
+    if (typeof mcphee.expandSubjectInTextarea === "function") {
+      const origExpand = mcphee.expandSubjectInTextarea.bind(mcphee);
+      mcphee.expandSubjectInTextarea = (textarea, matchOrKey, allOccurrences) => {
+        if (textarea === promptBox) {
+          recordSubjectExpansionUndo(promptBox.value);
+        }
+        const res = origExpand(textarea, matchOrKey, allOccurrences);
+        renderPromptSubjectMatches();
+        return res;
+      };
+    }
+    if (typeof mcphee.ignoreSubject === "function") {
+      const origIgnore = mcphee.ignoreSubject.bind(mcphee);
+      mcphee.ignoreSubject = (nameOrKey) => {
+        promptSubjectsIgnoredFallback.add(normalizePromptSubjectKey(nameOrKey));
+        const res = origIgnore(nameOrKey);
+        renderPromptSubjectMatches();
+        return res;
+      };
+    }
+    mcphee.setSubjects(promptSubjectsList);
+    for (const key of promptSubjectsIgnoredFallback) {
+      mcphee.ignoreSubject(key);
+    }
     mcpheeCtl = mcphee.attach(promptBox);
     mcpheePanel = mcphee.attachPanel({
       textarea: promptBox,
@@ -8116,10 +8776,16 @@ async function initMcphee() {
       controller: mcpheeCtl,
       formalityStorageKey: "mic_mcphee_formality",
       ruleOverridesStorageKey: "mic_mcphee_rule_overrides",
-      onChange: persistPersonalConfigurationSnapshot,
+      onChange: () => {
+        persistPersonalConfigurationSnapshot();
+        renderPromptSubjectMatches();
+      },
     });
     const persistMcpheePanelChange = () =>
-      queueMicrotask(persistPersonalConfigurationSnapshot);
+      queueMicrotask(() => {
+        persistPersonalConfigurationSnapshot();
+        renderPromptSubjectMatches();
+      });
     mcpheePanelContainer.addEventListener("click", persistMcpheePanelChange);
     mcpheePanelContainer.addEventListener("change", persistMcpheePanelChange);
     mcpheeEnabledToggle.disabled = false;
@@ -8127,6 +8793,7 @@ async function initMcphee() {
     const canonicalEnabled = storedPersonalField("spelling")?.enabled;
     const legacyEnabled = localStorage.getItem(mcpheeEnabledStorageKey);
     setMcpheeEnabled(canonicalEnabled ?? (legacyEnabled !== "false"), false);
+    renderPromptSubjectMatches();
   } catch (err) {
     // Missing or malformed McPhee data is a hard failure for its independent
     // spelling overlay and suggestions panel.

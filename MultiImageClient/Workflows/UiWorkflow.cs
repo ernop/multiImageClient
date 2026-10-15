@@ -812,6 +812,7 @@ namespace MultiImageClient
                         available = DiscordVibecoders.IsConfigured(settings) && (environments?.Get(settings.UiEnvironmentId).AllowVibecoders ?? true),
                     },
                     shareLinks = new { available = ShareLinksProblem(settings, auth) == null },
+                    promptSubjects = PromptSubjectSynthesis.BuildCatalogPayload(settings),
                 });
             });
 
@@ -2200,6 +2201,340 @@ namespace MultiImageClient
                         record.Error,
                     }),
                 });
+            });
+
+            static object SerializeSubjectTag(UiSubjectTagRecord record) => new
+            {
+                id = record.Id,
+                name = record.Name,
+                normalizedName = record.NormalizedName,
+                kind = record.Kind,
+                searchQuery = record.SearchQuery,
+                model = record.Model,
+                description = record.Description,
+                sourceSummary = record.SourceSummary,
+                matchedPromptsCount = record.MatchedPromptsCount,
+                matchedPrompts = record.MatchedPrompts.Select(m => new
+                {
+                    source = m.Source,
+                    recordId = m.RecordId,
+                    createdAtUtc = m.CreatedAtUtc,
+                    prompt = m.Prompt,
+                }),
+                createdAtUnixMs = record.CreatedAtUnixMs,
+                updatedAtUnixMs = record.UpdatedAtUnixMs,
+            };
+
+            bool TryResolveSubjectIdentity(
+                string? rawUser,
+                string authUser,
+                out string identityKey,
+                out string actorDisplay,
+                out string error)
+            {
+                if (authUser.Length > 0)
+                {
+                    if (!TryResolveCreatorName(rawUser, authUser, community, out actorDisplay, out error))
+                    {
+                        identityKey = "";
+                        return false;
+                    }
+                    identityKey = "login:" + authUser;
+                    return true;
+                }
+                if (string.IsNullOrWhiteSpace(rawUser))
+                {
+                    actorDisplay = "local";
+                    identityKey = "display:LOCAL";
+                    error = "";
+                    return true;
+                }
+                if (!TryResolveCreatorName(rawUser, authUser, community, out actorDisplay, out error))
+                {
+                    identityKey = "";
+                    return false;
+                }
+                identityKey = "display:" + actorDisplay.ToUpperInvariant();
+                return true;
+            }
+
+            app.MapGet("/api/prompt/subjects", (string? user, HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                if (!TryResolveSubjectIdentity(user, authUser, out var identityKey, out _, out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+                var subjects = community.ListSubjectTags(identityKey);
+                if (authUser.Length == 0 && !string.Equals(identityKey, "display:LOCAL", StringComparison.Ordinal))
+                {
+                    var localFallback = community.ListSubjectTags("display:LOCAL");
+                    var existingNames = new HashSet<string>(
+                        subjects.Select(s => s.NormalizedName),
+                        StringComparer.Ordinal);
+                    foreach (var item in localFallback)
+                    {
+                        if (existingNames.Add(item.NormalizedName))
+                        {
+                            subjects.Add(item);
+                        }
+                    }
+                }
+                return Results.Json(new
+                {
+                    subjects = subjects.Select(SerializeSubjectTag),
+                });
+            });
+
+            app.MapPost("/api/prompt/subjects/search", async (HttpRequest request) =>
+            {
+                var form = await request.ReadFormAsync();
+                var name = form["name"].ToString();
+                var query = form["query"].ToString();
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    query = form["searchQuery"].ToString();
+                }
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (!TryResolveSubjectIdentity(form["user"].ToString(), authUser, out var identityKey, out _, out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+                try
+                {
+                    var terms = PromptSubjectSynthesis.ExtractSearchTerms(name, query);
+                    var matches = PromptSubjectSynthesis.SearchAllHistory(
+                        settings,
+                        name,
+                        query,
+                        jobs,
+                        community,
+                        visibility,
+                        identityKey);
+                    return Results.Json(new
+                    {
+                        name = terms[0],
+                        searchTerms = terms,
+                        matchedPromptsCount = matches.Count,
+                        matches = matches.Select(m => new
+                        {
+                            source = m.Source,
+                            recordId = m.RecordId,
+                            createdAtUtc = m.CreatedAtUtc,
+                            prompt = m.Prompt,
+                        }),
+                    });
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/prompt/subjects/synthesize", async (HttpRequest request) =>
+            {
+                var form = await request.ReadFormAsync();
+                var name = form["name"].ToString();
+                var kind = form["kind"].ToString();
+                var query = form["query"].ToString();
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    query = form["searchQuery"].ToString();
+                }
+                var model = form["model"].ToString();
+                var notes = form["notes"].ToString();
+                var save = !string.Equals(form["save"].ToString(), "false", StringComparison.OrdinalIgnoreCase);
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (!TryResolveSubjectIdentity(
+                    form["user"].ToString(),
+                    authUser,
+                    out var identityKey,
+                    out var actorDisplay,
+                    out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+
+                try
+                {
+                    var matches = PromptSubjectSynthesis.SearchAllHistory(
+                        settings,
+                        name,
+                        query,
+                        jobs,
+                        community,
+                        visibility,
+                        identityKey);
+                    var synthesized = await PromptSubjectSynthesis.SynthesizeSubjectAsync(
+                        settings,
+                        name,
+                        kind,
+                        query,
+                        model,
+                        matches,
+                        notes,
+                        ct: request.HttpContext.RequestAborted);
+
+                    UiSubjectTagRecord? saved = null;
+                    if (save)
+                    {
+                        saved = community.UpsertSubjectTag(
+                            identityKey,
+                            actorDisplay,
+                            synthesized.Name,
+                            synthesized.Kind,
+                            query,
+                            synthesized.Model,
+                            synthesized.Description,
+                            synthesized.SourceSummary,
+                            synthesized.MatchedPrompts,
+                            synthesized.RawResponse,
+                            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                        Logger.Log(
+                            $"UI subject tag '{saved.Name}' ({saved.Kind}) synthesized with {saved.Model} from {saved.MatchedPromptsCount} historical prompt(s) for '{actorDisplay}'.");
+                    }
+
+                    return Results.Json(new
+                    {
+                        subject = saved != null ? SerializeSubjectTag(saved) : null,
+                        synthesized = new
+                        {
+                            name = synthesized.Name,
+                            kind = synthesized.Kind,
+                            model = synthesized.Model,
+                            description = synthesized.Description,
+                            sourceSummary = synthesized.SourceSummary,
+                            searchTerms = synthesized.SearchTerms,
+                            matchedPromptsCount = synthesized.MatchedPrompts.Count,
+                            matchedPrompts = synthesized.MatchedPrompts.Select(m => new
+                            {
+                                source = m.Source,
+                                recordId = m.RecordId,
+                                createdAtUtc = m.CreatedAtUtc,
+                                prompt = m.Prompt,
+                            }),
+                        },
+                    });
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"UI subject synthesis failed for '{actorDisplay}': {ex.Message}");
+                    return Results.Json(new { error = ex.Message }, statusCode: 502);
+                }
+            });
+
+            app.MapPost("/api/prompt/subjects", async (HttpRequest request) =>
+            {
+                var form = await request.ReadFormAsync();
+                var name = form["name"].ToString();
+                var kind = form["kind"].ToString();
+                var query = form["query"].ToString();
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    query = form["searchQuery"].ToString();
+                }
+                var model = form["model"].ToString();
+                var description = form["description"].ToString();
+                var summary = form["summary"].ToString();
+                if (string.IsNullOrWhiteSpace(summary))
+                {
+                    summary = form["notes"].ToString();
+                }
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (!TryResolveSubjectIdentity(
+                    form["user"].ToString(),
+                    authUser,
+                    out var identityKey,
+                    out var actorDisplay,
+                    out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+                try
+                {
+                    var existing = community.GetSubjectTag(identityKey, name);
+                    var matchedPrompts = existing?.MatchedPrompts
+                        ?? PromptSubjectSynthesis.SearchAllHistory(
+                            settings,
+                            name,
+                            query,
+                            jobs,
+                            community,
+                            visibility,
+                            identityKey);
+                    var saved = community.UpsertSubjectTag(
+                        identityKey,
+                        actorDisplay,
+                        name,
+                        kind,
+                        query,
+                        string.IsNullOrWhiteSpace(model) ? (existing?.Model ?? "manual") : model,
+                        description,
+                        string.IsNullOrWhiteSpace(summary) ? (existing?.SourceSummary ?? "Saved subject description.") : summary,
+                        matchedPrompts,
+                        existing?.RawResponse ?? "",
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    Logger.Log($"UI subject tag '{saved.Name}' ({saved.Kind}) saved for '{actorDisplay}'.");
+                    return Results.Json(new
+                    {
+                        subject = SerializeSubjectTag(saved),
+                    });
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
+            app.MapPost("/api/prompt/subjects/delete", async (HttpRequest request) =>
+            {
+                var form = await request.ReadFormAsync();
+                var idOrName = form["id"].ToString();
+                if (string.IsNullOrWhiteSpace(idOrName))
+                {
+                    idOrName = form["idOrName"].ToString();
+                }
+                if (string.IsNullOrWhiteSpace(idOrName))
+                {
+                    idOrName = form["name"].ToString();
+                }
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (!TryResolveSubjectIdentity(
+                    form["user"].ToString(),
+                    authUser,
+                    out var identityKey,
+                    out var actorDisplay,
+                    out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+                try
+                {
+                    var deleted = community.DeleteSubjectTag(identityKey, idOrName);
+                    if (!deleted && authUser.Length == 0 && !string.Equals(identityKey, "display:LOCAL", StringComparison.Ordinal))
+                    {
+                        deleted = community.DeleteSubjectTag("display:LOCAL", idOrName);
+                    }
+                    if (!deleted)
+                    {
+                        return Results.NotFound(new { error = "Subject tag not found." });
+                    }
+                    Logger.Log($"UI subject tag '{idOrName}' deleted by '{actorDisplay}'.");
+                    return Results.Json(new { deleted = true, id = idOrName });
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
             });
 
             // Cursor-based poll for ALL job events. Deliberately NOT a

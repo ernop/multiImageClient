@@ -182,6 +182,80 @@ namespace MultiImageClient
                 return;
             }
 
+            if (options.SubjectList || !string.IsNullOrWhiteSpace(options.SubjectSearchName) || !string.IsNullOrWhiteSpace(options.SubjectSynthesizeName))
+            {
+                var community = new UiCommunityStore(settings);
+                var visibility = new UiVisibilityStore(settings);
+                var userDisplay = string.IsNullOrWhiteSpace(options.SubjectUser) ? "local" : options.SubjectUser.Trim();
+                var identityKey = "display:" + userDisplay.ToUpperInvariant();
+
+                if (options.SubjectList)
+                {
+                    var tags = community.ListSubjectTags(identityKey);
+                    Console.WriteLine($"Stored subject tags for {identityKey}: {tags.Count}");
+                    foreach (var tag in tags)
+                    {
+                        Console.WriteLine($"- {tag.Name} [{tag.Kind}] (model={tag.Model}, matches={tag.MatchedPromptsCount}):");
+                        Console.WriteLine($"  {tag.Description}");
+                    }
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(options.SubjectSearchName))
+                {
+                    var matches = PromptSubjectSynthesis.SearchAllHistory(
+                        settings,
+                        options.SubjectSearchName,
+                        options.SubjectQuery,
+                        null,
+                        community,
+                        visibility,
+                        identityKey);
+                    Console.WriteLine($"Matched historical prompts for '{options.SubjectSearchName}': {matches.Count}");
+                    foreach (var match in matches)
+                    {
+                        Console.WriteLine($"[{match.Source} | {match.RecordId} | {match.CreatedAtUtc}] {match.Prompt}");
+                    }
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(options.SubjectSynthesizeName))
+                {
+                    var matches = PromptSubjectSynthesis.SearchAllHistory(
+                        settings,
+                        options.SubjectSynthesizeName,
+                        options.SubjectQuery,
+                        null,
+                        community,
+                        visibility,
+                        identityKey);
+                    var synthesized = await PromptSubjectSynthesis.SynthesizeSubjectAsync(
+                        settings,
+                        options.SubjectSynthesizeName,
+                        options.SubjectKind,
+                        options.SubjectQuery,
+                        options.SubjectModel,
+                        matches,
+                        options.SubjectNotes,
+                        ct: CancellationToken.None);
+                    var saved = community.UpsertSubjectTag(
+                        identityKey,
+                        userDisplay,
+                        synthesized.Name,
+                        synthesized.Kind,
+                        options.SubjectQuery,
+                        synthesized.Model,
+                        synthesized.Description,
+                        synthesized.SourceSummary,
+                        synthesized.MatchedPrompts,
+                        synthesized.RawResponse,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    Console.WriteLine($"Synthesized and stored '{saved.Name}' [{saved.Kind}] using {saved.Model} ({saved.MatchedPromptsCount} prompt matches):");
+                    Console.WriteLine(saved.Description);
+                    return;
+                }
+            }
+
             var concurrency = 1;
             var stats = new MultiClientRunStats();
 
