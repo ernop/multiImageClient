@@ -96,13 +96,6 @@
    majority caps style — khaki. */
 .mcphee-mark-caps { background: #e3e8b8; }
 
-/* Subject tag: a recognized character, location, or object from stored
-   history synthesis — warm amber with an inset bottom accent line. */
-.mcphee-mark-subject {
-  background: #fde68a;
-  box-shadow: inset 0 -2px 0 #b45309;
-}
-
 /* Hover highlight: while the pointer is on a panel row, every occurrence of
    that row's issue gets this solid saturated background — a plain full-word
    color change. NO animation and NO transition, ever: the class is added on
@@ -286,22 +279,6 @@
 .mcphee-panel-word-obscure { background: #d5efd5; padding: 0 4px; border-radius: 3px; }
 .mcphee-panel-word-culture { background: #c9ecea; padding: 0 4px; border-radius: 3px; }
 .mcphee-panel-word-caps { background: #e3e8b8; padding: 0 4px; border-radius: 3px; white-space: pre; }
-.mcphee-panel-word-subject {
-  background: #fde68a;
-  color: #000;
-  padding: 0 4px;
-  border-radius: 3px;
-  box-shadow: inset 0 -2px 0 #b45309;
-}
-.mcphee-panel-subject-kind {
-  font-size: 11px;
-  font-weight: 700;
-  color: #000;
-  padding: 0 4px;
-  border: 1px solid #b45309;
-  border-radius: 3px;
-  background: #fffbeb;
-}
 
 /* ---------- caps block: style summary, per-style tools, diff review ----------
    Every line is a single row; counts and percentages carry the weight,

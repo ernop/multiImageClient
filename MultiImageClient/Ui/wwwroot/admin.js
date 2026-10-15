@@ -63,7 +63,7 @@ async function load() {
     const features = node("div"); features.className = "features";
     const goals = field(features, "Goal loops", "goals", env.goalLoops, "checkbox");
     const video = field(features, "Video generation", "video", env.video, "checkbox");
-    const rewrite = field(features, "Prompt rewriting", "rewrite", env.promptRewrite, "checkbox"); form.append(features);
+    const rewrite = field(features, "Prompt rewriting and character writing", "rewrite", env.promptRewrite, "checkbox"); form.append(features);
     const night = field(features, "Night filter", "night", env.nightFilter ?? true, "checkbox");
     const sharing = field(features, "Send to Vibecoders", "sharing", env.vibecodersSharing ?? env.original, "checkbox");
     const accountRequests = env.id === "vibecoders-ai-generation"

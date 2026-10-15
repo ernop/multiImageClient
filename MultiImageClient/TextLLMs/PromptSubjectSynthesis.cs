@@ -1,6 +1,7 @@
 #nullable enable
 using Microsoft.Data.Sqlite;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -15,7 +16,7 @@ namespace MultiImageClient
     public sealed class PromptSubjectSynthesisResult
     {
         public string Name { get; init; } = "";
-        public string Kind { get; init; } = "character";
+        public string Kind { get; init; } = "";
         public string Description { get; init; } = "";
         public string SourceSummary { get; init; } = "";
         public string Model { get; init; } = "";
@@ -24,113 +25,126 @@ namespace MultiImageClient
         public List<UiSubjectTagMatchedPrompt> MatchedPrompts { get; init; } = new();
     }
 
+    // Whose prompts a character search may read. A shared site searches only
+    // the signed-in account's own jobs and Claude edits; the generation
+    // archive and server prompt files carry no account identity, so only the
+    // auth-off local instance (one owner) reads them.
+    public sealed class PromptSubjectSearchScope
+    {
+        public required string CreatorLogin { get; init; }
+        public required string ClaudeExchangeIdentityKey { get; init; }
+        public required bool IncludeLocalSources { get; init; }
+
+        public static PromptSubjectSearchScope ForAccount(string login) => new()
+        {
+            CreatorLogin = login,
+            ClaudeExchangeIdentityKey = "login:" + login,
+            IncludeLocalSources = false,
+        };
+
+        public static readonly PromptSubjectSearchScope LocalOwner = new()
+        {
+            CreatorLogin = "",
+            ClaudeExchangeIdentityKey = "",
+            IncludeLocalSources = true,
+        };
+    }
+
     public static class PromptSubjectSynthesis
     {
-        public const string DefaultModel = "claude-opus-5-5";
+        public const string DefaultModelKey = ManagerCatalog.KeyClaudeOpus55;
         public const int MaxMatchedPrompts = 40;
         public const int MaxPromptCorpusChars = 48000;
         public const int MaxSinglePromptChars = 3000;
-        public const int MaxNotesChars = 4000;
+        public const int MaxNotesChars = 2000;
+
+        private static readonly ConcurrentDictionary<string, byte> RunningSyntheses = new(StringComparer.Ordinal);
 
         public const string SynthesisSystemPrompt =
             """
-            You synthesize a reusable visual description of a recurring person, character, location, or object from the user's historical image-generation prompts and personal notes.
+            You write a reusable visual description of one recurring character, place, or thing, using the user's own past image-generation prompts and notes as evidence.
 
-            Return ONLY a single valid JSON object with these exact keys (no markdown fences, no commentary outside the JSON):
+            Return ONLY one JSON object with exactly these keys (no markdown fences, no text outside the JSON):
             {
               "kind": "character" | "location" | "object" | "general",
-              "description": "<complete, self-contained visual description ready to be inserted directly into an image prompt>",
-              "summary": "<concise 1-2 sentence summary of the historical prompt evidence and traits consolidated>"
+              "description": "<the reusable visual description>",
+              "summary": "<1-2 sentences: what evidence you used, and any conflicts between prompts>"
             }
 
-            Rules for "description":
-            1. Write a concrete, self-contained visual description that an image generator can render directly when the subject's name is expanded in a future prompt.
-            2. Begin with the subject's name and core identity (for example, "Jing (an East Asian woman in her early 30s with shoulder-length straight black hair, warm brown eyes, and a calm, observant expression...)").
-            3. Consolidate consistent physical traits, apparent age, hair, eyes, facial features, stature, signature clothing or accessories (for characters), or architectural layout, materials, surroundings, geography, and Era/atmosphere (for locations) attested across the historical prompts.
-            4. Do not invent unrelated backstory that is absent from the provided prompts and notes. When different prompts show the subject in varied outfits or activities, distinguish enduring traits from scene-specific details.
-            5. Follow the Universal Image Prompt Defaults: favor clear, bright, full normal daytime clarity, readable visual details, and natural balanced color unless the subject itself is explicitly defined otherwise. Avoid murky, dim, shadow-choked, or gloomy filler.
+            The application inserts the description directly after the name, in parentheses: "<Name> (<description>)". So the description must:
+            1. Be a noun phrase that reads naturally inside those parentheses. Do not start with the name and do not repeat it. Example for a character: "a woman in her early 30s with shoulder-length straight black hair, warm brown eyes, round silver glasses, and a navy linen jacket".
+            2. Describe only enduring visual traits an image model can draw: apparent age, build, face, hair, eyes, skin, signature clothing or accessories for characters and animals; layout, architecture, materials, surroundings, and landmarks for places; shape, material, color, size, and markings for things.
+            3. Leave out scene-specific actions, poses, camera directions, art styles, and one-off outfits. When prompts disagree, prefer the traits that recur most, and mention the conflict in "summary".
+            4. Never invent traits that the prompts and notes do not support.
+            5. Stay between 25 and 90 words, in plain concrete language.
+            6. Favor clear, bright, readable visual details and natural balanced color. Do not add dim, murky, gloomy, or dark atmosphere unless the evidence defines the subject that way.
             """;
 
         public static object BuildCatalogPayload(Settings settings)
         {
-            var models = ManagerCatalog.All.Select(entry =>
-            {
-                var problem = ManagerCatalog.DescribeAvailabilityProblem(entry, settings);
-                return new
-                {
-                    id = entry.Model,
-                    key = entry.Key,
-                    label = entry.Label,
-                    provider = entry.Provider,
-                    available = problem == null,
-                    availabilityProblem = problem,
-                };
-            }).ToList();
-
             return new
             {
-                defaultModel = DefaultModel,
+                defaultModel = DefaultModelKey,
                 maxNameChars = UiCommunityStore.MaxSubjectTagNameChars,
                 maxQueryChars = UiCommunityStore.MaxSubjectTagQueryChars,
                 maxDescriptionChars = UiCommunityStore.MaxSubjectTagDescriptionChars,
                 maxNotesChars = MaxNotesChars,
-                validKinds = UiCommunityStore.ValidSubjectKinds,
-                models,
+                models = ManagerCatalog.All.Select(entry => new
+                {
+                    key = entry.Key,
+                    label = entry.Label,
+                    availabilityProblem = ManagerCatalog.DescribeAvailabilityProblem(entry, settings),
+                }).ToList(),
             };
         }
 
-        public static ManagerDefinition ResolveModelDefinition(string? requestedModel)
+        public static ManagerDefinition ResolveModelDefinition(string? modelKey)
         {
-            var token = string.IsNullOrWhiteSpace(requestedModel)
-                ? DefaultModel
-                : requestedModel.Trim();
+            var key = (modelKey ?? "").Trim();
+            return ManagerCatalog.All.FirstOrDefault(m => string.Equals(m.Key, key, StringComparison.Ordinal))
+                ?? throw new InvalidDataException(
+                    $"Unknown writer model '{modelKey}'. Known models: {string.Join(", ", ManagerCatalog.All.Select(m => m.Key))}");
+        }
 
-            var match = ManagerCatalog.All.FirstOrDefault(m =>
-                string.Equals(m.Model, token, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(m.Key, token, StringComparison.OrdinalIgnoreCase));
+        // One synthesis at a time per account, so extra tabs or repeated
+        // clicks cannot multiply provider calls. Dispose the result to release.
+        public static IDisposable? TryBeginSynthesis(string identityKey)
+        {
+            return RunningSyntheses.TryAdd(identityKey, 0) ? new SynthesisLease(identityKey) : null;
+        }
 
-            if (match == null)
+        private sealed class SynthesisLease : IDisposable
+        {
+            private string? _identityKey;
+            public SynthesisLease(string identityKey) => _identityKey = identityKey;
+            public void Dispose()
             {
-                throw new InvalidDataException(
-                    $"Unsupported synthesis model '{requestedModel}'. Supported models: "
-                    + string.Join(", ", ManagerCatalog.All.Select(m => m.Model)));
+                var key = Interlocked.Exchange(ref _identityKey, null);
+                if (key != null)
+                {
+                    RunningSyntheses.TryRemove(key, out _);
+                }
             }
-            return match;
         }
 
         public static List<string> ExtractSearchTerms(string name, string? searchQuery)
         {
             var (displayName, _) = UiCommunityStore.NormalizeSubjectTagName(name);
             var terms = new List<string> { displayName };
-
-            if (!string.IsNullOrWhiteSpace(searchQuery))
+            searchQuery ??= "";
+            if (searchQuery.Length > UiCommunityStore.MaxSubjectTagQueryChars)
             {
-                if (searchQuery.Length > UiCommunityStore.MaxSubjectTagQueryChars)
+                throw new InvalidDataException(
+                    $"Search terms exceed the {UiCommunityStore.MaxSubjectTagQueryChars}-character limit.");
+            }
+            foreach (var rawPart in searchQuery.Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var cleaned = Regex.Replace(rawPart.Trim(), @"\s+", " ");
+                if (cleaned.Length >= 2 && !terms.Contains(cleaned, StringComparer.OrdinalIgnoreCase))
                 {
-                    throw new InvalidDataException(
-                        $"Search query exceeds the {UiCommunityStore.MaxSubjectTagQueryChars}-character limit.");
-                }
-                foreach (var rawPart in searchQuery.Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var cleaned = Regex.Replace(rawPart.Trim(), @"\s+", " ");
-                    if (cleaned.Length >= 2 && !terms.Contains(cleaned, StringComparer.OrdinalIgnoreCase))
-                    {
-                        terms.Add(cleaned);
-                    }
-                }
-                if (terms.Count == 1)
-                {
-                    foreach (var word in Regex.Split(searchQuery.Trim(), @"\s+"))
-                    {
-                        var cleaned = word.Trim(',', ';', '.', '"', '\'', '(', ')', '[', ']');
-                        if (cleaned.Length >= 2 && !terms.Contains(cleaned, StringComparer.OrdinalIgnoreCase))
-                        {
-                            terms.Add(cleaned);
-                        }
-                    }
+                    terms.Add(cleaned);
                 }
             }
-
             return terms;
         }
 
@@ -138,86 +152,79 @@ namespace MultiImageClient
             Settings settings,
             string name,
             string? searchQuery,
-            UiJobRegistry? jobs = null,
-            UiCommunityStore? community = null,
-            UiVisibilityStore? visibility = null,
-            string? identityKey = null,
-            int limit = MaxMatchedPrompts)
+            UiJobRegistry? jobs,
+            UiCommunityStore community,
+            UiVisibilityStore? visibility,
+            PromptSubjectSearchScope scope)
         {
             var terms = ExtractSearchTerms(name, searchQuery);
-            limit = Math.Clamp(limit, 1, 100);
+            var perSourceLimit = MaxMatchedPrompts * 2;
             var rawCandidates = new List<UiSubjectTagMatchedPrompt>();
-
-            rawCandidates.AddRange(SearchGenerationArchive(settings, terms, visibility, limit * 2));
 
             if (jobs != null)
             {
-                rawCandidates.AddRange(jobs.SearchPrompts(terms, visibility, limit * 2));
+                rawCandidates.AddRange(jobs.SearchPrompts(terms, visibility, scope.CreatorLogin, perSourceLimit));
             }
             else
             {
-                rawCandidates.AddRange(SearchUiHistoryOnDisk(settings, terms, visibility, limit * 2));
+                if (!scope.IncludeLocalSources)
+                {
+                    throw new InvalidOperationException("A shared-site character search requires the live job registry.");
+                }
+                rawCandidates.AddRange(SearchUiHistoryOnDisk(settings, terms, visibility, perSourceLimit));
             }
-
-            if (community != null)
+            rawCandidates.AddRange(community.SearchClaudePromptExchanges(scope.ClaudeExchangeIdentityKey, terms, perSourceLimit));
+            if (scope.IncludeLocalSources)
             {
-                rawCandidates.AddRange(community.SearchClaudePromptExchanges(identityKey ?? "", terms, limit));
+                rawCandidates.AddRange(SearchGenerationArchive(settings, terms, visibility, perSourceLimit));
+                rawCandidates.AddRange(SearchPromptFiles(settings, terms, perSourceLimit));
             }
 
-            rawCandidates.AddRange(SearchPromptFiles(settings, terms, limit));
-
-            var primaryName = terms[0];
-            var wholeWordPattern = new Regex(
-                $@"(?<![\p{{L}}\p{{N}}_]){Regex.Escape(primaryName)}(?![\p{{L}}\p{{N}}_])",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            // A name found only inside a longer word ("Jing" in "Beijing")
+            // is not evidence about the subject.
+            var wholeWordPatterns = terms.Select(term => new Regex(
+                $@"(?<![\p{{L}}\p{{N}}_]){Regex.Escape(term)}(?![\p{{L}}\p{{N}}_])",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)).ToList();
 
             var seenPrompts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var deduped = new List<(UiSubjectTagMatchedPrompt Item, int Score)>();
-
+            var scored = new List<(UiSubjectTagMatchedPrompt Item, int Score)>();
             foreach (var candidate in rawCandidates)
             {
                 var trimmed = StripAutomaticSuffixes(candidate.Prompt);
-                if (string.IsNullOrWhiteSpace(trimmed))
+                if (trimmed.Length == 0)
                 {
                     continue;
                 }
-                var fingerprint = Regex.Replace(trimmed, @"\s+", " ").Trim();
+                var fingerprint = Regex.Replace(trimmed, @"\s+", " ");
                 if (!seenPrompts.Add(fingerprint))
                 {
                     continue;
                 }
-                var score = 0;
-                if (wholeWordPattern.IsMatch(trimmed))
+                var score = wholeWordPatterns[0].IsMatch(trimmed) ? 100 : 0;
+                for (var i = 1; i < wholeWordPatterns.Count; i++)
                 {
-                    score += 100;
-                }
-                else if (trimmed.IndexOf(primaryName, StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    score += 50;
-                }
-                for (var i = 1; i < terms.Count; i++)
-                {
-                    if (trimmed.IndexOf(terms[i], StringComparison.OrdinalIgnoreCase) >= 0)
+                    if (wholeWordPatterns[i].IsMatch(trimmed))
                     {
                         score += 15;
                     }
                 }
-                var clipped = trimmed.Length > MaxSinglePromptChars
-                    ? trimmed.Substring(0, MaxSinglePromptChars)
-                    : trimmed;
-                deduped.Add((new UiSubjectTagMatchedPrompt
+                if (score == 0)
+                {
+                    continue;
+                }
+                scored.Add((new UiSubjectTagMatchedPrompt
                 {
                     Source = candidate.Source,
                     RecordId = candidate.RecordId,
                     CreatedAtUtc = candidate.CreatedAtUtc,
-                    Prompt = clipped,
+                    Prompt = trimmed.Length > MaxSinglePromptChars ? trimmed.Substring(0, MaxSinglePromptChars) : trimmed,
                 }, score));
             }
 
-            return deduped
+            return scored
                 .OrderByDescending(entry => entry.Score)
                 .ThenByDescending(entry => entry.Item.CreatedAtUtc, StringComparer.Ordinal)
-                .Take(limit)
+                .Take(MaxMatchedPrompts)
                 .Select(entry => entry.Item)
                 .ToList();
         }
@@ -225,38 +232,31 @@ namespace MultiImageClient
         public static async Task<PromptSubjectSynthesisResult> SynthesizeSubjectAsync(
             Settings settings,
             string name,
-            string? requestedKind,
+            string kind,
             string? searchQuery,
-            string? requestedModel,
+            string modelKey,
             IReadOnlyList<UiSubjectTagMatchedPrompt> matchedPrompts,
-            string? customNotes = null,
+            string? notes,
             IManagerChatClient? clientOverride = null,
             CancellationToken ct = default)
         {
             var (displayName, _) = UiCommunityStore.NormalizeSubjectTagName(name);
-            var normalizedKind = string.IsNullOrWhiteSpace(requestedKind)
-                ? ""
-                : UiCommunityStore.NormalizeSubjectKind(requestedKind);
+            var normalizedKind = UiCommunityStore.NormalizeSubjectKind(kind);
             var terms = ExtractSearchTerms(displayName, searchQuery);
-            var notes = (customNotes ?? "").Trim();
+            notes = (notes ?? "").Trim();
             if (notes.Length > MaxNotesChars)
             {
                 throw new InvalidDataException($"Notes exceed the {MaxNotesChars}-character limit.");
             }
-            var prompts = (matchedPrompts ?? Array.Empty<UiSubjectTagMatchedPrompt>())
-                .Where(p => !string.IsNullOrWhiteSpace(p.Prompt))
-                .Take(MaxMatchedPrompts)
-                .ToList();
-
-            if (prompts.Count == 0 && notes.Length == 0)
+            if (matchedPrompts.Count == 0 && notes.Length == 0)
             {
                 throw new InvalidDataException(
-                    $"No historical prompts matched '{displayName}'"
-                    + (terms.Count > 1 ? $" (or search terms: {string.Join(", ", terms.Skip(1))})" : "")
-                    + ". Add search terms or provide descriptive notes before synthesizing.");
+                    $"None of your past prompts mention {displayName}"
+                    + (terms.Count > 1 ? $" or {string.Join(", ", terms.Skip(1))}" : "")
+                    + ". Add other names it went by, write a few notes, or write the description yourself.");
             }
 
-            var definition = ResolveModelDefinition(requestedModel);
+            var definition = ResolveModelDefinition(modelKey);
             IManagerChatClient client;
             if (clientOverride != null)
             {
@@ -272,49 +272,39 @@ namespace MultiImageClient
                 client = ManagerCatalog.Build(definition, settings);
             }
 
-            var userMessage = BuildSynthesisUserMessage(displayName, normalizedKind, terms, prompts, notes);
+            var userMessage = BuildSynthesisUserMessage(displayName, normalizedKind, terms, matchedPrompts, notes);
             var reply = await client.CompleteAsync(
                 SynthesisSystemPrompt,
-                new[]
-                {
-                    new ManagerChatMessage
-                    {
-                        Role = "user",
-                        Text = userMessage,
-                    },
-                },
+                new[] { new ManagerChatMessage { Role = "user", Text = userMessage } },
                 ct);
-
             if (!string.IsNullOrWhiteSpace(reply.ProviderStop))
             {
-                throw new InvalidOperationException(
-                    $"Subject synthesis stopped early ({reply.ProviderStop}).");
+                throw new InvalidOperationException($"{definition.Label} stopped early ({reply.ProviderStop}).");
             }
 
-            var parsed = ParseSynthesisReply(reply.Text, normalizedKind);
+            var parsed = ParseSynthesisReply(reply.Text);
             return new PromptSubjectSynthesisResult
             {
                 Name = displayName,
-                Kind = parsed.Kind,
+                // The user's chosen kind is the record's kind; the reply's kind
+                // is still validated so a malformed reply fails.
+                Kind = normalizedKind,
                 Description = parsed.Description,
                 SourceSummary = parsed.Summary,
-                Model = definition.Model,
+                Model = definition.Key,
                 RawResponse = reply.RawResponse,
                 SearchTerms = terms,
-                MatchedPrompts = prompts,
+                MatchedPrompts = matchedPrompts.ToList(),
             };
         }
 
-        public static (string Kind, string Description, string Summary) ParseSynthesisReply(
-            string? rawText,
-            string? fallbackKind = null)
+        public static (string Kind, string Description, string Summary) ParseSynthesisReply(string? rawText)
         {
             var stripped = UiGoalLoopProtocol.StripMarkdownFence(rawText ?? "").Trim();
             if (stripped.Length == 0)
             {
-                throw new InvalidDataException("Synthesis model returned an empty reply.");
+                throw new InvalidDataException("The writer model returned an empty reply.");
             }
-
             JsonDocument doc;
             try
             {
@@ -322,116 +312,101 @@ namespace MultiImageClient
             }
             catch (JsonException ex)
             {
-                throw new InvalidDataException(
-                    $"Synthesis model did not return valid JSON: {ex.Message}", ex);
+                throw new InvalidDataException($"The writer model did not return valid JSON: {ex.Message}", ex);
             }
-
             using (doc)
             {
-                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
                 {
-                    throw new InvalidDataException("Synthesis reply must be a JSON object.");
+                    throw new InvalidDataException("The writer model's reply must be a JSON object.");
                 }
-
-                string? rawDescription = null;
-                if (doc.RootElement.TryGetProperty("description", out var descEl)
-                    && descEl.ValueKind == JsonValueKind.String)
+                var known = new HashSet<string>(StringComparer.Ordinal) { "kind", "description", "summary" };
+                foreach (var property in root.EnumerateObject())
                 {
-                    rawDescription = descEl.GetString();
+                    if (!known.Contains(property.Name))
+                    {
+                        throw new InvalidDataException($"The writer model's reply has an unexpected field '{property.Name}'.");
+                    }
                 }
-                var description = (rawDescription ?? "").Trim();
-                if (description.Length == 0)
-                {
-                    throw new InvalidDataException("Synthesis reply is missing a non-empty 'description' string.");
-                }
+                var kind = UiCommunityStore.NormalizeSubjectKind(RequireString(root, "kind"));
+                var description = RequireString(root, "description");
                 if (description.Length > UiCommunityStore.MaxSubjectTagDescriptionChars)
                 {
                     throw new InvalidDataException(
-                        $"Synthesized description exceeds {UiCommunityStore.MaxSubjectTagDescriptionChars} characters.");
+                        $"The written description exceeds {UiCommunityStore.MaxSubjectTagDescriptionChars} characters.");
                 }
-
-                string rawKind = "";
-                if (doc.RootElement.TryGetProperty("kind", out var kindEl)
-                    && kindEl.ValueKind == JsonValueKind.String)
+                var summary = RequireString(root, "summary");
+                if (summary.Length > UiCommunityStore.MaxSubjectTagSummaryChars)
                 {
-                    rawKind = (kindEl.GetString() ?? "").Trim();
+                    throw new InvalidDataException(
+                        $"The written summary exceeds {UiCommunityStore.MaxSubjectTagSummaryChars} characters.");
                 }
-                var kind = !string.IsNullOrWhiteSpace(fallbackKind)
-                    ? UiCommunityStore.NormalizeSubjectKind(fallbackKind)
-                    : UiCommunityStore.NormalizeSubjectKind(rawKind.Length > 0 ? rawKind : "character");
-
-                string summary = "";
-                if (doc.RootElement.TryGetProperty("summary", out var sumEl)
-                    && sumEl.ValueKind == JsonValueKind.String)
-                {
-                    summary = (sumEl.GetString() ?? "").Trim();
-                }
-
                 return (kind, description, summary);
             }
         }
 
+        private static string RequireString(JsonElement root, string field)
+        {
+            if (!root.TryGetProperty(field, out var element) || element.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidDataException($"The writer model's reply is missing the string field '{field}'.");
+            }
+            var value = (element.GetString() ?? "").Trim();
+            if (value.Length == 0)
+            {
+                throw new InvalidDataException($"The writer model's reply has an empty '{field}'.");
+            }
+            return value;
+        }
+
         public static string BuildSynthesisUserMessage(
             string name,
-            string requestedKind,
+            string kind,
             IReadOnlyList<string> searchTerms,
             IReadOnlyList<UiSubjectTagMatchedPrompt> matchedPrompts,
             string notes)
         {
             var sb = new StringBuilder();
-            sb.AppendLine($"Subject name to define: {name}");
-            if (!string.IsNullOrWhiteSpace(requestedKind))
+            sb.AppendLine($"Name: {name}");
+            sb.AppendLine($"Kind: {kind}");
+            if (searchTerms.Count > 1)
             {
-                sb.AppendLine($"Requested subject kind: {requestedKind}");
+                sb.AppendLine($"Other names it went by: {string.Join(", ", searchTerms.Skip(1))}");
             }
-            sb.AppendLine($"Database search terms used: {string.Join(", ", searchTerms)}");
-            if (!string.IsNullOrWhiteSpace(notes))
+            if (notes.Length > 0)
             {
                 sb.AppendLine();
-                sb.AppendLine("Additional user notes / context:");
+                sb.AppendLine("The user's notes (treat as reliable evidence):");
                 sb.AppendLine(notes);
             }
             sb.AppendLine();
-            sb.AppendLine($"Historical prompts found ({matchedPrompts.Count}):");
+            sb.AppendLine($"Past prompts that mention it ({matchedPrompts.Count}):");
 
             var budget = MaxPromptCorpusChars;
             for (var i = 0; i < matchedPrompts.Count; i++)
             {
-                var item = matchedPrompts[i];
-                var block = $"\n--- [{i + 1}] source={item.Source} id={item.RecordId} date={item.CreatedAtUtc} ---\n{item.Prompt}\n";
+                var block = $"\n--- [{i + 1}] {matchedPrompts[i].CreatedAtUtc} ---\n{matchedPrompts[i].Prompt}\n";
                 if (block.Length > budget && i > 0)
                 {
                     break;
                 }
                 sb.Append(block);
                 budget -= block.Length;
-                if (budget <= 0)
-                {
-                    break;
-                }
             }
-
             return sb.ToString();
         }
 
         private static string StripAutomaticSuffixes(string prompt)
         {
-            if (string.IsNullOrWhiteSpace(prompt))
+            var text = (prompt ?? "").Trim();
+            foreach (var marker in new[] { "\n\nComposition sketch legend:", "\n\nLayout template regions:" })
             {
-                return "";
-            }
-            var text = prompt.Trim();
-            var sketchMarker = "\n\nComposition sketch legend:";
-            var sketchIdx = text.IndexOf(sketchMarker, StringComparison.Ordinal);
-            if (sketchIdx > 0)
-            {
-                text = text.Substring(0, sketchIdx).Trim();
-            }
-            var layoutMarker = "\n\nLayout template regions:";
-            var layoutIdx = text.IndexOf(layoutMarker, StringComparison.Ordinal);
-            if (layoutIdx > 0)
-            {
-                text = text.Substring(0, layoutIdx).Trim();
+                var index = text.IndexOf(marker, StringComparison.Ordinal);
+                if (index > 0)
+                {
+                    text = text.Substring(0, index).Trim();
+                }
             }
             return text;
         }
@@ -447,82 +422,61 @@ namespace MultiImageClient
                 ? GenerationArchive.DatabasePath
                 : !string.IsNullOrWhiteSpace(settings.GenerationArchiveDbPath)
                     ? settings.GenerationArchiveDbPath
-                    : !string.IsNullOrWhiteSpace(settings.ImageDownloadBaseFolder)
-                        ? Path.Combine(settings.ImageDownloadBaseFolder, "generation-history.sqlite3")
-                        : "";
-
-            if (string.IsNullOrWhiteSpace(dbPath) || !File.Exists(dbPath))
+                    : Path.Combine(settings.ImageDownloadBaseFolder, "generation-history.sqlite3");
+            if (!settings.EnableGenerationArchive || !File.Exists(dbPath))
             {
                 return results;
             }
 
-            try
+            GenerationArchive.EnsureSqliteAvailable();
+            var cs = new SqliteConnectionStringBuilder
             {
-                GenerationArchive.EnsureSqliteAvailable();
-                var cs = new SqliteConnectionStringBuilder
+                DataSource = Path.GetFullPath(dbPath),
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false,
+                DefaultTimeout = 10,
+            }.ToString();
+            using var connection = new SqliteConnection(cs);
+            connection.Open();
+            using var cmd = connection.CreateCommand();
+            var clauses = new List<string>();
+            for (var i = 0; i < terms.Count; i++)
+            {
+                var p = $"$term{i}";
+                clauses.Add($"(INSTR(UPPER(COALESCE(prompt, '')), {p}) > 0 OR INSTR(UPPER(COALESCE(final_prompt, '')), {p}) > 0)");
+                cmd.Parameters.AddWithValue(p, terms[i].ToUpperInvariant());
+            }
+            cmd.CommandText =
+                $"""
+                SELECT id, COALESCE(external_job_id, ''), COALESCE(started_at_utc, ''),
+                       COALESCE(prompt, ''), COALESCE(final_prompt, '')
+                FROM generation_attempts
+                WHERE {string.Join(" OR ", clauses)}
+                ORDER BY id DESC
+                LIMIT $limit;
+                """;
+            cmd.Parameters.AddWithValue("$limit", limit);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var externalJobId = reader.GetString(1);
+                if (externalJobId.Length > 0 && visibility != null && visibility.IsPromptHidden(externalJobId))
                 {
-                    DataSource = Path.GetFullPath(dbPath),
-                    Mode = SqliteOpenMode.ReadOnly,
-                    Pooling = false,
-                    DefaultTimeout = 10,
-                }.ToString();
-
-                using var connection = new SqliteConnection(cs);
-                connection.Open();
-
-                using (var cmd = connection.CreateCommand())
+                    continue;
+                }
+                var prompt = reader.GetString(3);
+                var chosen = prompt.Length > 0 ? prompt : reader.GetString(4);
+                if (chosen.Length > 0)
                 {
-                    var clauses = new List<string>();
-                    for (var i = 0; i < terms.Count; i++)
+                    results.Add(new UiSubjectTagMatchedPrompt
                     {
-                        var p = $"$term{i}";
-                        clauses.Add($"(INSTR(UPPER(COALESCE(prompt, '')), {p}) > 0 OR INSTR(UPPER(COALESCE(final_prompt, '')), {p}) > 0)");
-                        cmd.Parameters.AddWithValue(p, terms[i].ToUpperInvariant());
-                    }
-                    cmd.CommandText =
-                        $"""
-                        SELECT id, COALESCE(external_job_id, ''), COALESCE(started_at_utc, ''),
-                               COALESCE(prompt, ''), COALESCE(final_prompt, '')
-                        FROM generation_attempts
-                        WHERE {string.Join(" OR ", clauses)}
-                        ORDER BY id DESC
-                        LIMIT $limit;
-                        """;
-                    cmd.Parameters.AddWithValue("$limit", limit);
-
-                    using var reader = cmd.ExecuteReader();
-                    while (reader.Read())
-                    {
-                        var id = reader.GetInt64(0);
-                        var externalJobId = reader.GetString(1);
-                        if (!string.IsNullOrWhiteSpace(externalJobId)
-                            && visibility != null
-                            && visibility.IsPromptHidden(externalJobId))
-                        {
-                            continue;
-                        }
-                        var startedAt = reader.GetString(2);
-                        var prompt = reader.GetString(3);
-                        var finalPrompt = reader.GetString(4);
-                        var chosen = !string.IsNullOrWhiteSpace(prompt) ? prompt : finalPrompt;
-                        if (!string.IsNullOrWhiteSpace(chosen))
-                        {
-                            results.Add(new UiSubjectTagMatchedPrompt
-                            {
-                                Source = "generation-archive",
-                                RecordId = externalJobId.Length > 0 ? externalJobId : $"attempt-{id}",
-                                CreatedAtUtc = startedAt,
-                                Prompt = chosen,
-                            });
-                        }
-                    }
+                        Source = "generation-archive",
+                        RecordId = externalJobId.Length > 0 ? externalJobId : $"attempt-{reader.GetInt64(0)}",
+                        CreatedAtUtc = reader.GetString(2),
+                        Prompt = chosen,
+                    });
                 }
             }
-            catch (Exception ex)
-            {
-                Logger.Log($"Subject search: could not query generation archive {dbPath}: {ex.Message}");
-            }
-
             return results;
         }
 
@@ -533,19 +487,12 @@ namespace MultiImageClient
             int limit)
         {
             var results = new List<UiSubjectTagMatchedPrompt>();
-            if (string.IsNullOrWhiteSpace(settings.ImageDownloadBaseFolder))
-            {
-                return results;
-            }
             var root = Path.Combine(settings.ImageDownloadBaseFolder, "UiHistory");
             if (!Directory.Exists(root))
             {
                 return results;
             }
-            var entries = UiJobStorage.ScanIndex(root)
-                .OrderByDescending(e => e.CreatedAt)
-                .ToList();
-            foreach (var entry in entries)
+            foreach (var entry in UiJobStorage.ScanIndex(root).OrderByDescending(e => e.CreatedAt))
             {
                 if (results.Count >= limit)
                 {
@@ -555,12 +502,9 @@ namespace MultiImageClient
                 {
                     continue;
                 }
-                var prompt = UiJobStorage.TryReadJobPrompt(root, entry.FolderName);
-                if (string.IsNullOrWhiteSpace(prompt))
-                {
-                    continue;
-                }
-                if (!terms.Any(t => prompt.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0))
+                var prompt = UiJobStorage.ReadJobPromptIfPresent(root, entry.FolderName);
+                if (string.IsNullOrWhiteSpace(prompt)
+                    || !terms.Any(t => prompt.Contains(t, StringComparison.OrdinalIgnoreCase)))
                 {
                     continue;
                 }
@@ -590,45 +534,30 @@ namespace MultiImageClient
             {
                 files.Add(settings.TypedPromptsAppendFile);
             }
-
             foreach (var rawPath in files.Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                if (results.Count >= limit)
+                var expanded = Settings.ExpandPath(rawPath);
+                if (!File.Exists(expanded))
                 {
-                    break;
+                    continue;
                 }
-                try
+                var fileName = Path.GetFileName(expanded);
+                var lines = File.ReadAllLines(expanded);
+                for (var i = lines.Length - 1; i >= 0 && results.Count < limit; i--)
                 {
-                    var expanded = Settings.ExpandPath(rawPath);
-                    if (!File.Exists(expanded))
+                    var line = lines[i].Trim();
+                    if (line.Length == 0 || line.StartsWith('#')
+                        || !terms.Any(t => line.Contains(t, StringComparison.OrdinalIgnoreCase)))
                     {
                         continue;
                     }
-                    var fileName = Path.GetFileName(expanded);
-                    var lines = File.ReadAllLines(expanded);
-                    for (var i = lines.Length - 1; i >= 0 && results.Count < limit; i--)
+                    results.Add(new UiSubjectTagMatchedPrompt
                     {
-                        var line = lines[i].Trim();
-                        if (line.Length == 0 || line.StartsWith('#'))
-                        {
-                            continue;
-                        }
-                        if (!terms.Any(t => line.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0))
-                        {
-                            continue;
-                        }
-                        results.Add(new UiSubjectTagMatchedPrompt
-                        {
-                            Source = $"file:{fileName}",
-                            RecordId = $"{fileName}:{i + 1}",
-                            CreatedAtUtc = "",
-                            Prompt = line,
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log($"Subject search: could not scan prompt file {rawPath}: {ex.Message}");
+                        Source = $"file:{fileName}",
+                        RecordId = $"{fileName}:{i + 1}",
+                        CreatedAtUtc = "",
+                        Prompt = line,
+                    });
                 }
             }
             return results;

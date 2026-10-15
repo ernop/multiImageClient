@@ -400,6 +400,7 @@ No old image URLs or image indexes are copied to the new environment.
 ## Feature switches and activity summaries
 
 Each environment has switches for goal loops, video generation, prompt rewriting, Send to Vibecoders, and night filter.
+Since 2026-10-15, prompt rewriting also controls character writing (see [characters](prompt-subject-tags-prd.md)).
 Disabled controls disappear from the page.
 The server also rejects corresponding direct API requests and goal/recap page routes.
 Disabling a feature does not delete existing work or cancel an already accepted provider request.

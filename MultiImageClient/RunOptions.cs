@@ -300,10 +300,9 @@ namespace MultiImageClient
         public string SubjectSearchName { get; set; } = "";
         public string SubjectSynthesizeName { get; set; } = "";
         public string SubjectQuery { get; set; } = "";
-        public string SubjectKind { get; set; } = "";
-        public string SubjectModel { get; set; } = PromptSubjectSynthesis.DefaultModel;
+        public string SubjectKind { get; set; } = "character";
+        public string SubjectModel { get; set; } = PromptSubjectSynthesis.DefaultModelKey;
         public string SubjectNotes { get; set; } = "";
-        public string SubjectUser { get; set; } = "local";
 
         public static RunOptions Parse(string[] args)
         {
@@ -564,9 +563,6 @@ namespace MultiImageClient
                     case "--subject-notes":
                         o.SubjectNotes = args[++i];
                         break;
-                    case "--subject-user":
-                        o.SubjectUser = args[++i];
-                        break;
                     case "--help":
                     case "-h":
                         PrintUsage();
@@ -663,14 +659,13 @@ namespace MultiImageClient
             Console.WriteLine("  --provider-sample-retry-failures N  Pair with --provider-sample-showcase to retry failed prompt slots N extra times before composing the sheet.");
             Console.WriteLine("  --grok-api-export [path]  One-shot: full grok-api history export OUTSIDE the repo. Runs --grok-api-sync first, then copies every known Grok image/video plus prompts.txt and grok_ledger.jsonl into [path] (default C:\\GrokArchive). Rerunnable; already-present files are skipped.");
             Console.WriteLine("  --grok-api-sync       One-shot: back-read/back-download the entire reachable grok-api history and exit. Sweeps the xAI Files API inventory, re-polls any ledger video request_ids whose local file is missing, backfills prompts from old JSON logs, and writes everything to grok_ledger.jsonl + saves\\GrokArchive\\. Idempotent — run it whenever to stay synced.");
-            Console.WriteLine("  --subject-list        List stored subject/character/location descriptions from ui-community.sqlite3 and exit.");
-            Console.WriteLine("  --subject-search NAME Search historical prompts across generation-history.sqlite3, UiHistory, and prompt exchanges for NAME (plus optional --subject-query terms) and exit.");
-            Console.WriteLine("  --subject-synthesize NAME  Search historical prompts for NAME, synthesize a reusable visual description via --subject-model (default claude-opus-5-5), store it in ui-community.sqlite3, and exit.");
-            Console.WriteLine("  --subject-query TERMS Optional comma/space-separated search terms or aliases paired with --subject-search or --subject-synthesize.");
-            Console.WriteLine("  --subject-kind KIND   Optional subject kind for --subject-synthesize: character | location | object | general.");
-            Console.WriteLine("  --subject-model MODEL Model for --subject-synthesize (default claude-opus-5-5; supports claude-sonnet-5-5, gpt-5.6-sol, gpt-6-astra, gemini-3.5-flash, grok-4.6, etc.).");
-            Console.WriteLine("  --subject-notes TEXT  Optional extra notes passed to --subject-synthesize.");
-            Console.WriteLine("  --subject-user USER   User identity for CLI subject commands (default: local).");
+            Console.WriteLine("  --subject-list        List the local owner's saved characters (people, places, things) and exit.");
+            Console.WriteLine("  --subject-search NAME Show the local past prompts that mention NAME (plus --subject-query names) and exit.");
+            Console.WriteLine("  --subject-synthesize NAME  Write a reusable description of NAME from local past prompts with --subject-model, save it as a character (replacing one with that name), and exit.");
+            Console.WriteLine("  --subject-query NAMES Other names it went by, comma-separated, for --subject-search or --subject-synthesize.");
+            Console.WriteLine("  --subject-kind KIND   character (default) | location | object | general.");
+            Console.WriteLine("  --subject-model KEY   Writer model catalog key (default manager-claude-opus-5-5; any goal-loop manager key).");
+            Console.WriteLine("  --subject-notes TEXT  Notes for the writer, treated as reliable evidence.");
         }
     }
 }

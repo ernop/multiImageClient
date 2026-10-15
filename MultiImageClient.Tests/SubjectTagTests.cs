@@ -2,238 +2,217 @@ namespace MultiImageClient;
 
 public sealed class SubjectTagTests
 {
+    private const string ValidReply = """
+        {
+          "kind": "character",
+          "description": "a woman in her early 30s with shoulder-length straight black hair and round silver glasses",
+          "summary": "Consolidated from three family prompts."
+        }
+        """;
+
     [Fact]
-    public void SubjectTagsPersistUpdateDeleteAndTransferAcrossLoginRenames()
+    public void CharactersCreateEditRenameRefuseDuplicatesDeleteByIdAndTransferLogins()
     {
-        var folder = CreateTempFolder();
-        try
-        {
-            var settings = new Settings
-            {
-                LogFilePath = Path.Combine(folder, "log.txt"),
-                ImageDownloadBaseFolder = folder,
-                UiCommunityDbPath = Path.Combine(folder, "ui-community.sqlite3"),
-            };
-            var store = new UiCommunityStore(settings);
+        using var temp = new TempFolder();
+        var store = new UiCommunityStore(temp.Settings());
 
-            var sampleMatches = new List<UiSubjectTagMatchedPrompt>
-            {
-                new()
-                {
-                    Source = "ui-history",
-                    RecordId = "job-1",
-                    CreatedAtUtc = "2026-10-10T12:00:00Z",
-                    Prompt = "Jing smiling on the sunny wooden porch.",
-                },
-                new()
-                {
-                    Source = "generation-archive",
-                    RecordId = "attempt-2",
-                    CreatedAtUtc = "2026-10-11T15:30:00Z",
-                    Prompt = "Jenny and Jing walking through the botanical garden in bright daylight.",
-                },
-            };
+        var jing = store.SaveSubjectTag("login:alice", "alice", null, "  Jing  ", "character", "cousin Jing",
+            ManagerCatalog.KeyClaudeOpus55, "a woman in her late 20s", "from 2 prompts",
+            new List<UiSubjectTagMatchedPrompt> { new() { Source = "ui-history", RecordId = "job-1", Prompt = "Jing on a porch" } },
+            "{}", 1_000);
+        Assert.Equal("Jing", jing.Name);
+        Assert.Equal(1, jing.MatchedPromptsCount);
 
-            var saved = store.UpsertSubjectTag(
-                identityKey: "login:alice",
-                actorDisplay: "alice",
-                name: "  Jing  ",
-                kind: "character",
-                searchQuery: "Jing, cousin Jing",
-                model: "claude-opus-5-5",
-                description: "an East Asian woman in her late 20s with shoulder-length straight black hair, warm brown eyes, and a navy linen jacket",
-                sourceSummary: "Synthesized from 2 family portrait prompts",
-                matchedPrompts: sampleMatches,
-                rawResponse: "{\"kind\":\"character\"}",
-                nowUnixMs: 1_800_000_000_000);
+        var duplicate = Assert.Throws<InvalidDataException>(() => store.SaveSubjectTag("login:alice", "alice", null, "jing",
+            "character", "", "manual", "someone else", "", null, "", 2_000));
+        Assert.Contains("already have a character named Jing.", duplicate.Message);
 
-            Assert.Equal("Jing", saved.Name);
-            Assert.Equal("JING", saved.NormalizedName);
-            Assert.Equal("character", saved.Kind);
-            Assert.Equal(2, saved.MatchedPromptsCount);
-            Assert.Equal("claude-opus-5-5", saved.Model);
+        var renamed = store.SaveSubjectTag("login:alice", "alice", jing.Id, "Cousin Jing", "character", "",
+            "manual", "a woman in her early 30s", "", null, "", 3_000);
+        Assert.Equal(jing.Id, renamed.Id);
+        Assert.Equal(1_000, renamed.CreatedAtUnixMs);
+        Assert.Equal(3_000, renamed.UpdatedAtUnixMs);
+        Assert.Null(store.GetSubjectTagByName("login:alice", "Jing"));
+        Assert.Equal(jing.Id, store.GetSubjectTagByName("login:alice", "cousin  jing")!.Id);
 
-            var updated = store.UpsertSubjectTag(
-                identityKey: "login:alice",
-                actorDisplay: "alice",
-                name: "jing",
-                kind: "character",
-                searchQuery: "Jing",
-                model: "claude-opus-5-5",
-                description: "an East Asian woman in her early 30s with shoulder-length black hair, silver-rimmed glasses, and a cream cardigan",
-                sourceSummary: "Updated from newer family memory prompts",
-                matchedPrompts: sampleMatches,
-                rawResponse: "{\"kind\":\"character\"}",
-                nowUnixMs: 1_800_000_005_000);
+        var courtyard = store.SaveSubjectTag("login:alice", "alice", null, "Grandma's Courtyard", "location", "",
+            "manual", "a sunlit red-brick courtyard", "", null, "", 4_000);
+        Assert.Throws<InvalidDataException>(() => store.SaveSubjectTag("login:alice", "alice", courtyard.Id, "Cousin Jing",
+            "location", "", "manual", "renamed onto another", "", null, "", 5_000));
+        Assert.Throws<InvalidDataException>(() => store.SaveSubjectTag("login:alice", "alice", "missing-id", "Ghost",
+            "character", "", "manual", "nobody", "", null, "", 5_000));
 
-            Assert.Equal(saved.Id, updated.Id);
-            Assert.Equal("JING", updated.NormalizedName);
-            Assert.Equal(1_800_000_000_000, updated.CreatedAtUnixMs);
-            Assert.Equal(1_800_000_005_000, updated.UpdatedAtUnixMs);
+        // Another account never sees or edits Alice's characters.
+        Assert.Empty(store.ListSubjectTags("login:bob"));
+        Assert.Throws<InvalidDataException>(() => store.SaveSubjectTag("login:bob", "bob", jing.Id, "Jing",
+            "character", "", "manual", "hijack", "", null, "", 6_000));
+        Assert.False(store.DeleteSubjectTag("login:bob", jing.Id));
 
-            store.UpsertSubjectTag(
-                identityKey: "login:alice",
-                actorDisplay: "alice",
-                name: "Grandma's Courtyard",
-                kind: "location",
-                searchQuery: "Tainan courtyard",
-                model: "claude-sonnet-5-5",
-                description: "a sunlit red-brick courtyard house in Tainan with terracotta roof tiles and potted bougainvillea",
-                sourceSummary: "Synthesized from travel prompts",
-                matchedPrompts: null,
-                rawResponse: "",
-                nowUnixMs: 1_800_000_006_000);
+        store.TransferLogin("alice", "alice-renamed");
+        Assert.Empty(store.ListSubjectTags("login:alice"));
+        Assert.Equal(new[] { "Cousin Jing", "Grandma's Courtyard" },
+            store.ListSubjectTags("login:alice-renamed").Select(t => t.Name));
 
-            var list = store.ListSubjectTags("login:alice");
-            Assert.Equal(2, list.Count);
-
-            var byName = store.GetSubjectTag("login:alice", "Grandma's Courtyard");
-            Assert.NotNull(byName);
-            Assert.Equal("GRANDMA'S COURTYARD", byName!.NormalizedName);
-
-            // TransferLogin preserves subject tags across account renames.
-            store.TransferLogin("alice", "alice-renamed");
-            Assert.Empty(store.ListSubjectTags("login:alice"));
-            var transferred = store.ListSubjectTags("login:alice-renamed");
-            Assert.Equal(2, transferred.Count);
-
-            Assert.True(store.DeleteSubjectTag("login:alice-renamed", "Jing"));
-            Assert.Single(store.ListSubjectTags("login:alice-renamed"));
-            Assert.False(store.DeleteSubjectTag("login:alice-renamed", "Jing"));
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
+        // Delete matches the exact id, never a name.
+        Assert.False(store.DeleteSubjectTag("login:alice-renamed", "Cousin Jing"));
+        Assert.True(store.DeleteSubjectTag("login:alice-renamed", jing.Id));
+        Assert.Single(store.ListSubjectTags("login:alice-renamed"));
     }
 
     [Fact]
-    public void SubjectTagValidationAndSynthesisReplyParsingFailClosed()
+    public void CharacterValidationFailsClosed()
     {
-        var folder = CreateTempFolder();
-        try
-        {
-            var settings = new Settings
-            {
-                LogFilePath = Path.Combine(folder, "log.txt"),
-                ImageDownloadBaseFolder = folder,
-                UiCommunityDbPath = Path.Combine(folder, "ui-community.sqlite3"),
-            };
-            var store = new UiCommunityStore(settings);
+        using var temp = new TempFolder();
+        var store = new UiCommunityStore(temp.Settings());
+        UiSubjectTagRecord Save(string name = "Jing", string kind = "character", string model = "manual",
+            string description = "a woman", string summary = "") =>
+            store.SaveSubjectTag("local", "local", null, name, kind, "", model, description, summary, null, "", 1);
 
-            Assert.Throws<InvalidDataException>(() =>
-                store.UpsertSubjectTag("login:alice", "alice", "", "character", "", "manual", "valid description", "", null, "", 1000));
-            Assert.Throws<InvalidDataException>(() =>
-                store.UpsertSubjectTag("login:alice", "alice", "Jing", "invalid-kind", "", "manual", "valid description", "", null, "", 1000));
-            Assert.Throws<InvalidDataException>(() =>
-                store.UpsertSubjectTag("login:alice", "alice", "Jing", "character", "", "manual", "   ", "", null, "", 1000));
-
-            var validJson = """
-                {
-                  "kind": "character",
-                  "description": "Jing (an East Asian woman in her late 20s with shoulder-length black hair and bright daytime lighting)",
-                  "summary": "Consolidated from three family vacation prompts."
-                }
-                """;
-            var parsed = PromptSubjectSynthesis.ParseSynthesisReply(validJson, "");
-            Assert.Equal("character", parsed.Kind);
-            Assert.Contains("shoulder-length black hair", parsed.Description);
-            Assert.Equal("Consolidated from three family vacation prompts.", parsed.Summary);
-
-            Assert.Throws<InvalidDataException>(() =>
-                PromptSubjectSynthesis.ParseSynthesisReply("not json at all", "character"));
-            Assert.Throws<InvalidDataException>(() =>
-                PromptSubjectSynthesis.ParseSynthesisReply("""{"kind":"character","description":""}""", "character"));
-            Assert.Throws<InvalidDataException>(() =>
-                PromptSubjectSynthesis.ParseSynthesisReply("""{"kind":"invalid","description":"some description","sourceSummary":"ok"}""", ""));
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
+        Assert.Throws<InvalidDataException>(() => Save(name: " "));
+        Assert.Throws<InvalidDataException>(() => Save(name: "two\nlines"));
+        Assert.Throws<InvalidDataException>(() => Save(name: new string('x', UiCommunityStore.MaxSubjectTagNameChars + 1)));
+        Assert.Throws<InvalidDataException>(() => Save(kind: ""));
+        Assert.Throws<InvalidDataException>(() => Save(kind: "villain"));
+        Assert.Throws<InvalidDataException>(() => Save(model: ""));
+        Assert.Throws<InvalidDataException>(() => Save(description: "  "));
+        Assert.Throws<InvalidDataException>(() => Save(summary: new string('s', UiCommunityStore.MaxSubjectTagSummaryChars + 1)));
+        Assert.Empty(store.ListSubjectTags("local"));
     }
 
     [Fact]
-    public void SearchAllHistoryCollectsAndDeduplicatesAcrossUiJobsClaudeExchangesAndPromptFiles()
+    public void SynthesisReplyContractIsStrict()
     {
-        var folder = CreateTempFolder();
-        try
+        var parsed = PromptSubjectSynthesis.ParseSynthesisReply("```json\n" + ValidReply + "\n```");
+        Assert.Equal("character", parsed.Kind);
+        Assert.StartsWith("a woman in her early 30s", parsed.Description);
+        Assert.Equal("Consolidated from three family prompts.", parsed.Summary);
+
+        Assert.Throws<InvalidDataException>(() => PromptSubjectSynthesis.ParseSynthesisReply("not json"));
+        Assert.Throws<InvalidDataException>(() => PromptSubjectSynthesis.ParseSynthesisReply("[]"));
+        Assert.Throws<InvalidDataException>(() => PromptSubjectSynthesis.ParseSynthesisReply(
+            """{"kind":"character","description":"","summary":"s"}"""));
+        Assert.Throws<InvalidDataException>(() => PromptSubjectSynthesis.ParseSynthesisReply(
+            """{"description":"d","summary":"s"}"""));
+        Assert.Throws<InvalidDataException>(() => PromptSubjectSynthesis.ParseSynthesisReply(
+            """{"kind":"villain","description":"d","summary":"s"}"""));
+        Assert.Throws<InvalidDataException>(() => PromptSubjectSynthesis.ParseSynthesisReply(
+            """{"kind":"character","description":"d"}"""));
+        Assert.Throws<InvalidDataException>(() => PromptSubjectSynthesis.ParseSynthesisReply(
+            """{"kind":"character","description":"d","summary":"s","name":"Jing"}"""));
+    }
+
+    [Fact]
+    public void SharedSiteSearchReadsOnlyTheAccountsOwnPromptsAndWholeWords()
+    {
+        using var temp = new TempFolder();
+        var promptFile = Path.Combine(temp.Path, "owner-prompts.txt");
+        File.WriteAllLines(promptFile, new[] { "Jing on the sunny pier in Seattle." });
+        var settings = temp.Settings(promptFile);
+        var store = new UiCommunityStore(settings);
+        var registry = new UiJobRegistry(settings);
+        registry.Add(new UiJob { Id = "alice-1", Prompt = "Jing laughing in a sunlit kitchen.", CreatedBy = "alice", CreatorLogin = "alice" });
+        registry.Add(new UiJob { Id = "alice-2", Prompt = "A night market in Beijing.", CreatedBy = "alice", CreatorLogin = "alice" });
+        registry.Add(new UiJob { Id = "alice-3", Prompt = "Cousin J at the lake.", CreatedBy = "alice", CreatorLogin = "alice" });
+        registry.Add(new UiJob { Id = "alice-4", Prompt = "Cousin Jones on a bright pier.", CreatedBy = "alice", CreatorLogin = "alice" });
+        registry.Add(new UiJob { Id = "bob-1", Prompt = "Jing as a pirate captain.", CreatedBy = "bob", CreatorLogin = "bob" });
+        var exchange = store.StartClaudePromptExchange("login:alice", "alice", "claude-opus-5-5", "detail",
+            "Jing with a camera", "sys", "wire", 1);
+        store.CompleteClaudePromptExchange(exchange.Id, "raw", "Jing holding a silver rangefinder camera.", "", 2);
+        var bobExchange = store.StartClaudePromptExchange("login:bob", "bob", "claude-opus-5-5", "detail",
+            "Jing in armor", "sys", "wire", 3);
+        store.CompleteClaudePromptExchange(bobExchange.Id, "raw", "Jing in shining armor.", "", 4);
+
+        var alice = PromptSubjectSynthesis.SearchAllHistory(settings, "Jing", "Cousin J", registry, store, null,
+            PromptSubjectSearchScope.ForAccount("alice"));
+        Assert.Equal(
+            new[] { "Cousin J at the lake.", "Jing holding a silver rangefinder camera.", "Jing laughing in a sunlit kitchen." },
+            alice.Select(m => m.Prompt).OrderBy(p => p, StringComparer.Ordinal));
+
+        var local = PromptSubjectSynthesis.SearchAllHistory(settings, "Jing", "", registry, store, null,
+            PromptSubjectSearchScope.LocalOwner);
+        Assert.Contains(local, m => m.Source == "file:owner-prompts.txt");
+        Assert.Contains(local, m => m.RecordId == "bob-1");
+        Assert.Contains(local, m => m.Prompt == "Jing in shining armor.");
+        Assert.DoesNotContain(local, m => m.RecordId == "alice-2");
+    }
+
+    [Fact]
+    public async Task SynthesisKeepsTheChosenKindRecordsTheCatalogKeyAndRequiresEvidence()
+    {
+        var client = new FakeWriter(ValidReply.Replace("\"character\"", "\"object\""));
+        var matches = new List<UiSubjectTagMatchedPrompt> { new() { Source = "ui-history", RecordId = "j1", Prompt = "Jing at the beach" } };
+
+        var result = await PromptSubjectSynthesis.SynthesizeSubjectAsync(new Settings(), "Jing", "character", "",
+            ManagerCatalog.KeyClaudeOpus55, matches, "", client);
+        Assert.Equal("character", result.Kind);
+        Assert.Equal(ManagerCatalog.KeyClaudeOpus55, result.Model);
+        Assert.Contains("Jing at the beach", client.LastUserMessage);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => PromptSubjectSynthesis.SynthesizeSubjectAsync(
+            new Settings(), "Jing", "character", "", ManagerCatalog.KeyClaudeOpus55,
+            new List<UiSubjectTagMatchedPrompt>(), "", client));
+        await Assert.ThrowsAsync<InvalidDataException>(() => PromptSubjectSynthesis.SynthesizeSubjectAsync(
+            new Settings(), "Jing", "character", "", "claude-opus-5-5", matches, "", client));
+
+        var fromNotes = await PromptSubjectSynthesis.SynthesizeSubjectAsync(new Settings(), "Jing", "character", "",
+            ManagerCatalog.KeyClaudeOpus55, new List<UiSubjectTagMatchedPrompt>(), "She always wears a red scarf.", client);
+        Assert.Contains("red scarf", client.LastUserMessage);
+        Assert.Empty(fromNotes.MatchedPrompts);
+    }
+
+    [Fact]
+    public void OneSynthesisRunsAtATimePerAccount()
+    {
+        using (var first = PromptSubjectSynthesis.TryBeginSynthesis("login:test-lease"))
         {
-            var communityDb = Path.Combine(folder, "ui-community.sqlite3");
-            var promptFile = Path.Combine(folder, "family-memories.txt");
-            File.WriteAllLines(
-                promptFile,
-                new[]
-                {
-                    "Jenny and Jing standing on the sunny wooden pier in Seattle, Jing wearing a navy linen jacket and silver glasses.",
-                    "Unrelated prompt about a mountain bicycle on a gravel trail.",
-                });
-
-            var settings = new Settings
-            {
-                LogFilePath = Path.Combine(folder, "log.txt"),
-                ImageDownloadBaseFolder = folder,
-                UiCommunityDbPath = communityDb,
-                EnableGenerationArchive = false,
-                PromptFiles = new List<string> { promptFile },
-            };
-            var store = new UiCommunityStore(settings);
-
-            var registry = new UiJobRegistry(settings);
-            var job = new UiJob
-            {
-                Id = "jobtest001",
-                Prompt = "Jing laughing in Grandma's sunlit kitchen while making dumplings, wearing a cream cardigan, shoulder-length straight black hair.",
-                CreatedBy = "alice",
-            };
-            registry.Add(job);
-
-            var exchange = store.StartClaudePromptExchange(
-                identityKey: "login:alice",
-                actorDisplay: "alice",
-                model: "claude-opus-5-5",
-                instruction: "Add more detail about Jing's camera",
-                originalPrompt: "Jing holding a vintage Leica camera at the botanical garden",
-                systemPrompt: "sys",
-                wirePrompt: "wire",
-                requestedAtUnixMs: 1_800_000_000_000);
-            store.CompleteClaudePromptExchange(
-                exchange.Id,
-                rawResponse: "Jing (East Asian woman, 30, shoulder-length black hair) holding a silver rangefinder camera in a bright botanical garden.",
-                resultPrompt: "Jing (East Asian woman, 30, shoulder-length black hair) holding a silver rangefinder camera in a bright botanical garden.",
-                error: "",
-                completedAtUnixMs: 1_800_000_001_000);
-
-            var terms = PromptSubjectSynthesis.ExtractSearchTerms("Jing", "cousin Jing");
-            Assert.Equal(new[] { "Jing", "cousin Jing" }, terms);
-
-            var matches = PromptSubjectSynthesis.SearchAllHistory(
-                settings,
-                name: "Jing",
-                searchQuery: "cousin Jing",
-                jobs: registry,
-                community: store,
-                visibility: null,
-                identityKey: "login:alice",
-                limit: 20);
-
-            Assert.Equal(3, matches.Count);
-            Assert.Contains(matches, m => m.Source == "ui-history" && m.RecordId == job.Id);
-            Assert.Contains(matches, m => m.Source == "prompt-exchange" && m.Prompt.Contains("silver rangefinder camera"));
-            Assert.Contains(matches, m => m.Source == "file:family-memories.txt" && m.Prompt.Contains("sunny wooden pier in Seattle"));
+            Assert.NotNull(first);
+            Assert.Null(PromptSubjectSynthesis.TryBeginSynthesis("login:test-lease"));
+            using var other = PromptSubjectSynthesis.TryBeginSynthesis("login:test-lease-other");
+            Assert.NotNull(other);
         }
-        finally
+        using var again = PromptSubjectSynthesis.TryBeginSynthesis("login:test-lease");
+        Assert.NotNull(again);
+    }
+
+    private sealed class FakeWriter : IManagerChatClient
+    {
+        private readonly string _reply;
+        public FakeWriter(string reply) => _reply = reply;
+        public string Model => "fake";
+        public string LastUserMessage { get; private set; } = "";
+
+        public Task<ManagerChatReply> CompleteAsync(string systemPrompt, IReadOnlyList<ManagerChatMessage> history, CancellationToken ct)
         {
-            Directory.Delete(folder, true);
+            LastUserMessage = history.Single().Text;
+            return Task.FromResult(new ManagerChatReply
+            {
+                Text = _reply,
+                ProviderReasoning = "",
+                RawResponse = _reply,
+                RedactedRequest = "",
+                RequestBytes = 0,
+                Ms = 1,
+                Model = "fake",
+            });
         }
     }
 
-    private static string CreateTempFolder()
+    private sealed class TempFolder : IDisposable
     {
-        var path = Path.Combine(
-            Path.GetTempPath(),
-            "MultiImageClient.SubjectTagTests." + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(path);
-        return path;
+        public string Path { get; } = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "MultiImageClient.SubjectTagTests." + Guid.NewGuid().ToString("N"));
+
+        public TempFolder() => Directory.CreateDirectory(Path);
+
+        public Settings Settings(string? promptFile = null) => new()
+        {
+            LogFilePath = System.IO.Path.Combine(Path, "log.txt"),
+            ImageDownloadBaseFolder = Path,
+            UiCommunityDbPath = System.IO.Path.Combine(Path, "ui-community.sqlite3"),
+            EnableGenerationArchive = false,
+            PromptFiles = promptFile == null ? new List<string>() : new List<string> { promptFile },
+        };
+
+        public void Dispose() => Directory.Delete(Path, true);
     }
 }

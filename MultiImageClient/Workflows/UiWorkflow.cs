@@ -316,6 +316,7 @@ namespace MultiImageClient
                             || (policy != null && ((!policy.GoalLoops && (path.StartsWith("/api/goal-loops", StringComparison.OrdinalIgnoreCase) || path is "/goal.html" or "/recap.html"))
                                 || (!policy.Video && path.StartsWith("/api/video-jobs", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/advice", StringComparison.OrdinalIgnoreCase))
+                                || (!policy.PromptRewrite && path.StartsWith("/api/prompt/subjects/synthesize", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.AllowVibecoders && path.StartsWith("/api/discord/vibecoders", StringComparison.OrdinalIgnoreCase)))))
                         {
                             ctx.Response.StatusCode = 403;
@@ -2207,124 +2208,54 @@ namespace MultiImageClient
             {
                 id = record.Id,
                 name = record.Name,
-                normalizedName = record.NormalizedName,
                 kind = record.Kind,
                 searchQuery = record.SearchQuery,
                 model = record.Model,
                 description = record.Description,
                 sourceSummary = record.SourceSummary,
                 matchedPromptsCount = record.MatchedPromptsCount,
-                matchedPrompts = record.MatchedPrompts.Select(m => new
-                {
-                    source = m.Source,
-                    recordId = m.RecordId,
-                    createdAtUtc = m.CreatedAtUtc,
-                    prompt = m.Prompt,
-                }),
-                createdAtUnixMs = record.CreatedAtUnixMs,
                 updatedAtUnixMs = record.UpdatedAtUnixMs,
             };
 
-            bool TryResolveSubjectIdentity(
-                string? rawUser,
-                string authUser,
-                out string identityKey,
-                out string actorDisplay,
-                out string error)
+            static object SerializeMatchedPrompts(IEnumerable<UiSubjectTagMatchedPrompt> matches) => matches.Select(m => new
             {
-                if (authUser.Length > 0)
-                {
-                    if (!TryResolveCreatorName(rawUser, authUser, community, out actorDisplay, out error))
-                    {
-                        identityKey = "";
-                        return false;
-                    }
-                    identityKey = "login:" + authUser;
-                    return true;
-                }
-                if (string.IsNullOrWhiteSpace(rawUser))
-                {
-                    actorDisplay = "local";
-                    identityKey = "display:LOCAL";
-                    error = "";
-                    return true;
-                }
-                if (!TryResolveCreatorName(rawUser, authUser, community, out actorDisplay, out error))
-                {
-                    identityKey = "";
-                    return false;
-                }
-                identityKey = "display:" + actorDisplay.ToUpperInvariant();
-                return true;
+                source = m.Source,
+                recordId = m.RecordId,
+                createdAtUtc = m.CreatedAtUtc,
+                prompt = m.Prompt,
+            }).ToList();
+
+            // Characters belong to the signed-in account. The auth-off local
+            // instance has one owner, so every "creating as" name shares one
+            // collection there.
+            (string IdentityKey, string Actor, PromptSubjectSearchScope Scope) CharacterIdentity(HttpContext ctx)
+            {
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                return authUser.Length > 0
+                    ? ("login:" + authUser, authUser, PromptSubjectSearchScope.ForAccount(authUser))
+                    : ("local", "local", PromptSubjectSearchScope.LocalOwner);
             }
 
-            app.MapGet("/api/prompt/subjects", (string? user, HttpContext ctx) =>
+            app.MapGet("/api/prompt/subjects", (HttpContext ctx) =>
             {
                 ctx.Response.Headers.CacheControl = "no-store";
-                var authUser = ctx.Items["micUser"] as string ?? "";
-                if (!TryResolveSubjectIdentity(user, authUser, out var identityKey, out _, out var identityError))
-                {
-                    return Results.BadRequest(new { error = identityError });
-                }
-                var subjects = community.ListSubjectTags(identityKey);
-                if (authUser.Length == 0 && !string.Equals(identityKey, "display:LOCAL", StringComparison.Ordinal))
-                {
-                    var localFallback = community.ListSubjectTags("display:LOCAL");
-                    var existingNames = new HashSet<string>(
-                        subjects.Select(s => s.NormalizedName),
-                        StringComparer.Ordinal);
-                    foreach (var item in localFallback)
-                    {
-                        if (existingNames.Add(item.NormalizedName))
-                        {
-                            subjects.Add(item);
-                        }
-                    }
-                }
+                var identity = CharacterIdentity(ctx);
                 return Results.Json(new
                 {
-                    subjects = subjects.Select(SerializeSubjectTag),
+                    subjects = community.ListSubjectTags(identity.IdentityKey).Select(SerializeSubjectTag),
                 });
             });
 
             app.MapPost("/api/prompt/subjects/search", async (HttpRequest request) =>
             {
                 var form = await request.ReadFormAsync();
-                var name = form["name"].ToString();
-                var query = form["query"].ToString();
-                if (string.IsNullOrWhiteSpace(query))
-                {
-                    query = form["searchQuery"].ToString();
-                }
-                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
-                if (!TryResolveSubjectIdentity(form["user"].ToString(), authUser, out var identityKey, out _, out var identityError))
-                {
-                    return Results.BadRequest(new { error = identityError });
-                }
+                var identity = CharacterIdentity(request.HttpContext);
                 try
                 {
-                    var terms = PromptSubjectSynthesis.ExtractSearchTerms(name, query);
                     var matches = PromptSubjectSynthesis.SearchAllHistory(
-                        settings,
-                        name,
-                        query,
-                        jobs,
-                        community,
-                        visibility,
-                        identityKey);
-                    return Results.Json(new
-                    {
-                        name = terms[0],
-                        searchTerms = terms,
-                        matchedPromptsCount = matches.Count,
-                        matches = matches.Select(m => new
-                        {
-                            source = m.Source,
-                            recordId = m.RecordId,
-                            createdAtUtc = m.CreatedAtUtc,
-                            prompt = m.Prompt,
-                        }),
-                    });
+                        settings, form["name"].ToString(), form["query"].ToString(),
+                        jobs, community, visibility, identity.Scope);
+                    return Results.Json(new { matches = SerializeMatchedPrompts(matches) });
                 }
                 catch (InvalidDataException ex)
                 {
@@ -2335,86 +2266,52 @@ namespace MultiImageClient
             app.MapPost("/api/prompt/subjects/synthesize", async (HttpRequest request) =>
             {
                 var form = await request.ReadFormAsync();
+                var identity = CharacterIdentity(request.HttpContext);
+                var id = form["id"].ToString();
                 var name = form["name"].ToString();
                 var kind = form["kind"].ToString();
                 var query = form["query"].ToString();
-                if (string.IsNullOrWhiteSpace(query))
+                using var lease = PromptSubjectSynthesis.TryBeginSynthesis(identity.IdentityKey);
+                if (lease == null)
                 {
-                    query = form["searchQuery"].ToString();
+                    return Results.Json(
+                        new { error = "A description is already being written for your account. Wait for it to finish." },
+                        statusCode: 409);
                 }
-                var model = form["model"].ToString();
-                var notes = form["notes"].ToString();
-                var save = !string.Equals(form["save"].ToString(), "false", StringComparison.OrdinalIgnoreCase);
-                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
-                if (!TryResolveSubjectIdentity(
-                    form["user"].ToString(),
-                    authUser,
-                    out var identityKey,
-                    out var actorDisplay,
-                    out var identityError))
-                {
-                    return Results.BadRequest(new { error = identityError });
-                }
-
                 try
                 {
-                    var matches = PromptSubjectSynthesis.SearchAllHistory(
-                        settings,
-                        name,
-                        query,
-                        jobs,
-                        community,
-                        visibility,
-                        identityKey);
-                    var synthesized = await PromptSubjectSynthesis.SynthesizeSubjectAsync(
-                        settings,
-                        name,
-                        kind,
-                        query,
-                        model,
-                        matches,
-                        notes,
-                        ct: request.HttpContext.RequestAborted);
-
-                    UiSubjectTagRecord? saved = null;
-                    if (save)
+                    // Check the save target before the paid model call.
+                    if (id.Length > 0)
                     {
-                        saved = community.UpsertSubjectTag(
-                            identityKey,
-                            actorDisplay,
-                            synthesized.Name,
-                            synthesized.Kind,
-                            query,
-                            synthesized.Model,
-                            synthesized.Description,
-                            synthesized.SourceSummary,
-                            synthesized.MatchedPrompts,
-                            synthesized.RawResponse,
-                            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                        Logger.Log(
-                            $"UI subject tag '{saved.Name}' ({saved.Kind}) synthesized with {saved.Model} from {saved.MatchedPromptsCount} historical prompt(s) for '{actorDisplay}'.");
+                        var target = community.GetSubjectTagById(identity.IdentityKey, id)
+                            ?? throw new InvalidDataException("That character no longer exists.");
+                        var holder = community.GetSubjectTagByName(identity.IdentityKey, name);
+                        if (holder != null && holder.Id != target.Id)
+                        {
+                            throw new InvalidDataException($"You already have a character named {holder.Name}. Edit that one instead.");
+                        }
                     }
-
+                    else if (community.GetSubjectTagByName(identity.IdentityKey, name) is { } existingByName)
+                    {
+                        throw new InvalidDataException($"You already have a character named {existingByName.Name}. Edit that one instead.");
+                    }
+                    var matches = PromptSubjectSynthesis.SearchAllHistory(
+                        settings, name, query, jobs, community, visibility, identity.Scope);
+                    var synthesized = await PromptSubjectSynthesis.SynthesizeSubjectAsync(
+                        settings, name, kind, query, form["model"].ToString(), matches,
+                        form["notes"].ToString(), ct: request.HttpContext.RequestAborted);
+                    var saved = community.SaveSubjectTag(
+                        identity.IdentityKey, identity.Actor, id,
+                        synthesized.Name, synthesized.Kind, query, synthesized.Model,
+                        synthesized.Description, synthesized.SourceSummary,
+                        synthesized.MatchedPrompts, synthesized.RawResponse,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    Logger.Log(
+                        $"UI character '{saved.Name}' ({saved.Kind}) written by {saved.Model} from {saved.MatchedPromptsCount} past prompt(s) for '{identity.Actor}'.");
                     return Results.Json(new
                     {
-                        subject = saved != null ? SerializeSubjectTag(saved) : null,
-                        synthesized = new
-                        {
-                            name = synthesized.Name,
-                            kind = synthesized.Kind,
-                            model = synthesized.Model,
-                            description = synthesized.Description,
-                            sourceSummary = synthesized.SourceSummary,
-                            searchTerms = synthesized.SearchTerms,
-                            matchedPromptsCount = synthesized.MatchedPrompts.Count,
-                            matchedPrompts = synthesized.MatchedPrompts.Select(m => new
-                            {
-                                source = m.Source,
-                                recordId = m.RecordId,
-                                createdAtUtc = m.CreatedAtUtc,
-                                prompt = m.Prompt,
-                            }),
-                        },
+                        subject = SerializeSubjectTag(saved),
+                        matches = SerializeMatchedPrompts(synthesized.MatchedPrompts),
                     });
                 }
                 catch (InvalidDataException ex)
@@ -2425,9 +2322,13 @@ namespace MultiImageClient
                 {
                     return Results.BadRequest(new { error = ex.Message });
                 }
+                catch (OperationCanceledException) when (request.HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    return Results.Empty;
+                }
                 catch (Exception ex)
                 {
-                    Logger.Log($"UI subject synthesis failed for '{actorDisplay}': {ex.Message}");
+                    Logger.Log($"UI character synthesis failed for '{identity.Actor}': {ex.Message}");
                     return Results.Json(new { error = ex.Message }, statusCode: 502);
                 }
             });
@@ -2435,59 +2336,29 @@ namespace MultiImageClient
             app.MapPost("/api/prompt/subjects", async (HttpRequest request) =>
             {
                 var form = await request.ReadFormAsync();
-                var name = form["name"].ToString();
-                var kind = form["kind"].ToString();
-                var query = form["query"].ToString();
-                if (string.IsNullOrWhiteSpace(query))
-                {
-                    query = form["searchQuery"].ToString();
-                }
-                var model = form["model"].ToString();
-                var description = form["description"].ToString();
-                var summary = form["summary"].ToString();
-                if (string.IsNullOrWhiteSpace(summary))
-                {
-                    summary = form["notes"].ToString();
-                }
-                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
-                if (!TryResolveSubjectIdentity(
-                    form["user"].ToString(),
-                    authUser,
-                    out var identityKey,
-                    out var actorDisplay,
-                    out var identityError))
-                {
-                    return Results.BadRequest(new { error = identityError });
-                }
+                var identity = CharacterIdentity(request.HttpContext);
+                var id = form["id"].ToString();
                 try
                 {
-                    var existing = community.GetSubjectTag(identityKey, name);
-                    var matchedPrompts = existing?.MatchedPrompts
-                        ?? PromptSubjectSynthesis.SearchAllHistory(
-                            settings,
-                            name,
-                            query,
-                            jobs,
-                            community,
-                            visibility,
-                            identityKey);
-                    var saved = community.UpsertSubjectTag(
-                        identityKey,
-                        actorDisplay,
-                        name,
-                        kind,
-                        query,
-                        string.IsNullOrWhiteSpace(model) ? (existing?.Model ?? "manual") : model,
+                    // A hand edit keeps the record's sources but is no longer
+                    // the model's text, so the model becomes "manual".
+                    var existing = id.Length > 0
+                        ? community.GetSubjectTagById(identity.IdentityKey, id)
+                            ?? throw new InvalidDataException("That character no longer exists.")
+                        : null;
+                    var description = form["description"].ToString().Trim();
+                    var unchanged = existing != null && existing.Description == description;
+                    var saved = community.SaveSubjectTag(
+                        identity.IdentityKey, identity.Actor, id,
+                        form["name"].ToString(), form["kind"].ToString(), form["query"].ToString(),
+                        unchanged ? existing!.Model : "manual",
                         description,
-                        string.IsNullOrWhiteSpace(summary) ? (existing?.SourceSummary ?? "Saved subject description.") : summary,
-                        matchedPrompts,
-                        existing?.RawResponse ?? "",
+                        existing?.SourceSummary ?? "",
+                        existing?.MatchedPrompts,
+                        unchanged ? existing!.RawResponse : "",
                         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    Logger.Log($"UI subject tag '{saved.Name}' ({saved.Kind}) saved for '{actorDisplay}'.");
-                    return Results.Json(new
-                    {
-                        subject = SerializeSubjectTag(saved),
-                    });
+                    Logger.Log($"UI character '{saved.Name}' ({saved.Kind}) saved for '{identity.Actor}'.");
+                    return Results.Json(new { subject = SerializeSubjectTag(saved) });
                 }
                 catch (InvalidDataException ex)
                 {
@@ -2498,38 +2369,15 @@ namespace MultiImageClient
             app.MapPost("/api/prompt/subjects/delete", async (HttpRequest request) =>
             {
                 var form = await request.ReadFormAsync();
-                var idOrName = form["id"].ToString();
-                if (string.IsNullOrWhiteSpace(idOrName))
-                {
-                    idOrName = form["idOrName"].ToString();
-                }
-                if (string.IsNullOrWhiteSpace(idOrName))
-                {
-                    idOrName = form["name"].ToString();
-                }
-                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
-                if (!TryResolveSubjectIdentity(
-                    form["user"].ToString(),
-                    authUser,
-                    out var identityKey,
-                    out var actorDisplay,
-                    out var identityError))
-                {
-                    return Results.BadRequest(new { error = identityError });
-                }
+                var identity = CharacterIdentity(request.HttpContext);
                 try
                 {
-                    var deleted = community.DeleteSubjectTag(identityKey, idOrName);
-                    if (!deleted && authUser.Length == 0 && !string.Equals(identityKey, "display:LOCAL", StringComparison.Ordinal))
+                    if (!community.DeleteSubjectTag(identity.IdentityKey, form["id"].ToString()))
                     {
-                        deleted = community.DeleteSubjectTag("display:LOCAL", idOrName);
+                        return Results.NotFound(new { error = "That character no longer exists." });
                     }
-                    if (!deleted)
-                    {
-                        return Results.NotFound(new { error = "Subject tag not found." });
-                    }
-                    Logger.Log($"UI subject tag '{idOrName}' deleted by '{actorDisplay}'.");
-                    return Results.Json(new { deleted = true, id = idOrName });
+                    Logger.Log($"UI character {form["id"]} deleted by '{identity.Actor}'.");
+                    return Results.Json(new { deleted = true });
                 }
                 catch (InvalidDataException ex)
                 {

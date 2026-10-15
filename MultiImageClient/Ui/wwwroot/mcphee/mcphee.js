@@ -537,220 +537,7 @@ var McPhee = (function () {
     this.notRareStorageKey = options.notRareStorageKey || (this.storageKey + ":notrare");
     this.notRareWords = new Set();
     this.loadNotRareWords();
-    // Dynamic subject tags: known characters, locations, objects, or named
-    // entities with synthesized visual descriptions. Coordinated here so
-    // known names are never flagged as unknown/misspelled or obscure repeats,
-    // while active occurrences highlight in the backdrop and surface in the
-    // panel with one-click expansion ("use description") or literal-word
-    // dismissal ("keep as word").
-    this.subjects = new Map();
-    this.subjectWords = new Set();
-    this.ignoredSubjects = new Set();
-    this._subjectMatchers = [];
-    if (options.subjects) this.setSubjects(options.subjects);
   }
-
-  function normalizeSubjectKey(name) {
-    var s = String(name || "").trim().replace(/\s+/g, " ").toLowerCase().replace(/\u2019/g, "'");
-    if (s.slice(-2) === "'s") s = s.slice(0, -2);
-    return s;
-  }
-
-  Checker.prototype.setSubjects = function (list) {
-    this.subjects.clear();
-    this.subjectWords.clear();
-    this._subjectMatchers = [];
-    var self = this;
-    (list || []).forEach(function (item) {
-      if (!item || typeof item !== "object") return;
-      var rawName = String(item.name || item.normalizedName || "").trim().replace(/\s+/g, " ");
-      var key = normalizeSubjectKey(item.normalizedName || rawName);
-      var description = String(item.description || "").trim();
-      if (!key || !rawName || !description) return;
-      var entry = {
-        id: item.id ? String(item.id) : key,
-        name: rawName,
-        normalizedName: key,
-        kind: String(item.kind || "character").toLowerCase(),
-        description: description,
-        sourceSummary: String(item.sourceSummary || ""),
-        matchedCount: typeof item.matchedCount === "number" ? item.matchedCount : 0,
-        model: String(item.model || ""),
-      };
-      self.subjects.set(key, entry);
-      WORD_RE.lastIndex = 0;
-      var m;
-      while ((m = WORD_RE.exec(rawName)) !== null) {
-        self.subjectWords.add(normWord(m[0]));
-      }
-    });
-    // Build longest-first boundary regexes so multi-word subjects ("Aunt Mei",
-    // "Lake Tahoe Cabin") match before single-word prefixes.
-    var entries = Array.from(this.subjects.values()).sort(function (a, b) {
-      return b.normalizedName.length - a.normalizedName.length || a.normalizedName.localeCompare(b.normalizedName);
-    });
-    this._subjectMatchers = entries.map(function (entry) {
-      var pattern = entry.normalizedName
-        .split(" ")
-        .map(escapeRegExp)
-        .join("\\s+");
-      return {
-        entry: entry,
-        re: new RegExp("(^|[^A-Za-z0-9_])(" + pattern + ")(?=(?:['\u2019]s)?(?![A-Za-z0-9_]))", "gi"),
-      };
-    });
-  };
-
-  Checker.prototype.getSubjects = function () {
-    return Array.from(this.subjects.values());
-  };
-
-  Checker.prototype.getSubject = function (nameOrKey) {
-    return this.subjects.get(normalizeSubjectKey(nameOrKey)) || null;
-  };
-
-  Checker.prototype.ignoreSubject = function (nameOrKey) {
-    var key = normalizeSubjectKey(nameOrKey);
-    if (key) this.ignoredSubjects.add(key);
-  };
-
-  Checker.prototype.unignoreSubject = function (nameOrKey) {
-    var key = normalizeSubjectKey(nameOrKey);
-    if (key) this.ignoredSubjects.delete(key);
-  };
-
-  Checker.prototype.isSubjectIgnored = function (nameOrKey) {
-    return this.ignoredSubjects.has(normalizeSubjectKey(nameOrKey));
-  };
-
-  Checker.prototype.listIgnoredSubjects = function () {
-    return Array.from(this.ignoredSubjects).sort();
-  };
-
-  Checker.prototype.formatSubjectExpansion = function (subjectOrName, matchedText) {
-    var entry = typeof subjectOrName === "string" ? this.getSubject(subjectOrName) : subjectOrName;
-    if (!entry || !entry.description) return String(matchedText || "");
-    var desc = entry.description.trim();
-    var display = String(matchedText || entry.name).trim();
-    var lowerDesc = desc.toLowerCase();
-    var lowerName = entry.normalizedName;
-    if (lowerDesc.indexOf(lowerName) === 0) {
-      return desc;
-    }
-    return display + " (" + desc + ")";
-  };
-
-  Checker.prototype.findSubjectMatches = function (text, opts) {
-    if (!this.subjects || !this.subjects.size || !text) return [];
-    if (opts && opts.rules && opts.rules.subjects === false) return [];
-    var excludedList = this.excludedRanges(text, opts);
-    var lowerText = String(text).toLowerCase();
-    var expandedRanges = [];
-    this.subjects.forEach(function (entry) {
-      var descLower = entry.description.toLowerCase();
-      if (!descLower) return;
-      var pos = 0;
-      while (pos <= lowerText.length) {
-        var idx = lowerText.indexOf(descLower, pos);
-        if (idx === -1) break;
-        var startIdx = idx;
-        // Also cover a preceding "Name (" wrapper when formatSubjectExpansion produced "Name (description)".
-        var prefixSlice = lowerText.slice(Math.max(0, idx - entry.normalizedName.length - 4), idx);
-        var wrapperMatch = new RegExp(escapeRegExp(entry.normalizedName) + "\\s*\\(\\s*$").exec(prefixSlice);
-        if (wrapperMatch) {
-          startIdx = idx - wrapperMatch[0].length;
-        }
-        var endIdx = idx + descLower.length;
-        if (lowerText.charAt(endIdx) === ")") endIdx++;
-        expandedRanges.push([startIdx, endIdx]);
-        pos = idx + Math.max(1, descLower.length);
-      }
-    });
-    function overlaps(start, end, ranges) {
-      for (var i = 0; i < ranges.length; i++) {
-        if (start < ranges[i][1] && end > ranges[i][0]) return true;
-      }
-      return false;
-    }
-    var occupied = [];
-    var matches = [];
-    var self = this;
-    this._subjectMatchers.forEach(function (matcher) {
-      var entry = matcher.entry;
-      if (self.ignoredSubjects.has(entry.normalizedName)) return;
-      matcher.re.lastIndex = 0;
-      var m;
-      while ((m = matcher.re.exec(text)) !== null) {
-        var prefixLen = m[1] ? m[1].length : 0;
-        var value = m[2];
-        var start = m.index + prefixLen;
-        var end = start + value.length;
-        if (overlaps(start, end, excludedList)) continue;
-        if (overlaps(start, end, expandedRanges)) continue;
-        if (overlaps(start, end, occupied)) continue;
-        occupied.push([start, end]);
-        matches.push({
-          kind: "subject",
-          classification: "subject",
-          value: value,
-          start: start,
-          end: end,
-          subjectKey: entry.normalizedName,
-          subject: entry,
-        });
-      }
-    });
-    matches.sort(function (a, b) { return a.start - b.start || a.end - b.end; });
-    return matches;
-  };
-
-  Checker.prototype.expandSubjectInTextarea = function (textarea, matchOrKey, allOccurrences) {
-    if (!textarea) return { applied: false };
-    var matches = this.findSubjectMatches(textarea.value);
-    var targetKey = typeof matchOrKey === "string"
-      ? normalizeSubjectKey(matchOrKey)
-      : (matchOrKey && matchOrKey.subjectKey ? matchOrKey.subjectKey : normalizeSubjectKey(matchOrKey && matchOrKey.value));
-    var relevant = matches.filter(function (m) {
-      if (!targetKey) return true;
-      if (typeof matchOrKey === "object" && matchOrKey && typeof matchOrKey.start === "number" && !allOccurrences) {
-        return m.start === matchOrKey.start && m.subjectKey === targetKey;
-      }
-      return m.subjectKey === targetKey;
-    });
-    if (!relevant.length && targetKey) {
-      relevant = matches.filter(function (m) { return m.subjectKey === targetKey; });
-    }
-    if (!relevant.length) return { applied: false };
-    var chosen = allOccurrences ? relevant : [relevant[0]];
-    var before = textarea.value;
-    var caret = textarea.selectionStart;
-    var newCaret = caret;
-    var working = before;
-    var self = this;
-    chosen.slice().sort(function (a, b) { return b.start - a.start; }).forEach(function (m) {
-      var replacement = self.formatSubjectExpansion(m.subject, m.value);
-      working = working.slice(0, m.start) + replacement + working.slice(m.end);
-      var delta = replacement.length - (m.end - m.start);
-      if (m.end <= caret) newCaret += delta;
-      else if (m.start <= caret) newCaret = m.start + replacement.length;
-    });
-    if (working === before) return { applied: false };
-    if (chosen.length === 1) {
-      var single = chosen[0];
-      var rep = this.formatSubjectExpansion(single.subject, single.value);
-      replaceRange(textarea, single.start, single.end, rep);
-    } else {
-      replaceRange(textarea, 0, before.length, working);
-    }
-    textarea.setSelectionRange(newCaret, newCaret);
-    return {
-      applied: true,
-      subject: chosen[0].subject,
-      before: before,
-      after: textarea.value,
-      count: chosen.length,
-    };
-  };
 
   // Session-scoped: silences echo/obscureRepeat for this word or exact phrase
   // until reload. Permanent word exemption = add it to the personal
@@ -1051,9 +838,7 @@ var McPhee = (function () {
     if (word.length <= 1) return "ok";
     var lower = word.toLowerCase();
     var normalizedApostrophe = lower.replace(/\u2019/g, "'");
-    var folded = normWord(word);
     if (this.customWords.has(normalizedApostrophe) || this.extraWords.has(normalizedApostrophe)) return "ok";
-    if ((this.subjects && this.subjects.has(folded)) || (this.subjectWords && this.subjectWords.has(folded))) return "ok";
     var plain = word.replace(/\u2019/g, "'");
     if (this.dictHas(plain)) return "ok";
     if (plain !== normalizedApostrophe && this.dictHas(normalizedApostrophe)) return "ok";
@@ -1395,7 +1180,6 @@ var McPhee = (function () {
       var n = normWord(w.value);
       if (n.length < 4 || STOPWORDS.has(n)
         || this.customWords.has(n) || this.extraWords.has(n)
-        || (this.subjectWords && this.subjectWords.has(n))
         || this.ignoredRepeats.has(pluralKey(n))) { norms[i] = null; continue; }
       norms[i] = n;
     }
@@ -1930,9 +1714,9 @@ var McPhee = (function () {
   ];
 
   Checker.prototype.renderHtml = function (text, opts) {
-    var issues = this.analyze(text, opts).concat(this.findSubjectMatches(text, opts));
+    var issues = this.analyze(text, opts);
     // Repetition analysis suppresses weaker overlapping candidates; the only
-    // remaining overlap can be a tail punctuation issue or a subject span. Keep the
+    // remaining overlap can be a tail punctuation issue. Keep the
     // earlier-starting issue and drop the overlapper.
     issues.sort(function (a, b) { return a.start - b.start || a.end - b.end; });
     var out = [];
@@ -1946,9 +1730,6 @@ var McPhee = (function () {
         // divisions.
         out.push('<mark class="mcphee-mark-doublespace" data-start="' + issue.start + '">'
           + text.slice(issue.start, issue.end) + "</mark>");
-      } else if (issue.kind === "subject") {
-        out.push('<mark class="mcphee-mark-subject" data-start="' + issue.start + '" data-subject="' + escapeHtml(issue.subjectKey) + '">'
-          + escapeHtml(text.slice(issue.start, issue.end)) + "</mark>");
       } else {
         var cls = issue.kind === "word" ? issue.classification : issue.kind;
         out.push('<mark class="mcphee-mark-' + cls + '" data-start="' + issue.start + '">'
@@ -3108,71 +2889,10 @@ var McPhee = (function () {
       // rows read as one block, so mixing lavender and green rows was
       // disorienting.
       var SECTION_RANK = Object.assign({
-        subject: -1,
         misspelled: 0, unknown: 1, culture: 2, echo: 3, obscure: 4,
         capitalization: 5, punctuation: 6, caps: 7, doublespace: 8,
       }, self.sectionRank(analyzeOpts));
       var rows = [];
-
-      var subjectMatches = self.findSubjectMatches(textarea.value, analyzeOpts);
-      var subjectGroups = new Map();
-      subjectMatches.forEach(function (sm) {
-        var g = subjectGroups.get(sm.subjectKey);
-        if (g) {
-          g.count++;
-          g.spans.push([sm.start, sm.end]);
-        } else {
-          subjectGroups.set(sm.subjectKey, {
-            count: 1,
-            start: sm.start,
-            value: sm.value,
-            subjectKey: sm.subjectKey,
-            subject: sm.subject,
-            spans: [[sm.start, sm.end]],
-          });
-        }
-      });
-
-      subjectGroups.forEach(function (group) {
-        var label = document.createElement("span");
-        label.className = "mcphee-panel-word mcphee-panel-word-subject";
-        label.textContent = group.count > 1 ? group.value + " \u00d7" + group.count : group.value;
-        label.title = group.subject.description;
-        var kindTag = document.createElement("span");
-        kindTag.className = "mcphee-panel-subject-kind";
-        kindTag.textContent = group.subject.kind || "subject";
-        var expandBtn = button("use description", "mcphee-panel-suggestion", function () {
-          self.expandSubjectInTextarea(textarea, group.subjectKey, true);
-          afterAction();
-        });
-        expandBtn.title = group.subject.description;
-        var fixes = document.createElement("span");
-        fixes.className = "mcphee-panel-fixes";
-        fixes.appendChild(kindTag);
-        fixes.appendChild(expandBtn);
-        var keepWordBtn = button("keep word", "mcphee-panel-ignore", function () {
-          self.ignoreSubject(group.subjectKey);
-          afterAction();
-        });
-        keepWordBtn.title = "Keep as a literal word without expanding its stored description";
-        var sel = button("select", "mcphee-panel-select", function () {
-          var current = self.findSubjectMatches(textarea.value, analyzeOpts).find(function (m) {
-            return m.subjectKey === group.subjectKey;
-          });
-          if (!current) return;
-          textarea.focus();
-          textarea.setSelectionRange(current.start, current.end);
-          if (config.controller && config.controller.scrollToOffset) {
-            config.controller.scrollToOffset(current.start);
-          }
-        });
-        rows.push({
-          rank: SECTION_RANK.subject,
-          start: group.start,
-          spans: group.spans,
-          el: panelRow([label, fixes], keepWordBtn, null, sel),
-        });
-      });
 
       wordGroups.forEach(function (group, key) {
         var parts = key.split("\u0000");

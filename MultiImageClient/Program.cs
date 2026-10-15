@@ -182,36 +182,31 @@ namespace MultiImageClient
                 return;
             }
 
-            if (options.SubjectList || !string.IsNullOrWhiteSpace(options.SubjectSearchName) || !string.IsNullOrWhiteSpace(options.SubjectSynthesizeName))
+            if (options.SubjectList || options.SubjectSearchName.Length > 0 || options.SubjectSynthesizeName.Length > 0)
             {
+                // The CLI acts for the auth-off local owner, the same collection
+                // the local --ui uses.
                 var community = new UiCommunityStore(settings);
                 var visibility = new UiVisibilityStore(settings);
-                var userDisplay = string.IsNullOrWhiteSpace(options.SubjectUser) ? "local" : options.SubjectUser.Trim();
-                var identityKey = "display:" + userDisplay.ToUpperInvariant();
+                const string identityKey = "local";
 
                 if (options.SubjectList)
                 {
                     var tags = community.ListSubjectTags(identityKey);
-                    Console.WriteLine($"Stored subject tags for {identityKey}: {tags.Count}");
+                    Console.WriteLine($"Characters: {tags.Count}");
                     foreach (var tag in tags)
                     {
-                        Console.WriteLine($"- {tag.Name} [{tag.Kind}] (model={tag.Model}, matches={tag.MatchedPromptsCount}):");
-                        Console.WriteLine($"  {tag.Description}");
+                        Console.WriteLine($"- {tag.Name} [{tag.Kind}] (model={tag.Model}, sources={tag.MatchedPromptsCount}): {tag.Description}");
                     }
                     return;
                 }
 
-                if (!string.IsNullOrWhiteSpace(options.SubjectSearchName))
+                var name = options.SubjectSearchName.Length > 0 ? options.SubjectSearchName : options.SubjectSynthesizeName;
+                var matches = PromptSubjectSynthesis.SearchAllHistory(
+                    settings, name, options.SubjectQuery, null, community, visibility, PromptSubjectSearchScope.LocalOwner);
+                if (options.SubjectSearchName.Length > 0)
                 {
-                    var matches = PromptSubjectSynthesis.SearchAllHistory(
-                        settings,
-                        options.SubjectSearchName,
-                        options.SubjectQuery,
-                        null,
-                        community,
-                        visibility,
-                        identityKey);
-                    Console.WriteLine($"Matched historical prompts for '{options.SubjectSearchName}': {matches.Count}");
+                    Console.WriteLine($"Past prompts that mention '{name}': {matches.Count}");
                     foreach (var match in matches)
                     {
                         Console.WriteLine($"[{match.Source} | {match.RecordId} | {match.CreatedAtUtc}] {match.Prompt}");
@@ -219,41 +214,19 @@ namespace MultiImageClient
                     return;
                 }
 
-                if (!string.IsNullOrWhiteSpace(options.SubjectSynthesizeName))
-                {
-                    var matches = PromptSubjectSynthesis.SearchAllHistory(
-                        settings,
-                        options.SubjectSynthesizeName,
-                        options.SubjectQuery,
-                        null,
-                        community,
-                        visibility,
-                        identityKey);
-                    var synthesized = await PromptSubjectSynthesis.SynthesizeSubjectAsync(
-                        settings,
-                        options.SubjectSynthesizeName,
-                        options.SubjectKind,
-                        options.SubjectQuery,
-                        options.SubjectModel,
-                        matches,
-                        options.SubjectNotes,
-                        ct: CancellationToken.None);
-                    var saved = community.UpsertSubjectTag(
-                        identityKey,
-                        userDisplay,
-                        synthesized.Name,
-                        synthesized.Kind,
-                        options.SubjectQuery,
-                        synthesized.Model,
-                        synthesized.Description,
-                        synthesized.SourceSummary,
-                        synthesized.MatchedPrompts,
-                        synthesized.RawResponse,
-                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                    Console.WriteLine($"Synthesized and stored '{saved.Name}' [{saved.Kind}] using {saved.Model} ({saved.MatchedPromptsCount} prompt matches):");
-                    Console.WriteLine(saved.Description);
-                    return;
-                }
+                var existing = community.GetSubjectTagByName(identityKey, name);
+                var synthesized = await PromptSubjectSynthesis.SynthesizeSubjectAsync(
+                    settings, name, options.SubjectKind, options.SubjectQuery, options.SubjectModel,
+                    matches, options.SubjectNotes, ct: CancellationToken.None);
+                var saved = community.SaveSubjectTag(
+                    identityKey, "local", existing?.Id,
+                    synthesized.Name, synthesized.Kind, options.SubjectQuery, synthesized.Model,
+                    synthesized.Description, synthesized.SourceSummary,
+                    synthesized.MatchedPrompts, synthesized.RawResponse,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                Console.WriteLine($"{(existing == null ? "Saved" : "Replaced")} '{saved.Name}' [{saved.Kind}], written by {saved.Model} from {saved.MatchedPromptsCount} past prompt(s):");
+                Console.WriteLine(saved.Description);
+                return;
             }
 
             var concurrency = 1;

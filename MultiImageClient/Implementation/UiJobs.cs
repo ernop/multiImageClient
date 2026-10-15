@@ -1377,28 +1377,18 @@ namespace MultiImageClient
             return entries;
         }
 
-        public static string? TryReadJobPrompt(string root, string folderOrJobId)
+        // Null means the job folder is gone (deleted since indexing). A job.json
+        // that exists but cannot be parsed is a hard error.
+        public static string? ReadJobPromptIfPresent(string root, string folderName)
         {
-            if (string.IsNullOrWhiteSpace(folderOrJobId) || !Directory.Exists(root))
-            {
-                return null;
-            }
-            var metadataPath = Path.Combine(root, folderOrJobId, "job.json");
+            var metadataPath = Path.Combine(root, folderName, "job.json");
             if (!File.Exists(metadataPath))
             {
                 return null;
             }
-            try
-            {
-                var metadata = JsonSerializer.Deserialize<UiPersistedJob>(
-                    File.ReadAllText(metadataPath), JsonOptions);
-                return metadata?.Prompt;
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"UI history: could not read prompt from {metadataPath}: {ex.Message}");
-                return null;
-            }
+            var metadata = JsonSerializer.Deserialize<UiPersistedJob>(File.ReadAllText(metadataPath), JsonOptions)
+                ?? throw new InvalidDataException($"UI history job file {metadataPath} is empty.");
+            return metadata.Prompt;
         }
 
         public static UiJob? TryLoad(string root, string folderOrJobId)
@@ -2022,21 +2012,14 @@ namespace MultiImageClient
             lock (_orderLock) return _ordered.ToList();
         }
 
+        // creatorLogin non-empty restricts the search to that account's own
+        // jobs; it is checked on the index entry before any file is read.
         public List<UiSubjectTagMatchedPrompt> SearchPrompts(
             IReadOnlyList<string> terms,
             UiVisibilityStore? visibility,
-            int limit = 40)
+            string creatorLogin,
+            int limit)
         {
-            var normalizedTerms = (terms ?? Array.Empty<string>())
-                .Select(t => (t ?? "").Trim())
-                .Where(t => t.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            if (normalizedTerms.Count == 0)
-            {
-                return new List<UiSubjectTagMatchedPrompt>();
-            }
-            limit = Math.Clamp(limit, 1, 100);
             List<UiHistoryIndexEntry> snapshot;
             lock (_indexLock)
             {
@@ -2050,33 +2033,19 @@ namespace MultiImageClient
                 {
                     break;
                 }
+                if (creatorLogin.Length > 0 && !string.Equals(entry.CreatorLogin, creatorLogin, StringComparison.Ordinal))
+                {
+                    continue;
+                }
                 if (visibility != null && visibility.IsPromptHidden(entry.Id))
                 {
                     continue;
                 }
-                string? prompt = null;
-                if (_jobs.TryGetValue(entry.Id, out var resident))
-                {
-                    prompt = resident.Prompt;
-                }
-                else
-                {
-                    prompt = UiJobStorage.TryReadJobPrompt(_historyRoot, entry.FolderName);
-                }
-                if (string.IsNullOrWhiteSpace(prompt))
-                {
-                    continue;
-                }
-                var hit = false;
-                foreach (var term in normalizedTerms)
-                {
-                    if (prompt.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        hit = true;
-                        break;
-                    }
-                }
-                if (!hit)
+                var prompt = _jobs.TryGetValue(entry.Id, out var resident)
+                    ? resident.Prompt
+                    : UiJobStorage.ReadJobPromptIfPresent(_historyRoot, entry.FolderName);
+                if (string.IsNullOrWhiteSpace(prompt)
+                    || !terms.Any(t => prompt.Contains(t, StringComparison.OrdinalIgnoreCase)))
                 {
                     continue;
                 }
