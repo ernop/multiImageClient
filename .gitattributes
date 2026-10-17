@@ -1,3 +1,5 @@
 .gitattributes text eol=lf
 deploy/*.sh text eol=lf
 deploy/*.py text eol=lf
+.cursor/*.sh text eol=lf
+.cursor/environment.json text eol=lf
