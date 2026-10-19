@@ -1,9 +1,118 @@
+using System.Reflection;
+using System.Text;
+using Microsoft.AspNetCore.Http;
 using RecraftAPIClient;
 
 namespace MultiImageClient.Tests;
 
 public class PromptLimitTests
 {
+    // Every UI target without a limit in UiJobRunner.MaxPromptCharsFor, with
+    // the reason. A new target fails EveryUiTargetHasALimitOrAListedReason
+    // until it gets one or the other. See docs/prompt-length-limits.md.
+    private static readonly string[] KeysWithoutAPublishedLimit =
+    [
+        // xAI publishes no limit for grok-imagine-image-2.0.
+        UiJobRunner.KeyGrokApiPro,
+        // grok-web truncates text-to-image prompts to
+        // GrokWebClient.MaxPromptUtf8Bytes instead. Its app-chat routes (edit,
+        // chat, video) have no known limit.
+        UiJobRunner.KeyGrokWeb,
+        UiJobRunner.KeyGrokWebChat,
+        UiJobRunner.KeyGrokWebVideo,
+        // Ideogram's API pages state no limit for 4.0, 3.0, or 2.0.
+        UiJobRunner.KeyIdeogram,
+        UiJobRunner.KeyIdeogramV3,
+        UiJobRunner.KeyIdeogramV2,
+        // BFL states token limits, not character limits.
+        UiJobRunner.KeyBfl,
+        UiJobRunner.KeyBflFlux2Pro,
+        UiJobRunner.KeyBflFlux2Max,
+        UiJobRunner.KeyBflFlux2Flex,
+        UiJobRunner.KeyBflFlux2Klein4b,
+        UiJobRunner.KeyBflFlux2Klein9bPreview,
+        UiJobRunner.KeyBflFlux2Klein9b,
+        UiJobRunner.KeyBflKontextPro,
+        UiJobRunner.KeyBflKontextMax,
+        UiJobRunner.KeyBflFlux11Ultra,
+        UiJobRunner.KeyBflFlux11,
+        UiJobRunner.KeyBflFluxPro,
+        UiJobRunner.KeyBflFluxDev,
+        UiJobRunner.KeyKrea,
+        UiJobRunner.KeyKreaTurbo,
+        UiJobRunner.KeyKreaLarge,
+        // Google's token limits exceed every prompt the composer accepts.
+        UiJobRunner.KeyGoogle,
+        UiJobRunner.KeyGooglePro,
+        // Local text encoders truncate internally; meta-web is disabled in the UI.
+        UiJobRunner.KeyLocalKlein,
+        UiJobRunner.KeyLocalZImage,
+        UiJobRunner.KeyMetaWeb,
+        // Analysis models limit input in tokens, far above any composer prompt.
+        // Ideogram describe sends no prompt.
+        UiJobRunner.KeyDescribeIdeogram,
+        UiJobRunner.KeyDescribeOpenAi,
+        UiJobRunner.KeyDescribeClaude,
+        UiJobRunner.KeyDescribeGemini,
+        UiJobRunner.KeyDescribeGrok,
+        UiJobRunner.KeyLayoutMap,
+    ];
+
+    // Every target key the runner declares, so a new key constant is covered
+    // without editing this test.
+    private static IReadOnlyList<string> EveryUiKey()
+        => typeof(UiJobRunner)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && f.FieldType == typeof(string) && f.Name.StartsWith("Key", StringComparison.Ordinal))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .Concat(UiJobRunner.ImageGeneratorKeys)
+            .Concat(UiJobRunner.DescribeKeys)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    [Fact]
+    public void EveryUiTargetHasALimitOrAListedReason()
+    {
+        var keys = EveryUiKey();
+        Assert.Contains(UiJobRunner.KeyGpt25Sunburst, keys);
+        Assert.Contains(UiJobRunner.KeyLayoutMap, keys);
+
+        var unclassified = keys
+            .Where(key => UiJobRunner.MaxPromptCharsFor(key, imageSent: false) is null
+                && UiJobRunner.MaxPromptCharsFor(key, imageSent: true) is null
+                && !KeysWithoutAPublishedLimit.Contains(key))
+            .ToList();
+
+        Assert.Empty(unclassified);
+    }
+
+    [Fact]
+    public void ListedTargetsHaveNoLimitOnEitherRoute()
+    {
+        foreach (var key in KeysWithoutAPublishedLimit)
+        {
+            Assert.Null(UiJobRunner.MaxPromptCharsFor(key, imageSent: false));
+            Assert.Null(UiJobRunner.MaxPromptCharsFor(key, imageSent: true));
+        }
+    }
+
+    // prompt-limits.js counts each prompt line break as the CR LF that browsers
+    // send in multipart forms (Chrome 154, checked 2026-10-12). That count is
+    // right only while the server keeps those line breaks as received.
+    [Fact]
+    public async Task ServerKeepsTheCrLfLineBreaksOfAFormPrompt()
+    {
+        const string body = "--b\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\n"
+            + "line one\r\nline two\r\n--b--\r\n";
+        var context = new DefaultHttpContext();
+        context.Request.ContentType = "multipart/form-data; boundary=b";
+        context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));
+
+        var form = await context.Request.ReadFormAsync();
+
+        Assert.Equal("line one\r\nline two", form["prompt"].ToString());
+    }
+
     [Theory]
     [InlineData(UiJobRunner.KeyGpt2, false, 32_000)]
     [InlineData(UiJobRunner.KeyGpt2, true, 32_000)]

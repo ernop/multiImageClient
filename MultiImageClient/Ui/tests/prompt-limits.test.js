@@ -13,8 +13,18 @@ test("the wire prompt joins the trimmed prompt and extra text with a blank line"
   assert.equal(wirePrompt("a cat", "  "), "a cat");
 });
 
+test("prompt line breaks count as the CR LF the form sends; extra text keeps LF", () => {
+  assert.equal(wirePrompt("a\nb\r\nc", "d\ne"), "a\r\nb\r\nc\n\nd\ne");
+});
+
 test("characters are Unicode code points", () => {
   assert.equal(characterCount("a😀é"), 3);
+});
+
+test("line breaks can carry a prompt over the limit", () => {
+  const prompt = "a".repeat(998) + "\n" + "b";
+  assert.deepEqual(check(recraftV3, prompt, "", false),
+    { action: "fail", count: 1001, max: 1000, unit: "characters" });
 });
 
 test("the limit is inclusive and counts the extra text and separator", () => {
@@ -31,10 +41,14 @@ test("a target receiving the attached image uses its image-route limit", () => {
   assert.equal(check(grokApi, prompt, "", true), null);
 });
 
-test("grok-web truncates by UTF-8 bytes", () => {
+test("grok-web truncates text-to-image prompts by UTF-8 bytes", () => {
   assert.equal(check(grokWeb, "é".repeat(4096), "", false), null);
   assert.deepEqual(check(grokWeb, "é".repeat(4096) + "a", "", false),
     { action: "truncate", count: 8193, max: 8192, unit: "UTF-8 bytes" });
+});
+
+test("grok-web edits send the full prompt", () => {
+  assert.equal(check(grokWeb, "a".repeat(20000), "", true), null);
 });
 
 test("a target without a published limit is never flagged", () => {

@@ -33,13 +33,18 @@ alwaysApply: true
 - If the original release or its verification fails, stop. Do not update
   Vibecoders, and report the release as failed.
 - Exception (2026-10-12): `agent-redeploy.sh` stops before publishing when
-  the root-owned helper differs from `deploy/update-shared-host.sh`. Read
-  that script's diff, run `deploy/install-agent-deploy.sh` as root through
+  the root-owned helper or its root-owned idle checker differs from
+  `deploy/update-shared-host.sh` or `deploy/check-unfinished-work.py`. Read
+  those diffs, run `deploy/install-agent-deploy.sh` as root through
   `tpbeta-root`, then rerun `agent-redeploy.sh`. Never make the helper run a
   file that the deploy user can edit.
-- `deploy/update-vibecoders.sh` changes nothing while Vibecoders has
-  unfinished jobs or goal loops. Rerun it after they finish. Report the
-  release as incomplete until it succeeds.
+- A release step changes nothing while an instance it would restart has
+  unfinished jobs or goal loops (owner, 2026-10-12). `agent-redeploy.sh`
+  checks both instances, because every release restarts both. The step then
+  exits with status 75. Rerun it after the work finishes, or pass
+  `--wait-minutes N` to wait. Never bypass the check or restart a busy
+  instance by hand. Report the release as incomplete until both steps
+  succeed.
 - Never keep recovery copies of builds: not locally, not on either
   instance, and not on any other site (owner, 2026-10-11). The repository
   is the recovery source; rebuild and redeploy from it. Updates delete the

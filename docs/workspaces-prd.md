@@ -699,13 +699,43 @@ A release is complete only when both instances run the identical build and pass 
 
 Step 2 copies `/opt/multiimageclient`, the original's verified install, through `create-environment.py update`.
 If step 1 fails, step 2 does not run, and the release is reported as failed.
-Step 2 exits without changes while Vibecoders has unfinished jobs or goal loops.
+Each step changes nothing while an instance it would restart has unfinished jobs or goal loops.
+Step 1 checks both instances, because every release restarts both.
+A step that finds unfinished work exits with status 75.
 The release then stays incomplete until a rerun succeeds after that work finishes.
 Pushes that do not update `origin/master` skip both instances.
 Both instances read the shared account and environment records.
 An older version can reject fields that a newer version writes.
 
 Any further environment still updates only when explicitly selected.
+
+### Release idle gate (2026-10-12)
+
+The owner asked that releases reach both instances only once they have no running jobs.
+Before this change, only step 2 checked, and only with a 15-minute file-age heuristic.
+A goal loop waiting on a long manager call could pass that heuristic and die in the restart.
+Step 1 had no check, so it could restart the original during a job.
+
+`deploy/check-unfinished-work.py` now decides for both steps from files on disk:
+
+- A job is unfinished when its `events.jsonl` changed after the current process started and holds no `job-done` record.
+  Startup closes jobs from an earlier process as interrupted, so only current-process jobs can run.
+- A goal loop is unfinished while its `loop.json` status is `running`, whatever its age.
+  Startup stops loops that an earlier process left running.
+  A corrupt `loop.json` counts as running.
+- An `inactive` or `failed` service counts as idle. The sleeping original is `inactive`.
+  The check sends no request, so it never wakes the original.
+- Other states, such as `activating`, count as busy.
+
+Step 1 checks both instances before it publishes, then the original again before it replaces `/opt/multiimageclient`.
+Step 2 checks Vibecoders before the swap.
+`--wait-minutes N` polls every 30 seconds for up to N minutes instead of exiting at once.
+Exit status 75 means busy; status 2 means unreadable state. Neither changes anything.
+The update helper runs as root for the deploy user, so it runs a root-owned copy of the checker.
+`deploy/install-agent-deploy.sh` installs that copy with the helper, in `/usr/local/lib/multiimageclient-update/`.
+`agent-redeploy.sh` stops before publishing when either root-owned copy differs from the repository.
+See [the deployment guide](../deploy/README.md#release-idle-gate-2026-10-12) for commands.
+Tests: `deploy/test_check_unfinished_work.py` and `deploy/test_release_helper.py`.
 
 ### Replaced builds (2026-10-11)
 

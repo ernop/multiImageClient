@@ -2,8 +2,10 @@
 
 Signup/setup steps for each candidate provider, ready to execute. Each section
 lists: how to get a key, the endpoint + request shape, pricing, known quirks
-(especially prompt-length caps — wire these into the `maxPromptChars` config
-plumbing added 2026-07-30), and the planned settings key. All of these are
+(especially prompt-length caps — add each to `UiJobRunner.MaxPromptCharsFor`,
+or list a target without one in `PromptLimitTests.KeysWithoutAPublishedLimit`
+with the reason; see [prompt-length limits](prompt-length-limits.md), updated
+2026-10-12), and the planned settings key. All of these are
 hosted APIs; none involve running weights ourselves.
 
 Recommended implementation order: **Seedream → Reve → Luma → Qwen → MiniMax →
@@ -36,9 +38,9 @@ near-OpenAI-shaped; Reve is synchronous base64-in-response).
 ```
 
 - **Pricing:** ~$0.03–0.09/image depending on model + resolution.
-- **Quirks:** prompt should stay under ~600 English words (treat as a
-  `maxPromptChars` cap; verify the exact char behavior empirically on
-  integration). 5.0 Pro does NOT support `sequential_image_generation` or
+- **Quirks:** prompt should stay under ~600 English words (a word guideline,
+  not a character cap; verify the exact behavior on integration before
+  adding a `MaxPromptCharsFor` limit). 5.0 Pro does NOT support `sequential_image_generation` or
   `stream` (Lite supports both). Set `watermark: false` explicitly. Also
   accepts `image` (URL or base64) for image-to-image/edit.
 - **Settings key:** `SeedreamApiKey`. UI target name suggestion: `seedream`.
@@ -59,7 +61,7 @@ near-OpenAI-shaped; Reve is synchronous base64-in-response).
   (e.g. `PROMPT_TOO_LONG`, `CONTENT_POLICY_VIOLATION`).
 - **Pricing:** credit-based, ~$0.032/image reported; `credits_used` comes back
   on every response so real cost is directly observable.
-- **Quirks:** **prompt max 2,560 chars** (hard cap → `maxPromptChars`).
+- **Quirks:** **prompt max 2,560 chars** (hard cap → `MaxPromptCharsFor`).
   Aspect ratios: 16:9, 9:16, 3:2 (default), 2:3, 4:3, 3:4, 1:1. Optional
   `postprocessing` (upscale 2x/3x/4x, remove_background, fit_image) and
   `test_time_scaling` (1–15, more compute for better output, >5 rarely helps).
@@ -139,7 +141,7 @@ near-OpenAI-shaped; Reve is synchronous base64-in-response).
 ```
 
 - **Pricing:** ~$0.0035/image — cheapest metered API in the market.
-- **Quirks:** **prompt max 1,500 chars** (→ `maxPromptChars`). n=1–9. Aspect
+- **Quirks:** **prompt max 1,500 chars** (→ `MaxPromptCharsFor`). n=1–9. Aspect
   ratios 1:1/16:9/4:3/3:2/2:3/3:4/9:16/21:9 or custom WxH (512–2048,
   divisible by 8; aspect_ratio wins if both sent). URL responses expire in
   24h — use `response_format: "base64"`. `subject_reference` (single image)
@@ -158,7 +160,7 @@ near-OpenAI-shaped; Reve is synchronous base64-in-response).
   - Headers: `Authorization: Bearer $RUNWAYML_API_SECRET` AND the mandatory
     `X-Runway-Version: 2024-11-06`.
 - **Pricing:** images 5 credits at 720p / 8 at 1080p (~$0.05–0.08/image).
-- **Quirks:** `promptText` max 1,000 chars (→ `maxPromptChars`). Ratios are
+- **Quirks:** `promptText` max 1,000 chars (→ `MaxPromptCharsFor`). Ratios are
   exact enums (`1280:720`, `1584:672`, `1104:832`, `720:1280`, `832:1104`,
   `960:960`). `referenceImages` with @mention tags is the distinctive feature
   (identity/style consistency). Official Python/Node SDKs exist but plain
@@ -228,10 +230,12 @@ also aggregates third-party models, but these endpoints are Krea-owned:
   like existing providers), one `IImageGenerator` adapter, a
   `GeneratorGroups.BuildByShortName` entry, a UI catalog entry in
   `UiWorkflow` `/api/config`, and archive coverage for requests/responses.
-- Prompt caps to wire into `maxPromptChars` when integrating: Reve 2,560
-  chars; MiniMax 1,500 chars; Runway 1,000 chars; Seedream ~600 words
-  (verify); Qwen truncates server-side (decide whether to warn anyway).
-  grok-web's 8,192 is already wired.
+- Prompt caps to add to `UiJobRunner.MaxPromptCharsFor` when integrating:
+  Reve 2,560 chars; MiniMax 1,500 chars; Runway 1,000 chars; Seedream ~600
+  words (verify; a word guideline is not a character cap); Qwen truncates
+  server-side (list it in `KeysWithoutAPublishedLimit` with that reason unless
+  the owner decides otherwise). `PromptLimitTests` fails for a UI key with
+  neither. See [prompt-length limits](prompt-length-limits.md).
 - Multi-image responses (MiniMax n≤9, Qwen n≤6, Seedream Lite sequential)
   should follow the existing pattern: download in-generator, return
   `Base64ImageDatas`.

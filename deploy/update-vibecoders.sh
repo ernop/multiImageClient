@@ -9,9 +9,16 @@ set -Eeuo pipefail
 #
 # From the current development workstation:
 #   ssh tpbeta-root \
-#     'bash /home/tparkour/multiImageClient/deploy/update-vibecoders.sh'
+#     'bash /home/tparkour/multiImageClient/deploy/update-vibecoders.sh [--wait-minutes N]'
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+wait_minutes=0
+if [[ "${1:-}" == "--wait-minutes" && "${2:-}" =~ ^[0-9]+$ ]]; then
+    wait_minutes=$2
+    shift 2
+fi
+(( $# == 0 )) || die "usage: update-vibecoders.sh [--wait-minutes N]"
 
 id=vibecoders-ai-generation
 unit=multiimageclient-env-$id
@@ -24,31 +31,9 @@ repo=/home/tparkour/multiImageClient
 [[ -f $manifest ]] || die "missing $manifest"
 [[ -f $publish/MultiImageClient.dll ]] || die "missing the original's installed build"
 
-settings=$(systemctl show "$unit" -p Environment | tr ' ' '\n' \
-    | sed -n 's/^\(Environment=\)\?MULTIIMAGECLIENT_SETTINGS=//p')
-[[ -f $settings ]] || die "cannot locate the $unit settings file"
-
-# A restart kills in-flight work, so abort instead and rerun after it finishes.
-python3 - "$settings" <<'PY'
-import glob, json, os, sys, time
-with open(sys.argv[1], encoding="utf-8") as f:
-    base = json.load(f)["ImageDownloadBaseFolder"]
-cutoff = time.time() - 15 * 60
-busy = 0
-for events in glob.glob(os.path.join(base, "UiHistory", "*", "events.jsonl")):
-    if os.path.getmtime(events) >= cutoff:
-        with open(events, encoding="utf-8") as f:
-            if not any(json.loads(line).get("type") == "job-done" for line in f if line.strip()):
-                busy += 1
-for loop in glob.glob(os.path.join(base, "UiGoalLoops", "*", "loop.json")):
-    if os.path.getmtime(loop) >= cutoff:
-        with open(loop, encoding="utf-8") as f:
-            if str(json.load(f).get("status")).lower() in ("running", "starting"):
-                busy += 1
-if busy:
-    sys.exit(f"BUSY: {busy} unfinished Vibecoders job(s) or goal loop(s); nothing changed. Rerun after they finish.")
-print("pre-check: no unfinished jobs or goal loops")
-PY
+# A restart kills in-flight work, so this exits 75 without changes while
+# Vibecoders has unfinished jobs or goal loops.
+python3 "$repo/deploy/check-unfinished-work.py" --wait-minutes "$wait_minutes" "$unit"
 
 python3 "$repo/deploy/create-environment.py" update --id "$id" --publish "$publish"
 

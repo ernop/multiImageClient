@@ -3,11 +3,14 @@
 ## Decision — 2026-09-09
 
 The user requires automatic truncation instead of a shortening dialog or rewrite.
-Grok-web image generation sends the longest complete Unicode prefix within 8,192 UTF-8 bytes.
+Grok-web text-to-image generation sends the longest complete Unicode prefix within 8,192 UTF-8 bytes.
 Truncation occurs after prompt composition and before request capture and transmission.
 Other generators never truncate; see [prompt-length-limits.md](prompt-length-limits.md) (2026-10-12).
 The original composer text remains unchanged.
 The composer warns when prompt text plus endpoint additions exceeds this byte budget.
+
+Grok-web edits use grok.com app-chat, not the image WebSocket (checked 2026-10-12).
+They send the full prompt, so the composer shows no grok-web notice while grok-web receives the attached image.
 The server logs the original and transmitted character counts without logging prompt text there.
 
 The previous cutoff used 8,192 UTF-16 units.

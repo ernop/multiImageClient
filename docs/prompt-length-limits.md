@@ -11,10 +11,28 @@ A provider that counts UTF-16 units or bytes reaches its limit no earlier than t
 The check therefore never rejects a prompt that the provider accepts.
 An over-limit target fails with a clear error and receives nothing.
 The other selected targets of the job still run.
-Grok-web alone truncates its prompt, to 8,192 UTF-8 bytes.
+Grok-web alone truncates its text-to-image prompt, to 8,192 UTF-8 bytes.
+Its edits send the full prompt.
 That truncation is an owner requirement; see [grok-web-prompt-limits.md](grok-web-prompt-limits.md).
 The server does not check targets without a published limit.
 Their providers decide, and their rejections remain visible errors.
+
+### Line breaks
+
+A browser sends each prompt line break as CR LF, two characters, in the multipart job request.
+Chrome 154 did this in a 2026-10-12 check.
+The server keeps the CR LF, so its check counts each prompt line break as two characters.
+A prompt of 100 lines therefore counts 99 characters more than the text box shows.
+Endpoint extra text travels inside a JSON field and keeps single LF line breaks.
+The composer measures both parts the same way, so its notice matches the server's decision.
+`PromptLimitTests.ServerKeepsTheCrLfLineBreaksOfAFormPrompt` fails if the server ever normalizes them.
+
+### Every target is classified
+
+`PromptLimitTests.EveryUiTargetHasALimitOrAListedReason` reads every UI target key by reflection.
+Each key needs a limit in `UiJobRunner.MaxPromptCharsFor` or a `KeysWithoutAPublishedLimit` entry with its reason.
+A new target without either fails the test, so it cannot reach production unclassified.
+`ListedTargetsHaveNoLimitOnEitherRoute` fails when a listed target later gets a limit.
 
 ### Recraft no longer truncates
 
@@ -35,7 +53,7 @@ The generator applies the same per-model check in command-line runs.
 | `recraft`, `recraft-v41-utility`, `recraft-v41-pro`, `recraft-v41-vector`, `recraft-v4`, `recraft-v4-pro` | 10,000 characters | Text-to-image and image-to-image | Recraft API appendix, checked 2026-10-12 |
 | `recraft-v3` | 1,000 characters | Text-to-image and image-to-image | Recraft API appendix, checked 2026-10-12 |
 | `grok-api` (1.0) | 16,000 characters | Text-to-image only | xAI's HTTP 400 reply text, production 2026-09-19 and 2026-09-25 |
-| `grok-web` | 8,192 UTF-8 bytes, truncated | Text-to-image and edit | Owner requirement, 2026-09-09 |
+| `grok-web` | 8,192 UTF-8 bytes, truncated | Text-to-image only | Owner requirement, 2026-09-09 |
 
 The server publishes and checks no limit for these targets:
 
@@ -45,6 +63,7 @@ The server publishes and checks no limit for these targets:
   A 5,000-character figure for 3.0 appears only on third-party sites.
 - BFL FLUX models: BFL states a 32K-token limit for FLUX.2, not a character limit.
 - Google models: their token limits exceed every prompt the composer accepts.
+- `grok-web` edits: they use grok.com app-chat, which has no known limit.
 - Local generators, grok-web chat and video, and the describe and layout-map targets.
 
 ## Evidence (production, 2026-10-12)
@@ -69,6 +88,8 @@ Submission stays available.
 The user shortens the prompt or deselects the target.
 The notice updates on prompt edits, extra-text edits, target selection, and image attachment changes.
 A target uses its image-route limit when it receives the attached image.
+Grok-web shows no notice when it receives the attached image, because its edits send the full prompt.
+The counts include the two characters of each prompt line break.
 
 ## Contract and files
 
@@ -88,4 +109,4 @@ The job's result event and the server log record the error.
 - `Workflows/UiWorkflow.cs`: the `/api/config` fields.
 - `Ui/wwwroot/prompt-limits.js`: the composer measurement, also loaded by the tests.
 - `Ui/wwwroot/app.js`, `style.css`, and `index.html`: the notice.
-- `MultiImageClient.Tests/PromptLimitTests.cs` and `Ui/tests/prompt-limits.test.js`: tests.
+- `MultiImageClient.Tests/PromptLimitTests.cs` and `Ui/tests/prompt-limits.test.js`: tests, including the target classification and the line-break count.
