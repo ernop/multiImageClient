@@ -4185,6 +4185,7 @@ function resizeSketchCanvasToSize(width, height) {
     sketchOverlay.height = height;
   }
   updateSketchResolutionReadout();
+  fitSketchCanvasDisplay();
 }
 
 function updateSketchResolutionReadout() {
@@ -6171,6 +6172,79 @@ async function attachSketch() {
   sketchDialog.close();
 }
 
+const SketchDialogFloor = { width: 640, height: 420 };
+
+let sketchDialogBox = null;
+let sketchDialogResizeStart = null;
+
+function defaultSketchDialogGeometry() {
+  const width = Math.min(1500, Math.max(280, window.innerWidth - 28));
+  const height = Math.max(240, window.innerHeight - 28);
+  return {
+    width,
+    height,
+    left: Math.max(0, Math.round((window.innerWidth - width) / 2)),
+    top: Math.max(0, Math.round((window.innerHeight - height) / 2)),
+  };
+}
+
+function clampSketchDialogGeometry(box) {
+  const viewWidth = window.innerWidth;
+  const viewHeight = window.innerHeight;
+  const minWidth = Math.min(SketchDialogFloor.width, viewWidth);
+  const minHeight = Math.min(SketchDialogFloor.height, viewHeight);
+  const width = Math.round(Math.max(minWidth, Math.min(viewWidth, box.width)));
+  const height = Math.round(Math.max(minHeight, Math.min(viewHeight, box.height)));
+  const left = Math.round(Math.min(Math.max(0, box.left), Math.max(0, viewWidth - width)));
+  const top = Math.round(Math.min(Math.max(0, box.top), Math.max(0, viewHeight - height)));
+  return { width, height, left, top };
+}
+
+function syncSketchMaximizeButton() {
+  const button = el("sketch-maximize");
+  const maximized = sketchDialog.classList.contains("is-maximized");
+  button.textContent = maximized ? "restore" : "full screen";
+  button.title = maximized
+    ? "Return the sketch window to its previous size"
+    : "Expand the sketch window to the whole screen";
+  button.setAttribute("aria-pressed", maximized ? "true" : "false");
+  button.setAttribute("aria-label", maximized ? "Restore sketch window" : "Maximize sketch window");
+}
+
+function applySketchDialogBox(box) {
+  sketchDialogBox = box.maximized
+    ? { ...box, maximized: true }
+    : { ...clampSketchDialogGeometry(box), maximized: false };
+  sketchDialog.classList.toggle("is-maximized", sketchDialogBox.maximized);
+  if (sketchDialogBox.maximized) {
+    sketchDialog.style.left = "";
+    sketchDialog.style.top = "";
+    sketchDialog.style.width = "";
+    sketchDialog.style.height = "";
+  } else {
+    sketchDialog.style.left = `${sketchDialogBox.left}px`;
+    sketchDialog.style.top = `${sketchDialogBox.top}px`;
+    sketchDialog.style.width = `${sketchDialogBox.width}px`;
+    sketchDialog.style.height = `${sketchDialogBox.height}px`;
+  }
+  syncSketchMaximizeButton();
+}
+
+function fitSketchCanvasDisplay() {
+  const wrap = el("sketch-canvas-wrap");
+  if (sketchCanvas.width < 1 || sketchCanvas.height < 1) return;
+  wrap.style.setProperty("--sketch-aspect", String(sketchCanvas.width / sketchCanvas.height));
+  invalidateSketchCanvasRect();
+}
+
+function layoutSketchDialog() {
+  if (!sketchDialogBox) {
+    applySketchDialogBox({ ...defaultSketchDialogGeometry(), maximized: false });
+    return;
+  }
+  applySketchDialogBox(sketchDialogBox);
+}
+
 el("sketch-open").addEventListener("click", () => {
   sketchOverlay.width = sketchCanvas.width;
   sketchOverlay.height = sketchCanvas.height;
@@ -6178,13 +6252,99 @@ el("sketch-open").addEventListener("click", () => {
   drawSketchSelectionOverlay();
   sketchStatus.textContent = sketchEditorNotice;
   sketchStatus.classList.remove("error");
+  layoutSketchDialog();
   sketchDialog.showModal();
+  fitSketchCanvasDisplay();
+});
+el("sketch-maximize").addEventListener("click", () => {
+  if (sketchDialog.classList.contains("is-maximized")) {
+    const restored = sketchDialogBox
+      ? { ...sketchDialogBox, maximized: false }
+      : { ...defaultSketchDialogGeometry(), maximized: false };
+    applySketchDialogBox(restored);
+  } else {
+    const current = sketchDialogBox || { ...defaultSketchDialogGeometry(), maximized: false };
+    applySketchDialogBox({ ...current, maximized: true });
+  }
+  fitSketchCanvasDisplay();
 });
 if (typeof ResizeObserver === "function") {
-  new ResizeObserver(invalidateSketchCanvasRect).observe(el("sketch-canvas-wrap"));
+  new ResizeObserver(() => invalidateSketchCanvasRect()).observe(el("sketch-canvas-wrap"));
 }
 sketchDialog.addEventListener("scroll", invalidateSketchCanvasRect, true);
-window.addEventListener("resize", invalidateSketchCanvasRect);
+window.addEventListener("resize", () => {
+  if (!sketchDialog.open || sketchDialogResizeStart) {
+    invalidateSketchCanvasRect();
+    return;
+  }
+  layoutSketchDialog();
+  fitSketchCanvasDisplay();
+});
+
+const sketchResizeHandle = el("sketch-resize");
+function moveSketchDialogResize(event) {
+  if (!sketchDialogResizeStart) return;
+  applySketchDialogBox({
+    width: sketchDialogResizeStart.width + event.clientX - sketchDialogResizeStart.pointerX,
+    height: sketchDialogResizeStart.height + event.clientY - sketchDialogResizeStart.pointerY,
+    left: sketchDialogResizeStart.left,
+    top: sketchDialogResizeStart.top,
+    maximized: false,
+  });
+  fitSketchCanvasDisplay();
+}
+function endSketchDialogResize(event) {
+  if (!sketchDialogResizeStart) return;
+  sketchDialogResizeStart = null;
+  if (event && sketchResizeHandle.hasPointerCapture(event.pointerId)) {
+    sketchResizeHandle.releasePointerCapture(event.pointerId);
+  }
+}
+sketchResizeHandle.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  const rect = sketchDialog.getBoundingClientRect();
+  sketchDialogResizeStart = {
+    pointerX: event.clientX,
+    pointerY: event.clientY,
+    width: rect.width,
+    height: rect.height,
+    left: rect.left,
+    top: rect.top,
+  };
+  try { sketchResizeHandle.setPointerCapture(event.pointerId); } catch { /* the window listeners still track the drag */ }
+});
+window.addEventListener("pointermove", moveSketchDialogResize);
+window.addEventListener("pointerup", endSketchDialogResize);
+window.addEventListener("pointercancel", endSketchDialogResize);
+sketchResizeHandle.addEventListener("keydown", (event) => {
+  const step = event.shiftKey ? 80 : 24;
+  let dw = 0;
+  let dh = 0;
+  if (event.key === "ArrowRight") dw = step;
+  else if (event.key === "ArrowLeft") dw = -step;
+  else if (event.key === "ArrowDown") dh = step;
+  else if (event.key === "ArrowUp") dh = -step;
+  else return;
+  event.preventDefault();
+  event.stopPropagation();
+  const base = sketchDialog.classList.contains("is-maximized")
+    ? {
+      width: sketchDialog.getBoundingClientRect().width,
+      height: sketchDialog.getBoundingClientRect().height,
+      left: 0,
+      top: 0,
+    }
+    : (sketchDialogBox || defaultSketchDialogGeometry());
+  applySketchDialogBox({
+    width: base.width + dw,
+    height: base.height + dh,
+    left: base.left,
+    top: base.top,
+    maximized: false,
+  });
+  fitSketchCanvasDisplay();
+});
 el("sketch-close").addEventListener("click", () => sketchDialog.close());
 el("sketch-cancel").addEventListener("click", () => sketchDialog.close());
 el("sketch-form").addEventListener("submit", (event) => {

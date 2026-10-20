@@ -168,3 +168,28 @@ It builds synthetic job cards and checks the six-line clamp, both toggle labels,
 Without the `app.js` collapse scroll, the pass without scroll anchoring fails: the prompt start ends 610 px above the screen.
 
 Implementation: `style.css`, `index.html`, `app.js`, `text-entry.js`, and asset versions in every page that loads them.
+
+## Sketch window size — 2026-10-20
+
+The sketch window opens centered at the full viewport height and up to 1500 px wide, with a 14 px margin on each side.
+That keeps the drawing surface at least as large as the earlier scrolling dialog drew it.
+The closed window is hidden; only an open window uses the flex layout.
+**full screen** expands it to the viewport.
+**restore** returns the size from before that expansion.
+Drag the bottom-right grip to change width and height.
+The top-left corner stays in place.
+Arrow keys on the grip move an edge by 24 px, or by 80 px with Shift.
+The window stays inside the viewport.
+Its floor is 640×420 px, or the viewport when the viewport is smaller.
+
+The drawing surface fills the free space on both axes and keeps the canvas pixel aspect ratio.
+Changing the window does not change the sketch's pixel size.
+The legend and the action list use the side column.
+A shorter window scrolls those lists.
+A taller window shows more actions.
+Under 900 px of window width, the legend stacks under the drawing surface and takes about a third of the height.
+Tool groups reflow to two columns under 1100 px and to one column under 720 px of window width.
+
+The size lasts until the page reloads.
+It is not part of portable personal configuration.
+A reload opens the default size again.

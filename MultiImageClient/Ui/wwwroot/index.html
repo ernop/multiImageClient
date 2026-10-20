@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261015-characters">
+<link rel="stylesheet" href="style.css?v=20261020-sketch-review">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261006-mcphee-3-12-0">
 </head>
 <body class="composer-page">
@@ -549,7 +549,11 @@
   <form id="sketch-form">
     <div class="compact-dialog-head">
       <h2>Sketch a composition</h2>
-      <button id="sketch-close" type="button" aria-label="Close">&times;</button>
+      <div class="sketch-dialog-controls">
+        <button id="sketch-maximize" type="button" aria-pressed="false"
+          title="Expand the sketch window to the whole screen">full screen</button>
+        <button id="sketch-close" type="button" aria-label="Close">&times;</button>
+      </div>
     </div>
     <p class="compact-dialog-note">
       Build a spatial map of where things should go, then say what each color means.
@@ -783,11 +787,13 @@
             </section>
           </div>
         </div>
-        <div id="sketch-canvas-wrap">
-          <canvas id="sketch-canvas" width="1024" height="1024"
-            aria-label="Composition sketch canvas — draw, or paste a clipboard image"></canvas>
-          <canvas id="sketch-overlay" width="1024" height="1024" aria-hidden="true"></canvas>
-          <div id="sketch-brush-cursor" aria-hidden="true"></div>
+        <div id="sketch-canvas-stage">
+          <div id="sketch-canvas-wrap">
+            <canvas id="sketch-canvas" width="1024" height="1024"
+              aria-label="Composition sketch canvas — draw, or paste a clipboard image"></canvas>
+            <canvas id="sketch-overlay" width="1024" height="1024" aria-hidden="true"></canvas>
+            <div id="sketch-brush-cursor" aria-hidden="true"></div>
+          </div>
         </div>
       </div>
       <div id="sketch-right">
@@ -817,6 +823,8 @@
       <button id="sketch-attach" type="submit">attach sketch + legend</button>
     </div>
   </form>
+  <button id="sketch-resize" type="button"
+    aria-label="Resize sketch window" title="Drag to resize. Arrow keys resize too."></button>
 </dialog>
 
 <dialog id="video-dialog">
@@ -909,6 +917,6 @@
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261012-prompt-limits"></script>
 <script src="prompt-characters.js?v=20261015-characters"></script>
-<script src="app.js?v=20261015-characters"></script>
+<script src="app.js?v=20261020-sketch-review"></script>
 </body>
 </html>

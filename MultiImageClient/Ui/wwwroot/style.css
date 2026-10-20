@@ -2399,19 +2399,103 @@ body.image-viewer-open { overflow: hidden; }
 
 /* ---------- composition sketch dialog ---------- */
 
-#sketch-dialog { width: min(1180px, calc(100vw - 28px)); }
+#sketch-dialog {
+  position: fixed;
+  inset: auto;
+  container-type: inline-size;
+  container-name: sketch-dialog;
+  flex-direction: column;
+  left: 14px;
+  top: 14px;
+  width: min(1500px, calc(100vw - 28px));
+  height: calc(100vh - 28px);
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  overflow: hidden;
+}
+#sketch-dialog[open] { display: flex; }
+#sketch-dialog.is-maximized {
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  border-radius: 0;
+}
+#sketch-form {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.sketch-dialog-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+#sketch-maximize {
+  min-height: 32px;
+  padding: 4px 10px;
+  color: #fff;
+  background: transparent;
+  border: 2px solid #fff;
+  border-radius: 3px;
+  font: 800 14px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+#sketch-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  box-sizing: border-box;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: #fff;
+  border: 0;
+  border-top: 2px solid #000;
+  border-left: 2px solid #000;
+  border-radius: 0;
+}
+#sketch-resize::before {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(#000, #000) right bottom / 14px 2px no-repeat,
+    linear-gradient(#000, #000) right bottom / 2px 14px no-repeat,
+    linear-gradient(#000, #000) right 6px bottom 6px / 8px 2px no-repeat,
+    linear-gradient(#000, #000) right 6px bottom 6px / 2px 8px no-repeat;
+}
+#sketch-dialog .compact-dialog-actions { padding-right: 36px; }
 #sketch-body {
   display: flex;
+  flex: 1 1 auto;
   gap: 14px;
+  min-height: 0;
   padding: 0 14px;
-  align-items: flex-start;
+  align-items: stretch;
 }
-#sketch-left { flex: 1 1 auto; min-width: 0; }
+#sketch-left {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
 #sketch-tools {
   display: flex;
+  flex: 0 1 auto;
   flex-direction: column;
   gap: 8px;
+  max-height: 42%;
   margin-bottom: 8px;
+  overflow: auto;
   font-size: 12px;
   font-weight: 700;
   color: var(--accent-dark);
@@ -2516,8 +2600,23 @@ body.image-viewer-open { overflow: hidden; }
   border: 1px solid var(--ink);
   border-radius: 50%;
 }
+#sketch-canvas-stage {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 96px;
+  overflow: hidden;
+  container-type: size;
+  container-name: sketch-stage;
+}
 #sketch-canvas-wrap {
+  --sketch-aspect: 1;
   position: relative;
+  width: min(100cqw, calc(100cqh * var(--sketch-aspect)));
+  aspect-ratio: var(--sketch-aspect);
+  height: auto;
   overflow: hidden;
   background: #fff;
   border: 2px solid var(--accent);
@@ -2547,7 +2646,7 @@ body.image-viewer-open { overflow: hidden; }
 #sketch-overlay {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
   background: transparent;
   touch-action: none;
 }
@@ -2562,10 +2661,10 @@ body.image-viewer-open { overflow: hidden; }
   height: 100%;
   pointer-events: none;
 }
-@media (max-width: 1100px) {
+@container sketch-dialog (max-width: 1100px) {
   #sketch-tool-rack { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 720px) {
+@container sketch-dialog (max-width: 720px) {
   #sketch-tool-rack { grid-template-columns: 1fr; }
 }
 #sketch-brush-cursor {
@@ -2602,15 +2701,27 @@ body.image-viewer-open { overflow: hidden; }
   display: flex;
   flex-direction: column;
   gap: 7px;
+  min-height: 0;
+  overflow: hidden;
 }
 #sketch-legend-help {
   margin: 0;
   font-size: 12px;
   color: var(--accent-dark);
 }
-#sketch-legend-fields { display: flex; flex-direction: column; gap: 6px; }
-#sketch-action-panel {
+#sketch-legend-fields {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 6px;
   min-height: 0;
+  overflow: auto;
+}
+#sketch-action-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 80px;
   margin-top: 5px;
   border: 1px solid var(--line);
   border-radius: 3px;
@@ -2634,9 +2745,10 @@ body.image-viewer-open { overflow: hidden; }
 }
 #sketch-action-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 3px;
-  max-height: 250px;
+  min-height: 0;
   margin: 0;
   padding: 4px;
   overflow-y: auto;
@@ -2711,9 +2823,9 @@ body.image-viewer-open { overflow: hidden; }
   border: 1px solid var(--line);
   border-radius: 3px;
 }
-@media (max-width: 900px) {
+@container sketch-dialog (max-width: 900px) {
   #sketch-body { flex-direction: column; }
-  #sketch-right { flex: 1 1 auto; width: 100%; }
+  #sketch-right { flex: 0 1 36%; width: 100%; }
 }
 .compact-dialog-head {
   display: flex;
@@ -3593,6 +3705,8 @@ body.image-viewer-open { overflow: hidden; }
     min-width: min(300px, calc(100vw - 16px));
     min-height: min(260px, calc(100vh - 16px));
   }
+  #sketch-maximize { min-height: 36px; padding: 6px 12px; }
+  #sketch-resize { width: 36px; height: 36px; }
   /* The bottom bar takes at most about a third of the screen, so the image
      keeps most of the window. It scrolls as one region, like the side column:
      nested scroll boxes are hard to use with a finger. */
