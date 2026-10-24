@@ -10,48 +10,58 @@ using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
-    /// Edits/generates an image through the consumer grok.com "chat door":
-    /// the uploaded source is sent as a normal app-chat conversation message
-    /// and a chat model (grok-3) reads it, expands the instruction into a
-    /// detailed edit prompt, and orchestrates imagine-image-edit. This differs
-    /// from GrokWebImagineEditGenerator, which posts modelName=imagine-image-edit
-    /// directly. Both ride the same signed POST /rest/app-chat/conversations/new
-    /// transport; the request/response schema for this path was validated live
-    /// 2026-08-10 (see GrokWebClient.RunImageChatEditAsync).
-    public class GrokWebImagineChatEditGenerator : IImageGenerator
+    /// Generates or edits an image through the consumer grok.com "chat door":
+    /// the prompt is sent as a normal app-chat conversation message and a chat
+    /// model (grok-3) expands it and calls grok.com's image tool. With a source
+    /// image the upload rides the message and the model orchestrates
+    /// imagine-image-edit; without one the model generates from the text
+    /// alone. This differs from GrokWebImagineEditGenerator, which posts
+    /// modelName=imagine-image-edit directly. Both ride the same POST
+    /// /rest/app-chat/conversations/new transport (see
+    /// GrokWebClient.RunImageChatAsync).
+    public class GrokWebImagineChatGenerator : IImageGenerator
     {
         private readonly GrokWebClient _client;
         private readonly SemaphoreSlim _semaphore;
         private readonly MultiClientRunStats _stats;
-        private readonly GrokWebAsset _sourceAsset;
+        private readonly GrokWebAsset? _sourceAsset;
         private readonly string _chatModel;
+        // Label only: the chat door sends no aspect ratio. Edits show the
+        // source image's nearest ratio; text-only generation leaves it blank
+        // because the chat model chooses the shape.
         private readonly string _aspectRatio;
 
         public ImageGeneratorApiType ApiType => ImageGeneratorApiType.GrokWebImagineChat;
 
-        public GrokWebImagineChatEditGenerator(
+        public GrokWebImagineChatGenerator(
             GrokWebClient client,
-            GrokWebAsset sourceAsset,
+            GrokWebAsset? sourceAsset,
             int maxConcurrency,
             MultiClientRunStats stats,
             string chatModel = GrokWebClient.DefaultChatModel,
-            string aspectRatio = "1:1")
+            string aspectRatio = "")
         {
             _client = client;
             _sourceAsset = sourceAsset;
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _stats = stats;
             _chatModel = string.IsNullOrWhiteSpace(chatModel) ? GrokWebClient.DefaultChatModel : chatModel;
-            _aspectRatio = string.IsNullOrWhiteSpace(aspectRatio) ? "1:1" : aspectRatio;
+            _aspectRatio = aspectRatio ?? "";
         }
 
-        public static async Task<GrokWebImagineChatEditGenerator> CreateAsync(
+        public static GrokWebImagineChatGenerator CreateForText(
+            GrokWebClient client,
+            int maxConcurrency,
+            MultiClientRunStats stats,
+            string chatModel = GrokWebClient.DefaultChatModel)
+            => new GrokWebImagineChatGenerator(client, null, maxConcurrency, stats, chatModel);
+
+        public static async Task<GrokWebImagineChatGenerator> CreateAsync(
             GrokWebClient client,
             string inputImagePath,
             int maxConcurrency,
             MultiClientRunStats stats,
-            string chatModel = GrokWebClient.DefaultChatModel,
-            string aspectRatio = "")
+            string chatModel = GrokWebClient.DefaultChatModel)
         {
             var uploaded = await client.UploadImageAsync(inputImagePath);
             var asset = new GrokWebAsset
@@ -60,33 +70,35 @@ namespace MultiImageClient
                 MediaUrl = uploaded.MediaUrl,
                 PostId = uploaded.AssetId,
             };
-            var resolvedAspect = string.IsNullOrWhiteSpace(aspectRatio)
-                ? DeriveAspectRatio(inputImagePath)
-                : aspectRatio;
-            return new GrokWebImagineChatEditGenerator(
+            return new GrokWebImagineChatGenerator(
                 client, asset, maxConcurrency, stats,
-                chatModel: chatModel, aspectRatio: resolvedAspect);
+                chatModel: chatModel, aspectRatio: DeriveAspectRatio(inputImagePath));
         }
 
         public string GetFilenamePart(PromptDetails pd)
-        {
-            var ar = _aspectRatio.Replace(':', 'x');
-            return $"grokweb-chat_{_chatModel}_{ar}";
-        }
+            => _aspectRatio.Length == 0
+                ? $"grokweb-chat_{_chatModel}"
+                : $"grokweb-chat_{_chatModel}_{_aspectRatio.Replace(':', 'x')}";
 
         public List<string> GetRightParts()
         {
-            return new List<string>
+            var parts = new List<string>
             {
                 "Grok Web Chat Image",
-                $"{_chatModel} + imagine-image-edit",
+                _sourceAsset == null ? $"{_chatModel} + image tool" : $"{_chatModel} + imagine-image-edit",
                 "grok.com app-chat (chat door)",
-                $"AR {_aspectRatio}",
             };
+            if (_aspectRatio.Length > 0)
+            {
+                parts.Add($"AR {_aspectRatio}");
+            }
+            return parts;
         }
 
         public string GetGeneratorSpecPart()
-            => $"Grok Web Chat Image ({_chatModel})  {_aspectRatio}";
+            => _aspectRatio.Length == 0
+                ? $"Grok Web Chat Image ({_chatModel})"
+                : $"Grok Web Chat Image ({_chatModel})  {_aspectRatio}";
 
         public decimal GetCost() => 0m;
 
@@ -98,9 +110,9 @@ namespace MultiImageClient
             {
                 _stats.GrokImageGenerationRequestCount++;
                 var prompt = promptDetails.Prompt ?? string.Empty;
-                Logger.Log($"\t-> Grok Web Chat Image model={_chatModel} asset={_sourceAsset.AssetId}: {prompt}");
+                Logger.Log($"\t-> Grok Web Chat Image model={_chatModel} asset={_sourceAsset?.AssetId ?? "none (text only)"}: {prompt}");
 
-                var chat = await _client.RunImageChatEditAsync(prompt, _sourceAsset, _chatModel);
+                var chat = await _client.RunImageChatAsync(prompt, _sourceAsset, _chatModel);
                 if (!string.IsNullOrWhiteSpace(chat.ErrorMessage))
                 {
                     _stats.GrokImageGenerationErrorCount++;

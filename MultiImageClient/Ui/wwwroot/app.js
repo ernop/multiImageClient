@@ -716,10 +716,9 @@ function updateGeneratorCompatibility() {
     label.classList.toggle("sketch-unsupported", sketchUnsupported);
     if (missingRequiredImage)
     {
-      const requiresImageReason = isDescribe
-        ? `${genLabel(cb.value)} describes an attached image — attach one to enable it`
-        : `${genLabel(cb.value)} edits an attached image through a chat message — attach one to enable it`;
-      label.title = generatorChooserTitle(cb.value, requiresImageReason);
+      label.title = generatorChooserTitle(
+        cb.value,
+        `${genLabel(cb.value)} describes an attached image — attach one to enable it`);
     }
     else if (aspectIncompatible)
     {

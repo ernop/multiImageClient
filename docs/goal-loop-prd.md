@@ -1084,7 +1084,10 @@ Both pages use the same standard groups from `/api/config` and the same editable
 Both expose Enable all, Disable all, Toggle all, Default, and the configuration dialog.
 Group buttons replace the current selection with their shown members (2026-10-06: they never change visibility).
 Hidden and unavailable generators remain absent from the picker.
-Goal loops also exclude videos, describe targets, and generators requiring an input image.
+Goal loops also exclude videos, describe targets, and grok-web chat.
+Updated 2026-10-23: grok-web chat no longer requires an input image, but grok-3 can rewrite the manager's prompt.
+`/api/config` sends each fixed exclusion as `goalLoopProblem`; the goal page hides those keys, and the server rejects them.
+See [grok-web-chat.md](grok-web-chat.md#goal-loops).
 The configuration dialog retains the complete catalog so settings apply consistently across both pages.
 
 Initial selection uses the shared configured defaults.

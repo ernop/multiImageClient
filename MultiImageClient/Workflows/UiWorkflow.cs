@@ -64,12 +64,13 @@ namespace MultiImageClient
         private const string VisibilityOverrideLogin = "ernieMultiZone";
         private const string LocalVisibilityActor = "local-instance-owner";
 
-        private static bool SupportsImageAspectOverride(
-            UiJobRunner runner,
-            string key)
-            => runner.IsImageCapableForCurrentSettings(key)
+        // The grok-web chat door sends no aspect ratio, like the
+        // source-sized Recraft and Ideogram 4.5 image paths.
+        private static bool SupportsImageAspectOverride(string key)
+            => UiJobRunner.IsImageCapable(key)
                 && !UiJobRunner.IsRecraftKey(key)
-                && key != UiJobRunner.KeyIdeogramV45;
+                && key != UiJobRunner.KeyIdeogramV45
+                && key != UiJobRunner.KeyGrokWebChat;
 
         // Default anti-murk guidance appended to every gpt-image-2 prompt while
         // the composer's toggle is on (which it is by default). gpt-image-2
@@ -514,10 +515,8 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise. Accepts up to 4 ordered input images (other selected generators only receive the first). The default output AR matches the primary attached source; explicit AR choices override it." },
                     new { key = UiJobRunner.KeyGpt25Sunburst, label = "gpt-image-2.5 sunburst", detail = "OpenAI's most capable image model (released 2026-09-08): strongest editing precision, instruction following, and text rendering. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
                     new { key = UiJobRunner.KeyGpt25Flare, label = "gpt-image-2.5 flare", detail = "OpenAI's fast everyday GPT Image 2.5 tier (released 2026-09-08): quicker and cheaper than sunburst with the same API surface. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
-                    new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = runner.IsImageCapableForCurrentSettings(UiJobRunner.KeyGrokWeb)
-                        ? "grok.com cookie session. Text-to-image uses the browser-free imagine WebSocket; attached images use browser-free x-statsig-id-signed imagine-image-edit. Auto edits inherit the source shape. Text-to-image auto requests square 1:1 because the WebSocket has no prompt-aware auto."
-                        : "grok.com cookie session using the browser-free imagine WebSocket. Text-to-image only until current x-statsig-id signing material is captured; attached images are not sent. Auto requests square 1:1 because this transport has no prompt-aware auto and Grok's own default is 2:3. Side-by-side mode requests up to 4 images." },
-                    new { key = UiJobRunner.KeyGrokWebChat, label = "grok-web chat", detail = "grok.com cookie session, chat-message door. The attached image is sent as a normal chat message; a chat model (grok-3) reads it, expands your instruction into a detailed edit prompt, and edits via imagine-image-edit. Requires an attached image and current x-statsig-id signing material. Slower than direct edit because the chat model reasons first." },
+                    new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = "grok.com cookie session. Text-to-image uses the imagine WebSocket; attached images use imagine-image-edit over app-chat. Auto edits inherit the source shape. Text-to-image auto requests square 1:1 because the WebSocket has no prompt-aware auto and Grok's own default is 2:3. Side-by-side mode requests up to 4 images." },
+                    new { key = UiJobRunner.KeyGrokWebChat, label = "grok-web chat", detail = "grok.com cookie session, chat-message door. Your prompt goes to a chat model (grok-3) as a normal message, and the model calls grok.com's image tool. Without an image it generates from the text and chooses the shape itself; this door sends no aspect ratio, so an explicit AR has no effect. With an image the upload rides the message and the model edits it via imagine-image-edit; an explicit AR cannot be combined with an attached image. Slower than grok-web pro because the chat model reasons first." },
                     new { key = UiJobRunner.KeyGrokApi, label = "grok-api", detail = "api.x.ai legacy grok-imagine-image 1.0. The model does not accept quality. With an input, only the primary image is sent; auto maps its dimensions to Grok's nearest supported AR." },
                     new { key = UiJobRunner.KeyGrokApiPro, label = "grok-api 2.0", detail = "api.x.ai grok-imagine-image-2.0. Quality maps to low, medium, or auto; high, xhigh, and max map to 2.0's highest medium tier. Editing sends up to five ordered reference images. Auto maps the primary image to Grok's nearest supported AR, including 21:9 and 5:2." },
                     new { key = UiJobRunner.KeyKrea, label = "Krea 2 Medium", detail = "Krea's own foundation image model, not an aggregated third-party model. Best for expressive illustration and stable general use. An attached image is sent as a 0.6-strength style reference; auto matches its nearest native aspect ratio. The API currently accepts 1K only, so detail has no effect. n runs separate generations." },
@@ -587,9 +586,8 @@ namespace MultiImageClient
                     // attached image by definition (that's their whole input),
                     // so they count as image-capable for the chip icons and
                     // image-only bulk actions.
-                    imageCapable = runner.IsImageCapableForCurrentSettings(g.key) || UiJobRunner.IsAnalysisKey(g.key),
-                    imageCapabilityProblem = runner.DescribeImageCapabilityProblem(g.key),
-                    imageAspectOverride = SupportsImageAspectOverride(runner, g.key),
+                    imageCapable = UiJobRunner.IsImageCapable(g.key) || UiJobRunner.IsAnalysisKey(g.key),
+                    imageAspectOverride = SupportsImageAspectOverride(g.key),
                     // Live-validated composition-sketch followers (see
                     // UiJobRunner.SketchCapableKeys). The composer's sketch
                     // dialog auto-deselects targets without this flag and
@@ -602,11 +600,8 @@ namespace MultiImageClient
                     // returns generated media.
                     kind = UiJobRunner.IsAnalysisKey(g.key) ? "describe" : "image",
                     // Analysis targets require an image (their input).
-                    // grok-web-chat also requires one: it edits the attached
-                    // image through a chat message and has no text-to-image
-                    // path in this UI.
-                    requiresImage = UiJobRunner.IsAnalysisKey(g.key)
-                        || g.key == UiJobRunner.KeyGrokWebChat,
+                    requiresImage = UiJobRunner.IsAnalysisKey(g.key),
+                    goalLoopProblem = UiGoalLoopRunner.GoalLoopExclusion(g.key),
                     // Published prompt limits, so the composer can warn before
                     // submit. The server fails an over-limit target without
                     // sending it; maxImagePromptChars applies when the target
@@ -692,7 +687,7 @@ namespace MultiImageClient
                     }),
                     // Goal loop manager catalog + limits, consumed by goal.html.
                     // Generators come from the `generators` list above (image
-                    // kind, available, not requiring an input image).
+                    // kind, available, no goalLoopProblem).
                     goalLoop = new
                     {
                         protocolVersion = UiGoalLoopProtocol.Version,
@@ -1198,8 +1193,8 @@ namespace MultiImageClient
                     if (shape != "auto")
                     {
                         var aspectIncompatible = genKeys
-                            .Where(key => runner.IsImageCapableForCurrentSettings(key)
-                                && !SupportsImageAspectOverride(runner, key))
+                            .Where(key => UiJobRunner.IsImageCapable(key)
+                                && !SupportsImageAspectOverride(key))
                             .ToList();
                         if (aspectIncompatible.Count > 0)
                         {

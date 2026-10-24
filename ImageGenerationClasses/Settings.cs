@@ -37,32 +37,6 @@ namespace MultiImageClient
         /// Required for --grok-web consumer-session generators.
         public string GrokWebCookiePath { get; set; } = "";
 
-        /// Optional pinned 48-byte grok-site-verification key, base64. Leave
-        /// blank (the default) to fetch keys from the grok.com page for
-        /// x-statsig-id signing. grok.com stops accepting a pinned key after
-        /// about 7 days. Pin with --grok-web-capture-statsig --grok-web-statsig-pin.
-        public string GrokWebStatsigVerificationKey { get; set; } = "";
-
-        /// Animation key paired with a pinned GrokWebStatsigVerificationKey.
-        /// Set both or neither; an incomplete or malformed pair disables
-        /// signed grok-web features (image edit, chat door, video).
-        public string GrokWebStatsigAnimationKey { get; set; } = "";
-
-        /// ISO-8601 UTC capture time of the pinned pair, written by
-        /// --grok-web-statsig-pin. Logs and errors report the key's age from it.
-        public string GrokWebStatsigCapturedAtUtc { get; set; } = "";
-
-        /// Optional Chrome/Chromium binary used for grok-web video generation's
-        /// browser-backed app-chat POST. Blank = Playwright's bundled Chromium.
-        public string GrokWebBrowserExecutablePath { get; set; } = "";
-
-        /// Show the grok-web video browser window. Normally false; useful when
-        /// diagnosing an expired session or provider-side page change.
-        public bool GrokWebBrowserHeaded { get; set; }
-
-        /// Timeout for grok-web's browser-backed video request.
-        public int GrokWebVideoTimeoutSeconds { get; set; } = 900;
-
         /// How long to poll for a video after app-chat accepted the request but
         /// returned no URL. Grok sometimes silently drops moderated jobs.
         public int GrokWebVideoPollTimeoutSeconds { get; set; } = 180;
@@ -386,7 +360,6 @@ namespace MultiImageClient
             ComfyUIFlux2KleinWorkflowPath = ExpandPath(ComfyUIFlux2KleinWorkflowPath);
             ComfyUIZImageWorkflowPath = ExpandPath(ComfyUIZImageWorkflowPath);
             GrokWebCookiePath = ExpandPath(GrokWebCookiePath);
-            GrokWebBrowserExecutablePath = ExpandPath(GrokWebBrowserExecutablePath);
             MetaWebCookiePath = ExpandPath(MetaWebCookiePath);
             MetaWebBrowserProfilePath = ExpandPath(MetaWebBrowserProfilePath);
             MetaWebBrowserExecutablePath = ExpandPath(MetaWebBrowserExecutablePath);

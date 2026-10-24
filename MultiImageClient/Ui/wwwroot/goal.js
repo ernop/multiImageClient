@@ -101,7 +101,7 @@ function bulkGeneratorInputs() { return [...gensRow.querySelectorAll("input:not(
 function renderGoalGeneratorPicker(checkedKeys = generatorPreferences.defaultSelectedKeys) {
   gensRow.replaceChildren();
   for (const generator of generators) {
-    if (!generator.available || generator.kind !== "image" || generator.requiresImage ||
+    if (!generator.available || generator.kind !== "image" || generator.goalLoopProblem ||
         !generatorShownByPreferences(generator)) continue;
     const chip = buildGenChip(generator);
     const box = chip.querySelector("input");

@@ -2609,18 +2609,25 @@ namespace MultiImageClient
         }
 
         public static string GeneratorProblem(UiJobRunner runner, string key)
+            => GoalLoopExclusion(key) ?? runner.DescribeAvailabilityProblem(key) ?? "";
+
+        // Reasons a key can never render goal-loop prompts, whatever the
+        // provider state. /api/config sends them so goal.html hides the key.
+        public static string? GoalLoopExclusion(string key)
         {
             if (UiJobRunner.IsAnalysisKey(key))
             {
                 return $"{key} is an analysis target, not an image generator";
             }
-            if (string.Equals(key, UiJobRunner.KeyGrokWebVideo, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(key, UiJobRunner.KeyGrokWebChat, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(key, UiJobRunner.KeyGrokWebVideo, StringComparison.OrdinalIgnoreCase))
             {
-                return $"{key} requires an input image or produces video; goal loops render text prompts only";
+                return $"{key} makes video from an input image; goal loops render images from text prompts";
             }
-            var problem = runner.DescribeAvailabilityProblem(key);
-            return problem ?? "";
+            if (string.Equals(key, UiJobRunner.KeyGrokWebChat, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{key} gives the prompt to a chat model that can rewrite it before the image tool runs; goal loops require the generator to receive the manager's exact prompt";
+            }
+            return null;
         }
 
         public UiGoalLoopState Start(UiGoalLoop loop)

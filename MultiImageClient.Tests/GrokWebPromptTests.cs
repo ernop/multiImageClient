@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 
 namespace MultiImageClient.Tests;
 
@@ -24,5 +25,23 @@ public class GrokWebPromptTests
         var prefix = new string('a', 8191);
         Assert.Equal(prefix, GrokWebClient.TruncateImagePrompt(prefix + "😀z"));
         Assert.Equal("", GrokWebClient.TruncateImagePrompt(""));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("asset-1")]
+    public void ChatPayloadAttachesOnlyTheGivenSourceAsset(string? assetId)
+    {
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(
+            GrokWebClient.BuildImageChatPayload("a red apple", assetId, GrokWebClient.DefaultChatModel)));
+        var root = doc.RootElement;
+
+        Assert.Equal("a red apple", root.GetProperty("message").GetString());
+        Assert.Equal("grok-3", root.GetProperty("modelName").GetString());
+        Assert.False(root.GetProperty("temporary").GetBoolean());
+        Assert.True(root.GetProperty("enableImageGeneration").GetBoolean());
+        Assert.Equal(
+            assetId == null ? Array.Empty<string>() : new[] { assetId },
+            root.GetProperty("fileAttachments").EnumerateArray().Select(e => e.GetString()!).ToArray());
     }
 }

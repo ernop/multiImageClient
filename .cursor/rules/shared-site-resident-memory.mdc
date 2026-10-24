@@ -26,7 +26,7 @@ See [docs/workspaces-prd.md](../../docs/workspaces-prd.md) for installation and 
 - **Do not hydrate all of `UiHistory/` at startup.** Index `job.json` lightly; keep only today's jobs (live feed) resident; archive days and `Get(id)` load on demand; evict cold archive graphs (cap ~250).
 - **Caches must have caps or eviction** (LRU / max bytes / TTL). Unbounded `ConcurrentDictionary` of previews, envelopes, or event JSON is a defect.
 - **Ephemeral RAM is OK** only while an operation is in flight (e.g. gpt-image-2 streaming partials) and must be dropped when replaced by a durable artifact.
-- **Playwright Chromium** (grok-web video/edit, meta-web) must idle-release after a few minutes; keep the client object reusable, do not hold a warm browser for the process lifetime.
+- **Playwright Chromium** (meta-web; grok-web runs no browser since 2026-10-23) must idle-release after a few minutes; keep the client object reusable, do not hold a warm browser for the process lifetime.
 - **Multi-user concurrency** shares process-wide semaphores; raising caps without fixing retention will OOM the box again.
 - When touching UI job/image/log serving, **check for unbounded growth** and fix it in the same change when practical.
 
@@ -38,7 +38,7 @@ See [docs/workspaces-prd.md](../../docs/workspaces-prd.md) for installation and 
 4. ~~Header **RAM** status via `/api/status`~~ — working set + cgroup + job/envelope/browser warm counts.
 5. ~~Lazy archive hydration~~ — index all days; hydrate today + on-demand archive/`Get`; cold eviction.
 6. ~~Disk-backed card thumbs~~ — `UiHistory/{id}/thumbs/`; stream path; build from file stream, not full-original heap buffer.
-7. ~~Idle Chromium shutdown~~ — `GrokWebBrowserClient` / `MetaWebClient` release after 5 min idle (gate stays alive).
+7. ~~Idle Chromium shutdown~~ — `MetaWebClient` releases after 5 min idle (gate stays alive). `GrokWebBrowserClient` was deleted on 2026-10-23.
 8. ~~gpt-image-2 SSE partial parse churn~~ — each partial/final event arrived as one multi-MB base64 line and was materialized ~6x (StreamReader UTF-16 line, `Substring`, JSON transcode, summarizer `GetString` for `.Length`, b64 `GetString`, decode); two concurrent streams generated enough LOH garbage to cross memory.high. Fixed 2026-08-04: byte-based pooled `Utf8SseLineReader` in `GptImage2Generator`, `GetBytesFromBase64()` straight from the document, raw-token length via `JsonMarshal`, plus `runtimeconfig.template.json` pinning `System.GC.HeapHardLimitPercent=50` so the GC collects well below the liveness guard's memory.high kill line (the .NET default of 75% of memory.max equalled MemoryHigh exactly).
 
 When adding new UI caches, give them a byte/entry cap from day one.

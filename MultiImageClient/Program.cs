@@ -46,20 +46,6 @@ namespace MultiImageClient
 
             var options = RunOptions.Parse(args);
 
-            if (options.GrokWebStatsigPin && !options.GrokWebCaptureStatsig)
-            {
-                Console.Error.WriteLine("--grok-web-statsig-pin requires --grok-web-capture-statsig.");
-                Environment.ExitCode = 2;
-                return;
-            }
-
-            if (options.GrokWebStatsigSelfTest)
-            {
-                GrokWebStatsigSigner.RunSelfTest();
-                Console.WriteLine("grok-web-statsig-self-test: PASS");
-                return;
-            }
-
             if (options.Ui)
             {
                 // The shared-site daemon repeatedly decodes large originals to
@@ -78,7 +64,7 @@ namespace MultiImageClient
 
             if (options.PlaywrightInstall)
             {
-                // One-time browser download for --meta-web and grok-web video.
+                // One-time browser download for --meta-web.
                 // Exits with the installer's own status; no settings needed.
                 Environment.Exit(Microsoft.Playwright.Program.Main(new[] { "install", "chromium" }));
             }
@@ -115,25 +101,6 @@ namespace MultiImageClient
                 return;
             }
             GenerationArchive.Initialize(settings);
-
-            if (options.GrokWebCaptureStatsig)
-            {
-                try
-                {
-                    await GrokWebStatsigCapture.RunAsync(
-                        settings,
-                        options,
-                        settingsFilePath,
-                        CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine(
-                        $"grok-web-capture-statsig: FAIL; capture failed: {ex.GetType().Name}: {ex.Message}");
-                    Environment.ExitCode = 1;
-                }
-                return;
-            }
 
             if (options.GrokWebChatProbe)
             {

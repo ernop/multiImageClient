@@ -11,15 +11,14 @@ using System.Threading.Tasks;
 namespace MultiImageClient
 {
     /// Edits an existing image through the consumer grok.com app-chat path
-    /// (imagine-image-edit), using the same Playwright integrity-signed
+    /// (imagine-image-edit), the same POST /rest/app-chat/conversations/new
     /// transport as image-to-video. The source is uploaded, posted, then
     /// referenced as mediaGenInput.imageToImage.inputAssets=[assetId].
     ///
     /// Do not use wss://grok.com/ws/imagine/listen with properties.image_uri
     /// for edits: that transport accepts the field but ignores the source
     /// image and invents a new scene from the prompt alone (observed
-    /// 2026-07-31). Standalone HTTP to /rest/app-chat/conversations/new
-    /// still 403s without a real Edit-button click that attaches x-statsig-id.
+    /// 2026-07-31).
     public class GrokWebImagineEditGenerator : IImageGenerator
     {
         private readonly GrokWebClient _client;
@@ -100,7 +99,7 @@ namespace MultiImageClient
             {
                 _enablePro ? "Grok Web Imagine Edit Pro" : "Grok Web Imagine Edit",
                 "imagine-image-edit",
-                "grok.com browser app-chat",
+                "grok.com app-chat",
                 $"AR {_aspectRatio}",
             };
         }

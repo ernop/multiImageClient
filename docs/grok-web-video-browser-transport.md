@@ -11,7 +11,55 @@
 - Duration, resolution, SSE job updates, local MP4 saving, and the existing video result tile remain part of the normal UI job flow.
 - Product decisions and protocol findings belong in Markdown documentation, not only chat transcripts or code comments.
 
+## Unsigned app-chat (2026-10-23)
+
+grok.com no longer signs app-chat requests. This section supersedes every signing section below. Those sections remain as history.
+
+### Evidence
+
+- Local logs show the last successful page-key fetch at 2026-10-11 00:10.
+- The first failure came at 2026-10-20 07:18: "expected one grok-site-verification meta tag, found 0".
+- Every later signed request failed in the same way. Grok-web edit, chat, and video stopped.
+- Text-to-image continued, because the imagine WebSocket never needed a signature.
+- On 2026-10-23 grok.com served release `grok-web@851ca8e5df6ab015a3dd0f4499b262ac1c5545b9`, as its Sentry release tag states.
+- The anonymous and logged-in pages had the same release and the same 114 scripts.
+- Neither page had the verification meta tag or the animation frame table.
+- None of the 1,742 reachable script chunks contained `botoxSign`, `x-statsig`, or the signer's counter epoch.
+- The site's REST client sends app-chat with two headers only: `x-xai-request-id`, a random UUID, and an acting-organization header.
+- The site handles one kind of 403 only: a Cloudflare challenge with `cf-mitigated: challenge`. It then solves Turnstile.
+- Chat now prefers a new "gateway" transport and keeps REST as a fallback. Image edit still sends `modelName: "imagine-image-edit"` over REST.
+
+### Live verification
+
+- `--grok-web-chat-probe` sent one unsigned text-only request on 2026-10-23.
+- grok.com returned HTTP 200 and one 1168×784 image that matched the prompt.
+- The response format was unchanged, so the existing parser read it.
+- After the change, a local UI image job sent a 768×512 source to grok-web and grok-web chat.
+- Both unsigned edits returned one 1728×1152 image that followed the instruction.
+- Video was not tested live after the change. It uses the same request builder.
+
+### Decision
+
+- Send every app-chat request without a signature and with a new `x-xai-request-id`, as the current site does.
+- Edit, chat image, and video share one request builder, `GrokWebClient.BuildAppChatRequest`.
+- Delete the signing subsystem and the Playwright app-chat transport. Neither has a remaining use.
+- Removed files: `GrokWebStatsigSource.cs`, `GrokWebStatsigSigner.cs`, `GrokWebStatsigCapture.cs`, `GrokWebBrowserClient.cs`, and `GrokWebStatsigTests.cs`.
+- Removed settings: `GrokWebStatsigVerificationKey`, `GrokWebStatsigAnimationKey`, `GrokWebStatsigCapturedAtUtc`, `GrokWebBrowserExecutablePath`, `GrokWebBrowserHeaded`, and `GrokWebVideoTimeoutSeconds`.
+- A settings file that still holds them loads normally. The loader ignores unknown keys.
+- Removed flags: `--grok-web-capture-statsig`, `--grok-web-statsig-pin`, `--grok-web-statsig-self-test`, and `--grok-web-headed`. They now fail as unknown arguments.
+- `--playwright-install` remains for meta-web only.
+- Commit `ef71c8b` holds the last signing code. Restore it from history if grok.com signs requests again.
+
+### Failure behavior
+
+- A rejected app-chat request fails its target with the HTTP status and grok.com's error text.
+- Nothing retries or replays a rejected request.
+- If grok.com reinstates signing, app-chat will return 403. Restore the signer from history; do not add a fallback.
+- The app-chat request uses the HTTP client's 15-minute timeout, equal to the removed setting's 900-second default.
+
 ## Live browser finding (2026-07-20)
+
+History. grok.com stopped sending `x-statsig-id` by 2026-10-20; see [Unsigned app-chat](#unsigned-app-chat-2026-10-23).
 
 A controlled test in a real logged-in grok.com browser succeeded:
 
@@ -26,6 +74,8 @@ The same endpoint returns HTTP 403 ("Request rejected by anti-bot rules") from a
 The missing condition is Grok's own request initiation path. The web app adds a dynamic `x-statsig-id` integrity header when its real **Make Video** action creates the request. Merely copying cookies or running arbitrary JavaScript in Chromium does not produce that header. On a post-detail page, the working sequence is **Make Video → Quick Animate**; the latter initiates the signed app-chat request.
 
 ## Browser-free app-chat signing (2026-08-05/06)
+
+Superseded 2026-10-23 by [Unsigned app-chat](#unsigned-app-chat-2026-10-23). The signer and capture tool were deleted.
 
 `x-statsig-id` is reproducible without a browser. Grok's frontend uses the
 same client-transaction construction as X: a public 48-byte
@@ -71,6 +121,8 @@ an HTTP rejection or missing exact-post result remains a visible hard failure.
 
 ## Production signing refresh and video verification (2026-09-09)
 
+History. Signing ended on 2026-10-23; see [Unsigned app-chat](#unsigned-app-chat-2026-10-23).
+
 Production already exposed the video action, but its saved signing pair returned HTTP 403 during a video test.
 The source-image upload succeeded with the existing production cookie file.
 Updating only the two signing settings with the locally verified pair resolved the rejection.
@@ -88,6 +140,8 @@ The local server was also restarted and passed its health and video-availability
 No additional environment or neighboring service was changed.
 
 ## Expired signing pair: "This page is out of date" (2026-10-07)
+
+History. Signing ended on 2026-10-23; see [Unsigned app-chat](#unsigned-app-chat-2026-10-23).
 
 App-chat returns HTTP 403 with this body when grok.com no longer accepts the signing key:
 `{"error":{"code":7,"message":"This page is out of date. Reload to continue.","details":[]}}`.
@@ -116,6 +170,8 @@ Only `multiimageclient-ui.service` restarted, after running jobs finished.
 The automatic page keys below supersede that manual procedure.
 
 ## Automatic page signing keys (2026-10-07)
+
+Superseded 2026-10-23 by [Unsigned app-chat](#unsigned-app-chat-2026-10-23). The page-key source, its settings, and its flags were deleted. Commit `ef71c8b` holds the last version.
 
 Owner request, 2026-10-07: fix the expiry durably and add useful logging.
 Research the mechanism online before choosing a design.
@@ -332,11 +388,12 @@ These lines answer three questions:
 ## Implemented transport split
 
 - Text-to-image generation continues to use `wss://grok.com/ws/imagine/listen`.
-- Image editing does **not** use that WebSocket. `properties.image_uri` is accepted but ignored by the consumer transport (observed 2026-07-31: outputs invented from the prompt alone). Live edit uses `POST /rest/app-chat/conversations/new` with `modelName: "imagine-image-edit"` and `mediaGenInput.imageToImage.inputAssets: [assetId]`. With signing available (page keys by default since 2026-10-07) this is direct browser-free HTTP; otherwise CLI edit retains the real-control Playwright transport.
+- Image editing does **not** use that WebSocket. `properties.image_uri` is accepted but ignored by the consumer transport (observed 2026-07-31: outputs invented from the prompt alone). Live edit uses `POST /rest/app-chat/conversations/new` with `modelName: "imagine-image-edit"` and `mediaGenInput.imageToImage.inputAssets: [assetId]`. Since 2026-10-23 this is a direct unsigned HTTP request.
 - Image upload, asset lookup, media-post creation, polling, and downloads continue to use `GrokWebClient` HTTP calls.
-- Video generation uses the same direct signed app-chat HTTP request when signing is available. The UI has no Playwright video fallback: a missing cookie file or an unusable pinned pair makes video unavailable. Explicit CLI video modes retain the prior real-control Playwright path only when signing is unavailable.
+- Video generation uses the same direct unsigned app-chat request, in the UI and the CLI. Only a missing cookie file makes video unavailable.
+- The grok-web chat target uses the same request with a chat model; see [grok-web chat](grok-web-chat.md).
 - The app first uploads the source and creates its normal Grok image post, then submits the selected method, optional motion prompt, duration, resolution, and aspect ratio through app-chat.
-- CLI Playwright fallback operations are serialized and idle-release their Chromium process.
+- No grok-web operation starts Chromium.
 - Relative `streamingVideoGenerationResponse.videoUrl` values are normalized to `https://assets.grok.com/...` before download.
 - HTTP 200 and a model message saying that a video was generated are not success. The job succeeds only after an MP4 URL appears for the exact source post and the downloaded bytes have MP4 file magic.
 
@@ -355,6 +412,8 @@ The client now treats this as a bounded provider failure instead of leaving the 
 - video jobs persist and log source job/generator/index provenance, including whether the source was `gpt2`.
 
 ## End-to-end validation (2026-07-20)
+
+History. The browser-backed transport was deleted on 2026-10-23.
 
 The local UI completed an image-to-video job through the browser-backed transport with:
 
@@ -380,6 +439,8 @@ Repeated 2:3 output came from `auto` image jobs, where grok-web's consumer trans
 
 ## Local signing setup repair (2026-09-09)
 
+History. The capture tool and `GrokWebBrowserClient.cs` were deleted on 2026-10-23.
+
 The local WSL server lacked both signing settings, so its viewer hid the video action.
 The existing local cookie file remained valid.
 Capture now dismisses Grok's cookie notice immediately before clicking Edit.
@@ -400,18 +461,11 @@ Implementation: `MultiImageClient/GrokWebBrowserClient.cs`.
 
 ## Configuration
 
+Updated 2026-10-23: the signing and browser settings and flags were removed.
+
 - `GrokWebCookiePath`: existing complete grok.com cookie export; `sso` and `sso-rw` are required.
-- `GrokWebStatsigVerificationKey` and `GrokWebStatsigAnimationKey`: leave both blank (the default) to sign with page keys. Set both only to pin a captured pair for diagnosis. Updated 2026-10-07; a pair is no longer required.
-- `GrokWebStatsigCapturedAtUtc`: capture time that `--grok-web-statsig-pin` writes with a pinned pair. Logs and errors report the pair's age from it.
-- `--grok-web-capture-statsig --input-image <path>`: verify-only signing check; add `--grok-web-statsig-pin` to pin the captured pair.
-- `--grok-web-statsig-self-test`: offline signer test; it needs no settings, cookies, or network.
-- `GrokWebBrowserExecutablePath`: optional existing Chrome/Chromium executable for capture and CLI fallback.
-- `GrokWebBrowserHeaded`: optional troubleshooting window for capture and CLI fallback.
-- `GrokWebVideoTimeoutSeconds`: app-chat request timeout, default 900.
 - `GrokWebVideoPollTimeoutSeconds`: media-post polling limit after app-chat returns without a video URL, default 180.
-- `--playwright-install`: installs Playwright Chromium when no executable path is configured.
 - `--grok-web-video-method normal|fun|custom|spicy`: CLI method selection.
-- `--grok-web-headed`: shows the CLI Grok browser when capture/fallback requires it.
 
 Cookies are credentials. Never log their values, commit the cookie file, or include it in captures.
 
@@ -433,6 +487,6 @@ The server normalizes and rejects a missing/unknown method. An empty prompt rema
 ## Operational caveats
 
 - This is an unofficial consumer-web integration and can break when grok.com changes its page or anti-automation behavior.
-- UI image and video jobs do not start Chromium. Playwright remains an explicit capture/CLI-fallback dependency.
-- A rejected signing key or other provider rejection affects only that target and is surfaced through the normal job error result. The next signed request fetches a new page key.
-- A grok.com page or chunk layout change stops signed edit and video with "grok.com page format changed" until the parser is updated.
+- No grok-web job starts Chromium. Updated 2026-10-23: Playwright serves meta-web only.
+- A provider rejection affects only that target and appears as the normal job error result.
+- If grok.com signs app-chat requests again, edit, chat, and video fail with HTTP 403. Restore the signer from commit `ef71c8b`.

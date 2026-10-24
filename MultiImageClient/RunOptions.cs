@@ -195,9 +195,6 @@ namespace MultiImageClient
         /// Overall motion method for --grok-web video modes.
         public string GrokWebVideoMode { get; set; } = "normal";
 
-        /// Show the Playwright browser used by grok-web video app-chat.
-        public bool GrokWebHeaded { get; set; }
-
         /// When true, request side-by-side variants on grok.com web endpoints.
         public bool GrokWebSideBySide { get; set; } = true;
 
@@ -216,30 +213,15 @@ namespace MultiImageClient
         public bool MetaWebHeaded { get; set; }
 
         /// If true, run Playwright's browser installer (chromium) and exit.
-        /// One-time setup for --meta-web and grok-web video when no configured
-        /// browser executable is available.
+        /// One-time setup for --meta-web when no configured browser
+        /// executable is available.
         public bool PlaywrightInstall { get; set; }
-
-        /// If true, run deterministic offline vectors against the pure-C#
-        /// grok.com x-statsig-id signer and exit. No settings, cookies,
-        /// browser, network access, or provider request is involved.
-        public bool GrokWebStatsigSelfTest { get; set; }
-
-        /// If true, use a real Grok image-post Edit control once to capture
-        /// current x-statsig-id deployment inputs, abort the signed edit before
-        /// it reaches Grok, verify exact reproduction, check that the page-key
-        /// derivation reproduces the captured animation key, and exit.
-        public bool GrokWebCaptureStatsig { get; set; }
-
-        /// With --grok-web-capture-statsig: also write the captured pair and its
-        /// capture time to the loaded settings file. A pinned pair replaces
-        /// page keys and stops working after about 7 days.
-        public bool GrokWebStatsigPin { get; set; }
 
         /// Dev-only: send a chat-door app-chat message (optionally with an
         /// --input-image attached) to discover/validate the exact grok-web chat
-        /// image-generation request/response schema, print the raw response,
-        /// and exit. Not a production path.
+        /// image-generation request/response schema, save the raw response to
+        /// /tmp/chat-probe-raw.txt, print the parsed result, and exit. Not a
+        /// production path.
         public bool GrokWebChatProbe { get; set; }
 
         /// If true, run GrokArchive.SyncAsync and exit: back-read the entire
@@ -492,9 +474,6 @@ namespace MultiImageClient
                     case "--grok-web-video-method":
                         o.GrokWebVideoMode = args[++i];
                         break;
-                    case "--grok-web-headed":
-                        o.GrokWebHeaded = true;
-                        break;
                     case "--grok-web-no-side-by-side":
                         o.GrokWebSideBySide = false;
                         break;
@@ -512,15 +491,6 @@ namespace MultiImageClient
                         break;
                     case "--playwright-install":
                         o.PlaywrightInstall = true;
-                        break;
-                    case "--grok-web-statsig-self-test":
-                        o.GrokWebStatsigSelfTest = true;
-                        break;
-                    case "--grok-web-capture-statsig":
-                        o.GrokWebCaptureStatsig = true;
-                        break;
-                    case "--grok-web-statsig-pin":
-                        o.GrokWebStatsigPin = true;
                         break;
                     case "--grok-web-chat-probe":
                         o.GrokWebChatProbe = true;
@@ -643,16 +613,12 @@ namespace MultiImageClient
             Console.WriteLine("  --grok-web-length N   Video length seconds for grok-web video modes (default 10).");
             Console.WriteLine("  --grok-web-resolution R  480p (default) or 720p for grok-web video modes.");
             Console.WriteLine("  --grok-web-video-method M  Required video method: normal (default), fun, custom, or spicy. The motion prompt may be empty for video-from-image.");
-            Console.WriteLine("  --grok-web-headed     Show the Playwright browser used for grok-web video requests (troubleshooting only).");
             Console.WriteLine("  --grok-web-no-side-by-side  Request a single variant instead of side-by-side on grok-web.");
             Console.WriteLine("  --grok-web-no-capture  Disable full WebSocket session capture (on by default under saves/.../grok-web-capture/).");
             Console.WriteLine("  --meta-web            Batch prompts through the meta.ai consumer web app (Muse Image) by driving a real Playwright browser session. Best-effort/unofficial; text-to-image only; Meta decides the image count. Uses --prompt-file or PromptFiles.");
             Console.WriteLine("  --meta-web-headed     Show the meta-web browser window. Run this once to log in to meta.ai; the persistent profile (MetaWebBrowserProfilePath) keeps the session for headless runs.");
             Console.WriteLine("  --meta-web-cookies fp Override settings.json MetaWebCookiePath with a Netscape cookies.txt or raw Cookie header export from https://www.meta.ai (needs datr + ecto_1_sess; full jar preferred). Alternative to the headed login.");
-            Console.WriteLine("  --playwright-install  One-time setup: download Playwright's Chromium for --meta-web and grok-web video, then exit. Not needed when the corresponding BrowserExecutablePath points at Chrome/Chromium.");
-            Console.WriteLine("  --grok-web-statsig-self-test  One-shot offline test of the pure-C# x-statsig-id signer against fixed independent and browser-recorded vectors; no settings, cookies, browser, network, or provider request.");
-            Console.WriteLine("  --grok-web-capture-statsig  One-shot diagnostic: use --input-image to create a Grok post, capture current signing inputs from the real Edit control, abort before generation, verify the header, and check that page-key derivation reproduces the captured animation key. Writes nothing unless --grok-web-statsig-pin is given.");
-            Console.WriteLine("  --grok-web-statsig-pin  With --grok-web-capture-statsig: write the captured pair and its capture time to the loaded settings file. A pinned pair replaces page keys and stops working after about 7 days.");
+            Console.WriteLine("  --playwright-install  One-time setup: download Playwright's Chromium for --meta-web, then exit. Not needed when MetaWebBrowserExecutablePath points at Chrome/Chromium.");
             Console.WriteLine("  --provider-sample-showcase  One-shot: randomly sample --limit prompts (default 15), then make one contact sheet per provider: Grok, Recraft, BFL, Google, and gpt-image-2 low (pops open only with --open-images).");
             Console.WriteLine("  --provider-sample-file fp   Pair with --provider-sample-showcase to reuse a saved numbered/plain people-fixture prompt list.");
             Console.WriteLine("  --provider-sample-providers csv  Pair with --provider-sample-showcase to run only matching providers, e.g. gpt-image-2 or grok-api,recraft (grok-api-pro adds the pro tier).");

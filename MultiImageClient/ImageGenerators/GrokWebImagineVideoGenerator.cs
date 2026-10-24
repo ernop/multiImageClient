@@ -132,7 +132,6 @@ namespace MultiImageClient
 
                 var chat = await _client.RunVideoGenerationAsync(
                     prompt,
-                    parentPostId,
                     _aspectRatio,
                     _durationSeconds,
                     _resolution,

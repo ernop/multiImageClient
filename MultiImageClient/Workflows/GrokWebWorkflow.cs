@@ -63,30 +63,7 @@ namespace MultiImageClient
                 return null;
             }
 
-            // Image edit and video submit through the same method + app-chat
-            // path, which are the complete inputs to x-statsig-id. Browser-free
-            // signing (page keys, or a valid pinned pair) serves both payloads.
-            // Only an unusable pinned pair sends the explicit CLI modes to
-            // their Playwright transport.
-            using var statsigSource = GrokWebStatsigSource.FromSettings(settings);
-            var needsBrowser = (mode is "video" or "video-from-image" or "edit")
-                && statsigSource.Problem != null;
-            if (mode is "video" or "video-from-image" or "edit")
-            {
-                Logger.Log(needsBrowser
-                    ? $"{statsigSource.DescribeMode()} Using the Playwright transport for {mode}."
-                    : statsigSource.DescribeMode());
-            }
-            await using var browserClient = needsBrowser
-                ? new GrokWebBrowserClient(GrokWebBrowserClient.BuildOptions(
-                    settings,
-                    cookiePath,
-                    headedOverride: options.GrokWebHeaded))
-                : null;
-            using var client = GrokWebClient.FromCookieFile(
-                cookiePath,
-                browserClient,
-                needsBrowser ? null : statsigSource);
+            using var client = GrokWebClient.FromCookieFile(cookiePath);
             IImageGenerator generator;
             string sheetHeader;
 
