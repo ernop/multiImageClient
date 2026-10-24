@@ -36,6 +36,8 @@ grok.com no longer signs app-chat requests. This section supersedes every signin
 - The response format was unchanged, so the existing parser read it.
 - After the change, a local UI image job sent a 768×512 source to grok-web and grok-web chat.
 - Both unsigned edits returned one 1728×1152 image that followed the instruction.
+- After the production release, the probe ran on the production host with the production cookie.
+- grok.com returned HTTP 200 and one image. See [the Vibecoders grok-web session](workspaces-prd.md#vibecoders-grok-web-session-2026-10-23).
 - Video was not tested live after the change. It uses the same request builder.
 
 ### Decision
@@ -383,7 +385,8 @@ These lines answer three questions:
 - Releasing this change removes the pinned keys from both production settings files.
   Neither file stored a capture time.
 - `deploy/create-environment.py` no longer copies signing keys into new environments.
-- The Vibecoders environment has no grok-web cookie file, so it never signs.
+- The Vibecoders environment had no grok-web cookie file, so it never signed.
+  Since 2026-10-23 it has its own copy; see [the Vibecoders grok-web session](workspaces-prd.md#vibecoders-grok-web-session-2026-10-23).
 
 ## Implemented transport split
 

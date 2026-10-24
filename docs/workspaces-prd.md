@@ -1,7 +1,7 @@
 # Separate workspaces and personal login links
 
 Date: 2026-09-08, America/Los_Angeles.
-Updated: 2026-10-11, America/Los_Angeles.
+Updated: 2026-10-23, America/Los_Angeles.
 Status: activated in production on 2026-09-09; both environments verified through the public hostname.
 
 A workspace is one isolated tenant, also called an image-making studio.
@@ -26,6 +26,7 @@ The new idea is a second tenant with its own membership and history.
 | R12 | Keep login links reusable without expiry (2026-09-21). | Administration reset links already have no time limit. Discord DM links also support repeated logins without expiry. Preserve owner review, exact account identity, credential replacement, revocation, and membership checks. |
 | R13 | Separate account creation from issued credentials (2026-09-21). | Start creation with an empty new username and no destination selection. Show creation, conversion, and reissue results in a separate section naming the account, action, and environment. |
 | R14 | Publish to both instances (2026-10-11). | Deploying either the original (AVE) or Vibecoders always deploys the same commit to the other. Neither instance is released alone. See [Release targets](#release-targets-2026-10-11). |
+| R15 | Give Vibecoders the grok.com session (2026-10-23). | Vibecoders reads its own copy of the original's grok.com cookie file. Members use every grok-web target on the owner's account. Replace both copies together. See [Vibecoders grok-web session](#vibecoders-grok-web-session-2026-10-23). |
 
 These requirements came from the owner during the review.
 The link grants the account's actual permissions; it does not merely select a display name.
@@ -396,6 +397,55 @@ See [Ideogram 4.5 support](ideogram-45-support.md#one-time-addition-to-saved-lis
 B2 original images retain the established public capability-URL policy.
 A person holding a direct original-image URL can retrieve it independently of application membership.
 No old image URLs or image indexes are copied to the new environment.
+
+## Vibecoders grok-web session (2026-10-23)
+
+Owner decision, 2026-10-23: give Vibecoders the grok.com cookie.
+
+Before this date Vibecoders had no grok.com session.
+The controller created it with `copy_grok_session=False`, so every grok-web target was disabled there.
+
+Behavior:
+
+- Vibecoders' settings set `GrokWebCookiePath` to `/etc/multiimageclient-env-vibecoders-ai-generation/grok-cookies.txt`.
+- That file is a copy of the original's `/etc/multiimageclient/grok-web-cookies.txt`.
+- Its owner is `root`, its group is `mic-vibecoders-ai-generation`, and its mode is 640.
+- `create-environment.py prepare --copy-grok-session` makes the same layout.
+- Vibecoders still cannot read the original's configuration folder.
+- Members' grok-web jobs run on the owner's grok.com account. grok.com receives their prompts and source images.
+- Members get grok-web, grok-web chat, image edit, and video. The Vibecoders video switch is on.
+- Vibecoders' default generator list already held `grok-web` and `grok-web-chat`. Those defaults now run.
+- Vibecoders keeps the default lane limits: one grok-web image request and one video at a time.
+- The original allows four image requests and one video.
+- Together the two instances send at most five image requests and two videos at once on the account.
+- Only `GrokWebCookiePath` changed in the settings file.
+- The controller and releases never rewrite environment settings, so the change persists.
+
+Cookie refresh:
+
+- The copy does not follow the original's file. Replace both files together.
+- The current export's `sso` and `sso-rw` cookies expire on 2026-12-08.
+- Each job reads the cookie file again, so a replaced file needs no restart.
+- Run as root, with the new export at `NEW`:
+
+```bash
+install -o root -g multiimageclient -m 0640 NEW /etc/multiimageclient/grok-web-cookies.txt
+install -o root -g mic-vibecoders-ai-generation -m 0640 NEW /etc/multiimageclient-env-vibecoders-ai-generation/grok-cookies.txt
+```
+
+- Do not use `deploy/apply-grok-cookies-and-update.sh` for a refresh.
+- That script replaces only the original's file. It also restarts the original without the idle check.
+
+Verification, 2026-10-23:
+
+- The idle check found no unfinished jobs or goal loops before the change and again before the restart.
+- Vibecoders restarted at 02:22:53 UTC.
+- Loopback health returned 200. The private route returned the 401 login gate.
+- The service account could read the copy.
+- `--grok-web-chat-probe` then ran as that account in a temporary systemd unit with a private `/tmp`.
+- Its temporary settings file named only the copy, a log, and a saves folder. Nothing reached Vibecoders' history or archive.
+- grok.com returned HTTP 200 and one image to the unsigned app-chat request.
+- The original's cookie file has the same bytes. The test therefore also covers the original's edit, chat, and video requests.
 
 ## Feature switches and activity summaries
 

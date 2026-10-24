@@ -23,8 +23,6 @@ import uuid
 
 # Copy provider access only. Never copy histories, profiles, personal preferences,
 # output paths, webhook destinations, cookie-file paths, or the old auth secret.
-# Pinned Grok web signing keys expire after about 7 days; new environments
-# fetch page keys instead.
 PROVIDER_FIELDS = (
     "OpenAIApiKey", "AnthropicApiKey", "IdeogramApiKey", "BFLApiKey", "RecraftApiKey",
     "GoogleGeminiApiKey", "XAIGrokApiKey", "KreaApiKey", "GoogleCloudApiKey",

@@ -17,7 +17,7 @@ Decision:
 
 ## Behavior
 
-- **Availability:** the target needs only the grok.com cookie file. Without one it is disabled with "grok-web cookie file not found".
+- **Availability:** the target needs only the grok.com cookie file. Without one it is disabled with "grok-web cookie file not found". Both production instances have one since 2026-10-23; see [the Vibecoders grok-web session](workspaces-prd.md#vibecoders-grok-web-session-2026-10-23).
 - **Transport:** `POST /rest/app-chat/conversations/new`, without a signature header. See [the transport document](grok-web-video-browser-transport.md#unsigned-app-chat-2026-10-23).
 - **Image input:** the target is image-capable. Its chip shows the image icon.
 - **Aspect ratio:** the chat request sends none.
@@ -29,7 +29,7 @@ Decision:
 - **Prompt:** grok-3 can rewrite the prompt before it calls the image tool. In the 2026-10-23 test it passed the prompt through unchanged.
 - **History flag:** the request sends `temporary: false`, unchanged since 2026-08-11. The flag name suggests grok.com keeps these conversations in account history. This was not verified.
 - **Prompt length:** no published limit. The full prompt is sent. See [prompt length limits](prompt-length-limits.md).
-- **Scheduling:** the target shares the `grok-web-ws` lane with direct grok-web image jobs. That lane runs one request at a time.
+- **Scheduling:** the target shares the `grok-web-ws` lane with direct grok-web image jobs. The lane runs one request at a time by default. Local and original production settings allow four; see [the shared-host memory budget](shared-host-memory-budget.md#grok-web-image-concurrency-2026-09-09).
 - **Cost:** shown as 0, because the consumer site has no metered price.
 
 ## Goal loops
@@ -49,6 +49,7 @@ Grok-web video is also excluded, because it makes video from an input image.
 - A text-only UI job returned one 1168×784 image in 18.4 s. It matched the prompt.
 - A UI image job sent a 768×512 source to grok-web and grok-web chat.
 - Each target returned one 1728×1152 edit that followed the instruction, in 6.7 s and 9.9 s.
+- After the production release, the text-only probe ran on the production host with Vibecoders' cookie copy. It returned HTTP 200 and one image.
 
 ## Files
 
