@@ -112,6 +112,9 @@ namespace MultiImageClient
         public string ResultPrompt { get; init; } = "";
         public string Status { get; init; } = "";
         public string Error { get; init; } = "";
+        // Empty for prompt edits (advice, flesh out, restore);
+        // DirectedPromptRewrite.CondensePurpose for condensed prompts.
+        public string Purpose { get; init; } = "";
     }
 
     public sealed class UiSubjectTagMatchedPrompt
@@ -260,7 +263,8 @@ namespace MultiImageClient
                         raw_response TEXT NOT NULL,
                         result_prompt TEXT NOT NULL,
                         status TEXT NOT NULL,
-                        error TEXT NOT NULL
+                        error TEXT NOT NULL,
+                        purpose TEXT NOT NULL DEFAULT ''
                     );
                     CREATE INDEX IF NOT EXISTS ix_ui_claude_prompt_exchanges_identity_time
                         ON ui_claude_prompt_exchanges(identity_key, requested_at_unix_ms DESC);
@@ -298,6 +302,7 @@ namespace MultiImageClient
                     "ui_generator_preferences",
                     "endpoint_configurations_json",
                     "TEXT NOT NULL DEFAULT '[]'");
+                EnsureColumn(connection, "ui_claude_prompt_exchanges", "purpose", "TEXT NOT NULL DEFAULT ''");
             }
         }
 
@@ -504,7 +509,8 @@ namespace MultiImageClient
             string originalPrompt,
             string systemPrompt,
             string wirePrompt,
-            long requestedAtUnixMs)
+            long requestedAtUnixMs,
+            string purpose = "")
         {
             identityKey = identityKey.Trim();
             actorDisplay = actorDisplay.Trim();
@@ -524,6 +530,7 @@ namespace MultiImageClient
                 SystemPrompt = systemPrompt,
                 WirePrompt = wirePrompt,
                 Status = "pending",
+                Purpose = purpose,
             };
             lock (_sync)
             {
@@ -535,11 +542,11 @@ namespace MultiImageClient
                         id, requested_at_unix_ms, completed_at_unix_ms,
                         identity_key, actor_display, model, instruction,
                         original_prompt, system_prompt, wire_prompt,
-                        raw_response, result_prompt, status, error)
+                        raw_response, result_prompt, status, error, purpose)
                     VALUES(
                         $id, $requested, NULL, $identity, $display, $model,
                         $instruction, $original, $system, $wire, '', '',
-                        'pending', '');
+                        'pending', '', $purpose);
                     """;
                 command.Parameters.AddWithValue("$id", record.Id);
                 command.Parameters.AddWithValue("$requested", record.RequestedAtUnixMs);
@@ -550,6 +557,7 @@ namespace MultiImageClient
                 command.Parameters.AddWithValue("$original", record.OriginalPrompt);
                 command.Parameters.AddWithValue("$system", record.SystemPrompt);
                 command.Parameters.AddWithValue("$wire", record.WirePrompt);
+                command.Parameters.AddWithValue("$purpose", record.Purpose);
                 command.ExecuteNonQuery();
             }
             return record;
@@ -609,11 +617,8 @@ namespace MultiImageClient
                 using var connection = OpenConnection();
                 using var command = connection.CreateCommand();
                 command.CommandText =
-                    """
-                    SELECT id, requested_at_unix_ms, completed_at_unix_ms,
-                           identity_key, actor_display, model, instruction,
-                           original_prompt, system_prompt, wire_prompt,
-                           raw_response, result_prompt, status, error
+                    $"""
+                    SELECT {ClaudePromptExchangeColumns}
                     FROM ui_claude_prompt_exchanges
                     WHERE identity_key = $identity
                       AND ($id IS NULL OR id = $id)
@@ -631,27 +636,79 @@ namespace MultiImageClient
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
                 {
-                    records.Add(new UiClaudePromptExchangeRecord
-                    {
-                        Id = reader.GetString(0),
-                        RequestedAtUnixMs = reader.GetInt64(1),
-                        CompletedAtUnixMs = reader.IsDBNull(2) ? null : reader.GetInt64(2),
-                        IdentityKey = reader.GetString(3),
-                        ActorDisplay = reader.GetString(4),
-                        Model = reader.GetString(5),
-                        Instruction = reader.GetString(6),
-                        OriginalPrompt = reader.GetString(7),
-                        SystemPrompt = reader.GetString(8),
-                        WirePrompt = reader.GetString(9),
-                        RawResponse = reader.GetString(10),
-                        ResultPrompt = reader.GetString(11),
-                        Status = reader.GetString(12),
-                        Error = reader.GetString(13),
-                    });
+                    records.Add(ReadClaudePromptExchange(reader));
                 }
                 return records;
             }
         }
+
+        // Exact inputs only. "Condense again" stores another answer to the same
+        // inputs, and the newest one is the user's latest choice.
+        public UiClaudePromptExchangeRecord? FindSucceededClaudePromptExchange(
+            string identityKey,
+            string purpose,
+            string model,
+            string instruction,
+            string originalPrompt)
+        {
+            identityKey = identityKey.Trim();
+            if (identityKey.Length == 0)
+            {
+                throw new InvalidDataException("Claude prompt history requires an exact user identity.");
+            }
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText =
+                    $"""
+                    SELECT {ClaudePromptExchangeColumns}
+                    FROM ui_claude_prompt_exchanges
+                    WHERE identity_key = $identity
+                      AND status = 'succeeded'
+                      AND purpose = $purpose
+                      AND model = $model
+                      AND instruction = $instruction
+                      AND original_prompt = $original
+                    ORDER BY requested_at_unix_ms DESC, id DESC
+                    LIMIT 1;
+                    """;
+                command.Parameters.AddWithValue("$identity", identityKey);
+                command.Parameters.AddWithValue("$purpose", purpose);
+                command.Parameters.AddWithValue("$model", model);
+                command.Parameters.AddWithValue("$instruction", instruction);
+                command.Parameters.AddWithValue("$original", originalPrompt);
+                using var reader = command.ExecuteReader();
+                return reader.Read() ? ReadClaudePromptExchange(reader) : null;
+            }
+        }
+
+        private const string ClaudePromptExchangeColumns =
+            """
+            id, requested_at_unix_ms, completed_at_unix_ms,
+                   identity_key, actor_display, model, instruction,
+                   original_prompt, system_prompt, wire_prompt,
+                   raw_response, result_prompt, status, error, purpose
+            """;
+
+        private static UiClaudePromptExchangeRecord ReadClaudePromptExchange(SqliteDataReader reader) => new()
+        {
+            Id = reader.GetString(0),
+            RequestedAtUnixMs = reader.GetInt64(1),
+            CompletedAtUnixMs = reader.IsDBNull(2) ? null : reader.GetInt64(2),
+            IdentityKey = reader.GetString(3),
+            ActorDisplay = reader.GetString(4),
+            Model = reader.GetString(5),
+            Instruction = reader.GetString(6),
+            OriginalPrompt = reader.GetString(7),
+            SystemPrompt = reader.GetString(8),
+            WirePrompt = reader.GetString(9),
+            RawResponse = reader.GetString(10),
+            ResultPrompt = reader.GetString(11),
+            Status = reader.GetString(12),
+            Error = reader.GetString(13),
+            Purpose = reader.GetString(14),
+        };
 
         public const int MaxSubjectTagNameChars = 80;
         public const int MaxSubjectTagDescriptionChars = 8000;
@@ -1020,6 +1077,7 @@ namespace MultiImageClient
                     SELECT id, requested_at_unix_ms, original_prompt, result_prompt
                     FROM ui_claude_prompt_exchanges
                     WHERE status = 'succeeded'
+                      AND purpose = ''
                       {identityFilter}
                       AND ({string.Join(" OR ", whereClauses)})
                     ORDER BY requested_at_unix_ms DESC

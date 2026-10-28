@@ -97,6 +97,8 @@ let videoGeneration = { available: false, availabilityProblem: "video configurat
 let setActiveJobVersion = 0;
 let setActiveJobController = null;
 let claudeAdvice = { available: false, availabilityProblem: "configuration not loaded" };
+let promptCondenseConfig = { available: false, availabilityProblem: "configuration not loaded" };
+let promptRewriteModels = [];
 let generatorPreferences = null;
 const GeneratorPreferencesLocalKey = "mic_generator_preferences_v1";
 const ClaudeAdviceInstructionKey = "mic_claude_advice_instruction_v1";
@@ -539,7 +541,9 @@ async function loadConfig() {
   shareLinksAvailable = !!cfg.shareLinks?.available;
   claudeAdvice = cfg.claudeAdvice || claudeAdvice;
   applyClaudeAdviceAvailability();
-  promptRewrites.configure(cfg.promptRewrites || []);
+  promptCondenseConfig = cfg.promptCondense;
+  promptRewriteModels = cfg.promptRewrites || [];
+  promptRewrites.configure(promptRewriteModels);
   configureCharacters(cfg.promptSubjects);
   describeConfig = cfg.describe || describeConfig;
   if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
@@ -814,50 +818,246 @@ function combinedEndpointExtraText(key) {
     .filter(Boolean).join("\n\n");
 }
 
+// Condensed prompts made with a line's condense button, keyed by target:
+// { exchangeId, sourcePrompt, text, model, modelLabel }. A target receives
+// its condensed prompt only while condensedCheck accepts it. Every other
+// target, and the prompt box, keep the full prompt.
+const promptCondensations = new Map();
+let promptCondensing = null;   // { keys: Set } while a condense request runs
+let promptCondenseNote = null; // { keys: Set, text } from the last request
+let promptCondensedShown = ""; // exchange id whose text the notice shows
+
+function promptRewriteModelLabel(model) {
+  return promptRewriteModels.find((entry) => entry.model === model)?.label ?? model;
+}
+
+function condensationFor(generator, prompt, extraText, imageAttached) {
+  const condensation = promptCondensations.get(generator.key);
+  const condensed = MultiImagePromptLimits.condensedCheck(
+    generator, prompt, extraText, imageAttached && generator.imageCapable, condensation);
+  return condensed ? { condensation, condensed } : null;
+}
+
 function updatePromptLimitNotice() {
   const imageAttached = hasInputImages();
-  const over = [...gensRow.querySelectorAll("input:checked")]
-    .map((cb) => generators.find((g) => g.key === cb.value))
-    .filter(Boolean)
-    .map((generator) => {
-      const extraText = combinedEndpointExtraText(generator.key);
-      const status = MultiImagePromptLimits.check(
-        generator, promptBox.value, extraText, imageAttached && generator.imageCapable);
-      return { generator, status, hasExtraText: extraText.length > 0 };
-    })
-    .filter(({ status }) => status);
-  const lines = [
-    promptLimitLine(over.filter(({ status }) => status.action === "fail"), "fail"),
-    promptLimitLine(over.filter(({ status }) => status.action === "truncate"), "truncate"),
-  ].filter(Boolean);
+  const groups = new Map();
+  for (const cb of gensRow.querySelectorAll("input:checked")) {
+    const generator = generators.find((g) => g.key === cb.value);
+    if (!generator) continue;
+    const extraText = combinedEndpointExtraText(generator.key);
+    const imageSent = imageAttached && generator.imageCapable;
+    const full = MultiImagePromptLimits.check(generator, promptBox.value, extraText, imageSent);
+    if (!full) continue;
+    const used = condensationFor(generator, promptBox.value, extraText, imageAttached);
+    const status = used ? { action: "condensed", unit: "characters", ...used.condensed } : full;
+    const id = used
+      ? `condensed ${used.condensation.exchangeId} ${status.max} ${status.count}`
+      : `${status.action} ${status.unit} ${status.max} ${status.count}`;
+    const group = groups.get(id) ?? {
+      status,
+      condensation: used?.condensation ?? null,
+      budget: MultiImagePromptLimits.condenseBudget(generator, extraText, imageSent),
+      generators: [],
+      hasExtraText: false,
+    };
+    group.generators.push(generator);
+    group.hasExtraText ||= extraText.length > 0;
+    groups.set(id, group);
+  }
+  const order = { fail: 0, condensed: 1, truncate: 2 };
+  const excess = ({ status }) => status.count - status.max;
+  const lines = [...groups.values()]
+    .sort((a, b) => order[a.status.action] - order[b.status.action] || excess(a) - excess(b))
+    .map((group) => (group.condensation ? condensedPromptLine(group) : promptLimitLine(group)));
   promptLimitNotice.replaceChildren(...lines);
   promptLimitNotice.hidden = lines.length === 0;
 }
 
-function promptLimitLine(affected, action) {
-  if (affected.length === 0) return null;
+const promptLimitNames = new Intl.ListFormat("en", { type: "conjunction" });
+
+function promptLimitButton(className, text, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = text;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function appendPromptCondenseNote(line, keys) {
+  if (!promptCondenseNote || !keys.some((key) => promptCondenseNote.keys.has(key))) return;
+  const note = document.createElement("div");
+  note.className = "prompt-limit-note";
+  note.textContent = promptCondenseNote.text;
+  line.append(note);
+}
+
+function promptLimitLine({ status, budget, generators: affected, hasExtraText }) {
   const line = document.createElement("div");
-  line.className = `prompt-limit-line ${action}`;
-  line.append("Too long for ");
-  affected.forEach(({ generator, status }, index) => {
-    const count = document.createElement("strong");
-    count.textContent = status.count.toLocaleString();
-    line.append(index > 0 ? ", " : "", `${generator.label} (`, count,
-      ` / ${status.max.toLocaleString()} ${status.unit})`);
-  });
+  line.className = `prompt-limit-line ${status.action}`;
+  const excess = status.count - status.max;
+  const overBy = document.createElement("strong");
+  overBy.textContent = excess.toLocaleString();
+  const unit = excess === 1 ? status.unit.replace(/s$/, "") : status.unit;
   const one = affected.length === 1;
-  line.append(action === "fail"
-    ? `. ${one ? "This target" : "These targets"} will fail and receive nothing. ` +
-      `Shorten the prompt or deselect ${one ? "it" : "them"}.`
-    : `. ${one ? "This target" : "These targets"} will receive a shortened prompt. ` +
-      "Other targets receive the full text.");
-  if (affected.some(({ hasExtraText }) => hasExtraText)) {
-    line.append(" Counts include endpoint extra text.");
+  const names = promptLimitNames.format(affected.map((g) => g.label));
+  line.append(overBy,
+    ` ${unit} too long for ${names} ` +
+    `(limit ${status.max.toLocaleString()}; prompt ${status.count.toLocaleString()}). ` +
+    (status.action === "fail"
+      ? `${one ? "It" : "They"} will fail and receive nothing.`
+      : `${one ? "It" : "They"} will receive a shortened prompt; other targets receive the full text.`));
+  if (hasExtraText) line.append(" Counts include endpoint extra text.");
+  if (status.action !== "fail") return line;
+  const keys = affected.map((g) => g.key);
+  const scope = one ? affected[0].label : `these ${affected.length}`;
+  const pending = !!promptCondensing && keys.some((key) => promptCondensing.keys.has(key));
+  const condense = promptLimitButton("prompt-limit-condense",
+    pending ? `condensing for ${scope}…` : `condense for ${scope} · ${promptCondenseConfig.label}`,
+    () => condensePromptFor(keys, false));
+  const blocked = !promptCondenseConfig.available
+    ? promptCondenseConfig.availabilityProblem
+    : budget < promptCondenseConfig.minCondensedPromptChars
+      ? `Endpoint extra text leaves ${Math.max(budget, 0).toLocaleString()} characters for the prompt. ` +
+        `A condensed prompt needs at least ${promptCondenseConfig.minCondensedPromptChars.toLocaleString()}.`
+      : "";
+  condense.disabled = !!promptCondensing || !!blocked;
+  condense.title = blocked ||
+    `Ask ${promptCondenseConfig.label} to shorten the prompt to at most ${budget.toLocaleString()} characters ` +
+    `for ${names} only. The prompt box and every other target keep the full prompt.`;
+  const deselect = promptLimitButton("prompt-limit-deselect",
+    one ? `deselect ${affected[0].label}` : `deselect these ${affected.length}`,
+    () => deselectGenerators(keys));
+  line.append(" ", condense, " ", deselect);
+  appendPromptCondenseNote(line, keys);
+  return line;
+}
+
+function condensedPromptLine({ status, condensation, generators: affected, hasExtraText }) {
+  const line = document.createElement("div");
+  line.className = "prompt-limit-line condensed";
+  const count = document.createElement("strong");
+  count.textContent = status.count.toLocaleString();
+  line.append(count,
+    `-character condensed prompt for ${promptLimitNames.format(affected.map((g) => g.label))} ` +
+    `(limit ${status.max.toLocaleString()}; full prompt ${status.fullCount.toLocaleString()}), ` +
+    `written by ${condensation.modelLabel}. Other targets receive the full prompt.`);
+  if (hasExtraText) line.append(" Counts include endpoint extra text.");
+  const keys = affected.map((g) => g.key);
+  const shown = promptCondensedShown === condensation.exchangeId;
+  const show = promptLimitButton("prompt-limit-show",
+    shown ? "hide condensed prompt" : "show condensed prompt",
+    () => {
+      promptCondensedShown = shown ? "" : condensation.exchangeId;
+      updatePromptLimitNotice();
+    });
+  show.setAttribute("aria-expanded", String(shown));
+  const pending = !!promptCondensing && keys.some((key) => promptCondensing.keys.has(key));
+  const again = promptLimitButton("prompt-limit-condense",
+    pending ? "condensing…" : "condense again",
+    () => condensePromptFor(keys, true));
+  again.disabled = !!promptCondensing || !promptCondenseConfig.available;
+  again.title = promptCondenseConfig.available
+    ? `Ask ${promptCondenseConfig.label} for a new condensed prompt for these targets.`
+    : promptCondenseConfig.availabilityProblem;
+  const discard = promptLimitButton("prompt-limit-discard", "discard", () => {
+    for (const key of keys) promptCondensations.delete(key);
+    updatePromptLimitNotice();
+  });
+  discard.title = "Stop using the condensed prompt. These targets will fail again until you condense or deselect them.";
+  line.append(" ", show, " ", again, " ", discard);
+  appendPromptCondenseNote(line, keys);
+  if (shown) {
+    const text = document.createElement("pre");
+    text.className = "prompt-limit-text";
+    text.textContent = condensation.text;
+    line.append(text);
   }
   return line;
 }
 
-promptBox.addEventListener("input", updatePromptLimitNotice);
+// One request at a time. The reply never changes the prompt box: it only
+// stores a condensed prompt for exactly these targets.
+async function condensePromptFor(keys, fresh) {
+  if (promptCondensing) return;
+  const user = currentUsername();
+  if (!user) {
+    promptCondenseNote = { keys: new Set(keys), text: "Choose a username first (top of the page)." };
+    updatePromptLimitNotice();
+    usernameInput.focus();
+    return;
+  }
+  const prompt = promptBox.value;
+  const sourcePrompt = MultiImagePromptLimits.sentPrompt(prompt);
+  const extraTexts = {};
+  for (const key of keys) {
+    const extraText = combinedEndpointExtraText(key);
+    if (extraText) extraTexts[key] = extraText;
+  }
+  const form = new URLSearchParams({
+    user,
+    prompt,
+    generators: keys.join(","),
+    generatorExtraTexts: JSON.stringify(extraTexts),
+    imageAttached: String(hasInputImages()),
+    fresh: String(fresh),
+  });
+  promptCondensing = { keys: new Set(keys) };
+  promptCondenseNote = null;
+  updatePromptLimitNotice();
+  try {
+    const response = await fetch(apiUrl("api/prompt/condense"), { method: "POST", body: form });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error([body.error || `HTTP ${response.status}`, body.errorHint].filter(Boolean).join(" "));
+    }
+    if (user !== currentUsername()) return;
+    const condensation = {
+      exchangeId: body.exchangeId,
+      sourcePrompt,
+      text: body.condensedPrompt,
+      model: body.model,
+      modelLabel: body.modelLabel,
+    };
+    for (const key of keys) promptCondensations.set(key, condensation);
+    if (MultiImagePromptLimits.sentPrompt(promptBox.value) !== sourcePrompt) {
+      promptCondenseNote = {
+        keys: new Set(keys),
+        text: `The prompt changed while ${body.modelLabel} condensed it, so the condensed prompt ` +
+          "applies only to the earlier text. Prompt history keeps it.",
+      };
+    } else if (body.reused) {
+      promptCondenseNote = {
+        keys: new Set(keys),
+        text: "This is the condensed prompt saved earlier for this exact prompt and limit. " +
+          "Press condense again for a new one.",
+      };
+    }
+  } catch (error) {
+    if (user === currentUsername()) {
+      promptCondenseNote = { keys: new Set(keys), text: `Condensing failed: ${error.message || error}` };
+    }
+  } finally {
+    promptCondensing = null;
+    updatePromptLimitNotice();
+    if (user === currentUsername()) promptRewrites.refreshHistory();
+  }
+}
+
+function deselectGenerators(keys) {
+  const wanted = new Set(keys);
+  for (const cb of gensRow.querySelectorAll("input:checked")) {
+    if (!wanted.has(cb.value)) continue;
+    cb.checked = false;
+    cb.closest(".gen-toggle").classList.remove("checked");
+  }
+  updateGeneratorCount();
+}
+
+promptBox.addEventListener("input", () => {
+  promptCondenseNote = null;
+  updatePromptLimitNotice();
+});
 
 // ---------- settings & hide night mode ----------
 
@@ -6687,6 +6887,12 @@ function updateProfileNameControl() {
 usernameInput.addEventListener("input", () => {
   updateProfileNameControl();
   profileNameStatus.textContent = "";
+  // Without a login, stored condensed prompts belong to the creator name.
+  if (!(authInfo.enabled && authInfo.user)) {
+    promptCondensations.clear();
+    promptCondenseNote = null;
+    updatePromptLimitNotice();
+  }
 });
 
 usernameInput.addEventListener("change", () => {
@@ -7981,6 +8187,18 @@ async function submit() {
     return;
   }
   form.append("generatorExtraTexts", JSON.stringify(generatorExtraTexts));
+  // The same check as the notice's condensed lines decides which targets
+  // receive a condensed prompt.
+  const condensedPrompts = {};
+  for (const key of gens) {
+    const generator = generators.find((g) => g.key === key);
+    const used = generator &&
+      condensationFor(generator, effectivePrompt, generatorExtraTexts[key] || "", hasInputImages());
+    if (used) condensedPrompts[key] = used.condensation.exchangeId;
+  }
+  if (Object.keys(condensedPrompts).length > 0) {
+    form.append("condensedPrompts", JSON.stringify(condensedPrompts));
+  }
   const sketchComposer = attachedSketchSubmission();
   if (sketchComposer) {
     form.append("sketchComposer", JSON.stringify(sketchComposer));
@@ -9191,6 +9409,7 @@ function getImageViewerPrompts() {
       gpt2GuidanceText: card.dataset.gpt2GuidanceText || "",
       generatorExtraTexts,
       generatorExtraTextsKnown: card.dataset.generatorExtraTextsKnown === "true",
+      condensedPrompts: card.dataset.condensedPrompts ? JSON.parse(card.dataset.condensedPrompts) : [],
       items,
     });
   }
@@ -9763,28 +9982,45 @@ function toggleImageViewerCompare() {
 // The appended text is item-specific chrome: show only the suffix that rode
 // with the exact endpoint currently visible. gpt-image-2 additionally keeps
 // a visible blank state because omitting its default anti-murk text once went
-// unnoticed for two days.
+// unnoticed for two days. A target that received a condensed prompt shows it
+// first, because the prompt above is not the text that target received.
 function renderImageViewerGuidance(current) {
   const key = current?.item?.generator || "";
   const extraText = current?.prompt?.generatorExtraTexts?.[key] || "";
   const legacyGpt2State = key === "gpt2" ? current?.prompt?.gpt2Guidance : "";
   const legacyGpt2Text = current?.prompt?.gpt2GuidanceText || "";
   const sentText = extraText || (legacyGpt2State === "sent" ? legacyGpt2Text : "");
+  const condensed = current?.prompt?.condensedPrompts?.find((entry) => entry.generators.includes(key));
+  const parts = [];
+  if (condensed) {
+    const part = document.createElement("div");
+    part.className = "guidance-condensed";
+    const lead = document.createElement("strong");
+    lead.textContent = `${genLabel(key)} received this ` +
+      `${MultiImagePromptLimits.characterCount(condensed.prompt).toLocaleString()}-character condensed prompt ` +
+      `from ${promptRewriteModelLabel(condensed.model)}, not the prompt above:`;
+    const text = document.createElement("div");
+    text.className = "guidance-condensed-text";
+    text.textContent = condensed.prompt;
+    part.append(lead, text);
+    parts.push(part);
+  }
   if (sentText) {
-    imageViewerGuidance.hidden = false;
-    imageViewerGuidance.className = "sent";
-    imageViewerGuidance.textContent = `+ appended extra text for ${genLabel(key)}: ${sentText}`;
+    const part = document.createElement("div");
+    part.className = "guidance-sent";
+    part.textContent = `+ appended extra text for ${genLabel(key)}: ${sentText}`;
+    parts.push(part);
   } else if (GptImageFamilyKeys.includes(key) &&
       (current?.prompt?.generatorExtraTextsKnown || legacyGpt2State === "off")) {
-    imageViewerGuidance.hidden = false;
-    imageViewerGuidance.className = "off";
-    imageViewerGuidance.textContent =
+    const part = document.createElement("div");
+    part.className = "guidance-off";
+    part.textContent =
       `${genLabel(key)} extra text was blank — anti-murk guidance was not sent with this image`;
-  } else {
-    imageViewerGuidance.hidden = true;
-    imageViewerGuidance.className = "";
-    imageViewerGuidance.textContent = "";
+    parts.push(part);
   }
+  imageViewerGuidance.replaceChildren(...parts);
+  imageViewerGuidance.classList.toggle("condensed", !!condensed);
+  imageViewerGuidance.hidden = parts.length === 0;
 }
 
 function imageViewerIdentityMatches(item) {
@@ -11860,6 +12096,38 @@ function buildProgressPreviews(id, evt) {
   return details;
 }
 
+// Each condensed prompt appears once between the job head and its cells.
+// Each target that received it carries a badge in its result cell.
+function renderJobCondensedPrompts(card, entries) {
+  for (const old of card.querySelectorAll(":scope > .job-condensed-prompt")) old.remove();
+  const cells = card.querySelector(".job-cells");
+  for (const entry of entries) {
+    const characters = MultiImagePromptLimits.characterCount(entry.prompt).toLocaleString();
+    const names = promptLimitNames.format(entry.generators.map(genLabel));
+    const details = document.createElement("details");
+    details.className = "job-condensed-prompt";
+    const summary = document.createElement("summary");
+    const count = document.createElement("strong");
+    count.textContent = characters;
+    summary.append("Condensed prompt for ", names, ": ", count,
+      ` characters, written by ${promptRewriteModelLabel(entry.model)}`);
+    const text = document.createElement("pre");
+    text.textContent = entry.prompt;
+    details.append(summary, text);
+    card.insertBefore(details, cells);
+    for (const gen of entry.generators) {
+      const cell = cells.querySelector(`.cell[data-gen="${CSS.escape(gen)}"]`);
+      if (!cell || cell.querySelector(".cell-condensed")) continue;
+      const badge = document.createElement("span");
+      badge.className = "cell-condensed";
+      badge.textContent = "condensed prompt";
+      badge.title = `${genLabel(gen)} received the ${characters}-character condensed prompt ` +
+        "shown under the job prompt, not the full prompt.";
+      cell.querySelector(".cell-name").after(badge);
+    }
+  }
+}
+
 function applyJobEvent(id, card, evt) {
   if (card.dataset.state !== "done") {
     const connection = card.querySelector(".job-connection");
@@ -11892,6 +12160,10 @@ function applyJobEvent(id, card, evt) {
       } else {
         card.dataset.sketchComposer = JSON.stringify(evt.sketchComposer);
       }
+    }
+    if (evt.condensedPrompts?.length > 0) {
+      card.dataset.condensedPrompts = JSON.stringify(evt.condensedPrompts);
+      renderJobCondensedPrompts(card, evt.condensedPrompts);
     }
     // What the gpt2 target actually received: "sent" (guidance text rode
     // along) or "off" (toggle disabled). Absent on events recorded before

@@ -106,10 +106,14 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
         const article = document.createElement("article");
         article.className = "prompt-rewrite-exchange";
         const heading = document.createElement("h3");
-        heading.textContent = `${exchange.model === "restore" ? "Restored version" : exchange.model} · ${new Date(exchange.requestedAtUnixMs).toLocaleString()}`;
+        const condensed = exchange.purpose === "condense";
+        const kind = exchange.model === "restore" ? "Restored version"
+          : condensed ? `Condensed for prompt limits · ${exchange.model}` : exchange.model;
+        heading.textContent = `${kind} · ${new Date(exchange.requestedAtUnixMs).toLocaleString()}`;
         article.append(heading, version(exchange.originalPrompt, "Before this change · exact source", exchange.id, "original"));
         if (exchange.status === "succeeded") {
-          article.append(version(exchange.resultPrompt, "Replacement", exchange.id, "result"));
+          article.append(version(exchange.resultPrompt,
+            condensed ? "Condensed prompt · the prompt box kept the full prompt" : "Replacement", exchange.id, "result"));
         } else {
           const failure = document.createElement("p");
           failure.textContent = exchange.error || "Request pending. Refresh history to check its result.";

@@ -30,6 +30,32 @@ namespace MultiImageClient
             + "Keep the composition readable and visually organized. "
             + "Return only the complete expanded prompt, without commentary or alternative proposals.";
 
+        // Condensing shortens the prompt only for selected targets over their
+        // prompt limit. See docs/prompt-length-limits.md.
+        public const string CondenseModel = SonnetModel;
+        public const string CondensePurpose = "condense";
+
+        // Models count characters poorly, so the request aims 10% under the
+        // budget. The server still rejects a reply over the budget.
+        public static string CondenseInstruction(int budget, int sourceCharacters)
+        {
+            var aim = budget * 9 / 10;
+            var percent = (int)Math.Round(100.0 * aim / sourceCharacters);
+            return $"Condense this image-generation prompt to at most {budget:N0} characters. "
+                + "Count every letter, space, punctuation mark, and line break. "
+                + $"The source has {sourceCharacters:N0} characters. "
+                + $"Aim for about {aim:N0} characters, about {percent}% of the source. "
+                + "Keep everything that changes the image: subjects, names, counts, actions, positions, spatial relationships, setting, style, materials, colors, lighting, mood, and composition. "
+                + "Keep requested on-image text word for word. "
+                + "Remove repetition, filler, and wording that does not change the image. "
+                + "Merge descriptions that overlap. "
+                + "Do not add subjects, objects, or details. "
+                + "Keep any lighting the source states. "
+                + "If it states none, describe bright, clear daytime light in a few words. "
+                + "Never make the scene dim, murky, or dark unless the source asks for that. "
+                + "Return only the condensed prompt.";
+        }
+
         private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromMinutes(5) };
         private static readonly SemaphoreSlim Slots = new(2, 2);
 

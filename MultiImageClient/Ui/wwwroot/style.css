@@ -1226,7 +1226,8 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 #send-error { color: var(--err); font-size: 13px; font-weight: 600; }
 
 /* Non-blocking prompt-length notice: red lines name targets that will fail
-   and receive nothing; amber lines name targets that get a shortened prompt. */
+   and receive nothing; amber lines name targets that get a shortened prompt,
+   either a condensed prompt or grok-web's truncation. */
 #prompt-limit-notice {
   display: flex;
   flex-direction: column;
@@ -1251,10 +1252,56 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
   background: #fdecea;
   border-color: var(--err);
 }
-.prompt-limit-line.truncate {
+.prompt-limit-line.truncate,
+.prompt-limit-line.condensed {
   color: #7a4d00;
   background: #fff7e0;
   border-color: #d9a521;
+}
+.prompt-limit-deselect,
+.prompt-limit-condense,
+.prompt-limit-show,
+.prompt-limit-discard {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #8a1c1c;
+  background: #fff;
+  border: 1px solid var(--err);
+  border-radius: 3px;
+  padding: 1px 10px;
+  cursor: pointer;
+}
+.prompt-limit-deselect:hover { color: #fff; background: var(--err); }
+.prompt-limit-condense { color: #fff; background: var(--accent); border-color: var(--accent); }
+.prompt-limit-condense:hover:not(:disabled) { background: var(--accent-dark); }
+.prompt-limit-condense:disabled {
+  color: var(--accent-dark);
+  background: #fff;
+  border-style: dashed;
+  cursor: not-allowed;
+}
+.prompt-limit-line.condensed .prompt-limit-condense,
+.prompt-limit-line.condensed .prompt-limit-show,
+.prompt-limit-line.condensed .prompt-limit-discard {
+  color: #7a4d00;
+  background: #fff;
+  border-color: #d9a521;
+}
+.prompt-limit-line.condensed button:hover:not(:disabled) { color: #000; background: #ffe7a3; }
+.prompt-limit-note { margin-top: 4px; font-weight: 700; }
+.prompt-limit-text {
+  margin: 6px 0 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 400 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #000;
+  background: #fff;
+  border: 1px solid #d9a521;
+  border-radius: 3px;
 }
 
 /* ---------- jobs ---------- */
@@ -1429,6 +1476,38 @@ body:not(.show-costs) #cost-summary { display: none !important; }
   border-radius: 4px;
   padding: 0 4px;
   white-space: nowrap;
+}
+/* Marker for targets that received the job's condensed prompt instead of the
+   full prompt. Same amber as the composer's condensed line. */
+.cell-condensed {
+  font-size: 10px;
+  font-weight: 700;
+  color: #7a4d00;
+  background: #fff7e0;
+  border: 1px solid #d9a521;
+  border-radius: 4px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.job-condensed-prompt {
+  margin-top: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: #7a4d00;
+  background: #fff7e0;
+  border: 1px solid #d9a521;
+  border-radius: 4px;
+}
+.job-condensed-prompt summary { cursor: pointer; font-weight: 600; }
+.job-condensed-prompt strong { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.job-condensed-prompt pre {
+  margin: 6px 0 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 400 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--ink);
 }
 /* Actual returned pixel size; secondary via smaller size, not desaturation. */
 .cell-size { font-size: 11px; font-weight: 600; color: var(--accent-dark); white-space: nowrap; }
@@ -2221,8 +2300,9 @@ body.image-viewer-open { overflow: hidden; }
   background: var(--err);
   border-color: var(--err);
 }
-/* gpt2 anti-murk guidance status under the prompt: green shows the exact
-   appended text, red flags a gpt2 image generated without it. Secondary via
+/* Per-target prompt status under the prompt: amber shows a condensed prompt
+   the target received instead of the prompt above, green shows the exact
+   appended text, red flags a GPT image generated without it. Secondary via
    size, not desaturation (house style: no gray text). */
 #image-viewer-guidance {
   min-width: 0;
@@ -2232,8 +2312,11 @@ body.image-viewer-open { overflow: hidden; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-#image-viewer-guidance.sent { color: var(--ok); }
-#image-viewer-guidance.off { color: var(--err); font-weight: 600; }
+#image-viewer-guidance.condensed { max-height: 160px; }
+#image-viewer-guidance .guidance-condensed strong { font-size: 12px; font-weight: 700; color: #7a4d00; }
+#image-viewer-guidance .guidance-condensed-text { font-size: 12px; color: var(--ink); }
+#image-viewer-guidance .guidance-sent { color: var(--ok); }
+#image-viewer-guidance .guidance-off { color: var(--err); font-weight: 600; }
 /* Side-column layout: when the image is wide (or compare mode doubles the
    stage) height is the binding constraint and a bottom bar shrinks the image,
    so the info panel becomes a fixed-width right column instead.
@@ -3785,7 +3868,9 @@ body.image-viewer-open { overflow: hidden; }
   header button, header a, #gen-controls button, #prompt-tools button,
   #input-library-toggle, #sketch-open, #inspiration-toggle, #describe-head button,
   .user-chip, .favorite-user-chip, .job-set-active, .job-share-link, .job-prompt-toggle,
-  .prompt-favorite, .hide-prompt, #cost-toggle, .archive-day-toggle { min-height: 36px; }
+  .prompt-favorite, .hide-prompt, #cost-toggle, .archive-day-toggle,
+  .prompt-limit-deselect, .prompt-limit-condense, .prompt-limit-show,
+  .prompt-limit-discard { min-height: 36px; }
   /* Unlike a button, a link keeps its text at the top of a taller box. */
   header a { display: inline-flex; align-items: center; }
   .gen-toggle { min-height: 40px; }

@@ -317,6 +317,7 @@ namespace MultiImageClient
                             || (policy != null && ((!policy.GoalLoops && (path.StartsWith("/api/goal-loops", StringComparison.OrdinalIgnoreCase) || path is "/goal.html" or "/recap.html"))
                                 || (!policy.Video && path.StartsWith("/api/video-jobs", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/advice", StringComparison.OrdinalIgnoreCase))
+                                || (!policy.PromptRewrite && path.StartsWith("/api/prompt/condense", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/subjects/synthesize", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.AllowVibecoders && path.StartsWith("/api/discord/vibecoders", StringComparison.OrdinalIgnoreCase)))))
                         {
@@ -685,6 +686,14 @@ namespace MultiImageClient
                         available = DirectedPromptRewrite.AvailabilityProblem(model, settings) == null,
                         availabilityProblem = DirectedPromptRewrite.AvailabilityProblem(model, settings),
                     }),
+                    promptCondense = new
+                    {
+                        model = DirectedPromptRewrite.CondenseModel,
+                        label = ManagerCatalog.All.Single(m => m.Model == DirectedPromptRewrite.CondenseModel).Label,
+                        available = DirectedPromptRewrite.AvailabilityProblem(DirectedPromptRewrite.CondenseModel, settings) == null,
+                        availabilityProblem = DirectedPromptRewrite.AvailabilityProblem(DirectedPromptRewrite.CondenseModel, settings),
+                        minCondensedPromptChars = UiJobRunner.MinCondensedPromptChars,
+                    },
                     // Goal loop manager catalog + limits, consumed by goal.html.
                     // Generators come from the `generators` list above (image
                     // kind, available, no goalLoopProblem).
@@ -1065,7 +1074,7 @@ namespace MultiImageClient
                 }
                 var form = await request.ReadFormAsync();
 
-                var prompt = (form["prompt"].ToString() ?? "").Trim();
+                var prompt = UiJobRunner.PromptFromFormField(form["prompt"].ToString());
                 // Blank prompts are rejected below once the generator set is
                 // known: a describe-only job may omit the prompt and gets the
                 // standard describe instruction instead (declared pre-operation
@@ -1177,6 +1186,34 @@ namespace MultiImageClient
                         error = $"These targets require an attached image: {string.Join(", ", analysisKeys)}. Attach an image or deselect them.",
                     });
                 }
+                Dictionary<string, UiCondensedPrompt> condensedPrompts;
+                try
+                {
+                    var condensedPromptsJson = form.ContainsKey("condensedPrompts")
+                        ? form["condensedPrompts"].ToString()
+                        : null;
+                    if (condensedPromptsJson != null
+                        && environments?.Get(settings.UiEnvironmentId) is { PromptRewrite: false })
+                    {
+                        throw new InvalidDataException("Prompt condensing is not available in this environment.");
+                    }
+                    var exchangeIdentity = PromptExchangeIdentityKey(
+                        request.HttpContext.Items["micUser"] as string ?? "",
+                        createdBy);
+                    condensedPrompts = UiJobRunner.ResolveCondensedPrompts(
+                        condensedPromptsJson,
+                        genKeys,
+                        prompt,
+                        generatorExtraTexts,
+                        imageAttached: uploadFiles.Count > 0,
+                        exchangeId => community
+                            .ReadClaudePromptExchanges(exchangeIdentity, 1, exchangeId: exchangeId)
+                            .SingleOrDefault());
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
 
                 var inputPaths = new List<string>();
                 var inputImageWidth = 0;
@@ -1253,6 +1290,7 @@ namespace MultiImageClient
                         Shape = shape,
                         Detail = (form["detail"].ToString() ?? "standard").Trim().ToLowerInvariant(),
                         GeneratorExtraTexts = generatorExtraTexts,
+                        CondensedPrompts = condensedPrompts,
                     };
                     jobs.Add(job);
                     try
@@ -1294,6 +1332,19 @@ namespace MultiImageClient
                         moderation = spec.Moderation,
                         n = spec.ImageCount,
                         generatorExtraTexts = spec.GeneratorExtraTexts,
+                        // One entry per condensed prompt, naming exactly the
+                        // targets that received it instead of the job prompt.
+                        condensedPrompts = genKeys
+                            .Where(spec.CondensedPrompts.ContainsKey)
+                            .GroupBy(key => spec.CondensedPrompts[key].ExchangeId)
+                            .Select(group => new
+                            {
+                                exchangeId = group.Key,
+                                model = spec.CondensedPrompts[group.First()].Model,
+                                prompt = spec.CondensedPrompts[group.First()].Prompt,
+                                generators = group.ToArray(),
+                            })
+                            .ToArray(),
                         // Exact persisted identity for the sketch editor. Null
                         // explicitly means this new job had no linked sketch;
                         // old accepted events lack the property entirely and
@@ -1934,7 +1985,7 @@ namespace MultiImageClient
                     });
                 }
 
-                var prompt = (form["prompt"].ToString() ?? "").Trim();
+                var prompt = UiJobRunner.PromptFromFormField(form["prompt"].ToString());
                 string inputImagePath;
                 int inputImageWidth;
                 int inputImageHeight;
@@ -2073,9 +2124,7 @@ namespace MultiImageClient
                 {
                     return Results.BadRequest(new { error = identityError });
                 }
-                var identityKey = authUser.Length > 0
-                    ? "login:" + authUser
-                    : "display:" + actorDisplay.ToUpperInvariant();
+                var identityKey = PromptExchangeIdentityKey(authUser, actorDisplay);
                 string? restoredPrompt = null;
                 if (restore)
                 {
@@ -2155,6 +2204,173 @@ namespace MultiImageClient
                 });
             });
 
+            // Condenses the prompt for the named targets only. The reply never
+            // edits the composer prompt; a job sends the condensed prompt to
+            // exactly those targets. See docs/prompt-length-limits.md.
+            // One request per identity, prompt, and limit runs at a time, so
+            // several tabs cannot send the same text to the provider twice.
+            var condenseInFlight = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+            app.MapPost("/api/prompt/condense", async (HttpRequest request) =>
+            {
+                var form = await request.ReadFormAsync();
+                var model = DirectedPromptRewrite.CondenseModel;
+                var modelLabel = ManagerCatalog.All.Single(m => m.Model == model).Label;
+                var problem = DirectedPromptRewrite.AvailabilityProblem(model, settings);
+                if (problem != null) return Results.BadRequest(new { error = problem });
+                var prompt = UiJobRunner.PromptFromFormField(form["prompt"].ToString());
+                if (prompt.Length == 0)
+                {
+                    return Results.BadRequest(new { error = "prompt is empty" });
+                }
+                if (prompt.Length > 100_000)
+                {
+                    return Results.BadRequest(new { error = "prompt must be 100,000 characters or fewer" });
+                }
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (!TryResolveCreatorName(
+                    form["user"].ToString(),
+                    authUser,
+                    community,
+                    out var actorDisplay,
+                    out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+                var identityKey = PromptExchangeIdentityKey(authUser, actorDisplay);
+                UiPromptCondensePlan plan;
+                try
+                {
+                    if (!form.ContainsKey("generatorExtraTexts"))
+                    {
+                        throw new InvalidDataException("A condense request must include generatorExtraTexts.");
+                    }
+                    var keys = form["generators"].ToString()
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    plan = UiJobRunner.PlanPromptCondense(
+                        keys,
+                        prompt,
+                        ParseGeneratorExtraTexts(form, keys),
+                        imageAttached: form["imageAttached"].ToString() == "true");
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                var instruction = DirectedPromptRewrite.CondenseInstruction(plan.Budget, plan.SourceCharacters);
+                object Reply(UiClaudePromptExchangeRecord exchange, bool reused) => new
+                {
+                    exchangeId = exchange.Id,
+                    model,
+                    modelLabel,
+                    condensedPrompt = exchange.ResultPrompt,
+                    budget = plan.Budget,
+                    generators = plan.Keys,
+                    reused,
+                };
+                if (form["fresh"].ToString() != "true")
+                {
+                    var stored = community.FindSucceededClaudePromptExchange(
+                        identityKey,
+                        DirectedPromptRewrite.CondensePurpose,
+                        model,
+                        instruction,
+                        prompt);
+                    if (stored != null)
+                    {
+                        return Results.Json(Reply(stored, reused: true));
+                    }
+                }
+                var flightKey = $"{identityKey}\n{instruction}\n{prompt}";
+                if (!condenseInFlight.TryAdd(flightKey, 0))
+                {
+                    return Results.Conflict(new
+                    {
+                        error = "This prompt is already being condensed for this limit, possibly in another tab. "
+                            + "Press condense again after it finishes.",
+                    });
+                }
+                try
+                {
+                    var exchange = community.StartClaudePromptExchange(
+                        identityKey,
+                        actorDisplay,
+                        model,
+                        instruction,
+                        prompt,
+                        ClaudeService.PromptAdviceSystemPrompt,
+                        ClaudeService.BuildPromptAdviceWirePrompt(instruction, prompt),
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        DirectedPromptRewrite.CondensePurpose);
+                    string rawResponse;
+                    string condensed;
+                    string failure;
+                    try
+                    {
+                        var result = await DirectedPromptRewrite.RewriteAsync(
+                            model, instruction, prompt, settings, request.HttpContext.RequestAborted);
+                        rawResponse = result.RawResponse;
+                        failure = result.Error;
+                        condensed = failure.Length == 0
+                            ? result.ResultPrompt.Replace("\r\n", "\n").Replace('\r', '\n').Trim()
+                            : "";
+                        // A refusal phrase the source already contains can be
+                        // ordinary prompt text.
+                        if (failure.Length == 0
+                            && ClaudeService.DidClaudeRefuse(condensed)
+                            && !ClaudeService.DidClaudeRefuse(prompt))
+                        {
+                            failure = $"{modelLabel} refused to condense this prompt: {condensed}";
+                        }
+                        if (failure.Length == 0)
+                        {
+                            failure = UiJobRunner.DescribeCondensedPromptProblem(condensed, plan, modelLabel) ?? "";
+                        }
+                        if (failure.Length > 0)
+                        {
+                            condensed = "";
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        rawResponse = "";
+                        condensed = "";
+                        failure = ex.Message;
+                    }
+                    community.CompleteClaudePromptExchange(
+                        exchange.Id,
+                        rawResponse,
+                        condensed,
+                        failure,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    if (failure.Length > 0)
+                    {
+                        var actionHint = ProviderActionHints.For(UiJobRunner.KeyDescribeClaude, failure);
+                        Logger.Log($"UI prompt condense {exchange.Id} failed for '{actorDisplay}': {failure}"
+                            + (actionHint != null
+                                ? $"\nUI prompt condense next step: {actionHint.Text} -> {actionHint.Url}"
+                                : ""));
+                        return Results.Json(
+                            new
+                            {
+                                error = failure,
+                                exchangeId = exchange.Id,
+                                errorHint = actionHint?.Text,
+                                errorHintUrl = actionHint?.Url,
+                            },
+                            statusCode: 502);
+                    }
+                    Logger.Log($"UI prompt condense {exchange.Id} completed for '{actorDisplay}': "
+                        + $"{condensed.EnumerateRunes().Count():N0} of {plan.Budget:N0} characters for {string.Join(", ", plan.Keys)}.");
+                    return Results.Json(Reply(
+                        new UiClaudePromptExchangeRecord { Id = exchange.Id, ResultPrompt = condensed },
+                        reused: false));
+                }
+                finally
+                {
+                    condenseInFlight.TryRemove(flightKey, out _);
+                }
+            });
+
             app.MapGet("/api/prompt/advice/history", (
                 string? user,
                 int? limit,
@@ -2174,9 +2390,7 @@ namespace MultiImageClient
                 {
                     return Results.BadRequest(new { error = identityError });
                 }
-                var identityKey = authUser.Length > 0
-                    ? "login:" + authUser
-                    : "display:" + actorDisplay.ToUpperInvariant();
+                var identityKey = PromptExchangeIdentityKey(authUser, actorDisplay);
                 var records = community.ReadClaudePromptExchanges(identityKey, limit ?? 50, beforeTime, beforeId);
                 return Results.Json(new
                 {
@@ -2195,6 +2409,7 @@ namespace MultiImageClient
                         record.ResultPrompt,
                         record.Status,
                         record.Error,
+                        record.Purpose,
                     }),
                 });
             });
@@ -3776,6 +3991,13 @@ namespace MultiImageClient
             criticOutputTokens = loop.CriticOutputTokens,
             canControl,
         };
+
+        // Owner of stored Claude prompt exchanges: the login when signed in,
+        // otherwise the resolved creator name.
+        private static string PromptExchangeIdentityKey(string authUser, string actorDisplay)
+            => authUser.Length > 0
+                ? "login:" + authUser
+                : "display:" + actorDisplay.ToUpperInvariant();
 
         private static bool TryResolveCreatorName(
             string? submitted,

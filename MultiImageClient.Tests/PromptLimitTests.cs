@@ -96,21 +96,35 @@ public class PromptLimitTests
         }
     }
 
-    // prompt-limits.js counts each prompt line break as the CR LF that browsers
-    // send in multipart forms (Chrome 154, checked 2026-10-12). That count is
-    // right only while the server keeps those line breaks as received.
+    // Browsers send each prompt line break as CR LF in multipart forms (Chrome
+    // 154, checked 2026-10-12), and ReadFormAsync keeps it. prompt-limits.js
+    // counts one character per line break, which is right only while the job
+    // stores the prompt with LF.
     [Fact]
-    public async Task ServerKeepsTheCrLfLineBreaksOfAFormPrompt()
+    public async Task FormPromptReachesTheJobWithLfLineBreaks()
     {
         const string body = "--b\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\n"
-            + "line one\r\nline two\r\n--b--\r\n";
+            + "  line one\r\nline two\rline three\r\n\r\n--b--\r\n";
         var context = new DefaultHttpContext();
         context.Request.ContentType = "multipart/form-data; boundary=b";
         context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));
 
         var form = await context.Request.ReadFormAsync();
 
-        Assert.Equal("line one\r\nline two", form["prompt"].ToString());
+        Assert.Equal("  line one\r\nline two\rline three\r\n", form["prompt"].ToString());
+        Assert.Equal("line one\nline two\nline three", UiJobRunner.PromptFromFormField(form["prompt"].ToString()));
+    }
+
+    [Fact]
+    public void FormLineBreaksCountOneCharacterEach()
+    {
+        // 500 lines of one character: 999 characters in the text box, 1,498 as sent.
+        var sent = string.Join("\r\n", Enumerable.Repeat("a", 500));
+
+        var prompt = UiJobRunner.PromptFromFormField(sent);
+
+        Assert.Equal(999, prompt.Length);
+        Assert.Null(UiJobRunner.DescribePromptLimitProblem(UiJobRunner.KeyRecraftV3, prompt, imageSent: false));
     }
 
     [Theory]

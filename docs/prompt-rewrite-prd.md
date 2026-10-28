@@ -85,6 +85,21 @@ This decision supersedes the 2026-09-05 inline history display.
 - The page does not re-check replies from this server. The server and page ship together.
 - Provider replies keep their strict server-side checks.
 
+## Condensing for prompt limits (2026-10-26)
+
+A red prompt-limit line can condense the prompt with Sonnet 5.5.
+[prompt-length-limits.md](prompt-length-limits.md#condensing-for-over-limit-targets-2026-10-26) holds the full contract.
+
+- Condensing uses this area's Messages request, reply checks, and two-call limit.
+- Its result never replaces the composer text.
+- Only the over-limit targets the user condensed for receive it.
+- Each request is saved in this area's history with `purpose = 'condense'`.
+- Prompt edits (advice, flesh out, restore) keep an empty `purpose`.
+- The history API returns `purpose` for every exchange.
+- Prompt history labels these entries **Condensed for prompt limits**.
+- Their result reads **Condensed prompt · the prompt box kept the full prompt**.
+- Restoring a condensed result is an explicit edit: the composer then sends it to every target.
+
 ## Provider contract
 
 - Use Anthropic Messages for flesh out and advice.
@@ -127,6 +142,8 @@ Provider failures return HTTP 502 with the saved exchange identifier.
 Optional `beforeTime` and `beforeId` form a complete cursor; both must be supplied together.
 Ordering uses descending request time and record ID, including equal timestamps.
 The existing `ui_claude_prompt_exchanges` table holds all model choices and restores.
+Since 2026-10-26 it also holds condensed prompts, marked by its `purpose` column.
+Startup adds that column to older databases with an empty default.
 Its historical name remains unchanged to preserve existing records.
 No new server history cache exists.
 

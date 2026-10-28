@@ -2374,11 +2374,25 @@ namespace MultiImageClient
         /// of the prompt and recorded as a ManualSuffixation transformation.
         public IReadOnlyDictionary<string, string> GeneratorExtraTexts { get; init; }
             = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        /// Condensed prompts the user made for targets over their prompt
+        /// limit, verified at intake. A listed target receives its condensed
+        /// prompt in place of the job prompt; every other target receives
+        /// the job prompt.
+        public IReadOnlyDictionary<string, UiCondensedPrompt> CondensedPrompts { get; init; }
+            = new Dictionary<string, UiCondensedPrompt>(StringComparer.Ordinal);
         public string VideoMode { get; init; } = "normal";
         public int VideoDurationSeconds { get; init; } = 15;
         public string VideoResolution { get; init; } = "480p";
         public string VideoAspectRatio { get; init; } = "source";
     }
+
+    // ExchangeId names the stored condense exchange that produced Prompt.
+    public sealed record UiCondensedPrompt(string ExchangeId, string Model, string Prompt);
+
+    // Budget is the longest prompt that fits every target in Keys after its
+    // endpoint extra text.
+    public sealed record UiPromptCondensePlan(IReadOnlyList<string> Keys, int Budget, int SourceCharacters);
 
     public sealed record UiSketchComposerPaletteColor(
         [property: JsonPropertyName("name")] string Name,
@@ -3566,6 +3580,170 @@ namespace MultiImageClient
                 : null;
         }
 
+        // Multipart form encoding sends each text-box line break as CR LF, but
+        // the text box holds LF only. Storing LF keeps every line break one
+        // character against provider limits, as the composer counts it.
+        public static string PromptFromFormField(string? value)
+            => (value ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+
+        // The exact prompt a target receives: the prompt, then a blank line
+        // and the endpoint extra text when the endpoint has any.
+        public static string WithEndpointExtraText(string prompt, string? extraText)
+            => string.IsNullOrWhiteSpace(extraText)
+                ? prompt.Trim()
+                : $"{prompt}\n\n{extraText.Trim()}".Trim();
+
+        // A shorter budget cannot hold the subjects of a long prompt, so the
+        // condense request is refused before it costs anything.
+        public const int MinCondensedPromptChars = 100;
+
+        public static UiPromptCondensePlan PlanPromptCondense(
+            IReadOnlyList<string> keys,
+            string prompt,
+            IReadOnlyDictionary<string, string> extraTexts,
+            bool imageAttached)
+        {
+            if (keys.Count == 0)
+            {
+                throw new InvalidDataException("Choose the targets to condense the prompt for.");
+            }
+            if (keys.Distinct(StringComparer.Ordinal).Count() != keys.Count)
+            {
+                throw new InvalidDataException("A condense request names each target once.");
+            }
+            var budget = int.MaxValue;
+            foreach (var key in keys)
+            {
+                if (!IsImageGeneratorKey(key))
+                {
+                    throw new InvalidDataException($"Unknown image generator '{key}'.");
+                }
+                var name = GeneratorPresentation.UiDisplayName(key);
+                var max = MaxPromptCharsFor(key, imageAttached && IsImageCapable(key))
+                    ?? throw new InvalidDataException($"{name} has no prompt limit, so it receives the full prompt.");
+                extraTexts.TryGetValue(key, out var extraText);
+                if (WithEndpointExtraText(prompt, extraText).EnumerateRunes().Count() <= max)
+                {
+                    throw new InvalidDataException($"{name} is within its prompt limit, so it receives the full prompt.");
+                }
+                var extraChars = string.IsNullOrWhiteSpace(extraText)
+                    ? 0
+                    : 2 + extraText.Trim().EnumerateRunes().Count();
+                budget = Math.Min(budget, max - extraChars);
+            }
+            if (budget < MinCondensedPromptChars)
+            {
+                throw new InvalidDataException(
+                    $"Endpoint extra text leaves {Math.Max(budget, 0):N0} characters for the prompt. "
+                    + $"A condensed prompt needs at least {MinCondensedPromptChars:N0}. Shorten the extra text.");
+            }
+            return new UiPromptCondensePlan(keys, budget, prompt.EnumerateRunes().Count());
+        }
+
+        public static string? DescribeCondensedPromptProblem(string condensed, UiPromptCondensePlan plan, string modelLabel)
+        {
+            var count = condensed.EnumerateRunes().Count();
+            return count > plan.Budget
+                ? $"{modelLabel} returned {count:N0} characters; at most {plan.Budget:N0} fit. Nothing was applied. Press condense to try again."
+                : null;
+        }
+
+        // condensedPromptsJson maps each target key to the id of a stored
+        // condense exchange. readExchange returns that exchange only when it
+        // belongs to the submitting user.
+        public static Dictionary<string, UiCondensedPrompt> ResolveCondensedPrompts(
+            string? condensedPromptsJson,
+            IReadOnlyCollection<string> selectedKeys,
+            string prompt,
+            IReadOnlyDictionary<string, string> extraTexts,
+            bool imageAttached,
+            Func<string, UiClaudePromptExchangeRecord?> readExchange)
+        {
+            var result = new Dictionary<string, UiCondensedPrompt>(StringComparer.Ordinal);
+            if (condensedPromptsJson == null)
+            {
+                return result;
+            }
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(condensedPromptsJson);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException($"Condensed prompts are not valid JSON: {ex.Message}", ex);
+            }
+            using (document)
+            {
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new InvalidDataException("Condensed prompts must be a JSON object keyed by generator.");
+                }
+                var selected = selectedKeys.ToHashSet(StringComparer.Ordinal);
+                var exchanges = new Dictionary<string, UiClaudePromptExchangeRecord>(StringComparer.Ordinal);
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    var key = property.Name;
+                    if (!selected.Contains(key))
+                    {
+                        throw new InvalidDataException($"Condensed prompts name unselected generator '{key}'.");
+                    }
+                    if (result.ContainsKey(key))
+                    {
+                        throw new InvalidDataException($"Condensed prompts name generator '{key}' twice.");
+                    }
+                    var exchangeId = property.Value.ValueKind == JsonValueKind.String
+                        ? property.Value.GetString()!
+                        : throw new InvalidDataException($"The condensed prompt for '{key}' must be an exchange id string.");
+                    // Validates the key and requires it to be over its limit
+                    // with the full prompt.
+                    PlanPromptCondense(new[] { key }, prompt, extraTexts, imageAttached);
+                    var name = GeneratorPresentation.UiDisplayName(key);
+                    if (!exchanges.TryGetValue(exchangeId, out var exchange))
+                    {
+                        exchange = readExchange(exchangeId)
+                            ?? throw new InvalidDataException($"Condensed prompt {exchangeId} is not one of your saved prompt versions.");
+                        exchanges[exchangeId] = exchange;
+                    }
+                    if (exchange.Purpose != DirectedPromptRewrite.CondensePurpose
+                        || !DirectedPromptRewrite.Models.Contains(exchange.Model))
+                    {
+                        throw new InvalidDataException($"Saved prompt version {exchangeId} is not a condensed prompt.");
+                    }
+                    if (exchange.Status != "succeeded")
+                    {
+                        throw new InvalidDataException($"Condensed prompt {exchangeId} did not complete.");
+                    }
+                    if (!string.Equals(exchange.OriginalPrompt, prompt, StringComparison.Ordinal))
+                    {
+                        throw new InvalidDataException(
+                            $"Condensed prompt {exchangeId} was made from a different prompt. Condense the current prompt again.");
+                    }
+                    extraTexts.TryGetValue(key, out var extraText);
+                    var max = MaxPromptCharsFor(key, imageAttached && IsImageCapable(key))!.Value;
+                    var count = WithEndpointExtraText(exchange.ResultPrompt, extraText).EnumerateRunes().Count();
+                    if (count > max)
+                    {
+                        throw new InvalidDataException(
+                            $"With its extra text, the condensed prompt has {count:N0} characters for {name}; at most {max:N0} fit. Condense again.");
+                    }
+                    result[key] = new UiCondensedPrompt(exchange.Id, exchange.Model, exchange.ResultPrompt);
+                }
+            }
+            return result;
+        }
+
+        public static void ApplyCondensedPrompt(PromptDetails copy, UiJobSpec spec, string key)
+        {
+            if (spec.CondensedPrompts.TryGetValue(key, out var condensed))
+            {
+                copy.ReplacePrompt(
+                    condensed.Prompt,
+                    $"Condensed by {condensed.Model} (prompt version {condensed.ExchangeId}) for this target's prompt limit: {condensed.Prompt}",
+                    TransformationType.ClaudeRewrite);
+            }
+        }
+
         // States, per selected generator, exactly what function the job's
         // input image served. Rendered under the INPUT cell of the combined
         // contact sheet. Must stay truthful to BuildGenerator's routing: edit
@@ -4736,6 +4914,11 @@ namespace MultiImageClient
             };
             var want = Math.Clamp(spec.ImageCount, 1, maxImages);
             var enablePartials = want == 1;
+            if (spec.CondensedPrompts.TryGetValue(key, out var condensedPrompt))
+            {
+                Logger.Log($"[ui #{job.Id}]   {key}: sends condensed prompt {condensedPrompt.ExchangeId} "
+                    + $"({condensedPrompt.Prompt.EnumerateRunes().Count():N0} characters) instead of the job prompt");
+            }
 
             var urls = new List<string>();
             // Local card-thumb URLs, index-aligned with `urls`. Always
@@ -4791,6 +4974,7 @@ namespace MultiImageClient
                     // Each generator gets an independent prompt copy. Append only
                     // that endpoint's configured text and record the exact wire
                     // prompt in the normal transformation/archive pipeline.
+                    ApplyCondensedPrompt(copy, spec, key);
                     ApplyEndpointExtraText(copy, spec, key, job.Id);
                     var promptLimitProblem = DescribePromptLimitProblem(
                         key, copy.Prompt, job.HasInputImage && IsImageCapable(key));
@@ -5015,6 +5199,10 @@ namespace MultiImageClient
             {
                 label = string.IsNullOrEmpty(label) ? $"{urls.Count}/{want} imgs" : $"{label} · {urls.Count}/{want} imgs";
             }
+            if (condensedPrompt != null)
+            {
+                label = string.IsNullOrEmpty(label) ? "condensed prompt" : $"{label} · condensed prompt";
+            }
             merged.ImageGeneratorDescription =
                 GeneratorPresentation.UiContactSheetLabel(key, label);
 
@@ -5218,7 +5406,7 @@ namespace MultiImageClient
             if (spec.GeneratorExtraTexts.TryGetValue(key, out var extraText)
                 && !string.IsNullOrWhiteSpace(extraText))
             {
-                var suffixed = $"{copy.Prompt}\n\n{extraText.Trim()}";
+                var suffixed = WithEndpointExtraText(copy.Prompt, extraText);
                 copy.ReplacePrompt(suffixed, suffixed, TransformationType.ManualSuffixation);
             }
             else if (key is KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare)

@@ -17,12 +17,15 @@
 })(typeof globalThis === "object" ? globalThis : this, function createPromptLimitsModule() {
   const encoder = new TextEncoder();
 
-  // Multipart form serialization sends each prompt line break as CR LF, and the
-  // server counts the prompt it receives. Extra text travels inside a JSON field
-  // and keeps LF.
+  // Multipart form serialization sends each prompt line break as CR LF; the
+  // server stores LF (UiJobRunner.PromptFromFormField), so a line break counts
+  // as one character. Extra text travels inside a JSON field and keeps LF.
+  function sentPrompt(prompt) {
+    return prompt.replace(/\r\n?/g, "\n").trim();
+  }
+
   function wirePrompt(prompt, extraText) {
-    const sentPrompt = prompt.trim().replace(/\r\n|\r|\n/g, "\r\n");
-    return [sentPrompt, extraText.trim()].filter(Boolean).join("\n\n");
+    return [sentPrompt(prompt), extraText.trim()].filter(Boolean).join("\n\n");
   }
 
   function characterCount(text) {
@@ -47,5 +50,26 @@
     return count > max ? { action: "fail", count, max, unit: "characters" } : null;
   }
 
-  return Object.freeze({ wirePrompt, characterCount, check });
+  // The longest prompt that fits the target's limit after its extra text
+  // (UiJobRunner.PlanPromptCondense), or null without a character limit.
+  function condenseBudget(generator, extraText, imageSent) {
+    if (generator.maxPromptUtf8Bytes) return null;
+    const max = imageSent ? generator.maxImagePromptChars : generator.maxPromptChars;
+    if (!max) return null;
+    const extra = extraText.trim();
+    return max - (extra ? 2 + characterCount(extra) : 0);
+  }
+
+  // A condensation ({ sourcePrompt, text }) replaces the prompt for a target
+  // only while the prompt still equals its source, the full prompt is over
+  // the target's limit, and the condensed prompt fits. Null otherwise.
+  function condensedCheck(generator, prompt, extraText, imageSent, condensation) {
+    if (!condensation || condensation.sourcePrompt !== sentPrompt(prompt)) return null;
+    const full = check(generator, prompt, extraText, imageSent);
+    if (!full || full.action !== "fail") return null;
+    const count = characterCount(wirePrompt(condensation.text, extraText));
+    return count <= full.max ? { count, max: full.max, fullCount: full.count } : null;
+  }
+
+  return Object.freeze({ sentPrompt, wirePrompt, characterCount, check, condenseBudget, condensedCheck });
 });
