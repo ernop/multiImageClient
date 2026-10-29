@@ -36,6 +36,8 @@ Decisions:
 - `ManagerChatHttp.MaxOutputTokens` = 64,000 for OpenAI, Anthropic, Gemini, and xAI.
   Published maxima: Anthropic Claude 5 128K, OpenAI Responses 128K, Gemini 3.5 Flash 65,536.
   xAI grok-4.6 has no published figure; 65,536 was accepted live on 2026-09-12.
+  **2026-10-29:** each `ManagerDefinition` carries its own `MaxOutputTokens`, 64,000 by default.
+  Gemini 4 Argon sends 32,768, its non-streaming cap (see `docs/gemini-4-argon-support.md`).
 - `ManagerCatalog.XaiLimits.MaxRequestBytes` = 48 MiB. Probed from the production host with synthetic
   bodies: 48 MiB passed the size check (failed later as `invalid_image`, as intended); 50 MiB returned
   HTTP 413. The 81.9 MB production critique request that failed would now go out as JPEG.
@@ -1133,9 +1135,19 @@ settings keys as the describe endpoints.
 | `manager-claude-opus-5` | claude-opus-5 | Anthropic Messages, adaptive thinking |
 | `manager-claude-sonnet-5` | claude-sonnet-5 | Anthropic Messages, adaptive thinking |
 | `manager-gemini-3.5-flash` | gemini-3.5-flash | Google generateContent, thoughts returned, JSON MIME |
+| `manager-gemini-4-argon` | gemini-4-argon | Google generateContent, high thinking, thoughts returned, JSON MIME, 32,768-token cap |
 | `manager-grok-4.6` | grok-4.6 | xAI Responses API |
 
 Gemini 3.5 Pro is not offered (partner-only as of 2026-09-04).
+
+Gemini 4 Argon joins the shared manager/critic catalog on 2026-10-29 (owner request).
+It uses the existing Google key and `GeminiLimits`.
+Pricing estimates use $2/$10 per million input/output tokens through 2026-11-30, then $4/$20.
+`ManagerDefinition.PriceChange` applies the new price from 2026-12-01 08:00 UTC (midnight Pacific time).
+`/api/config` publishes the price that applies when the page loads.
+Gemini output-token counts include `thoughtsTokenCount`, because Google bills thinking as output.
+This also changes Gemini 3.5 Flash counts, which left out thinking before.
+A live manager call with one image succeeded on 2026-10-29. Details: `docs/gemini-4-argon-support.md`.
 
 Opus 5.5 and Sonnet 5.5 join the shared manager/critic catalog on 2026-10-06 (owner request).
 Pricing estimates use $4/$20 (Opus 5.5) and $2/$10 (Sonnet 5.5) per million input/output tokens;

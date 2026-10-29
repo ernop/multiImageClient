@@ -5,6 +5,8 @@ namespace MultiImageClient.Tests
 {
     public class GoalAstraTests
     {
+        private static readonly DateTimeOffset At = new(2026, 10, 29, 0, 0, 0, TimeSpan.Zero);
+
         [Fact]
         public void AstraUsesExactOpenAiIdentityAndSharedImageTransport()
         {
@@ -27,7 +29,7 @@ namespace MultiImageClient.Tests
             Assert.Equal(label, model.Label);
             Assert.Equal(nameof(Settings.AnthropicApiKey), model.SettingsKeyName);
             Assert.Same(ManagerCatalog.AnthropicLimits, model.ImageLimits);
-            Assert.Equal((decimal)usdPerMillionEach, ManagerCatalog.EstimateCostUsd(model, 1_000_000, 1_000_000));
+            Assert.Equal((decimal)usdPerMillionEach, ManagerCatalog.EstimateCostUsd(model, 1_000_000, 1_000_000, At));
         }
 
         [Fact]
@@ -43,7 +45,7 @@ namespace MultiImageClient.Tests
         public void AstraPriceUsesTheLongContextThreshold(int input, int output, double expected)
         {
             Assert.Equal((decimal)expected, ManagerCatalog.EstimateCostUsd(
-                ManagerCatalog.Find(ManagerCatalog.KeyGpt6Astra)!, input, output));
+                ManagerCatalog.Find(ManagerCatalog.KeyGpt6Astra)!, input, output, At));
         }
     }
 }

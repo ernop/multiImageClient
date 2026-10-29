@@ -2963,6 +2963,7 @@ namespace MultiImageClient
         public const string KeyDescribeOpenAi = "describe-openai";
         public const string KeyDescribeClaude = "describe-claude";
         public const string KeyDescribeGemini = "describe-gemini";
+        public const string KeyDescribeGeminiArgon = "describe-gemini-argon";
         public const string KeyDescribeGrok = "describe-grok";
 
         // Layout map (image → labeled section-map IMAGE). Lives in the
@@ -3024,6 +3025,7 @@ namespace MultiImageClient
             KeyDescribeOpenAi,
             KeyDescribeClaude,
             KeyDescribeGemini,
+            KeyDescribeGeminiArgon,
             KeyDescribeGrok,
         };
 
@@ -3974,7 +3976,7 @@ namespace MultiImageClient
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.OpenAIApiKey), _settings.OpenAIApiKey),
             KeyDescribeClaude
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.AnthropicApiKey), _settings.AnthropicApiKey),
-            KeyDescribeGemini
+            KeyDescribeGemini or KeyDescribeGeminiArgon
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.GoogleGeminiApiKey), _settings.GoogleGeminiApiKey),
             KeyDescribeGrok
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.XAIGrokApiKey), _settings.XAIGrokApiKey),
@@ -5356,6 +5358,7 @@ namespace MultiImageClient
             KeyDescribeClaude => 0.03m,
             // Gemini 3.x thinkingLevel=low still bills some thought tokens.
             KeyDescribeGemini => 0.03m,
+            KeyDescribeGeminiArgon => ArgonDescribeCostEstimate(DateTimeOffset.UtcNow),
             KeyDescribeGrok => 0.03m,
             // Layout map is one Gemini vision call per input image (same
             // transport and token budget class as describe-gemini); the
@@ -5363,6 +5366,18 @@ namespace MultiImageClient
             KeyLayoutMap => 0.03m,
             _ => throw new ArgumentException($"Unknown describe key '{key}'.", nameof(key)),
         };
+
+        // Argon's price doubles on 2026-12-01; ManagerCatalog holds that
+        // schedule. The ceiling assumes 2,000 input tokens and the describe
+        // output budget. One 1024x768 PNG measured 1,294 input and 178 output
+        // tokens at thinkingLevel low on 2026-10-29.
+        public static decimal ArgonDescribeCostEstimate(DateTimeOffset at)
+        {
+            var (inputUsdPerMTok, outputUsdPerMTok) = ManagerCatalog.All
+                .Single(m => m.Key == ManagerCatalog.KeyGemini4Argon)
+                .PricesAt(at);
+            return (2_000m * inputUsdPerMTok.Value + DescribeMaxTokens * outputUsdPerMTok.Value) / 1_000_000m;
+        }
 
         private ILocalVisionModel BuildDescriber(string key)
         {
@@ -5389,6 +5404,9 @@ namespace MultiImageClient
                 case KeyDescribeGemini:
                     RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
                     return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey) { RequestJsonOutput = true };
+                case KeyDescribeGeminiArgon:
+                    RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
+                    return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey, GeminiVisionDescriber.ArgonModel) { RequestJsonOutput = true };
                 case KeyDescribeGrok:
                     RequireKey(_settings.XAIGrokApiKey, "XAIGrokApiKey", key);
                     return new GrokVisionDescriber(_settings.XAIGrokApiKey);

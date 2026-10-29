@@ -78,6 +78,7 @@ The server publishes and checks no limit for these targets:
 - Google models: their token limits exceed every prompt the composer accepts.
 - `grok-web` edits: they use grok.com app-chat, which has no known limit.
 - Local generators, grok-web chat and video, and the describe and layout-map targets.
+  This includes `describe-gemini-argon` (added 2026-10-29): Argon limits input in tokens, far above any composer prompt.
 
 ## Evidence (production, 2026-10-12)
 

@@ -141,11 +141,24 @@ namespace MultiImageClient
         public required string SettingsKeyName { get; init; }
         // Published USD per million tokens (input, output). Null = no verified
         // price on file; the UI then shows token counts without a dollar figure.
+        // Read them through PricesAt so a published price change applies.
         public decimal? InputUsdPerMTok { get; init; }
         public decimal? OutputUsdPerMTok { get; init; }
+        public ManagerPriceChange? PriceChange { get; init; }
+        // Sent as the provider's output-token cap. Thinking counts against it
+        // on every provider in the catalog.
+        public int MaxOutputTokens { get; init; } = ManagerChatHttp.MaxOutputTokens;
         public required string Detail { get; init; }
         public required ManagerImageLimits ImageLimits { get; init; }
+
+        public (decimal? InputUsdPerMTok, decimal? OutputUsdPerMTok) PricesAt(DateTimeOffset at)
+            => PriceChange != null && at >= PriceChange.StartsAt
+                ? (PriceChange.InputUsdPerMTok, PriceChange.OutputUsdPerMTok)
+                : (InputUsdPerMTok, OutputUsdPerMTok);
     }
+
+    // A published future price: calls from StartsAt on use these rates.
+    public sealed record ManagerPriceChange(DateTimeOffset StartsAt, decimal InputUsdPerMTok, decimal OutputUsdPerMTok);
 
     public static class ManagerCatalog
     {
@@ -157,6 +170,7 @@ namespace MultiImageClient
         public const string KeyClaudeOpus5 = "manager-claude-opus-5";
         public const string KeyClaudeSonnet5 = "manager-claude-sonnet-5";
         public const string KeyGemini35Flash = "manager-gemini-3.5-flash";
+        public const string KeyGemini4Argon = "manager-gemini-4-argon";
         public const string KeyGrok46 = "manager-grok-4.6";
 
         // Preselected in the goal form's manager selector when available.
@@ -227,6 +241,8 @@ namespace MultiImageClient
         // gemini-3.5-pro exists (partner testing only), so it is not offered.
         // claude-opus-5-5 ($4/$20) and claude-sonnet-5-5 ($2/$10) added
         // 2026-10-06; both IDs were live-verified 2026-10-02.
+        // gemini-4-argon added and live-verified 2026-10-29. Google prices it
+        // at $2/$10 through 2026-11-30 and $4/$20 from 2026-12-01.
         public static readonly IReadOnlyList<ManagerDefinition> All = new[]
         {
             new ManagerDefinition
@@ -293,6 +309,18 @@ namespace MultiImageClient
             },
             new ManagerDefinition
             {
+                Key = KeyGemini4Argon, Label = "Gemini 4 Argon", Provider = "google", Model = "gemini-4-argon",
+                SettingsKeyName = nameof(Settings.GoogleGeminiApiKey),
+                InputUsdPerMTok = 2m, OutputUsdPerMTok = 10m,
+                // The pricing page names a date only. Google Cloud billing
+                // days run on Pacific time, so the change starts 08:00 UTC.
+                PriceChange = new ManagerPriceChange(new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.FromHours(-8)), 4m, 20m),
+                MaxOutputTokens = ManagerChatHttp.Gemini4MaxOutputTokens,
+                Detail = "Google generateContent with high thinking level and thought parts returned; JSON MIME output mode; images at MEDIA_RESOLUTION_ULTRA_HIGH. One reply holds at most 32,768 tokens, thinking included. Introductory price $2 in / $10 out per million tokens through 2026-11-30, then $4 / $20.",
+                ImageLimits = GeminiLimits,
+            },
+            new ManagerDefinition
+            {
                 Key = KeyGrok46, Label = "Grok 4.6", Provider = "xai", Model = "grok-4.6",
                 SettingsKeyName = nameof(Settings.XAIGrokApiKey),
                 Detail = "xAI Responses API (api.x.ai), store=false so large images are accepted.",
@@ -335,17 +363,18 @@ namespace MultiImageClient
             };
         }
 
-        public static decimal? EstimateCostUsd(ManagerDefinition definition, int? inputTokens, int? outputTokens)
+        public static decimal? EstimateCostUsd(ManagerDefinition definition, int? inputTokens, int? outputTokens, DateTimeOffset at)
         {
-            if (definition.InputUsdPerMTok == null || definition.OutputUsdPerMTok == null
+            var (inputUsdPerMTok, outputUsdPerMTok) = definition.PricesAt(at);
+            if (inputUsdPerMTok == null || outputUsdPerMTok == null
                 || inputTokens == null || outputTokens == null)
             {
                 return null;
             }
             // Astra's published long-context rates apply to the complete request.
             bool astraLongContext = definition.Key == KeyGpt6Astra && inputTokens.Value > 272_000;
-            return (inputTokens.Value * definition.InputUsdPerMTok.Value * (astraLongContext ? 2m : 1m)
-                + outputTokens.Value * definition.OutputUsdPerMTok.Value * (astraLongContext ? 1.5m : 1m)) / 1_000_000m;
+            return (inputTokens.Value * inputUsdPerMTok.Value * (astraLongContext ? 2m : 1m)
+                + outputTokens.Value * outputUsdPerMTok.Value * (astraLongContext ? 1.5m : 1m)) / 1_000_000m;
         }
     }
 
@@ -365,6 +394,13 @@ namespace MultiImageClient
         // grok-4.6 accepted 65,536 live the same day. 64,000 fits every
         // provider without a per-provider table.
         public const int MaxOutputTokens = 64000;
+
+        // Gemini 4 returns at most 32,768 tokens per non-streaming REST call,
+        // thinking included. Google's long-decode guide (2026-10-29) states a
+        // 400 above that and asks callers with lower caps to raise them to
+        // 32,768. Longer output needs a continuationToken loop, which this
+        // app does not run; a reply that reaches the cap ends MAX_TOKENS.
+        public const int Gemini4MaxOutputTokens = 32_768;
 
         // Relaxed escaping keeps prompts and placeholders readable in the
         // stored copy (no \u003C for "<", no escaped non-ASCII); the body
@@ -523,7 +559,7 @@ namespace MultiImageClient
             return null;
         }
 
-        public static ManagerChatReply Partial(string model, string text, string reasoning, string? stop, JsonElement usage, string inputKey, string outputKey)
+        public static ManagerChatReply Partial(string model, string text, string reasoning, string? stop, int? inputTokens, int? outputTokens)
             => new()
             {
                 Text = text,
@@ -532,8 +568,8 @@ namespace MultiImageClient
                 RedactedRequest = "",
                 RequestBytes = 0,
                 ProviderStop = stop,
-                InputTokens = ReadInt(usage, inputKey),
-                OutputTokens = ReadInt(usage, outputKey),
+                InputTokens = inputTokens,
+                OutputTokens = outputTokens,
                 Ms = 0,
                 Model = model,
             };
@@ -628,7 +664,7 @@ namespace MultiImageClient
                 w.WriteEndObject();
             }
             w.WriteEndArray();
-            w.WriteNumber("max_output_tokens", ManagerChatHttp.MaxOutputTokens);
+            w.WriteNumber("max_output_tokens", _definition.MaxOutputTokens);
             w.WritePropertyName("text");
             w.WriteStartObject();
             w.WritePropertyName("format");
@@ -701,7 +737,8 @@ namespace MultiImageClient
                 string.Join(Environment.NewLine, text).Trim(),
                 string.Join(Environment.NewLine + Environment.NewLine, reasoning).Trim(),
                 DescribeStop(root),
-                usage, "input_tokens", "output_tokens");
+                ManagerChatHttp.ReadInt(usage, "input_tokens"),
+                ManagerChatHttp.ReadInt(usage, "output_tokens"));
         }
 
         // Responses API: a non-"completed" status (incomplete with
@@ -783,7 +820,7 @@ namespace MultiImageClient
         {
             w.WriteStartObject();
             w.WriteString("model", Model);
-            w.WriteNumber("max_tokens", ManagerChatHttp.MaxOutputTokens);
+            w.WriteNumber("max_tokens", _definition.MaxOutputTokens);
             w.WriteString("system", systemPrompt);
             w.WritePropertyName("messages");
             w.WriteStartArray();
@@ -858,7 +895,8 @@ namespace MultiImageClient
                 string.Join(Environment.NewLine, text).Trim(),
                 string.Join(Environment.NewLine + Environment.NewLine, thinking).Trim(),
                 DescribeStop(root),
-                usage, "input_tokens", "output_tokens");
+                ManagerChatHttp.ReadInt(usage, "input_tokens"),
+                ManagerChatHttp.ReadInt(usage, "output_tokens"));
         }
 
         // Messages API: stop_reason "end_turn" (or "stop_sequence") is a
@@ -978,7 +1016,7 @@ namespace MultiImageClient
 
             w.WritePropertyName("generationConfig");
             w.WriteStartObject();
-            w.WriteNumber("maxOutputTokens", ManagerChatHttp.MaxOutputTokens);
+            w.WriteNumber("maxOutputTokens", _definition.MaxOutputTokens);
             w.WriteString("responseMimeType", "application/json");
             w.WritePropertyName("thinkingConfig");
             w.WriteStartObject();
@@ -1022,7 +1060,20 @@ namespace MultiImageClient
                 string.Join("\n", text).Trim(),
                 string.Join("\n\n", thoughts).Trim(),
                 DescribeStop(root),
-                usage, "promptTokenCount", "candidatesTokenCount");
+                ManagerChatHttp.ReadInt(usage, "promptTokenCount"),
+                OutputTokens(usage));
+        }
+
+        // Google bills thinking as output, but candidatesTokenCount leaves it
+        // out; thoughtsTokenCount carries it. The API omits zero counts.
+        public static int? OutputTokens(JsonElement usage)
+        {
+            if (usage.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+            return (ManagerChatHttp.ReadInt(usage, "candidatesTokenCount") ?? 0)
+                + (ManagerChatHttp.ReadInt(usage, "thoughtsTokenCount") ?? 0);
         }
 
         // generateContent: a blocked prompt carries promptFeedback.blockReason

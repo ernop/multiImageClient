@@ -3161,7 +3161,7 @@ namespace MultiImageClient
                 ProviderReasoning = string.IsNullOrWhiteSpace(reply.ProviderReasoning) ? null : reply.ProviderReasoning,
                 InputTokens = reply.InputTokens,
                 OutputTokens = reply.OutputTokens,
-                CostUsd = ManagerCatalog.EstimateCostUsd(definition, reply.InputTokens, reply.OutputTokens),
+                CostUsd = ManagerCatalog.EstimateCostUsd(definition, reply.InputTokens, reply.OutputTokens, DateTimeOffset.UtcNow),
                 ProviderStop = string.IsNullOrWhiteSpace(reply.ProviderStop) ? null : reply.ProviderStop,
                 RequestBytes = reply.RequestBytes,
             };
@@ -3566,7 +3566,7 @@ namespace MultiImageClient
                 ProviderReasoning = string.IsNullOrWhiteSpace(reply.ProviderReasoning) ? null : reply.ProviderReasoning,
                 InputTokens = reply.InputTokens,
                 OutputTokens = reply.OutputTokens,
-                CostUsd = ManagerCatalog.EstimateCostUsd(definition, reply.InputTokens, reply.OutputTokens),
+                CostUsd = ManagerCatalog.EstimateCostUsd(definition, reply.InputTokens, reply.OutputTokens, DateTimeOffset.UtcNow),
                 ProviderStop = string.IsNullOrWhiteSpace(reply.ProviderStop) ? null : reply.ProviderStop,
                 RequestBytes = reply.RequestBytes,
             };

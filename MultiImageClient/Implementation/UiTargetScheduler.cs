@@ -163,7 +163,7 @@ namespace MultiImageClient
                 UiJobRunner.KeyLocalKlein or UiJobRunner.KeyLocalZImage => LaneComfyUi,
                 UiJobRunner.KeyDescribeOpenAi => LaneOpenAi,
                 UiJobRunner.KeyDescribeGrok => LaneXaiApi,
-                UiJobRunner.KeyDescribeGemini => LaneGoogle,
+                UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyDescribeGeminiArgon => LaneGoogle,
                 // Layout map is a Gemini vision call, so it shares the
                 // google provider-account lane with its describe sibling.
                 UiJobRunner.KeyLayoutMap => LaneGoogle,

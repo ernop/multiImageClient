@@ -154,7 +154,8 @@ namespace MultiImageClient
                     "https://www.krea.ai/app/api/tokens",
                     "add workspace API balance"),
             UiJobRunner.KeyGoogle or UiJobRunner.KeyGooglePro
-                or UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyLayoutMap =>
+                or UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyDescribeGeminiArgon
+                or UiJobRunner.KeyLayoutMap =>
                 new(
                     "Google AI Studio",
                     nameof(Settings.GoogleGeminiApiKey),

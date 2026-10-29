@@ -54,6 +54,7 @@ public class PromptLimitTests
         UiJobRunner.KeyDescribeOpenAi,
         UiJobRunner.KeyDescribeClaude,
         UiJobRunner.KeyDescribeGemini,
+        UiJobRunner.KeyDescribeGeminiArgon,
         UiJobRunner.KeyDescribeGrok,
         UiJobRunner.KeyLayoutMap,
     ];

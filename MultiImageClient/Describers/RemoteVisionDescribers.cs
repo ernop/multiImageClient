@@ -258,7 +258,16 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(5),
         };
 
+        // Google's long-decode guide (2026-10-29): Gemini 4 thinks longer than
+        // 3.x, the server closes a non-streaming call after 10 minutes, and a
+        // 5-minute client timeout stops requests early. Google asks for 20.
+        private static readonly HttpClient Gemini4HttpClient = new()
+        {
+            Timeout = TimeSpan.FromMinutes(20),
+        };
+
         public const string DefaultModel = "gemini-3.5-flash";
+        public const string ArgonModel = "gemini-4-argon";
 
         private readonly string _apiKey;
         private readonly string _model;
@@ -277,26 +286,42 @@ namespace MultiImageClient
         // "Budget 0 is invalid. This model only works in thinking mode."
         // Gemini 3.x rejects thinkingBudget and takes thinkingLevel instead.
         // Describe uses low thinking so the JSON object still fits the cap.
+        // Gemini 4 also takes thinkingLevel and ignores temperature. Its
+        // thinking counts against maxOutputTokens, so it gets the whole
+        // non-streaming cap instead of maxTokens.
         private const int ThinkingBudgetTokens = 1024;
 
         public string GetModelName() => _model;
 
+        private static bool IsGemini4(string model) => model.StartsWith("gemini-4", StringComparison.Ordinal);
+
+        public static Dictionary<string, object> GenerationConfig(string model, int maxTokens, float temperature, bool requestJsonOutput)
+        {
+            var config = IsGemini4(model)
+                ? new Dictionary<string, object>
+                {
+                    ["maxOutputTokens"] = ManagerChatHttp.Gemini4MaxOutputTokens,
+                    ["thinkingConfig"] = new { thinkingLevel = "low" },
+                }
+                : new Dictionary<string, object>
+                {
+                    ["maxOutputTokens"] = maxTokens + ThinkingBudgetTokens,
+                    ["temperature"] = temperature,
+                    ["thinkingConfig"] = model.StartsWith("gemini-3", StringComparison.Ordinal)
+                        ? (object)new { thinkingLevel = "low" }
+                        : new { thinkingBudget = ThinkingBudgetTokens },
+                };
+            if (requestJsonOutput)
+            {
+                config["responseMimeType"] = "application/json";
+            }
+            return config;
+        }
+
         public async Task<string> DescribeImageAsync(byte[] imageBytes, string prompt, int maxTokens = 512, float temperature = 0.8f)
         {
             var mime = DescriberImageFormat.DetectMime(imageBytes);
-            var isGemini3 = _model.StartsWith("gemini-3", StringComparison.Ordinal);
-            var generationConfig = new Dictionary<string, object>
-            {
-                ["maxOutputTokens"] = maxTokens + ThinkingBudgetTokens,
-                ["temperature"] = temperature,
-                ["thinkingConfig"] = isGemini3
-                    ? (object)new { thinkingLevel = "low" }
-                    : new { thinkingBudget = ThinkingBudgetTokens },
-            };
-            if (RequestJsonOutput)
-            {
-                generationConfig["responseMimeType"] = "application/json";
-            }
+            var generationConfig = GenerationConfig(_model, maxTokens, temperature, RequestJsonOutput);
             var payload = new
             {
                 contents = new[]
@@ -322,7 +347,7 @@ namespace MultiImageClient
                 Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
             };
 
-            using var response = await HttpClient.SendAsync(request);
+            using var response = await (IsGemini4(_model) ? Gemini4HttpClient : HttpClient).SendAsync(request);
             var body = await response.Content.ReadAsStringAsync();
             if (!response.IsSuccessStatusCode)
             {

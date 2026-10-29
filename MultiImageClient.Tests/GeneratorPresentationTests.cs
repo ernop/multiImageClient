@@ -131,6 +131,9 @@ namespace MultiImageClient.Tests
                 "Gemini describe (gemini-3.5-flash)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGemini));
             Assert.Equal(
+                "Gemini describe (gemini-4-argon)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiArgon));
+            Assert.Equal(
                 "Grok describe (grok-4.6)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGrok));
             Assert.Equal(

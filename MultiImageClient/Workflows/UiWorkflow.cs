@@ -430,6 +430,7 @@ namespace MultiImageClient
                     string.Equals(profile.Login, authUser, StringComparison.OrdinalIgnoreCase));
                 var generatorPreferences = community.GetGeneratorPreferences(authUser);
                 var environmentDefaults = environments?.Get(settings.UiEnvironmentId).DefaultGenerators ?? auth?.LoginLinks?.Defaults();
+                var managerPricesAt = DateTimeOffset.UtcNow;
                 // Standard groups belong to the endpoint catalog rather than
                 // any user's persisted chooser preferences. Each endpoint
                 // below advertises its memberships; every environment and
@@ -562,6 +563,7 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyDescribeOpenAi, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeOpenAi), detail = $"OpenAI {OpenAIVisionDescriber.DefaultModel} vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeClaude, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeClaude), detail = $"Anthropic {ClaudeVisionDescriber.DefaultModel} vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeGemini, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGemini), detail = $"Google {GeminiVisionDescriber.DefaultModel} vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeGeminiArgon, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiArgon), detail = $"Google {GeminiVisionDescriber.ArgonModel} vision, Google's flagship reasoning model, at low thinking. Slower and dearer than Flash. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeGrok, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGrok), detail = $"xAI {GrokVisionDescriber.DefaultModel} vision via api.x.ai. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     // Layout map: analysis target like describe (requires an
                     // attached image, ignores the output-options row) but its
@@ -714,8 +716,8 @@ namespace MultiImageClient
                             m.Detail,
                             available = ManagerCatalog.DescribeAvailabilityProblem(m, settings) == null,
                             availabilityProblem = ManagerCatalog.DescribeAvailabilityProblem(m, settings),
-                            inputUsdPerMTok = m.InputUsdPerMTok,
-                            outputUsdPerMTok = m.OutputUsdPerMTok,
+                            inputUsdPerMTok = m.PricesAt(managerPricesAt).InputUsdPerMTok,
+                            outputUsdPerMTok = m.PricesAt(managerPricesAt).OutputUsdPerMTok,
                         }),
                         defaultManagerKey = ManagerCatalog.DefaultKey,
                         defaultMaxTurns = UiGoalLoopRunner.DefaultMaxTurns,

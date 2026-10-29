@@ -1,116 +1,110 @@
-# Gemini 4 Argon support — plan (2026-10-29)
+# Gemini 4 Argon support (2026-10-29)
 
-Status: **not implemented.** This file records the owner's request and the
-research done so far. A local agent completes the work. It has `tpbeta-root`
-access for the release.
+Status: **implemented 2026-10-29.** Argon is a describe target and a goal-loop
+manager and critic. It is not an image maker, because it cannot output images.
+The owner still chooses one image-maker option (see below).
 
-## Owner request (2026-10-29, verbatim)
+## Owner requests (2026-10-29, verbatim)
+
+To the remote agent that wrote the first plan:
 
 > fully support it and also add it as an image maker and also a describe
 > target to the system, and also update production (both instances) to
 > include it in their current config, and also our local one too, then
 > redeploy all
 
-"It" means Gemini 4 Argon. The owner first called it "Gemini a3". The
-repository had no reference to Argon or `gemini-4` on 2026-10-29.
+To the local agent that implemented it:
+
+> a remote agent has made a branch with google a3 image support. add that to
+> all 2 current deployment configs, add supporting code, and redeploy both
+> prod sites please
+
+"It" and "google a3" mean Gemini 4 Argon. The owner first called it "Gemini a3".
 
 ## Provider facts (checked 2026-10-29)
 
 Sources:
 [Gemini API model page](https://ai.google.dev/gemini-api/docs/models/gemini-4-argon),
 [What's new in Gemini 4 Argon](https://ai.google.dev/gemini-api/docs/generate-content/latest-model),
+[Long decode guide](https://ai.google.dev/gemini-api/docs/generate-content/long-decode),
 [Google Cloud model page](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/4-argon),
 [DeepMind model card](https://deepmind.google/models/model-cards/gemini-4-argon/).
 
 - The model ID is `gemini-4-argon` (stable). Google released it worldwide on 2026-10-13.
 - Input types are text, image, video, audio, and PDF. **Output is text only.**
-- Google lists **image generation: not supported**.
-- Accepted image types are PNG, JPEG, WEBP, HEIC, and HEIF. The inline limit is 7 MB per file (Cloud page).
-- The context window is 1,048,576 tokens and counts input and output together.
-- Synchronous output is at most 65,536 tokens. Non-streaming REST calls default to **32,768**.
+- Google lists **image generation: not supported**. Google publishes no Gemini 4 image model.
 - Thinking levels are `low`, `medium` (the default), and `high`.
-- Google says `thinking_level="MINIMAL"` returns HTTP 400.
-- The two Google pages disagree about `thinking_budget`. The Gemini API page says it maps to a level with a warning. The Cloud page says it returns HTTP 400. Never send it.
-- Google ignores `temperature`, `top_p`, and `top_k`.
-- Explicit context caching (`cachedContents`) returns an error. Implicit caching works.
-- Pricing until 2026-11-30 is $2 input and $10 output per million tokens. After that it is $4 and $20.
-- Structured outputs are supported, so `responseMimeType: application/json` should work. Verify it live.
+- `thinkingLevel: MINIMAL` returns HTTP 400. Never send `thinkingBudget` to Argon.
+- Argon ignores `temperature`, `top_p`, and `top_k`. The app does not send them.
+- One non-streaming REST call returns at most 32,768 tokens. Thinking counts against this cap.
+- Google states HTTP 400 above 32,768 without a `continuationToken`. A live call with 64,000 returned HTTP 200. The app sends 32,768.
+- A reply that uses the whole cap ends with `MAX_TOKENS`. Longer output needs a `continuationToken` loop. The app does not run that loop.
+- The server closes a non-streaming call after 10 minutes. Google asks for a 20-minute client timeout.
+- Explicit context caching returns an error. Implicit caching works.
+- Price: $2 input and $10 output per million tokens through 2026-11-30. From 2026-12-01: $4 and $20.
+- The Cloud page states a 7 MB inline limit per image. The Gemini API accepted a 9.7 MB inline PNG live.
+- `usageMetadata.candidatesTokenCount` excludes thinking. `thoughtsTokenCount` holds it, and Google bills it as output.
+- `usageMetadata` omits token counts that are zero.
+- `responseMimeType: application/json` works live.
+- A history that replays assistant turns as plain text, with no thought signatures, works live.
 
-## Decision needed: "image maker"
+## Decisions
 
-Argon cannot return images, so it cannot be an image-generator target like
-Nano Banana. Do not add it to `ImageGeneratorKeys`. A text model listed as
-an image generator would fail on every job. Ask the owner which option to
-build:
+### No image maker yet: owner choice open
 
-1. **Prompt writer for an image model.** Argon writes or expands the image prompt, and an existing image model renders it. The goal-loop manager already works this way, and the prompt-rewrite area could too. The cost is that the image comes from another model. Prompt rewrite is Anthropic-only by an owner decision of 2026-10-06, so this option also changes that decision.
-2. **Skip the image maker.** Ship only the describe target and goal-loop roles.
-3. **Wait** for a Gemini 4 image model and add that as a normal image target.
+Argon cannot return images. A text model in `ImageGeneratorKeys` would fail on
+every job, so Argon is not an image target. The owner chooses one option:
 
-Recommendation: option 2 now, with the goal-loop manager role covering
-"Argon directs images". Option 1 only if the owner wants Argon in the
-composer's prompt tools.
+1. **Prompt writer for an image model.** Argon writes the image prompt, and an existing image model draws it. The goal-loop manager already works this way. A composer prompt tool would change the 2026-10-06 decision that prompt rewrite uses Anthropic only.
+2. **No image maker.** The describe target and the goal-loop roles are the Argon features. This is the current state.
+3. **Wait** for a Gemini 4 image model, then add it as a normal image target.
 
-## Implementation plan (describe target + full text support)
+Recommendation: option 2. The goal-loop manager already lets Argon direct an image model.
 
-### 1. Describe target `describe-gemini-argon`
+### Describe target `describe-gemini-argon`
 
-- In `UiJobs.cs`, add `KeyDescribeGeminiArgon = "describe-gemini-argon"`. Add it to `DescribeKeys`, the `GoogleGeminiApiKey` gate list (near line 3977), the cost table (near line 5358), and the `RunDescribeOneAsync` dispatch (near line 5389).
-- `GeminiVisionDescriber` (`Describers/RemoteVisionDescribers.cs`):
-  - `isGemini3` checks `StartsWith("gemini-3")`. For `gemini-4-argon` it is false, so the code sends `thinkingBudget`. Google may reject that with HTTP 400. Change the test to "send `thinkingLevel`" for `gemini-3*` and `gemini-4*`, and keep `thinkingBudget` only for 2.5.
-  - Send `thinkingLevel: "low"` (do not send `minimal`).
-  - Do not send `temperature` to Argon, because Google ignores it.
-  - `maxOutputTokens` is `maxTokens + 1024`. Check that Argon's thinking fits inside this. If it does not, raise the budget for Argon only.
-  - Images over 7 MB: check the 7 MB inline limit against the Gemini API (the Cloud page states it). If it applies, conform the input deterministically before the call and log it, as the Recraft and Ideogram paths do, or fail closed with a clear message.
-- In `GeneratorPresentation.cs`, set the display name to `Gemini 4 Argon describe` and the provider to `Google`.
-- `UiTargetScheduler.cs`: `LaneGoogle`.
-- `ProviderActionHints.cs`: add the key to the Google billing and key hint (line 157).
-- `UiWorkflow.cs` `/api/config` describe entry (near line 564).
-- `PromptLimitTests`: classify the key. Describe targets take an instruction, so give it a limit or a listed reason.
-- `ProviderActionHintsTests` must pass with the new key.
-- Estimate the cost per call from live token counts, then record the number here.
+- The chip name is `Gemini describe (gemini-4-argon)`, like the other describe chips.
+- Provider Google, scheduler lane `google`, key `GoogleGeminiApiKey`, Google billing and key hints.
+- Request: `thinkingLevel: low`, no `temperature`, `maxOutputTokens` 32,768, `responseMimeType: application/json`.
+- The client timeout is 20 minutes. Other Gemini describe models keep 5 minutes.
+- It has no prompt-length limit. Analysis models limit input in tokens, far above any composer prompt.
+- The cost estimate is 2,000 input tokens plus 1,200 output tokens at the current price: $0.016, then $0.032 from 2026-12-01.
 
-### 2. Goal-loop manager and critic `manager-gemini-4-argon`
+### Goal-loop manager and critic `manager-gemini-4-argon`
 
-- In `TextLLMs/ManagerChatClients.cs`, add `KeyGemini4Argon`. Use label `Gemini 4 Argon`, provider `google`, model `gemini-4-argon`, `InputUsdPerMTok = 2m`, `OutputUsdPerMTok = 10m`, and `ImageLimits = GeminiLimits`.
-- Update the comment at line 223. Argon is generally available, unlike `gemini-3.5-pro`.
-- Pricing changes on 2026-12-01. Record the date at the call site, or model the price change explicitly. Never estimate silently with old prices.
-- The Gemini manager request (near line 981) sends `maxOutputTokens = ManagerChatHttp.MaxOutputTokens` (64,000) and `thinkingLevel: high`. Google says non-streaming REST defaults to 32,768 output tokens. Live-check whether an explicit 64,000 is accepted without streaming. If Google rejects it, use 32,768 for Argon only, record it here, and update the 64,000-token claim in `docs/goal-loop-prd.md`.
-- `GeminiLimits` comes from the 2026-09-04 file-input page (100 MB inline). Check whether Argon has a smaller per-image limit, for example 7 MB.
-- Add the model to the manager and critic catalog tests. Verify that `/api/config` `goalLoop` lists it.
+- Label `Gemini 4 Argon`, provider `google`, image limits `GeminiLimits` (100 MB per request).
+- Request: `thinkingLevel: high` with thoughts returned, JSON output, images at `MEDIA_RESOLUTION_ULTRA_HIGH`.
+- The output cap is 32,768 tokens. `ManagerDefinition.MaxOutputTokens` holds the cap per model. Every other model keeps 64,000.
+- `ManagerDefinition.PriceChange` holds the 2026-12-01 price. The change starts at 08:00 UTC, midnight Pacific time.
+- Cost estimates use the price when the reply arrives. `/api/config` publishes the price when the page loads.
+- The characters feature uses the same catalog, so Argon is also a characters writer model.
+- The shared manager client timeout stays 15 minutes. The server closes the call at 10 minutes first.
 
-### 3. Groups and defaults
+### Gemini output tokens include thinking
 
-- Describers stay shown under **only SOTA** (2026-10-06 rule), so the new describe chip appears for everyone without a migration.
-- Do not add it to anyone's saved default selections unless the owner asks. The Ideogram 4.5 change of 2026-10-10 used a one-time migration. Repeat that only on an explicit request.
+Gemini manager replies count output as `candidatesTokenCount` plus
+`thoughtsTokenCount`. This applies to Gemini 3.5 Flash too. Before 2026-10-29
+the count left out thinking.
 
-### 4. Production and local configuration
+### Production configuration
 
-- Every target needs only `GoogleGeminiApiKey`, which both instances and the local install already use for Nano Banana and `describe-gemini`. Check that each settings file has a non-blank key. Change nothing else.
-- Vibecoders defaults: administration manages its provider defaults. Ask the owner whether the describe target should be on by default there. Add nothing to environment registry lists without that answer.
-- Never print or commit either instance's secret path or keys.
+- Both instances' settings files hold a non-blank `GoogleGeminiApiKey` (checked 2026-10-29). That key enables every Argon feature.
+- No settings file changes. The deploy tooling already copies `GoogleGeminiApiKey` into new environments.
+- The environment default lists stay unchanged. They pre-select image targets in the only SOTA group, never a describe target.
+- No migration adds the describe target to saved selections. A selected describe target makes a paid call on every image attach.
+- The describe chip appears for every user, because describe targets ignore the only SOTA view.
 
-### 5. Release
+## Live verification (2026-10-29)
 
-Follow `.cursor/rules/production-deploy-target.mdc` and `deploy/README.md`:
-the release gate, push `master`, `tools/restart-local-ui.sh` (or the
-`multi-image-client.service` unit on hostname `PC`), then
-`deploy/agent-redeploy.sh` for the original. Then run
-`deploy/update-vibecoders.sh` as root. Status 75 means busy: wait with
-`--wait-minutes N` and never bypass it. Verify local `/healthz`.
+- Local UI describe job: a 1024x768 synthetic PNG returned a correct `{description, comments}` reply in 7.9 s.
+- Describe probe on the same PNG: 1,294 input and 178 output tokens, about $0.0044 at the introductory price.
+- Manager call through `GeminiManagerClient`: a two-turn history with one image returned HTTP 200, `STOP`, and valid JSON.
+- That call used 2,362 input tokens (2,160 for the image) and 468 output tokens (381 thinking): about $0.0094.
 
-### 6. Verification
+## Files
 
-- `dotnet test MultiImageClient.Tests/MultiImageClient.Tests.csproj -c Release`
-- `node --test MultiImageClient/Ui/tests/*.test.js`
-- Run one live describe call with a small PNG. Confirm that the JSON `{description, comments}` parses and record the token usage.
-- Run one live goal-loop manager turn with Argon.
-- After the release, confirm that `/api/config` on both instances lists `describe-gemini-argon` and the Argon manager.
-
-### 7. Documents to update in the same change
-
-- This file: change the status, record measured costs and the owner's answers.
-- `docs/describe-endpoints.md`: add the new target and model ID.
-- `docs/goal-loop-prd.md`: add the manager and critic catalog entry.
-- `docs/prompt-length-limits.md`: add the classification.
-- `AGENTS.md`: update the `Also Read` entry for this file and the Run Modes describe and goal-loop bullets.
+- `Implementation/UiJobs.cs`: key, describe list, key gate, `ArgonDescribeCostEstimate`, describer construction.
+- `Describers/RemoteVisionDescribers.cs`: `GeminiVisionDescriber.GenerationConfig` and the 20-minute client.
+- `TextLLMs/ManagerChatClients.cs`: catalog entry, `MaxOutputTokens`, `ManagerPriceChange`, `GeminiManagerClient.OutputTokens`.
+- `Implementation/GeneratorPresentation.cs`, `UiTargetScheduler.cs`, `ProviderActionHints.cs`, `Workflows/UiWorkflow.cs`.
+- Tests: `GeminiArgonTests`, plus the key lists in `PromptLimitTests`, `ProviderActionHintsTests`, and `GeneratorPresentationTests`.

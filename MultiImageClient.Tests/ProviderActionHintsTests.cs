@@ -42,6 +42,7 @@ public sealed class ProviderActionHintsTests
             [UiJobRunner.KeyGoogle] = "https://aistudio.google.com/billing",
             [UiJobRunner.KeyGooglePro] = "https://aistudio.google.com/billing",
             [UiJobRunner.KeyDescribeGemini] = "https://aistudio.google.com/billing",
+            [UiJobRunner.KeyDescribeGeminiArgon] = "https://aistudio.google.com/billing",
             [UiJobRunner.KeyLayoutMap] = "https://aistudio.google.com/billing",
             [UiJobRunner.KeyGrokApi] = "https://console.x.ai/team/default/billing",
             [UiJobRunner.KeyGrokApiPro] = "https://console.x.ai/team/default/billing",
@@ -103,6 +104,7 @@ public sealed class ProviderActionHintsTests
     [InlineData(UiJobRunner.KeyDescribeIdeogram, "https://ideogram.ai/manage-api")]
     [InlineData(UiJobRunner.KeyDescribeClaude, "https://platform.claude.com/settings/keys")]
     [InlineData(UiJobRunner.KeyDescribeGemini, "https://aistudio.google.com/apikey")]
+    [InlineData(UiJobRunner.KeyDescribeGeminiArgon, "https://aistudio.google.com/apikey")]
     [InlineData(UiJobRunner.KeyDescribeGrok, "https://console.x.ai/team/default/api-keys")]
     [InlineData(UiJobRunner.KeyLayoutMap, "https://aistudio.google.com/apikey")]
     public void AnalysisTargetAuthenticationFailuresLinkToKeyManagement(

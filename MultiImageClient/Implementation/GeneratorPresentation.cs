@@ -55,6 +55,7 @@ namespace MultiImageClient
             UiJobRunner.KeyDescribeOpenAi => $"OpenAI describe ({OpenAIVisionDescriber.DefaultModel})",
             UiJobRunner.KeyDescribeClaude => $"Claude describe ({ClaudeVisionDescriber.DefaultModel})",
             UiJobRunner.KeyDescribeGemini => $"Gemini describe ({GeminiVisionDescriber.DefaultModel})",
+            UiJobRunner.KeyDescribeGeminiArgon => $"Gemini describe ({GeminiVisionDescriber.ArgonModel})",
             UiJobRunner.KeyDescribeGrok => $"Grok describe ({GrokVisionDescriber.DefaultModel})",
             UiJobRunner.KeyLayoutMap => $"Layout map ({GeminiVisionDescriber.DefaultModel})",
             _ => throw new ArgumentException($"Unknown UI generator key '{key}'.", nameof(key)),
@@ -76,7 +77,8 @@ namespace MultiImageClient
                 UiJobRunner.KeyDescribeGrok => "xAI API",
                 UiJobRunner.KeyGoogle => "Google · gemini-3.1-flash-image",
                 UiJobRunner.KeyGooglePro => "Google · gemini-3-pro-image",
-                UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyLayoutMap => "Google",
+                UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyDescribeGeminiArgon
+                    or UiJobRunner.KeyLayoutMap => "Google",
                 UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
                     or UiJobRunner.KeyIdeogramV3 or UiJobRunner.KeyIdeogramV2
                     or UiJobRunner.KeyDescribeIdeogram => "Ideogram",
