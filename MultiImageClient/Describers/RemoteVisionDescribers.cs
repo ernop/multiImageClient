@@ -266,7 +266,7 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(20),
         };
 
-        public const string DefaultModel = "gemini-3.5-flash";
+        public const string DefaultModel = "gemini-3.8-flash";
         public const string ArgonModel = "gemini-4-argon";
 
         private readonly string _apiKey;
@@ -286,9 +286,10 @@ namespace MultiImageClient
         // "Budget 0 is invalid. This model only works in thinking mode."
         // Gemini 3.x rejects thinkingBudget and takes thinkingLevel instead.
         // Describe uses low thinking so the JSON object still fits the cap.
-        // Gemini 4 also takes thinkingLevel and ignores temperature. Its
-        // thinking counts against maxOutputTokens, so it gets the whole
-        // non-streaming cap instead of maxTokens.
+        // Gemini 3.6 and later ignore temperature, and Google's migration
+        // guides say to remove it, so Gemini 3 and 4 requests omit it.
+        // Gemini 4's thinking counts against maxOutputTokens, so it gets the
+        // whole non-streaming cap instead of maxTokens.
         private const int ThinkingBudgetTokens = 1024;
 
         public string GetModelName() => _model;
@@ -303,14 +304,18 @@ namespace MultiImageClient
                     ["maxOutputTokens"] = ManagerChatHttp.Gemini4MaxOutputTokens,
                     ["thinkingConfig"] = new { thinkingLevel = "low" },
                 }
-                : new Dictionary<string, object>
-                {
-                    ["maxOutputTokens"] = maxTokens + ThinkingBudgetTokens,
-                    ["temperature"] = temperature,
-                    ["thinkingConfig"] = model.StartsWith("gemini-3", StringComparison.Ordinal)
-                        ? (object)new { thinkingLevel = "low" }
-                        : new { thinkingBudget = ThinkingBudgetTokens },
-                };
+                : model.StartsWith("gemini-3", StringComparison.Ordinal)
+                    ? new Dictionary<string, object>
+                    {
+                        ["maxOutputTokens"] = maxTokens + ThinkingBudgetTokens,
+                        ["thinkingConfig"] = new { thinkingLevel = "low" },
+                    }
+                    : new Dictionary<string, object>
+                    {
+                        ["maxOutputTokens"] = maxTokens + ThinkingBudgetTokens,
+                        ["temperature"] = temperature,
+                        ["thinkingConfig"] = new { thinkingBudget = ThinkingBudgetTokens },
+                    };
             if (requestJsonOutput)
             {
                 config["responseMimeType"] = "application/json";

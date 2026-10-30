@@ -41,7 +41,7 @@ namespace MultiImageClient
             UiJobRunner.KeyKrea => "Krea 2 Medium",
             UiJobRunner.KeyKreaTurbo => "Krea 2 Medium Turbo",
             UiJobRunner.KeyKreaLarge => "Krea 2 Large",
-            UiJobRunner.KeyGoogle => "Nano Banana 2",
+            UiJobRunner.KeyGoogle => "Nano Banana 2.1",
             UiJobRunner.KeyGooglePro => "Nano Banana Pro",
             UiJobRunner.KeyLocalKlein => "local FLUX.2 Klein",
             UiJobRunner.KeyLocalZImage => "local Z-Image Turbo",
@@ -75,7 +75,7 @@ namespace MultiImageClient
                 UiJobRunner.KeyGrokWeb or UiJobRunner.KeyGrokWebChat
                     or UiJobRunner.KeyGrokWebVideo => "xAI via grok.com",
                 UiJobRunner.KeyDescribeGrok => "xAI API",
-                UiJobRunner.KeyGoogle => "Google · gemini-3.1-flash-image",
+                UiJobRunner.KeyGoogle => "Google · gemini-nano-banana-2.1",
                 UiJobRunner.KeyGooglePro => "Google · gemini-3-pro-image",
                 UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyDescribeGeminiArgon
                     or UiJobRunner.KeyLayoutMap => "Google",
@@ -145,7 +145,7 @@ namespace MultiImageClient
             ImageGeneratorApiType.Recraft => "Recraft V3",
             ImageGeneratorApiType.GptImage1 => "gpt-image-1",
             ImageGeneratorApiType.BFLv11Ultra => "FLUX1.1 Pro Ultra",
-            ImageGeneratorApiType.GoogleNanoBanana => "Nano Banana 2",
+            ImageGeneratorApiType.GoogleNanoBanana => "Nano Banana 2.1",
             ImageGeneratorApiType.GoogleImagen4 => "Imagen 4 (retired)",
             ImageGeneratorApiType.IdeogramV3 => "Ideogram V3",
             ImageGeneratorApiType.GptImage1Mini => "gpt-image-1-mini",
@@ -201,7 +201,7 @@ namespace MultiImageClient
                 or ImageGeneratorApiType.GptImage25Sunburst or ImageGeneratorApiType.GptImage25SunburstEdit
                 or ImageGeneratorApiType.GptImage25Flare or ImageGeneratorApiType.GptImage25FlareEdit
                 or ImageGeneratorApiType.Dalle3 => "OpenAI",
-            ImageGeneratorApiType.GoogleNanoBanana => "Google · gemini-3.1-flash-image",
+            ImageGeneratorApiType.GoogleNanoBanana => "Google · gemini-nano-banana-2.1",
             ImageGeneratorApiType.GoogleNanoBananaPro => "Google · gemini-3-pro-image",
             ImageGeneratorApiType.GoogleImagen4 => "Google",
             ImageGeneratorApiType.GrokImagine or ImageGeneratorApiType.GrokImaginePro

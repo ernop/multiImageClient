@@ -5356,25 +5356,31 @@ namespace MultiImageClient
             KeyDescribeIdeogram => IdeogramModelPricing.IdeogramDescribe,
             KeyDescribeOpenAi => 0.04m,
             KeyDescribeClaude => 0.03m,
-            // Gemini 3.x thinkingLevel=low still bills some thought tokens.
-            KeyDescribeGemini => 0.03m,
+            KeyDescribeGemini => FlashDescribeCostEstimate(DateTimeOffset.UtcNow),
             KeyDescribeGeminiArgon => ArgonDescribeCostEstimate(DateTimeOffset.UtcNow),
             KeyDescribeGrok => 0.03m,
             // Layout map is one Gemini vision call per input image (same
             // transport and token budget class as describe-gemini); the
             // server-side map rendering itself costs nothing.
-            KeyLayoutMap => 0.03m,
+            KeyLayoutMap => FlashDescribeCostEstimate(DateTimeOffset.UtcNow),
             _ => throw new ArgumentException($"Unknown describe key '{key}'.", nameof(key)),
         };
 
-        // Argon's price doubles on 2026-12-01; ManagerCatalog holds that
-        // schedule. The ceiling assumes 2,000 input tokens and the describe
-        // output budget. One 1024x768 PNG measured 1,294 input and 178 output
-        // tokens at thinkingLevel low on 2026-10-29.
+        // Argon's price doubles on 2026-12-01 and 3.8 Flash's on 2027-01-01;
+        // ManagerCatalog holds both schedules. The ceiling assumes 2,000
+        // input tokens and the describe output budget. One 1024x768 PNG
+        // measured 1,294 input and 178 output tokens on Argon at
+        // thinkingLevel low on 2026-10-29.
         public static decimal ArgonDescribeCostEstimate(DateTimeOffset at)
+            => GeminiDescribeCostEstimate(ManagerCatalog.KeyGemini4Argon, at);
+
+        public static decimal FlashDescribeCostEstimate(DateTimeOffset at)
+            => GeminiDescribeCostEstimate(ManagerCatalog.KeyGeminiFlash, at);
+
+        private static decimal GeminiDescribeCostEstimate(string managerKey, DateTimeOffset at)
         {
             var (inputUsdPerMTok, outputUsdPerMTok) = ManagerCatalog.All
-                .Single(m => m.Key == ManagerCatalog.KeyGemini4Argon)
+                .Single(m => m.Key == managerKey)
                 .PricesAt(at);
             return (2_000m * inputUsdPerMTok.Value + DescribeMaxTokens * outputUsdPerMTok.Value) / 1_000_000m;
         }

@@ -12,16 +12,16 @@ chips and their catalog `detail` strings remain the instruction.
 | `describe-ideogram` | Ideogram `POST /describe`, `describe_model_version=V_3` | Official caption API. Default was already V_3; we now send it. `POST /v1/ideogram-v4/describe` returns structured *generation* prompts, not this caption path. |
 | `describe-openai` | `gpt-5.6-sol` | OpenAI flagship. Official models page: start here. Vision on Responses API. `gpt-4.1` is older. |
 | `describe-claude` | `claude-sonnet-5` | Current Sonnet. `claude-sonnet-4-5` is legacy. Keep Sonnet, not Opus 5 / Fable 5. |
-| `describe-gemini` | `gemini-3.5-flash` | `gemini-2.5-pro` retires 16 Oct 2026. Gemini 3.5 Flash is GA and led MMMU-Pro (~83.6%) in Sep 2026 aggregator tables. `gemini-3.1-pro-preview` is the Pro successor (~80.5% on the same board). |
+| `describe-gemini` | `gemini-3.8-flash` | Since 2026-10-30 (owner choice). Google deprecated `gemini-3.5-flash` and sends its requests to `gemini-3.6-flash`. 3.8 Flash is the newest Flash at the same price. See `docs/nano-banana-2-1-and-gemini-3-8-flash.md`. |
 | `describe-gemini-argon` | `gemini-4-argon` | Added 2026-10-29 (owner request). Google's flagship reasoning model, released 2026-10-13. Slower and dearer than Flash. See `docs/gemini-4-argon-support.md`. |
 | `describe-grok` | `grok-4.6` | xAI flagship. Modalities: text and image → text. `grok-4.3` remains available but is not current. |
-| `layout-map` | `gemini-3.5-flash` | Same Gemini call as describe. Layout-map asks for JSON boxes in the prompt. That is not Google’s old image-segmentation API. |
+| `layout-map` | `gemini-3.8-flash` | Same Gemini call as describe. Layout-map asks for JSON boxes in the prompt. That is not Google’s old image-segmentation API. |
 
 Request-shape notes that are part of the upgrade, not optional polish:
 
 - OpenAI GPT-5.x: `reasoning.effort=low` so the 1200-token cap is not spent on thinking.
 - Claude 5: omit `temperature` (non-default sampling is HTTP 400). Send `thinking: {type: disabled}` so adaptive thinking cannot empty the JSON reply.
-- Gemini 3.x: `thinkingConfig.thinkingLevel=low`. Do not send `thinkingBudget` (HTTP 400). Skip `thought: true` parts when reading the reply.
+- Gemini 3.x: `thinkingConfig.thinkingLevel=low`. Do not send `thinkingBudget` (HTTP 400). Skip `thought: true` parts when reading the reply. Send no `temperature`; 3.6 and later ignore it (2026-10-30).
 - Gemini 4 Argon: `thinkingLevel=low` and no `temperature`. Send `maxOutputTokens` 32,768, because thinking counts against it. Wait up to 20 minutes.
 - Grok 4.6: `reasoning.effort=low` for the same output-cap reason. Default reasoning on this model is high.
 

@@ -63,7 +63,7 @@ Small endpoint-specific clauses account for transport semantics:
 - gpt-image-2 and Grok edit transports are told not to edit, trace, or morph
   the map;
 - FLUX.2 conditioning is restricted to coarse placement and coverage;
-- Nano Banana 2 receives a layout-only reference preamble instead of the
+- Nano Banana 2.1 receives a layout-only reference preamble instead of the
   ordinary style/subject/composition reference wording.
 
 Targets outside `UiJobRunner.SketchCapableKeys` remain selectable only through

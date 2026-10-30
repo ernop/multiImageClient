@@ -2,7 +2,8 @@
 
 Status: **implemented 2026-10-29.** Argon is a describe target and a goal-loop
 manager and critic. It is not an image maker, because it cannot output images.
-The owner still chooses one image-maker option (see below).
+On 2026-10-30 the owner upgraded the Google image target to Nano Banana 2.1
+instead. See [nano-banana-2-1-and-gemini-3-8-flash.md](nano-banana-2-1-and-gemini-3-8-flash.md).
 
 ## Owner requests (2026-10-29, verbatim)
 
@@ -33,6 +34,7 @@ Sources:
 - The model ID is `gemini-4-argon` (stable). Google released it worldwide on 2026-10-13.
 - Input types are text, image, video, audio, and PDF. **Output is text only.**
 - Google lists **image generation: not supported**. Google publishes no Gemini 4 image model.
+- Google's newest image model is Nano Banana 2.1 (`gemini-nano-banana-2.1`, 2026-10-06). It is a Gemini 3 model.
 - Thinking levels are `low`, `medium` (the default), and `high`.
 - `thinkingLevel: MINIMAL` returns HTTP 400. Never send `thinkingBudget` to Argon.
 - Argon ignores `temperature`, `top_p`, and `top_k`. The app does not send them.
@@ -50,16 +52,16 @@ Sources:
 
 ## Decisions
 
-### No image maker yet: owner choice open
+### No Argon image maker (resolved 2026-10-30)
 
 Argon cannot return images. A text model in `ImageGeneratorKeys` would fail on
-every job, so Argon is not an image target. The owner chooses one option:
+every job, so Argon is not an image target. The first version of this section
+offered three options. The third option was to wait for a new Google image
+model. That premise was wrong: Google released Nano Banana 2.1 on 2026-10-06.
 
-1. **Prompt writer for an image model.** Argon writes the image prompt, and an existing image model draws it. The goal-loop manager already works this way. A composer prompt tool would change the 2026-10-06 decision that prompt rewrite uses Anthropic only.
-2. **No image maker.** The describe target and the goal-loop roles are the Argon features. This is the current state.
-3. **Wait** for a Gemini 4 image model, then add it as a normal image target.
-
-Recommendation: option 2. The goal-loop manager already lets Argon direct an image model.
+On 2026-10-30 the owner chose to upgrade the `google` target to Nano Banana 2.1.
+Argon keeps the describe and goal-loop roles. In a goal loop, Argon can direct
+Nano Banana 2.1. See [nano-banana-2-1-and-gemini-3-8-flash.md](nano-banana-2-1-and-gemini-3-8-flash.md).
 
 ### Describe target `describe-gemini-argon`
 

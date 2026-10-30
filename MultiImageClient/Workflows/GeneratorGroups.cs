@@ -104,7 +104,7 @@ namespace MultiImageClient
                 GrokImagine_Square(),
                 // GrokImaginePro_Square(),
                 // GrokVideo_Wide(),            // VIDEO: mp4 saved to day\Video\, card in the grid
-                // GeminiNanoBanana(),          // gemini-3.1-flash-image (Nano Banana 2), 1:1 2K
+                // GeminiNanoBanana(),          // gemini-nano-banana-2.1 (Nano Banana 2.1), 1:1 2K
                 // GeminiNanoBananaPro(),       // gemini-3-pro-image (Nano Banana Pro), 1:1 2K
                 // GeminiNanoBananaTallPortrait(), // 9:16 2K — replacement for the old Imagen 2:5 slot
                 // GeminiNanoBananaPro4K(),     // pro tier at 4K (~2x token cost)
@@ -735,12 +735,12 @@ namespace MultiImageClient
         //
         // June 2026: ALL dedicated Imagen endpoints shut down 06-24..30.
         // Gemini image models ("Nano Banana") are the replacement family:
-        //   gemini-3.1-flash-image  (Nano Banana 2)  — fast/cheap tier
+        //   gemini-nano-banana-2.1  (Nano Banana 2.1) — fast/cheap tier
         //   gemini-3-pro-image      (Nano Banana Pro) — reasoning tier, 4K-capable
         // Both take an optional aspectRatio ("1:1","2:3","3:2","3:4","4:3",
-        // "4:5","5:4","9:16","16:9","21:9") and imageSize ("512" flash-only,
-        // "1K","2K","4K" — uppercase K). 2K costs the same tokens as 1K, so
-        // it's the default here; only 4K is pricier.
+        // "4:5","5:4","9:16","16:9","21:9") and imageSize ("1K","2K","4K" —
+        // uppercase K). 2K is the default here. On Pro it costs the same
+        // tokens as 1K; on 2.1 it costs 1.5x.
         // These need only GoogleGeminiApiKey (AI Studio key) — no Vertex
         // project/service-account setup like the dead Imagen path required.
 

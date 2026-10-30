@@ -75,12 +75,13 @@ namespace MultiImageClient.Tests
         }
 
         [Fact]
-        public void FlashDescribeRequestIsUnchanged()
+        public void FlashDescribeSendsLowThinkingItsBudgetAndNoTemperature()
         {
             var config = GeminiVisionDescriber.GenerationConfig(GeminiVisionDescriber.DefaultModel, 1200, 0.2f, requestJsonOutput: true);
             Assert.Equal(2224, config["maxOutputTokens"]);
-            Assert.Equal(0.2f, config["temperature"]);
+            Assert.False(config.ContainsKey("temperature"));
             Assert.Equal("{\"thinkingLevel\":\"low\"}", JsonSerializer.Serialize(config["thinkingConfig"]));
+            Assert.Equal("application/json", config["responseMimeType"]);
         }
 
         [Fact]

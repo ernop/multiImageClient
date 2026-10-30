@@ -28,21 +28,22 @@ namespace MultiImageClient
         /// Gemini image-model slug per tier. June 2026 status: all dedicated
         /// Imagen endpoints shut down 2026-06-24..30; Gemini Image ("Nano
         /// Banana") models are Google's official replacement.
-        ///   GoogleNanoBanana    -> gemini-3.1-flash-image ("Nano Banana 2",
-        ///                          fast/cheap tier, successor to 2.5-flash-image)
+        ///   GoogleNanoBanana    -> gemini-nano-banana-2.1 ("Nano Banana 2.1",
+        ///                          fast/cheap tier; since 2026-10-30, replacing
+        ///                          the deprecated gemini-3.1-flash-image)
         ///   GoogleNanoBananaPro -> gemini-3-pro-image ("Nano Banana Pro",
         ///                          reasoning/"thinking" tier, hi-fi text, up to 4K)
-        private static string ModelFor(ImageGeneratorApiType apiType) => apiType switch
+        public static string ModelFor(ImageGeneratorApiType apiType) => apiType switch
         {
             ImageGeneratorApiType.GoogleNanoBananaPro => "gemini-3-pro-image",
-            _ => "gemini-3.1-flash-image",
+            _ => "gemini-nano-banana-2.1",
         };
 
         /// aspectRatio: "1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4",
         ///   "9:16", "16:9", "21:9" — or null to let the model decide (1:1 default).
-        /// imageSize: "512" (3.1-flash only), "1K", "2K", "4K" (K must be
-        ///   uppercase) — or null for the API default (1K). Per the token
-        ///   table, 2K costs the same tokens as 1K; only 4K is pricier.
+        /// imageSize: "1K", "2K", "4K" (K must be uppercase) — or null for the
+        ///   API default (1K). Nano Banana 2.1 has no 512 size. Pro bills 2K
+        ///   like 1K; on 2.1 each size step costs more.
         /// inputImagePath: when set, the image is sent as a visual reference/guide
         ///   part alongside the prompt (Gemini is natively multimodal), and the
         ///   instruction is reworded so the model treats it as guidance, not a
@@ -79,18 +80,26 @@ namespace MultiImageClient
 
         public decimal GetCost()
         {
-            // Gemini image models use token-based pricing ($30/1M output tokens).
-            // Per the docs' token table, 1K and 2K outputs both cost ~1120
-            // tokens; 4K costs ~2000. Pro additionally burns "thinking" tokens;
-            // ~$0.13/image is a reasonable 1K/2K estimate until we wire usage
-            // parsing.
-            var sizeMultiplier = _imageSize == "4K" ? (2000m / 1120m) : 1m;
+            // Google's price list (2026-10-30) bills Nano Banana 2.1 image
+            // output at $30 per 1M tokens: 1,120 tokens at 1K, 1,680 at 2K and
+            // 3,780 at 4K. Thinking and other output cost $7.50 per 1M; one 1K
+            // call on 2026-10-30 used 895 of those, so the estimate adds 1,000.
+            // Pro images cost 1,120 tokens at 1K and 2K and 2,000 at 4K, and
+            // Pro also burns "thinking" tokens; ~$0.13/image is a reasonable
+            // 1K/2K estimate until we wire usage parsing.
             if (_apiType == ImageGeneratorApiType.GoogleNanoBanana)
             {
-                return (30m / 1000000m) * 1120m * sizeMultiplier;
+                var imageTokens = _imageSize switch
+                {
+                    "4K" => 3780m,
+                    "2K" => 1680m,
+                    _ => 1120m,
+                };
+                return (30m * imageTokens + 7.50m * 1000m) / 1000000m;
             }
             else if (_apiType == ImageGeneratorApiType.GoogleNanoBananaPro)
             {
+                var sizeMultiplier = _imageSize == "4K" ? (2000m / 1120m) : 1m;
                 return 0.13m * sizeMultiplier;
             }
             else

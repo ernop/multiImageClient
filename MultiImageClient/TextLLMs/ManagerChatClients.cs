@@ -169,7 +169,9 @@ namespace MultiImageClient
         public const string KeyClaudeSonnet55 = "manager-claude-sonnet-5-5";
         public const string KeyClaudeOpus5 = "manager-claude-opus-5";
         public const string KeyClaudeSonnet5 = "manager-claude-sonnet-5";
-        public const string KeyGemini35Flash = "manager-gemini-3.5-flash";
+        // Saved goal loops store this key; it kept its 3.5 name when the
+        // entry moved to gemini-3.8-flash on 2026-10-30.
+        public const string KeyGeminiFlash = "manager-gemini-3.5-flash";
         public const string KeyGemini4Argon = "manager-gemini-4-argon";
         public const string KeyGrok46 = "manager-grok-4.6";
 
@@ -243,6 +245,10 @@ namespace MultiImageClient
         // 2026-10-06; both IDs were live-verified 2026-10-02.
         // gemini-4-argon added and live-verified 2026-10-29. Google prices it
         // at $2/$10 through 2026-11-30 and $4/$20 from 2026-12-01.
+        // Google deprecated gemini-3.5-flash and routes it to
+        // gemini-3.6-flash, so the Flash entry moved to gemini-3.8-flash on
+        // 2026-10-30. Google prices 3.8 Flash at $0.75/$3.75 through 2026
+        // and $1.50/$7.50 from 2027-01-01.
         public static readonly IReadOnlyList<ManagerDefinition> All = new[]
         {
             new ManagerDefinition
@@ -302,9 +308,11 @@ namespace MultiImageClient
             },
             new ManagerDefinition
             {
-                Key = KeyGemini35Flash, Label = "Gemini 3.5 Flash", Provider = "google", Model = "gemini-3.5-flash",
+                Key = KeyGeminiFlash, Label = "Gemini 3.8 Flash", Provider = "google", Model = "gemini-3.8-flash",
                 SettingsKeyName = nameof(Settings.GoogleGeminiApiKey),
-                Detail = "Google generateContent with high thinking level and thought parts returned; JSON MIME output mode; images at MEDIA_RESOLUTION_ULTRA_HIGH.",
+                InputUsdPerMTok = 0.75m, OutputUsdPerMTok = 3.75m,
+                PriceChange = new ManagerPriceChange(new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.FromHours(-8)), 1.50m, 7.50m),
+                Detail = "Google generateContent with high thinking level and thought parts returned; JSON MIME output mode; images at MEDIA_RESOLUTION_ULTRA_HIGH. Introductory price $0.75 in / $3.75 out per million tokens through 2026; $1.50 / $7.50 from 2027-01-01.",
                 ImageLimits = GeminiLimits,
             },
             new ManagerDefinition
@@ -390,7 +398,7 @@ namespace MultiImageClient
         // thinking counts against max_tokens, so a long review plus the JSON
         // reply was cut off with stop_reason "max_tokens"). Published maxima:
         // Anthropic Claude 5 128K output; OpenAI Responses 128K
-        // max_output_tokens; Gemini 3.5 Flash 65,536 maxOutputTokens; xAI
+        // max_output_tokens; Gemini 3.8 Flash 65,536 maxOutputTokens; xAI
         // grok-4.6 accepted 65,536 live the same day. 64,000 fits every
         // provider without a per-provider table.
         public const int MaxOutputTokens = 64000;

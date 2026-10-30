@@ -13,7 +13,7 @@ namespace MultiImageClient.Tests
         public void GoogleContactSheetLabelsKeepCatalogProviderAndExactModel()
         {
             Assert.Equal(
-                "Nano Banana 2 — Google · gemini-3.1-flash-image",
+                "Nano Banana 2.1 — Google · gemini-nano-banana-2.1",
                 GeneratorPresentation.UiContactSheetLabel(UiJobRunner.KeyGoogle, "google ui"));
             Assert.Equal(
                 "Nano Banana Pro — Google · gemini-3-pro-image",
@@ -119,7 +119,7 @@ namespace MultiImageClient.Tests
         {
             Assert.Equal("gpt-5.6-sol", OpenAIVisionDescriber.DefaultModel);
             Assert.Equal("claude-sonnet-5", ClaudeVisionDescriber.DefaultModel);
-            Assert.Equal("gemini-3.5-flash", GeminiVisionDescriber.DefaultModel);
+            Assert.Equal("gemini-3.8-flash", GeminiVisionDescriber.DefaultModel);
             Assert.Equal("grok-4.6", GrokVisionDescriber.DefaultModel);
             Assert.Equal(
                 "OpenAI describe (gpt-5.6-sol)",
@@ -128,7 +128,7 @@ namespace MultiImageClient.Tests
                 "Claude describe (claude-sonnet-5)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeClaude));
             Assert.Equal(
-                "Gemini describe (gemini-3.5-flash)",
+                "Gemini describe (gemini-3.8-flash)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGemini));
             Assert.Equal(
                 "Gemini describe (gemini-4-argon)",
@@ -137,7 +137,7 @@ namespace MultiImageClient.Tests
                 "Grok describe (grok-4.6)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGrok));
             Assert.Equal(
-                "Layout map (gemini-3.5-flash)",
+                "Layout map (gemini-3.8-flash)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyLayoutMap));
         }
     }

@@ -34,7 +34,7 @@ The other 17 failed. Failure causes, by count:
 Decisions:
 
 - `ManagerChatHttp.MaxOutputTokens` = 64,000 for OpenAI, Anthropic, Gemini, and xAI.
-  Published maxima: Anthropic Claude 5 128K, OpenAI Responses 128K, Gemini 3.5 Flash 65,536.
+  Published maxima: Anthropic Claude 5 128K, OpenAI Responses 128K, Gemini 3.8 Flash 65,536.
   xAI grok-4.6 has no published figure; 65,536 was accepted live on 2026-09-12.
   **2026-10-29:** each `ManagerDefinition` carries its own `MaxOutputTokens`, 64,000 by default.
   Gemini 4 Argon sends 32,768, its non-streaming cap (see `docs/gemini-4-argon-support.md`).
@@ -838,7 +838,7 @@ after editing the text of that message.
   |---|---|---|---|
   | OpenAI gpt-5.6-sol | 30,000 patches | 512 MB | `detail: "original"` (8.4 MB 2496×1664 PNG = 6,010 tokens; `high` = 2,924) |
   | Anthropic | 10 MB base64; 8000 px; 2000 px above 20 images | 32 MB | none (rejection text observed: "image exceeds 10 MB maximum: 11174516 bytes > 10485760 bytes") |
-  | Gemini 3.5 Flash | — | 100 MB inline | per-part `mediaResolution: MEDIA_RESOLUTION_ULTRA_HIGH` (2,198 tokens vs 1,124 default) |
+  | Gemini 3.8 Flash | — | 100 MB inline | per-part `mediaResolution: MEDIA_RESOLUTION_ULTRA_HIGH` (3.5 Flash: 2,198 tokens vs 1,124 default; 3.8 Flash: 2,160 tokens for a 1024×768 PNG) |
   | xAI grok-4.6 | 20 MiB; JPEG/PNG only | — | `store: false` (an 11 MB image otherwise fails "Response is too large to store"); `detail` has no effect and is omitted |
 
   Consequence for Anthropic managers: a 2048² gpt-image-2 PNG (≈5–7 MB) is
@@ -959,7 +959,7 @@ Manual turns and a configurable repeating sequence remain the proposed control m
 Presentation decisions (2026-09-05):
 - Use the shared `style.css` and `goal.css` styling, header, and navigation controls.
 - Link to the main page, goal loops, and the exact source conversation. Mark the current results page.
-- Use short model labels: Fable 5.1, Opus 5, GPT-5.6 Sol, and Gemini 3.5 Flash.
+- Use short model labels: Fable 5.1, Opus 5, GPT-5.6 Sol, and Gemini 3.8 Flash.
 - Omit redundant Claude prefixes and provider parentheses. Preserve model versions and generator transport distinctions.
 - Keep stored provider identities unchanged. Short names affect display only.
 - Omit the routine offline-preview notice from the page. Keep export limitations in export feedback and documentation.
@@ -1041,7 +1041,7 @@ On 2026-10-10 the release added it once to every saved default list.
 
 | Display name | Catalog key |
 |---|---|
-| Nano Banana 2 | `google` |
+| Nano Banana 2.1 | `google` |
 | GPT Image 2.5 Sunburst | `gpt25-sunburst` |
 | GPT Image 2.5 Flare | `gpt25-flare` |
 | grok-web | `grok-web` |
@@ -1134,7 +1134,7 @@ settings keys as the describe endpoints.
 | `manager-claude-sonnet-5-5` | claude-sonnet-5-5 | Anthropic Messages, adaptive thinking (default manager) |
 | `manager-claude-opus-5` | claude-opus-5 | Anthropic Messages, adaptive thinking |
 | `manager-claude-sonnet-5` | claude-sonnet-5 | Anthropic Messages, adaptive thinking |
-| `manager-gemini-3.5-flash` | gemini-3.5-flash | Google generateContent, thoughts returned, JSON MIME |
+| `manager-gemini-3.5-flash` | gemini-3.8-flash | Google generateContent, high thinking, thoughts returned, JSON MIME |
 | `manager-gemini-4-argon` | gemini-4-argon | Google generateContent, high thinking, thoughts returned, JSON MIME, 32,768-token cap |
 | `manager-grok-4.6` | grok-4.6 | xAI Responses API |
 
@@ -1148,6 +1148,13 @@ Pricing estimates use $2/$10 per million input/output tokens through 2026-11-30,
 Gemini output-token counts include `thoughtsTokenCount`, because Google bills thinking as output.
 This also changes Gemini 3.5 Flash counts, which left out thinking before.
 A live manager call with one image succeeded on 2026-10-29. Details: `docs/gemini-4-argon-support.md`.
+
+On 2026-10-30 the Flash entry moved from gemini-3.5-flash to gemini-3.8-flash (owner choice).
+Google deprecated 3.5 Flash and sends its requests to 3.6 Flash.
+The key `manager-gemini-3.5-flash` stays, because saved goal loops store it.
+Pricing estimates use $0.75/$3.75 per million input/output tokens through 2026, then $1.50/$7.50.
+The new price applies from 2027-01-01 08:00 UTC (midnight Pacific time).
+A live manager-shaped call with one image succeeded on 2026-10-30. Details: `docs/nano-banana-2-1-and-gemini-3-8-flash.md`.
 
 Opus 5.5 and Sonnet 5.5 join the shared manager/critic catalog on 2026-10-06 (owner request).
 Pricing estimates use $4/$20 (Opus 5.5) and $2/$10 (Sonnet 5.5) per million input/output tokens;

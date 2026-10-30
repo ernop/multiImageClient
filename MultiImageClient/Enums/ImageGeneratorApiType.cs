@@ -55,7 +55,7 @@ namespace MultiImageClient
 
         // Google Gemini 3 Pro Image ("Nano Banana Pro") — professional tier,
         // advanced reasoning, up to 4K. The flash tier (GoogleNanoBanana)
-        // now maps to gemini-3.1-flash-image ("Nano Banana 2").
+        // maps to gemini-nano-banana-2.1 ("Nano Banana 2.1") since 2026-10-30.
         GoogleNanoBananaPro = 28,
 
         // BFL flux-2-pro-preview: where BFL lands the latest [pro]

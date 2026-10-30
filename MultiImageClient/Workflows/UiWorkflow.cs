@@ -548,7 +548,7 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyBflFlux11, label = "FLUX1.1 Pro", detail = "Previous-generation text-to-image endpoint with optional image remix. Output edges are capped at 1440." },
                     new { key = UiJobRunner.KeyBflFluxPro, label = "FLUX.1 Pro (compatibility)", detail = "BFL still lists /flux-pro in its available-endpoints guide, but it is absent from the current OpenAPI. Kept as an explicitly unverified compatibility target; text-to-image only in this UI." },
                     new { key = UiJobRunner.KeyBflFluxDev, label = "FLUX.1 Dev", detail = "Older hosted FLUX.1 Dev endpoint with optional image prompt and explicit dimensions up to 1440." },
-                    new { key = UiJobRunner.KeyGoogle, label = "Nano Banana 2", detail = "Google gemini-3.1-flash-image. With an input, the default uses the nearest Gemini-supported AR; explicit shape overrides it and detail maps to 1K/2K/4K. No n support." },
+                    new { key = UiJobRunner.KeyGoogle, label = "Nano Banana 2.1", detail = "Google gemini-nano-banana-2.1. With an input, the default uses the nearest Gemini-supported AR; explicit shape overrides it and detail maps to 1K/2K/4K. No n support." },
                     new { key = UiJobRunner.KeyGooglePro, label = "Nano Banana Pro", detail = "Google gemini-3-pro-image. With an input, the default uses the nearest Gemini-supported AR; explicit shape overrides it and detail maps to 1K/2K/4K. No n support." },
                     new { key = UiJobRunner.KeyGpt1, label = "gpt-image-1", detail = "OpenAI image generation. Shape, quality, moderation, and n honored. Text-to-image in this UI." },
                     new { key = UiJobRunner.KeyGpt1Mini, label = "gpt-image-1-mini", detail = "OpenAI lower-cost image generation. Shape, quality, moderation, and n honored. Text-to-image in this UI." },
@@ -624,7 +624,7 @@ namespace MultiImageClient
                     defaultNotes = "",
                     // Default-on set for new windows: gpt-image-2, Recraft V4.1,
                     // grok-web pro, Ideogram 4.5, Ideogram 4.0, FLUX.2 Pro
-                    // Preview, Nano Banana 2.
+                    // Preview, Nano Banana 2.1.
                     defaultOn = environmentDefaults != null ? environmentDefaults.Contains(g.key) : g.key is UiJobRunner.KeyGpt2
                         or UiJobRunner.KeyRecraft
                         or UiJobRunner.KeyGrokWeb
