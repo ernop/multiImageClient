@@ -55,6 +55,45 @@ async function visible(field) {
   return g;
 }
 
+// Puts the caret at the start of a tall field, scrolls the page to a lower part
+// of it, and clicks or taps a visible line. The page must stay where it was and
+// the caret must land on the clicked line. Waits through the spelling overlay's
+// re-render and its 700 ms poll, which re-checks the overlay.
+async function pointerStays(page, field, label, { focused = false, below = null, nearBottom = false, tap = false }) {
+  const frames = () => field.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await field.evaluate((field, focused) => {
+    field.setSelectionRange(0, 0);
+    if (focused) field.focus({ preventScroll: true }); else field.blur();
+  }, focused);
+  // Focusing reveals the caret; the user then scrolls away from it.
+  await frames();
+  const aim = await field.evaluate((field, { below, nearBottom }) => {
+    const rect = field.getBoundingClientRect();
+    const top = rect.top + scrollY;
+    const wanted = Math.round(below == null ? top + rect.height * 0.7 - innerHeight / 2 : top + rect.height - innerHeight + below);
+    scrollTo(0, wanted);
+    const now = field.getBoundingClientRect();
+    const y = below != null ? now.bottom - 150 : nearBottom ? innerHeight - 10 : innerHeight / 2;
+    return { wanted, x: now.left + now.width / 2, y };
+  }, { below, nearBottom });
+  await frames();
+  const before = await page.evaluate(() => Math.round(scrollY));
+  assert.equal(before, aim.wanted, `The page scrolls to ${label}.`);
+  if (tap) await page.touchscreen.tap(aim.x, aim.y);
+  else await page.mouse.click(aim.x, aim.y);
+  await page.waitForTimeout(1000);
+  const g = await geometry(field);
+  assert.equal(Math.round(g.pageScroll), before, `Clicking ${label} must not scroll the page: ` + JSON.stringify(g));
+  assert.ok(aim.y > g.bottom - g.lineHeight - 2 && aim.y < g.bottom + 2,
+    `The caret lands on the clicked line in ${label}: ` + JSON.stringify({ aim, g }));
+}
+
+async function longPrompt(prompt) {
+  const paragraph = 'The bright market square fills with clear morning light, and the vendors arrange their fruit in tidy rows while children chase pigeons across the warm stones.';
+  await prompt.fill(Array.from({ length: 40 }, (_, i) => `${i + 1}. ${paragraph}`).join('\n'));
+  await prompt.page().waitForTimeout(900);
+}
+
 async function typeAtBottom(field) {
   await field.focus();
   await field.press('Control+End');
@@ -112,6 +151,15 @@ async function typeAtBottom(field) {
       await prompt.press('Control+Shift+z');
       assert.equal(await prompt.inputValue(), withEdit, 'Redo restores the exact edit.');
 
+      // A pointer places the caret where the user is looking. Chromium focused the field
+      // first and revealed the old caret; the overlay's check clamped Firefox's page.
+      await longPrompt(prompt);
+      await pointerStays(page, prompt, 'the lower part of the prompt', {});
+      await pointerStays(page, prompt, 'the prompt with the view past its bottom edge', { below: 250 });
+      await pointerStays(page, prompt, 'a focused prompt next to the bottom of the view', { focused: true, nearBottom: true });
+      await prompt.press('ArrowDown');
+      await visible(prompt);
+
       await page.setViewportSize({ width: 390, height: 640 });
       await prompt.fill('A wrapping prompt with café, emoji 🐈, and tabs\t'.repeat(40) + '\n\n');
       await typeAtBottom(prompt);
@@ -161,7 +209,19 @@ async function typeAtBottom(field) {
       await page.locator('#text-entry-dialog-test').evaluate(panel => panel.remove());
       assert.deepEqual(await page.evaluate(() => textEntryOverflow), [], 'Growth must finish during the input event.');
       assert.deepEqual(errors, []);
-      console.log(`PASS ${name}: Enter, wrapping, paste, spare lines, page/panel scrolling, sticky bottom bar, undo, drafts, resize, spelling, dynamic and hidden fields.`);
+
+      // A touch tap places the caret in compatibility mouse events after pointerup.
+      const touch = await browser.newContext({ viewport: { width: 390, height: 640 }, hasTouch: true });
+      await touch.route('**/*', route => route.request().method() === 'GET' ? route.continue() : route.abort());
+      const phone = await touch.newPage();
+      phone.on('pageerror', error => errors.push(error.message));
+      await phone.goto(base);
+      await phone.waitForFunction(() => typeof mcpheeCtl !== 'undefined' && mcpheeCtl);
+      await longPrompt(phone.locator('#prompt'));
+      await pointerStays(phone, phone.locator('#prompt'), 'a tapped phone prompt', { tap: true });
+      await touch.close();
+      assert.deepEqual(errors, []);
+      console.log(`PASS ${name}: Enter, wrapping, paste, spare lines, page/panel scrolling, sticky bottom bar, undo, drafts, resize, spelling, dynamic and hidden fields, clicks and taps that keep the page still.`);
     } finally {
       await browser.close();
     }

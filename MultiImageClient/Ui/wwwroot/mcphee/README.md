@@ -93,7 +93,8 @@ ctl.refresh();            // after programmatic .value writes (also auto-polled)
 ctl.refresh(true);        // force full regeneration: styles re-mirrored,
                           // geometry re-synced, marks rebuilt (the panel's
                           // "↻ recheck" button calls this)
-ctl.scrollToOffset(120);  // scroll the textarea to a character offset
+ctl.scrollToOffset(120);  // center a character offset in the textarea
+                          // (also with highlights off)
 ctl.hoverStart([120]);    // solidly highlight marks at offsets (no animation,
                           // no transition); hoverStop() clears instantly
 ctl.setRules({ profile: "casual" });  // switch rule profile live
@@ -106,10 +107,10 @@ ctl.detach();
 // Live issues panel: suggestion buttons (replace-all, undo-preserving),
 // add-to-dictionary, ignore (persistent per-word mute with a 3s undo chip
 // and an "ignored (N)" manager), capitalize, collapse extra spaces.
-// Hovering a row scrolls the textarea to the issue and solidly recolors
-// EVERY occurrence (repeat rows recolor both uses at once) for exactly as
-// long as the pointer stays — a plain background change, no animation or
-// transition; clicking anywhere on the row selects the issue's text. The header's "↻ recheck" button
+// Hovering a row solidly recolors EVERY occurrence on screen (repeat rows
+// recolor both uses at once) for exactly as long as the pointer stays — a
+// plain background change, no animation or transition — and never scrolls;
+// clicking anywhere on the row selects the issue's text and centers it. The header's "↻ recheck" button
 // force-regenerates the overlay and the panel. A formality chooser
 // (casual/normal/formal -> the three profiles) is always visible, persisted
 // per origin; its ⚙ config opens one block per checker (on/off, order,
@@ -208,7 +209,8 @@ treats it as not being there:
   entirely lowercase, ≥2 letters, not in the Hunspell dictionary, whose
   Capitalized form is also not in the dictionary. Exempt: personal
   dictionary, `extraWords`, ignore list. Display-only: when `opts.caret`
-  is passed (overlay and panel do this), the word containing the caret is
+  is passed (overlay and panel do this while the selection is collapsed;
+  a selected word is not being typed), the word containing the caret is
   omitted so the author is not nagged while typing it. Form guards and
   `localFix` do not pass caret, so they still see the word.
 - **unknown** (blue) — a word the dictionary doesn't know that is shaped
@@ -307,11 +309,14 @@ follows cSpell's model (word lists union; settings override).
   scrollbar can't skew wrapping.
 - **Overlay correctness is enforced, not assumed**: after every render the
   controller checks that the backdrop's text equals the textarea's value
-  and that both boxes wrapped identically (equal scrollHeights). A failed
+  and that both boxes wrapped identically (equal content heights). A failed
   check triggers one automatic re-mirror + re-render; if it still fails the
   overlay hides itself rather than display misplaced highlights, and keeps
-  retrying in the background until it verifies. Full analysis in DESIGN.md
-  ("Overlay correctness").
+  retrying in the background until it verifies. The check never moves the
+  page: it collapses the textarea for one layout pass to measure its text,
+  and sets `.mcphee-host`'s inline height, min-height, and max-height to
+  its current height until the measurement ends. Full analysis in
+  DESIGN.md ("Overlay correctness").
 - Classification is deliberately heuristic and predictable, not clever:
   anything capitalized/ALLCAPS/camelCase that the dictionary doesn't know is
   "unknown" (blue), on the theory that names and jargon shouldn't nag. A

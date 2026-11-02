@@ -38,9 +38,9 @@ async function create(ctx) {
   return vm.runInContext(`McPhee.create(${options})`, ctx);
 }
 
-test('composer loads version 3.12.0 and selects the 2026 dictionary', async () => {
+test('composer loads version 3.12.2 and selects the 2026 dictionary', async () => {
   const ctx = context();
-  assert.equal(ctx.McPhee.version, '3.12.0');
+  assert.equal(ctx.McPhee.version, '3.12.2');
   const checker = await create(ctx);
   const active = checker.resolveCheckers();
   assert.equal(active.find(c => c.id === 'spell2026').enabled, true);

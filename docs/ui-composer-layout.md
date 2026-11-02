@@ -65,6 +65,7 @@ Typing must never leave the caret below the visible page or enclosing panel.
 | Shared coverage | Apply automatically to editable textareas, including dynamically inserted and initially hidden fields. |
 | Read-only output | Leave read-only textareas unchanged. |
 | Layout changes | Recalculate after field resizing, viewport changes, and font loading. These passes never scroll to the caret (2026-10-08). |
+| Pointer placement | A click or tap places the caret where the user is looking. Never scroll to a caret that a pointer placed (2026-11-02). |
 
 `Ui/wwwroot/text-entry.js` implements this behavior once.
 It measures text separately from the live field to avoid flex sizing feedback and spelling-overlay disruption.
@@ -86,11 +87,52 @@ Future prompt editors must use the shared module; the binding rule appears in `A
 Browser regression: `tools/test-text-entry-browser.cjs` exercises Chromium and Firefox without submitting generation requests.
 It checks Enter, wrapping, spare lines, page/panel scrolling, undo, draft restoration, resizing, spelling, and dynamic/hidden fields.
 Since 2026-10-08 it also checks that typing stays above the sticky phone Generate row at 390×640.
+Since 2026-11-02 it also checks that clicks and taps leave the page still.
 
 Validation passed in Firefox and Chromium on 2026-09-20.
 Checks include synchronous input growth, actual video/rewrite dialogs, and the existing draft restoration suite.
 The local UI restarted successfully. The Workflow Lab build and its shared asset paths also passed verification.
 Django verification covered Python syntax and the static source path; its server was not started.
+
+## Pointer caret placement — 2026-11-02
+
+Owner report: clicking the lower part of a prompt taller than the screen made the page jump up.
+The text the owner wanted to see and edit then left its place on the screen.
+
+Requirement: a click or tap never scrolls the page or an enclosing panel.
+The caret lands where the pointer placed it, and the page stays still.
+
+| Event | Behavior |
+|---|---|
+| Pointer pressed in a field | No reveal while it stays pressed, including the focus and drag selection it causes. |
+| Pointer released | Record the field's selection. No reveal while the selection stays the same. |
+| Touch tap | Record the selection again on `click`, because the tap moves the caret after the pointer is released. |
+| Typing or composition input | Clear the record. Reveal the caret as before. |
+| Arrow keys or programmatic selection | The selection differs from the record, so reveal the caret as before. |
+| Focus leaves the field | Clear the record. Keyboard focus later reveals the caret as before. |
+
+Two causes moved the page:
+
+- Chromium focuses a clicked field before it moves the caret. The focus pass revealed the previous caret, often far above the click. The next pass revealed the clicked caret near the bottom edge. The net move in the regression test was 289 px.
+- McPhee's overlay check collapsed the prompt for one layout pass. Firefox then clamped the page's scroll position whenever the view reached past the prompt's bottom edge. McPhee 3.12.2 fixes this; see [mcphee-integration.md](mcphee-integration.md).
+
+Rationale: the reveal exists so typing never runs off the screen.
+A pointer already shows the user where the caret is, so a reveal can only move the text being read.
+Keeping the two-line reveal margin for clicks would also scroll a click near the bottom edge.
+
+`tools/test-text-entry-browser.cjs` now covers both engines.
+It clicks the lower part of a blurred prompt with its caret at the start.
+It clicks with the view 250 px past the prompt's bottom edge.
+It clicks a focused prompt 10 px above the bottom of the view.
+It taps a phone-sized touch view.
+Each case requires an unchanged page position and the caret on the clicked line.
+Arrow-key movement after the clicks must still reveal the caret.
+With the previous `text-entry.js`, Chromium failed the first case.
+With McPhee 3.12.0, Firefox failed the second case by 250 px.
+A matrix of 12 clicks also passed: both engines, an old caret at either end, and the view inside or past the bottom edge.
+None moved the page, every caret landed on the clicked character, and no console warning appeared.
+
+Implementation: `text-entry.js`, McPhee 3.12.2, and asset versions in `index.html`, `goal.html`, the Workflow Lab page, and the Django text-input template.
 
 ## Phone layout — 2026-10-08
 

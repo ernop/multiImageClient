@@ -9,6 +9,11 @@
   // viewport during every scroll).
   const pending = new Map();
   let frame = 0;
+  // A pointer places the caret where the user is looking, so revealing it can
+  // only move the text being read. Chromium focuses a clicked field before it
+  // moves the caret: focusin still reports the previous caret position.
+  let pressed = null;
+  let placed = null;
   const metrics = [
     "fontFamily", "fontSize", "fontWeight", "fontStyle", "fontStretch", "fontVariant",
     "fontFeatureSettings", "fontVariationSettings", "letterSpacing", "wordSpacing",
@@ -119,7 +124,9 @@
     // the text resets automatic growth; deletion within a draft never pulls it upward.
     if (required > rect.height) field.style.height = height + "px";
     field.scrollTop = 0;
-    if (keepVisible && document.activeElement === field) reveal(field, caretOffset(field), lineHeight);
+    if (keepVisible && document.activeElement === field && !placedByPointer(field)) {
+      reveal(field, caretOffset(field), lineHeight);
+    }
     sizeMirror.value = "";
     caretMirror.replaceChildren();
   }
@@ -169,9 +176,33 @@
     }
   }).observe(document.body, { childList: true, subtree: true });
 
+  function placedByPointer(field) {
+    if (pressed === field) return true;
+    return placed?.field === field && placed.start === field.selectionStart && placed.end === field.selectionEnd;
+  }
+  function recordPlacement(field) {
+    if (field?.matches?.(selector)) placed = { field, start: field.selectionStart, end: field.selectionEnd };
+  }
+  document.addEventListener("pointerdown", event => {
+    pressed = event.target.matches?.(selector) ? event.target : null;
+    placed = null;
+  }, true);
+  for (const type of ["pointerup", "pointercancel"]) {
+    document.addEventListener(type, () => {
+      recordPlacement(pressed);
+      pressed = null;
+    }, true);
+  }
+  // A touch tap places the caret in its compatibility mouse events, after pointerup.
+  document.addEventListener("click", event => recordPlacement(event.target), true);
+  document.addEventListener("focusout", event => {
+    if (placed?.field === event.target) placed = null;
+  }, true);
+
   function edited(event) {
     const field = event.target;
     if (!field.matches?.(selector)) return;
+    if (event.type === "input" || event.type === "compositionend") pressed = placed = null;
     attach(field);
     // The input handler runs before paint, including Enter, paste, and IME input.
     update(field, true);

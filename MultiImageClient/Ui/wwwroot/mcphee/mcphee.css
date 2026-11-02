@@ -256,13 +256,13 @@
   overflow: hidden;
 }
 
-/* Hovering a row scrolls the textarea to the issue's location. */
+/* Hovering a row highlights its marks on screen; it never scrolls. */
 .mcphee-panel-item:hover { background: #f3f7fc; }
 
-/* Scroll linkage: rows whose every occurrence is off screen are dimmed, so
-   the readable rows always correspond to text you can currently see. */
-.mcphee-panel-item-offscreen { opacity: 0.45; }
-.mcphee-panel-item-offscreen:hover { opacity: 1; }
+/* Scroll linkage: rows whose every occurrence is off screen carry a lighter
+   word weight, so the bold rows always correspond to text you can currently
+   see. Never dimmed: reduced contrast would turn the text gray. */
+.mcphee-panel-item-offscreen .mcphee-panel-word { font-weight: 400; }
 
 /* Caret linkage: the row nearest the caret in the text. */
 .mcphee-panel-item-current {
@@ -437,7 +437,6 @@
   padding: 12px;
   overflow-y: auto;
   transform: translateX(100%);
-  transition: transform 0.18s ease;
   z-index: 9999;
   box-sizing: border-box;
 }

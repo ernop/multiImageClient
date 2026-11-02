@@ -1,6 +1,6 @@
 # Composer spelling library
 
-Updated 2026-10-06.
+Updated 2026-11-02.
 
 ## Release decision
 
@@ -8,9 +8,25 @@ Load the current McPhee library from the owner's checkout into every MultiImageC
 This release includes the local UI, the original production environment, and Vibecoders AI Generation.
 All three use the same committed application assets.
 
-The vendored copy is upstream McPhee 3.12.0 (commit `bdc28ab`) with this application's two overlay fixes merged in.
-The library reports `McPhee.version === "3.12.0"`.
+The vendored copy is upstream McPhee 3.12.2 (commit `cc974b2`), unchanged (2026-11-02).
+The library reports `McPhee.version === "3.12.2"`.
+`mcphee.js` and `mcphee.css` are the upstream files; `README.md` is upstream `docs/integration.md`.
 Distribution remains a complete folder copy, with no runtime dependency on the source checkout.
+
+3.12.2 keeps the page still during the overlay check (owner report 2026-11-02).
+The check collapses the prompt for one layout pass to measure its text.
+That collapse shortened the page as well.
+Firefox then clamped the scroll position whenever the view reached past the prompt's bottom edge.
+Clicking the lower part of a long prompt moved the page up by that distance.
+McPhee now holds its wrapper's height during the measurement.
+An empty prompt with its long placeholder also failed the check.
+The overlay then hid itself and re-rendered on every poll; an empty prompt now passes.
+The composer's own click jump in Chromium is in [the composer layout record](ui-composer-layout.md#pointer-caret-placement--2026-11-02).
+
+3.12.1 changes panel navigation (2026-10-20).
+Hovering a row only highlights its marks and never scrolls.
+Clicking a row selects its word and centers it.
+Keeping the caret's row in view scrolls only the panel, never the page.
 
 3.12.0 adds the caps level (owner request 2026-10-06).
 The spelling panel reports the prompt's capitalization style and whether it is consistent.
@@ -59,7 +75,11 @@ Run the application's release gate and verify the loaded version and dictionary 
 
 ## Application overlay corrections
 
-These patches were first applied to 3.11.2 and are carried forward into each new upstream copy.
+Since 3.12.2 the vendored copy carries no application patches (2026-11-02).
+Both corrections below are now upstream: the class order since 3.12.1 and flex growth since 3.12.2.
+Fix future library defects in the McPhee checkout, then copy the released files here.
+
+These patches were first applied to 3.11.2 and carried forward through 3.12.0.
 Browser verification found two failures in the incoming 3.11.1 source.
 Copy text metrics while the textarea retains its overlay class.
 Temporarily remove that class only when reading its original background color.
@@ -69,7 +89,17 @@ Temporarily disable flex growth when measuring content height at zero height.
 Restore the previous flex value before returning.
 Otherwise, the stretched composer retains its full height and falsely fails overlay validation.
 The fixes preserve the overlay's existing content and wrap checks.
-These are application-copy patches; the independent source checkout remains unchanged.
+
+## Release validation — 2026-11-02 (3.12.2)
+
+Upstream `npm test` passed every Node suite.
+The upstream browser suite passed, including the new checks in Chromium and Firefox.
+Those checks failed on 3.12.1: Firefox moved the page 200 px, and the flex-host and placeholder checks failed in both engines.
+The application passed 662 C# tests, 45 JavaScript tests, 19 tool tests, and 26 deploy tests.
+The text-entry, McPhee, phone-layout, draft, and prompt-rewrite browser suites passed against the local UI.
+The draft suite's account-name step now opens Settings first; that field has been inside Settings since 2026-09-09.
+Every browser check blocked or mocked requests other than GET, so no job, paid call, or Discord post occurred.
+The release targets the local UI and both production instances through the standard release scripts.
 
 ## Release validation — 2026-10-06 (3.12.0)
 

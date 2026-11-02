@@ -57,8 +57,9 @@
 // the text's topic vocabulary), as are words on the persistent not-rare
 // list (checker.markNotRare(word) — the correction for frequency-list gaps
 // such as contractions). There is no autofix — word choice is the author's
-// call; the panel offers hover-to-scroll and a session-scoped dismiss per
-// word or phrase (checker.ignoreRepeat(value)).
+// call; panel hover highlights the occurrences, click navigates, and a
+// session-scoped dismiss is available per word or phrase
+// (checker.ignoreRepeat(value)).
 //
 // Highlighting model (deliberately NOT the browser's red squiggles):
 //   .mcphee-mark-misspelled      lowercase word not in any dictionary -> pink
@@ -94,7 +95,7 @@
 var McPhee = (function () {
   "use strict";
 
-  var VERSION = "3.12.0";
+  var VERSION = "3.12.2";
 
   var WORD_RE = /[A-Za-z]+(?:['\u2019][A-Za-z]+)*/g;
   var TOKEN_RE = /([A-Za-z]+(?:['\u2019][A-Za-z]+)*)|( {2,})/g;
@@ -337,6 +338,13 @@ var McPhee = (function () {
       if (start > caret) break;
     }
     return null;
+  }
+
+  // The caret position that marks a word as being typed. Only a collapsed
+  // selection is typing: a selected word (a panel navigation, a double-click)
+  // keeps its mark and its panel row.
+  function typingCaret(textarea) {
+    return textarea.selectionStart === textarea.selectionEnd ? textarea.selectionStart : null;
   }
 
   // Display-only: drop spelling nags on the in-progress word. analyze()
@@ -1766,18 +1774,18 @@ var McPhee = (function () {
       // background while that class is on would copy 'transparent' onto the
       // backdrop and the spell area would vanish. Drop the class for the
       // read, then put it back.
+      // Measure typography while the integration class is present: host
+      // styles may target that class, including late font changes.
       MIRRORED_STYLES.forEach(function (prop) {
         backdrop.style[prop] = computed[prop];
       });
+      var wasTransparent = textarea.classList.contains("mcphee-textarea");
+      if (wasTransparent) textarea.classList.remove("mcphee-textarea");
       // Always border-box, never mirrored: syncGeometry sets the OUTER box
       // (clientWidth + borders). Mirroring a content-box textarea would add
       // the mirrored padding/borders on top of that, wrapping the backdrop
       // ~18px wider than the textarea and drifting every mark leftward.
       backdrop.style.boxSizing = "border-box";
-      // Keep the class while reading text metrics: hosts can style its font.
-      // Remove it only for the background read.
-      var wasTransparent = textarea.classList.contains("mcphee-textarea");
-      if (wasTransparent) textarea.classList.remove("mcphee-textarea");
       backdrop.style.background = computed.backgroundColor;
       if (wasTransparent) textarea.classList.add("mcphee-textarea");
     }
@@ -1795,7 +1803,7 @@ var McPhee = (function () {
     var enabled = true;
 
     function caretWordKey() {
-      var span = wordAtCaret(textarea.value, textarea.selectionStart);
+      var span = wordAtCaret(textarea.value, typingCaret(textarea));
       return span ? span.start + ":" + span.end : "";
     }
 
@@ -1856,12 +1864,12 @@ var McPhee = (function () {
     // scrollHeight to report the real content height whether or not it
     // overflows. Both writes happen inside one layout pass (no paint in
     // between) and scrollTop is put back because shrinking clamps it.
+    // flex:none stops a flex-grown textarea from filling its box again.
     function contentHeight(el) {
       var prevHeight = el.style.height;
       var prevMinHeight = el.style.minHeight;
       var prevFlex = el.style.flex;
       var prevScrollTop = el.scrollTop;
-      // Flex growth otherwise overrides height:0 in a stretched composer.
       el.style.flex = "none";
       el.style.height = "0px";
       el.style.minHeight = "0px";
@@ -1873,12 +1881,35 @@ var McPhee = (function () {
       return h;
     }
 
+    // The host keeps its current height while the textarea is collapsed.
+    // Otherwise the collapse also shortens every ancestor for that layout
+    // pass. A page or scroll container scrolled near the end of its content
+    // then clamps its scroll position to the shorter content, and restoring
+    // the height does not scroll it back, so each check jumps the view up.
+    function contentHeights() {
+      var pinned = getComputedStyle(host).height;
+      var prevHeight = host.style.height;
+      var prevMinHeight = host.style.minHeight;
+      var prevMaxHeight = host.style.maxHeight;
+      host.style.height = pinned;
+      host.style.minHeight = pinned;
+      host.style.maxHeight = pinned;
+      var heights = { backdrop: contentHeight(backdrop), textarea: contentHeight(textarea) };
+      host.style.height = prevHeight;
+      host.style.minHeight = prevMinHeight;
+      host.style.maxHeight = prevMaxHeight;
+      return heights;
+    }
+
     function verifyIntegrity() {
       // Reality, not belief: compare against the textarea's LIVE value, never
       // against a variable recording what we think we rendered.
       if (backdrop.textContent !== textarea.value + "\n") return false;
-      if (Math.abs(contentHeight(backdrop) - contentHeight(textarea)) > 2) return false;
-      return true;
+      // An empty value has no marks to misplace. Its scrollHeight measures
+      // the placeholder, which the backdrop does not render.
+      if (!textarea.value) return true;
+      var heights = contentHeights();
+      return Math.abs(heights.backdrop - heights.textarea) <= 2;
     }
 
     function applyVisibility() {
@@ -1912,7 +1943,7 @@ var McPhee = (function () {
         var ok = false;
         var renderError = null;
         try {
-          renderOpts.caret = textarea.selectionStart;
+          renderOpts.caret = typingCaret(textarea);
           backdrop.innerHTML = self.renderHtml(textarea.value, renderOpts);
           syncGeometry();
           if (!verifyIntegrity()) {
@@ -1928,10 +1959,11 @@ var McPhee = (function () {
         lastRendered = textarea.value;
         lastCaretWord = wordKey;
         if (!ok && !integrityFailed) {
+          var failedHeights = renderError ? null : contentHeights();
           console.warn("McPhee: overlay integrity check failed; hiding highlights rather than showing them misaligned.", renderError || {
             contentParity: backdrop.textContent === textarea.value + "\n",
-            backdropContentHeight: contentHeight(backdrop),
-            textareaContentHeight: contentHeight(textarea),
+            backdropContentHeight: failedHeights.backdrop,
+            textareaContentHeight: failedHeights.textarea,
           });
         }
         integrityFailed = !ok;
@@ -2001,13 +2033,20 @@ var McPhee = (function () {
 
     refresh();
 
-    // Scrolls the textarea so the character at `offset` sits roughly a third
-    // of the way down the view. The backdrop mirrors the textarea's exact
-    // wrapping, so a collapsed Range over its text nodes gives the true pixel
-    // position of any character offset.
+    // Scrolls the textarea so the character at `offset` sits in the middle of
+    // the view. The backdrop mirrors the textarea's exact wrapping, so a
+    // collapsed Range over its text nodes gives the true pixel position of any
+    // character offset. Navigation works with highlights off too: the hidden
+    // backdrop then holds the plain text just for this measurement.
     function scrollToOffset(offset) {
-      if (!enabled) return;
-      refresh();
+      if (enabled) {
+        refresh();
+      } else {
+        mirrorStyles();
+        backdrop.textContent = textarea.value + "\n";
+        syncGeometry();
+        lastRendered = null;
+      }
       var walker = document.createTreeWalker(backdrop, NodeFilter.SHOW_TEXT);
       var remaining = offset;
       var node;
@@ -2020,7 +2059,7 @@ var McPhee = (function () {
           var rect = range.getBoundingClientRect();
           var backdropRect = backdrop.getBoundingClientRect();
           var y = rect.top - backdropRect.top + backdrop.scrollTop;
-          textarea.scrollTop = Math.max(0, y - textarea.clientHeight / 3);
+          textarea.scrollTop = Math.max(0, y - textarea.clientHeight / 2);
           refresh();
           return;
         }
@@ -2111,7 +2150,7 @@ var McPhee = (function () {
   // occurrences, undo-preserving), add-to-dictionary for misspelled/unknown
   // words, capitalize for sentence-start nags, collapse for double spaces.
   // With a controller, the panel stays linked to the text both ways: rows
-  // whose occurrences are all scrolled off screen are dimmed
+  // whose occurrences are all scrolled off screen lose their bold word
   // (followViewport), and the row nearest the caret is highlighted and
   // scrolled into view within the panel (followCaret). Both default on.
   // config: { textarea, container, controller?, profile?, rules?, onChange?,
@@ -2227,11 +2266,13 @@ var McPhee = (function () {
     // "Move cursor here": focuses the textarea with the issue's text SELECTED
     // so the author can immediately retype over it. The issue is re-located
     // in the current value at click time (text may have moved since render).
+    // The only scroll is scrollToOffset's: focus() and setSelectionRange()
+    // would otherwise move the page, or (in Firefox) the text, on their own.
     function selectButton(match) {
       return button("select", "mcphee-panel-select", function () {
         var current = self.analyze(textarea.value, analyzeOpts).find(match);
         if (!current) return;
-        textarea.focus();
+        textarea.focus({ preventScroll: true });
         textarea.setSelectionRange(current.start, current.end);
         if (config.controller && config.controller.scrollToOffset) {
           config.controller.scrollToOffset(current.start);
@@ -2284,17 +2325,15 @@ var McPhee = (function () {
       return row;
     }
 
-    // Row behaviors shared by every issue type: hovering scrolls the text
-    // to the first occurrence and solidly highlights EVERY occurrence for
-    // exactly as long as the pointer stays (repeat rows highlight both
-    // words); leaving clears it instantly. Clicking the row background acts
-    // like "select".
+    // Row behaviors shared by every issue type: hovering solidly highlights
+    // EVERY occurrence already on screen for exactly as long as the pointer
+    // stays (repeat rows highlight both words) and never moves the text —
+    // rows rebuild and slide under a resting pointer, so a hover is not a
+    // request to go anywhere. Leaving clears it instantly. Clicking the row
+    // background acts like "select", the one panel gesture that scrolls.
     function wireRow(row) {
       var el = row.el;
       el.addEventListener("mouseenter", function () {
-        if (config.controller && config.controller.scrollToOffset) {
-          config.controller.scrollToOffset(row.start);
-        }
         if (config.controller && config.controller.hoverStart) {
           config.controller.hoverStart(row.spans.map(function (s) { return s[0]; }));
         }
@@ -2702,14 +2741,9 @@ var McPhee = (function () {
         capsReview.skipped.add(change.start);
         render();
       }));
-      row.addEventListener("mouseenter", function () {
-        if (config.controller && config.controller.scrollToOffset) {
-          config.controller.scrollToOffset(change.start);
-        }
-      });
       row.addEventListener("click", function (e) {
         if (e.target.closest("button")) return;
-        textarea.focus();
+        textarea.focus({ preventScroll: true });
         textarea.setSelectionRange(change.start, change.end);
         if (config.controller && config.controller.scrollToOffset) {
           config.controller.scrollToOffset(change.start);
@@ -2781,18 +2815,13 @@ var McPhee = (function () {
 
     function render() {
       var issues = self.analyze(textarea.value, Object.assign({}, analyzeOpts, {
-        caret: textarea.selectionStart,
+        caret: typingCaret(textarea),
       }));
       // Rebuilding wipes the panel's DOM, which clamps the scroll position
-      // of whatever element scrolls it (the panel container, the dock side
-      // column, or the drawer) to 0. Preserve it so acting on a row leaves
-      // the list where the author was looking — the next row simply moves
-      // up into the acted-on row's place.
-      var scroller = container;
-      while (scroller && scroller !== document.documentElement
-        && scroller.scrollHeight <= scroller.clientHeight) {
-        scroller = scroller.parentElement;
-      }
+      // of whatever element scrolls it to 0. Preserve it so acting on a row
+      // leaves the list where the author was looking — the next row simply
+      // moves up into the acted-on row's place.
+      var scroller = panelScroller();
       var savedScroll = scroller ? scroller.scrollTop : 0;
       container.innerHTML = "";
 
@@ -2832,7 +2861,7 @@ var McPhee = (function () {
       if (rulesFromCheckers(activeCheckers()).caps) container.appendChild(capsSection());
 
       // Group repeated words into a single row (remembering the first
-      // occurrence so hover can scroll to it).
+      // occurrence so a click can navigate to it).
       var wordGroups = new Map();
       var cultureGroups = new Map();
       var repeatGroups = new Map(); // norm -> echo/obscure group
@@ -2914,10 +2943,10 @@ var McPhee = (function () {
       });
 
       // Repetition rows: no autofix (word choice is the author's), just
-      // hover-to-scroll plus a session dismiss. Obscure rows additionally
-      // carry "not rare" — the permanent correction for frequency-list gaps
-      // (contractions like "won't" are unranked): the word is treated as
-      // common from then on, in every text.
+      // hover highlight, click navigation, and a session dismiss. Obscure
+      // rows additionally carry "not rare" — the permanent correction for
+      // frequency-list gaps (contractions like "won't" are unranked): the
+      // word is treated as common from then on, in every text.
       repeatGroups.forEach(function (group, norm) {
         var label = document.createElement("span");
         label.className = "mcphee-panel-word mcphee-panel-word-" + group.kind;
@@ -3065,8 +3094,8 @@ var McPhee = (function () {
 
     // ----- scroll/caret linkage -----
     // The panel and the text stay oriented to each other: rows whose every
-    // occurrence is scrolled out of view are dimmed, and the row nearest the
-    // caret is highlighted and kept scrolled into view in the panel.
+    // occurrence is scrolled out of view lose their bold word, and the row
+    // nearest the caret is highlighted and kept in view in the panel.
     var rowMeta = [];
 
     function spansVisible(spans, vis) {
@@ -3104,14 +3133,35 @@ var McPhee = (function () {
       rowMeta.forEach(function (r) {
         r.el.classList.toggle("mcphee-panel-item-current", r === current);
       });
-      if (current) {
-        current.el.scrollIntoView({ block: "nearest" });
+      if (current) revealRow(current.el);
+    }
+
+    // Whatever element scrolls the panel: the panel container, the dock side
+    // column, or the drawer.
+    function panelScroller() {
+      var el = container;
+      while (el && el !== document.documentElement && el.scrollHeight <= el.clientHeight) {
+        el = el.parentElement;
       }
+      return el;
+    }
+
+    // Brings a row into view by scrolling the panel alone. scrollIntoView
+    // would also scroll the page and every other scrolled ancestor.
+    function revealRow(el) {
+      var scroller = panelScroller();
+      if (!scroller || scroller === document.documentElement || scroller === document.body) return;
+      var overflowY = getComputedStyle(scroller).overflowY;
+      if (overflowY !== "auto" && overflowY !== "scroll") return;
+      var box = scroller.getBoundingClientRect();
+      var r = el.getBoundingClientRect();
+      if (r.top < box.top) scroller.scrollTop -= box.top - r.top;
+      else if (r.bottom > box.bottom) scroller.scrollTop += Math.min(r.bottom - box.bottom, r.top - box.top);
     }
 
     var lastPanelCaretWord = "";
     function panelCaretWordKey() {
-      var span = wordAtCaret(textarea.value, textarea.selectionStart);
+      var span = wordAtCaret(textarea.value, typingCaret(textarea));
       return span ? span.start + ":" + span.end : "";
     }
 

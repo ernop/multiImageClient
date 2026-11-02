@@ -45,6 +45,7 @@ assert.ok(['127.0.0.1', 'localhost'].includes(new URL(base).hostname), 'Use a lo
       .some(key => key.includes('mic_text_draft_v1:') && sessionStorage.getItem(key).includes('activated from history'))));
     await page.reload();
     assert.equal(await page.locator('#prompt').inputValue(), 'A prompt activated from history.');
+    await page.locator('#settings-toggle').click();
     await page.locator('#username-input').fill('Draft test');
     await page.locator('#username-input').dispatchEvent('change');
     await page.goto(new URL('goal.html', base).href);
