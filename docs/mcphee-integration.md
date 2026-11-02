@@ -98,8 +98,16 @@ Those checks failed on 3.12.1: Firefox moved the page 200 px, and the flex-host 
 The application passed 662 C# tests, 45 JavaScript tests, 19 tool tests, and 26 deploy tests.
 The text-entry, McPhee, phone-layout, draft, and prompt-rewrite browser suites passed against the local UI.
 The draft suite's account-name step now opens Settings first; that field has been inside Settings since 2026-09-09.
-Every browser check blocked or mocked requests other than GET, so no job, paid call, or Discord post occurred.
-The release targets the local UI and both production instances through the standard release scripts.
+The text-entry, phone-layout, and draft suites aborted every request other than GET.
+The prompt-rewrite suite used a mocked origin and reached no server.
+The McPhee suite sets no request block.
+A rerun that logged and aborted every other method recorded no such request.
+No check created a job, made a paid call, or posted to Discord.
+Release `0c7899a` went to the restarted local UI and to the original service through `agent-redeploy.sh`.
+Vibecoders AI Generation was then updated from the same verified publish and runs the identical build.
+Both production services serve McPhee 3.12.2 and the new asset queries.
+The original answers its loopback health check, and its private vhost route returns the login gate.
+Vibecoders answers its loopback health check, and its private route returns the login gate.
 
 ## Release validation — 2026-10-06 (3.12.0)
 
