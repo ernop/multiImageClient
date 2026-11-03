@@ -13,6 +13,27 @@ The old restart script killed all matching UI processes and any process occupyin
 It also stopped the server before building.
 A failed build therefore left the local site unavailable.
 
+## Local request guard
+
+Decided 2026-11-03. With a blank `UiAuthFilePath` the UI has no login, so it
+refuses requests that another web page could make in the owner's browser:
+
+- `Host` must be `localhost`, a `*.localhost` name (Caddy serves
+  `multi-image-client.localhost`), `127.0.0.1` or `[::1]`, with any port. DNS
+  rebinding points an attacker's domain at 127.0.0.1, and the browser then
+  sends that domain as `Host`; the request is refused before any endpoint runs.
+- A request other than GET, HEAD or OPTIONS is refused when its `Origin` is not
+  one of those hosts (`Origin: null` included) or, without `Origin`, when
+  `Sec-Fetch-Site` is `cross-site`. This stops cross-site forms and fetches
+  aimed at `127.0.0.1:5960`. curl and agent scripts send neither header and pass.
+- Refusals get 403 with a JSON error. The first 20 per process are logged as
+  `UI local guard: refused ...`.
+
+Shared deployments set `UiAuthFilePath`, are reached through nginx under their
+public hostname, and are protected by the login gate, so the guard is not
+registered there. Code: `MultiImageClient/Implementation/UiLocalRequestGuard.cs`;
+tests: `MultiImageClient.Tests/UiLocalRequestGuardTests.cs`.
+
 ## Restart contract
 
 Run `tools/restart-local-ui.sh` from this checkout on Linux.

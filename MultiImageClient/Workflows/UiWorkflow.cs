@@ -211,6 +211,8 @@ namespace MultiImageClient
                 builder.WebHost.UseUrls(url);
 
             var app = builder.Build();
+            if (auth == null)
+                app.Use(UiLocalRequestGuard.Middleware);
             var idleLifetime = settings.UiIdleTimeoutSeconds == 0 ? null
                 : new UiIdleLifetime(TimeSpan.FromSeconds(settings.UiIdleTimeoutSeconds));
             if (idleLifetime != null)

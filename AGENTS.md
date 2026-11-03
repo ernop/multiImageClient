@@ -14,7 +14,7 @@ C# desktop app that chains together image generation steps across multiple APIs 
 
 - [docs/mcphee-integration.md](docs/mcphee-integration.md) — **2026-11-02:** load upstream McPhee 3.12.2 unchanged everywhere. Its overlay check no longer moves the page, and the copy carries no application patches; fix library defects upstream first. **2026-10-06:** load McPhee 3.12.0 (adds the caps level) and the 2026 dictionary everywhere; preserve per-checker personal settings.
 
-- [docs/local-ui-server.md](docs/local-ui-server.md) — **2026-10-11:** a startup failure after shutdown keeps no release copy; rebuild from the repository. **2026-09-10:** isolated local publishes, exact-process restarts, compatible library updates, and runtime/status verification.
+- [docs/local-ui-server.md](docs/local-ui-server.md) — **2026-11-03:** with auth off, the UI refuses requests whose Host is not localhost (DNS rebinding) and writes from other sites. **2026-10-11:** a startup failure after shutdown keeps no release copy; rebuild from the repository. **2026-09-10:** isolated local publishes, exact-process restarts, compatible library updates, and runtime/status verification.
 
 - [docs/ui-polling-prd.md](docs/ui-polling-prd.md) — **2026-10-10:** idle tabs stop polling after 10 minutes without input. Input or tab reveal resumes every loop; cursor polls catch up. The composer keeps polling while the user's own jobs run, at most 60 minutes after input. New poll loops must check `MultiImageTabActivity.shouldPoll()` and register a resume handler.
 
