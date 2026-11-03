@@ -390,11 +390,22 @@ namespace MultiImageClient
             if (!string.IsNullOrWhiteSpace(_options.BrowserExecutablePath))
             {
                 launch.ExecutablePath = Settings.ExpandPath(_options.BrowserExecutablePath);
+                // Playwright adds --no-sandbox by default. Ubuntu lets Chromium's sandbox start only
+                // for a binary with an AppArmor userns profile: installed Google Chrome has one
+                // (/etc/apparmor.d/chrome), Playwright's downloaded Chromium does not.
+                launch.ChromiumSandbox = true;
             }
 
             try
             {
                 _context = await _playwright.Chromium.LaunchPersistentContextAsync(profileDir, launch);
+            }
+            catch (PlaywrightException ex) when (ex.Message.Contains("No usable sandbox", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new MetaWebException(
+                    $"Meta web: the browser at {launch.ExecutablePath} cannot start its sandbox. Use Google Chrome "
+                    + "(/opt/google/chrome/chrome; its AppArmor profile allows the sandbox) or clear "
+                    + "MetaWebBrowserExecutablePath to use Playwright's Chromium without one.");
             }
             catch (PlaywrightException ex) when (ex.Message.Contains("Executable doesn't exist", StringComparison.OrdinalIgnoreCase))
             {

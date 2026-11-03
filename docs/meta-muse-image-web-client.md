@@ -46,6 +46,15 @@ implemented:
   with an actionable message; headless launch against live meta.ai reaches the
   auth check and reports "not authenticated" correctly.
 
+Browser (2026-11-03): Playwright 1.64.1. On PC, `MetaWebBrowserExecutablePath`
+is `/opt/google/chrome/chrome` (Google Chrome stable, updated by apt), and
+with an executable path set the browser runs with Chromium's sandbox
+(`ChromiumSandbox`). Without one, Playwright's downloaded Chromium runs with
+`--no-sandbox`: Ubuntu's AppArmor allows the sandbox only for a binary with a
+userns profile, which Chrome has (`/etc/apparmor.d/chrome`). Playwright's
+maintainers say their bundled browsers are not a security boundary for
+untrusted pages, and meta.ai's page runs in this browser.
+
 Live smoke test PASSED (2026-07-12, after two selector findings):
 
 - Finding 1: the composer is `<textarea data-testid="composer-input">` and is

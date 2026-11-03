@@ -32,7 +32,7 @@
     <PackageReference Include="Magick.NET-Q16-AnyCPU" Version="14.17.1" />
     <PackageReference Include="Magick.NET.Core" Version="14.17.1" />
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Playwright" Version="1.61.0" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.64.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="OpenAI" Version="2.1.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
