@@ -320,6 +320,7 @@ namespace MultiImageClient
                                 || (!policy.Video && path.StartsWith("/api/video-jobs", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/advice", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/condense", StringComparison.OrdinalIgnoreCase))
+                                || (!policy.PromptRewrite && path.StartsWith("/api/prompt/split", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/subjects/synthesize", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.AllowVibecoders && path.StartsWith("/api/discord/vibecoders", StringComparison.OrdinalIgnoreCase)))))
                         {
@@ -698,6 +699,7 @@ namespace MultiImageClient
                         availabilityProblem = DirectedPromptRewrite.AvailabilityProblem(DirectedPromptRewrite.CondenseModel, settings),
                         minCondensedPromptChars = UiJobRunner.MinCondensedPromptChars,
                     },
+                    promptSplit = PromptSplit.Config(settings),
                     // Goal loop manager catalog + limits, consumed by goal.html.
                     // Generators come from the `generators` list above (image
                     // kind, available, no goalLoopProblem).
@@ -1063,6 +1065,7 @@ namespace MultiImageClient
                         sourceJobId = j.SourceJobId,
                         sourceGenerator = j.SourceGenerator,
                         sourceIndex = j.SourceIndex,
+                        split = PromptSplit.ToMetadata(j.Split),
                         canHide = CanManageVisibility(j, authUser, auth != null),
                         createdAtUnixMs = new DateTimeOffset(UiJobStorage.EnsureUtc(j.CreatedAt)).ToUnixTimeMilliseconds(),
                     });
@@ -1218,6 +1221,52 @@ namespace MultiImageClient
                 {
                     return Results.BadRequest(new { error = ex.Message });
                 }
+                // A split submission names the user's stored split. Each part
+                // becomes its own job, in part order, with one image per
+                // generator. See docs/prompt-split-prd.md.
+                var splitExchangeId = form["splitExchangeId"].ToString().Trim();
+                PromptSplitPlan? splitPlan = null;
+                var splitModel = "";
+                if (splitExchangeId.Length > 0)
+                {
+                    try
+                    {
+                        if (environments?.Get(settings.UiEnvironmentId) is { PromptRewrite: false })
+                        {
+                            throw new InvalidDataException("Prompt splitting is not available in this environment.");
+                        }
+                        if (form["n"].ToString() != "1")
+                        {
+                            throw new InvalidDataException("A split makes one image per part on each generator. Send n=1.");
+                        }
+                        if (form.ContainsKey("condensedPrompts"))
+                        {
+                            throw new InvalidDataException("A split part cannot use a condensed prompt.");
+                        }
+                        if (sketchComposer != null)
+                        {
+                            throw new InvalidDataException("A composition sketch lays out one image. Remove the sketch to split the prompt.");
+                        }
+                        var exchangeIdentity = PromptExchangeIdentityKey(
+                            request.HttpContext.Items["micUser"] as string ?? "",
+                            createdBy);
+                        var resolved = PromptSplit.ResolveSubmission(
+                            splitExchangeId,
+                            prompt,
+                            genKeys,
+                            generatorExtraTexts,
+                            imageAttached: uploadFiles.Count > 0,
+                            exchangeId => community
+                                .ReadClaudePromptExchanges(exchangeIdentity, 1, exchangeId: exchangeId)
+                                .SingleOrDefault());
+                        splitPlan = resolved.Plan;
+                        splitModel = resolved.Exchange.Model;
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        return Results.BadRequest(new { error = ex.Message });
+                    }
+                }
 
                 var inputPaths = new List<string>();
                 var inputImageWidth = 0;
@@ -1266,154 +1315,197 @@ namespace MultiImageClient
                     }
                 }
 
-                if (!runner.TryAcquireJobAdmission(out var admission))
+                // Every job of a split is admitted before any of them starts,
+                // so a full queue starts none.
+                var jobCount = splitPlan?.Parts.Count ?? 1;
+                var admissions = new List<IDisposable?>(jobCount);
+                for (var a = 0; a < jobCount; a++)
                 {
-                    DeleteRejectedJobInputs(savedInputs.Select(saved => saved.Path));
-                    return Results.Json(
-                        new { error = $"The UI queue is full ({runner.MaxPendingJobs} pending jobs). Try again after a job finishes." },
-                        statusCode: 503);
+                    if (!runner.TryAcquireJobAdmission(out var admission))
+                    {
+                        foreach (var held in admissions) held?.Dispose();
+                        DeleteRejectedJobInputs(savedInputs.Select(saved => saved.Path));
+                        return Results.Json(
+                            new
+                            {
+                                error = jobCount == 1
+                                    ? $"The UI queue is full ({runner.MaxPendingJobs} pending jobs). Try again after a job finishes."
+                                    : $"The UI queue has no room for {jobCount} more jobs ({runner.MaxPendingJobs} pending jobs at most). Nothing was started. Try again after jobs finish.",
+                            },
+                            statusCode: 503);
+                    }
+                    admissions.Add(admission);
                 }
                 try
                 {
-                    var job = new UiJob
+                    UiJob StartJob(string jobPrompt, UiJobSplit? split, int admissionIndex)
                     {
-                        Prompt = prompt,
-                        CreatedBy = createdBy,
-                        CreatorLogin = request.HttpContext.Items["micUser"] as string ?? "",
-                        InputImagePaths = inputPaths,
-                        InputImageWidth = inputImageWidth,
-                        InputImageHeight = inputImageHeight,
-                        GeneratorKeys = genKeys,
-                    };
-                    var spec = new UiJobSpec
-                    {
-                        GeneratorKeys = genKeys,
-                        Quality = (form["quality"].ToString() ?? "high").Trim().ToLowerInvariant(),
-                        Moderation = (form["moderation"].ToString() ?? "low").Trim().ToLowerInvariant(),
-                        ImageCount = n,
-                        Shape = shape,
-                        Detail = (form["detail"].ToString() ?? "standard").Trim().ToLowerInvariant(),
-                        GeneratorExtraTexts = generatorExtraTexts,
-                        CondensedPrompts = condensedPrompts,
-                    };
-                    jobs.Add(job);
-                    try
-                    {
-                        community.RecordGenerationStart(
-                            job.CreatorLogin,
-                            job.CreatedBy,
-                            job.Id,
-                            new DateTimeOffset(UiJobStorage.EnsureUtc(job.CreatedAt)).ToUnixTimeMilliseconds());
-                    }
-                    catch (Exception ex)
-                    {
-                        // Activity is secondary to the accepted generation:
-                        // never turn a durable image job into a failed submit
-                        // after its exact identity has already been registered.
-                        Logger.Log($"UI activity: could not record generation start for {job.Id}: {ex.Message}");
-                    }
-                    for (var i = 0; i < savedInputs.Count; i++)
-                    {
-                        // Keep each input in the job's image store so reloaded pages
-                        // can show thumbnails without touching the saves/ layout.
-                        var saved = savedInputs[i];
-                        job.StoreImage("input", i, saved.Bytes, saved.ContentType, saved.Path);
-                    }
-                    // The full option set rides the persisted accepted event so a
-                    // job card can restore this exact setup into the composer
-                    // ("set active"), including after a server restart.
-                    job.Emit(new
-                    {
-                        type = "accepted",
-                        gens = genKeys,
-                        hasImage = job.HasInputImage,
-                        inputCount = job.InputImageCount,
-                        inputWidth = job.HasInputImage ? job.InputImageWidth : (int?)null,
-                        inputHeight = job.HasInputImage ? job.InputImageHeight : (int?)null,
-                        shape,
-                        detail = spec.Detail,
-                        quality = spec.Quality,
-                        moderation = spec.Moderation,
-                        n = spec.ImageCount,
-                        generatorExtraTexts = spec.GeneratorExtraTexts,
-                        // One entry per condensed prompt, naming exactly the
-                        // targets that received it instead of the job prompt.
-                        condensedPrompts = genKeys
-                            .Where(spec.CondensedPrompts.ContainsKey)
-                            .GroupBy(key => spec.CondensedPrompts[key].ExchangeId)
-                            .Select(group => new
-                            {
-                                exchangeId = group.Key,
-                                model = spec.CondensedPrompts[group.First()].Model,
-                                prompt = spec.CondensedPrompts[group.First()].Prompt,
-                                generators = group.ToArray(),
-                            })
-                            .ToArray(),
-                        // Exact persisted identity for the sketch editor. Null
-                        // explicitly means this new job had no linked sketch;
-                        // old accepted events lack the property entirely and
-                        // therefore cannot safely identify a legacy attachment.
-                        sketchComposer = sketchComposer == null
-                            ? null
-                            : sketchComposer.Version == 1
-                            ? (object)new
-                            {
-                                version = sketchComposer.Version,
-                                inputIndex = sketchComposer.InputIndex,
-                                aspect = sketchComposer.Aspect,
-                                meanings = sketchComposer.Meanings,
-                            }
-                            : (object)new
-                            {
-                                version = sketchComposer.Version,
-                                inputIndex = sketchComposer.InputIndex,
-                                aspect = sketchComposer.Aspect,
-                                palette = sketchComposer.Palette!
-                                    .Select(color => new { name = color.Name, hex = color.Hex })
-                                    .ToArray(),
-                                meanings = sketchComposer.Meanings,
-                            },
-                        // Keep the legacy gpt2 event fields while pre-feature
-                        // browser windows remain possible. New clients use the
-                        // keyed map above for every image and describe endpoint.
-                        gpt2GuidanceEnabled = spec.GeneratorExtraTexts.ContainsKey(UiJobRunner.KeyGpt2),
-                        gpt2GuidanceText = spec.GeneratorExtraTexts.TryGetValue(
-                            UiJobRunner.KeyGpt2,
-                            out var gpt2ExtraText)
-                            ? gpt2ExtraText
-                            : "",
-                        prompt,
-                        at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    });
-                    var ownedAdmission = admission!;
-                    activeJobs[job.Id] = Task.Run(async () =>
-                    {
+                        var job = new UiJob
+                        {
+                            Prompt = jobPrompt,
+                            CreatedBy = createdBy,
+                            CreatorLogin = request.HttpContext.Items["micUser"] as string ?? "",
+                            InputImagePaths = inputPaths,
+                            InputImageWidth = inputImageWidth,
+                            InputImageHeight = inputImageHeight,
+                            GeneratorKeys = genKeys,
+                            Split = split,
+                        };
+                        var spec = new UiJobSpec
+                        {
+                            GeneratorKeys = genKeys,
+                            Quality = (form["quality"].ToString() ?? "high").Trim().ToLowerInvariant(),
+                            Moderation = (form["moderation"].ToString() ?? "low").Trim().ToLowerInvariant(),
+                            ImageCount = n,
+                            Shape = shape,
+                            Detail = (form["detail"].ToString() ?? "standard").Trim().ToLowerInvariant(),
+                            GeneratorExtraTexts = generatorExtraTexts,
+                            CondensedPrompts = condensedPrompts,
+                        };
+                        jobs.Add(job);
                         try
                         {
-                            await runner.RunJobAsync(job, spec);
+                            community.RecordGenerationStart(
+                                job.CreatorLogin,
+                                job.CreatedBy,
+                                job.Id,
+                                new DateTimeOffset(UiJobStorage.EnsureUtc(job.CreatedAt)).ToUnixTimeMilliseconds());
                         }
                         catch (Exception ex)
                         {
-                            Logger.Log($"[ui #{job.Id}] job runner failed: {ex}");
+                            // Activity is secondary to the accepted generation:
+                            // never turn a durable image job into a failed submit
+                            // after its exact identity has already been registered.
+                            Logger.Log($"UI activity: could not record generation start for {job.Id}: {ex.Message}");
                         }
-                        finally
+                        for (var i = 0; i < savedInputs.Count; i++)
                         {
-                            ownedAdmission.Dispose();
-                            activeJobs.TryRemove(job.Id, out _);
+                            // Keep each input in the job's image store so reloaded pages
+                            // can show thumbnails without touching the saves/ layout.
+                            var saved = savedInputs[i];
+                            job.StoreImage("input", i, saved.Bytes, saved.ContentType, saved.Path);
                         }
-                    });
-                    admission = null;
+                        // The full option set rides the persisted accepted event so a
+                        // job card can restore this exact setup into the composer
+                        // ("set active"), including after a server restart.
+                        job.Emit(new
+                        {
+                            type = "accepted",
+                            gens = genKeys,
+                            hasImage = job.HasInputImage,
+                            inputCount = job.InputImageCount,
+                            inputWidth = job.HasInputImage ? job.InputImageWidth : (int?)null,
+                            inputHeight = job.HasInputImage ? job.InputImageHeight : (int?)null,
+                            shape,
+                            detail = spec.Detail,
+                            quality = spec.Quality,
+                            moderation = spec.Moderation,
+                            n = spec.ImageCount,
+                            generatorExtraTexts = spec.GeneratorExtraTexts,
+                            // One entry per condensed prompt, naming exactly the
+                            // targets that received it instead of the job prompt.
+                            condensedPrompts = genKeys
+                                .Where(spec.CondensedPrompts.ContainsKey)
+                                .GroupBy(key => spec.CondensedPrompts[key].ExchangeId)
+                                .Select(group => new
+                                {
+                                    exchangeId = group.Key,
+                                    model = spec.CondensedPrompts[group.First()].Model,
+                                    prompt = spec.CondensedPrompts[group.First()].Prompt,
+                                    generators = group.ToArray(),
+                                })
+                                .ToArray(),
+                            // Exact persisted identity for the sketch editor. Null
+                            // explicitly means this new job had no linked sketch;
+                            // old accepted events lack the property entirely and
+                            // therefore cannot safely identify a legacy attachment.
+                            sketchComposer = sketchComposer == null
+                                ? null
+                                : sketchComposer.Version == 1
+                                ? (object)new
+                                {
+                                    version = sketchComposer.Version,
+                                    inputIndex = sketchComposer.InputIndex,
+                                    aspect = sketchComposer.Aspect,
+                                    meanings = sketchComposer.Meanings,
+                                }
+                                : (object)new
+                                {
+                                    version = sketchComposer.Version,
+                                    inputIndex = sketchComposer.InputIndex,
+                                    aspect = sketchComposer.Aspect,
+                                    palette = sketchComposer.Palette!
+                                        .Select(color => new { name = color.Name, hex = color.Hex })
+                                        .ToArray(),
+                                    meanings = sketchComposer.Meanings,
+                                },
+                            // Keep the legacy gpt2 event fields while pre-feature
+                            // browser windows remain possible. New clients use the
+                            // keyed map above for every image and describe endpoint.
+                            gpt2GuidanceEnabled = spec.GeneratorExtraTexts.ContainsKey(UiJobRunner.KeyGpt2),
+                            gpt2GuidanceText = spec.GeneratorExtraTexts.TryGetValue(
+                                UiJobRunner.KeyGpt2,
+                                out var gpt2ExtraText)
+                                ? gpt2ExtraText
+                                : "",
+                            prompt = jobPrompt,
+                            at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        });
+                        var ownedAdmission = admissions[admissionIndex]!;
+                        activeJobs[job.Id] = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await runner.RunJobAsync(job, spec);
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Log($"[ui #{job.Id}] job runner failed: {ex}");
+                            }
+                            finally
+                            {
+                                ownedAdmission.Dispose();
+                                activeJobs.TryRemove(job.Id, out _);
+                            }
+                        });
+                        admissions[admissionIndex] = null;
+                        return job;
+                    }
+
+                    if (splitPlan == null)
+                    {
+                        var job = StartJob(prompt, null, 0);
+                        return Results.Json(new
+                        {
+                            id = job.Id,
+                            user = createdBy,
+                            originalUser = createdBy,
+                            ownerId = UiCommunityStore.PublicIdentityId(job.CreatorLogin),
+                        });
+                    }
+                    var groupId = Guid.NewGuid().ToString("N")[..12];
+                    var parts = new List<UiJob>(splitPlan.Parts.Count);
+                    for (var i = 0; i < splitPlan.Parts.Count; i++)
+                    {
+                        var part = splitPlan.Parts[i];
+                        parts.Add(StartJob(
+                            part.Prompt,
+                            new UiJobSplit(groupId, splitExchangeId, i + 1, splitPlan.Parts.Count, part.Title, splitModel, splitPlan.Reason),
+                            i));
+                    }
+                    Logger.Log($"UI split {splitExchangeId} started {parts.Count} jobs for '{createdBy}': "
+                        + string.Join(", ", parts.Select(job => job.Id)));
                     return Results.Json(new
                     {
-                        id = job.Id,
+                        jobs = parts.Select(job => new { id = job.Id, split = PromptSplit.ToMetadata(job.Split) }).ToArray(),
                         user = createdBy,
                         originalUser = createdBy,
-                        ownerId = UiCommunityStore.PublicIdentityId(job.CreatorLogin),
+                        ownerId = UiCommunityStore.PublicIdentityId(parts[0].CreatorLogin),
                     });
                 }
                 finally
                 {
-                    admission?.Dispose();
+                    foreach (var held in admissions) held?.Dispose();
                 }
             });
 
@@ -2139,6 +2231,8 @@ namespace MultiImageClient
                     var source = community.ReadClaudePromptExchanges(identityKey, 1, exchangeId: sourceId).SingleOrDefault();
                     if (source == null || (side == "result" && source.Status != "succeeded"))
                         return Results.BadRequest(new { error = "This saved prompt version is unavailable." });
+                    if (side == "result" && source.Purpose == PromptSplit.Purpose)
+                        return Results.BadRequest(new { error = "A split holds one prompt per image. Restore its source prompt, or use set active on a part's job card." });
                     restoredPrompt = side == "original" ? source.OriginalPrompt : source.ResultPrompt;
                     instruction = $"Restore {sourceId} / {side}.";
                 }
@@ -2373,6 +2467,131 @@ namespace MultiImageClient
                 {
                     condenseInFlight.TryRemove(flightKey, out _);
                 }
+            });
+
+            // Asks Opus 5.5 whether the prompt serves better as several images
+            // and stores its plan. The browser then submits the plan to
+            // /api/jobs, which makes one job per part. Every press asks again.
+            // See docs/prompt-split-prd.md.
+            app.MapPost("/api/prompt/split", async (HttpRequest request) =>
+            {
+                var form = await request.ReadFormAsync();
+                var definition = PromptSplit.Definition;
+                var problem = ManagerCatalog.DescribeAvailabilityProblem(definition, settings);
+                if (problem != null) return Results.BadRequest(new { error = problem });
+                var prompt = UiJobRunner.PromptFromFormField(form["prompt"].ToString());
+                if (prompt.Length == 0)
+                {
+                    return Results.BadRequest(new { error = "prompt is empty" });
+                }
+                if (prompt.Length > PromptSplit.MaxSourceChars)
+                {
+                    return Results.BadRequest(new { error = $"prompt must be {PromptSplit.MaxSourceChars:N0} characters or fewer" });
+                }
+                var instruction = UiJobRunner.PromptFromFormField(form["instruction"].ToString());
+                if (instruction.Length == 0 || instruction.Length > PromptSplit.MaxInstructionChars)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = $"The split instruction must be between 1 and {PromptSplit.MaxInstructionChars:N0} characters.",
+                    });
+                }
+                var styleNote = UiJobRunner.PromptFromFormField(form["styleNote"].ToString());
+                if (styleNote.Length > PromptSplit.MaxStyleNoteChars)
+                {
+                    return Results.BadRequest(new
+                    {
+                        error = $"The style note must be {PromptSplit.MaxStyleNoteChars:N0} characters or fewer.",
+                    });
+                }
+                var authUser = request.HttpContext.Items["micUser"] as string ?? "";
+                if (!TryResolveCreatorName(
+                    form["user"].ToString(),
+                    authUser,
+                    community,
+                    out var actorDisplay,
+                    out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+                var identityKey = PromptExchangeIdentityKey(authUser, actorDisplay);
+                int partBudget;
+                try
+                {
+                    if (!form.ContainsKey("generatorExtraTexts"))
+                    {
+                        throw new InvalidDataException("A split request must include generatorExtraTexts.");
+                    }
+                    var keys = form["generators"].ToString()
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    partBudget = PromptSplit.PartBudget(
+                        keys,
+                        ParseGeneratorExtraTexts(form, keys),
+                        imageAttached: form["imageAttached"].ToString() == "true");
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                using var lease = PromptSplit.TryBegin(identityKey, out var busy);
+                if (lease == null)
+                {
+                    return Results.Conflict(new { error = busy });
+                }
+                var userMessage = PromptSplit.BuildUserMessage(instruction, styleNote, partBudget, prompt);
+                var exchange = community.StartClaudePromptExchange(
+                    identityKey,
+                    actorDisplay,
+                    definition.Model,
+                    PromptSplit.RecordedInstruction(instruction, styleNote),
+                    prompt,
+                    PromptSplit.SystemPrompt,
+                    userMessage,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    PromptSplit.Purpose);
+                var outcome = await PromptSplit.RequestAsync(
+                    ManagerCatalog.Build(definition, settings),
+                    userMessage,
+                    partBudget,
+                    definition.Label,
+                    request.HttpContext.RequestAborted);
+                community.CompleteClaudePromptExchange(
+                    exchange.Id,
+                    outcome.RawResponse,
+                    outcome.Plan == null ? "" : PromptSplit.Serialize(outcome.Plan),
+                    outcome.Error,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                var tokens = $"{outcome.InputTokens?.ToString("N0") ?? "unknown"} input and "
+                    + $"{outcome.OutputTokens?.ToString("N0") ?? "unknown"} output tokens";
+                if (outcome.Plan == null)
+                {
+                    var actionHint = ProviderActionHints.For(UiJobRunner.KeyDescribeClaude, outcome.Error);
+                    Logger.Log($"UI prompt split {exchange.Id} failed for '{actorDisplay}' ({tokens}): {outcome.Error}"
+                        + (actionHint != null
+                            ? $"\nUI prompt split next step: {actionHint.Text} -> {actionHint.Url}"
+                            : ""));
+                    return Results.Json(
+                        new
+                        {
+                            error = outcome.Error,
+                            exchangeId = exchange.Id,
+                            errorHint = actionHint?.Text,
+                            errorHintUrl = actionHint?.Url,
+                        },
+                        statusCode: 502);
+                }
+                Logger.Log($"UI prompt split {exchange.Id} completed for '{actorDisplay}': "
+                    + $"{outcome.Plan.ImageCount} image(s), {tokens}.");
+                return Results.Json(new
+                {
+                    exchangeId = exchange.Id,
+                    model = definition.Model,
+                    modelLabel = definition.Label,
+                    partBudget,
+                    imageCount = outcome.Plan.ImageCount,
+                    reason = outcome.Plan.Reason,
+                    images = outcome.Plan.Parts.Select(part => new { title = part.Title, prompt = part.Prompt }),
+                });
             });
 
             app.MapGet("/api/prompt/advice/history", (

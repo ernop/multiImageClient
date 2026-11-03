@@ -61,6 +61,8 @@ namespace MultiImageClient
         public string SourceJobId { get; init; } = "";
         public string SourceGenerator { get; init; } = "";
         public int? SourceIndex { get; init; }
+        // Set when this job is one part of a prompt split.
+        public UiJobSplit? Split { get; init; }
 
         private readonly object _lock = new();
         // Events live on disk (events.jsonl). An in-RAM copy is kept only while
@@ -870,6 +872,7 @@ namespace MultiImageClient
                 SourceJobId = job.SourceJobId,
                 SourceGenerator = job.SourceGenerator,
                 SourceIndex = job.SourceIndex,
+                Split = job.Split == null ? null : UiPersistedJobSplit.From(job.Split),
                 Done = job.IsDone,
             };
             WriteJsonAtomically(_metadataPath, metadata);
@@ -1438,6 +1441,7 @@ namespace MultiImageClient
                     SourceJobId = metadata.SourceJobId,
                     SourceGenerator = metadata.SourceGenerator,
                     SourceIndex = metadata.SourceIndex,
+                    Split = metadata.Split?.ToJobSplit(),
                 };
                 job.AttachStorage(storage);
 
@@ -1723,7 +1727,33 @@ namespace MultiImageClient
             public string SourceJobId { get; set; } = "";
             public string SourceGenerator { get; set; } = "";
             public int? SourceIndex { get; set; }
+            public UiPersistedJobSplit? Split { get; set; }
             public bool Done { get; set; }
+        }
+
+        private sealed class UiPersistedJobSplit
+        {
+            public string GroupId { get; set; } = "";
+            public string ExchangeId { get; set; } = "";
+            public int Index { get; set; }
+            public int Count { get; set; }
+            public string Title { get; set; } = "";
+            public string Model { get; set; } = "";
+            public string Reason { get; set; } = "";
+
+            public static UiPersistedJobSplit From(UiJobSplit split) => new()
+            {
+                GroupId = split.GroupId,
+                ExchangeId = split.ExchangeId,
+                Index = split.Index,
+                Count = split.Count,
+                Title = split.Title,
+                Model = split.Model,
+                Reason = split.Reason,
+            };
+
+            public UiJobSplit ToJobSplit()
+                => PromptSplit.ValidateJobSplit(new UiJobSplit(GroupId, ExchangeId, Index, Count, Title, Model, Reason));
         }
 
         private sealed class UiPersistedImage
@@ -2072,6 +2102,7 @@ namespace MultiImageClient
                 gens = job.GeneratorKeys,
                 hasImage = job.HasInputImage,
                 inputCount = job.InputImageCount,
+                split = PromptSplit.ToMetadata(job.Split),
                 // No preformatted time string: the browser formats the unix-ms
                 // instant in the viewer's own timezone.
                 createdAtUnixMs = new DateTimeOffset(UiJobStorage.EnsureUtc(job.CreatedAt)).ToUnixTimeMilliseconds(),

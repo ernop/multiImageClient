@@ -41,7 +41,10 @@ const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><r
       const old = structuredClone(config);
       old.version = 2;
       delete old.promptTools.globalAppendText;
-      if (normalizeImportedPersonalConfiguration(old).promptTools.globalAppendText !== '') throw Error('migration');
+      delete old.promptTools.splitInstruction;
+      delete old.promptTools.splitStyleNote;
+      const migrated = normalizeImportedPersonalConfiguration(old).promptTools;
+      if (migrated.globalAppendText !== '' || migrated.splitInstruction !== '' || migrated.splitStyleNote !== '') throw Error('migration');
       for (const bad of [42, 'x'.repeat(16001)]) {
         const invalid = structuredClone(config);
         invalid.promptTools.globalAppendText = bad;
@@ -95,7 +98,9 @@ const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><r
 
     const viewerPage = await context.newPage();
     viewerPage.on('pageerror', error => errors.push(error.message));
-    await viewerPage.goto(base);
+    // The shared viewer needs only this origin. A composer page here would
+    // keep its startup running against the replaced document.
+    await viewerPage.goto(new URL('healthz', base).href);
     await viewerPage.setContent('<html><body></body></html>');
     await viewerPage.addScriptTag({ path: path.join(root, 'viewer.js') });
     const requests = [], thumbRequests = [];

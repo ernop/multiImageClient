@@ -94,6 +94,87 @@ async function longPrompt(prompt) {
   await prompt.page().waitForTimeout(900);
 }
 
+// Replacing the whole prompt, as an AI rewrite does, fits the field to the new text.
+// The rewrite request receives a fixed local reply, so no provider sees it.
+async function replacementFits(page, prompt) {
+  const frames = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const layout = () => page.evaluate(() => {
+    const rect = document.getElementById('prompt').getBoundingClientRect();
+    return { y: Math.round(scrollY), top: rect.top, bottom: rect.bottom, height: rect.height };
+  });
+  const paragraph = 'The bright harbor fills with clear noon light, and the sailboats rest in tidy rows while gulls circle above the white pier.';
+  const paragraphs = count => Array.from({ length: count }, (_, i) => `${i + 1}. ${paragraph}`).join('\n');
+  const short = paragraphs(2), medium = paragraphs(15), long = paragraphs(45);
+  const typedHeight = async text => {
+    await prompt.fill('');
+    await prompt.fill(text);
+    await frames();
+    return (await layout()).height;
+  };
+  const shortHeight = await typedHeight(short);
+  const mediumHeight = await typedHeight(medium);
+  await prompt.fill(long);
+  await frames();
+  const tall = await layout();
+  assert.ok(tall.height > mediumHeight + 600, 'The long prompt stretches the field: ' + JSON.stringify({ tall, mediumHeight }));
+
+  // The view shows the end of the prompt and the buttons under it; its top is far above.
+  await page.evaluate(() => {
+    const tools = document.getElementById('prompt-tools').getBoundingClientRect();
+    scrollTo(0, scrollY + tools.bottom - innerHeight + 60);
+  });
+  await frames();
+  const before = await layout();
+  assert.ok(before.top < 0, 'The prompt starts above the view: ' + JSON.stringify(before));
+  await page.route('**/api/prompt/advice', route => route.fulfill({ json: { replacement: medium, exchangeId: 'text-entry-test' } }));
+  const button = await page.locator('[data-rewrite-model="claude-sonnet-5-5"]').boundingBox();
+  await page.mouse.click(button.x + button.width / 2, button.y + button.height / 2);
+  await page.waitForFunction(() => document.getElementById('prompt-rewrite-status').textContent === 'Expanded prompt applied.');
+  await page.unroute('**/api/prompt/advice');
+  await frames();
+  await page.waitForTimeout(900);
+  const rewritten = await layout();
+  assert.equal(await prompt.inputValue(), medium);
+  assert.ok(Math.abs(rewritten.height - mediumHeight) <= 1,
+    'A shorter rewrite is as tall as the same text typed into an empty prompt: ' + JSON.stringify({ mediumHeight, rewritten }));
+  assert.ok(Math.abs(rewritten.bottom - before.bottom) <= 1,
+    'The bottom edge and the buttons under it keep their place: ' + JSON.stringify({ before, rewritten }));
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.mcphee-backdrop')).visibility), 'visible',
+    'The spelling overlay still matches the fitted field.');
+
+  // With the prompt's top in view, the page stays still while the field grows or shrinks.
+  await page.evaluate(() => scrollTo(0, 0));
+  await frames();
+  const atTop = await layout();
+  await page.evaluate(text => applyViewedPromptToComposer(text), long);
+  await frames();
+  const grown = await layout();
+  assert.ok(grown.y === atTop.y && Math.abs(grown.top - atTop.top) <= 1 && grown.height > atTop.height + 600,
+    'A longer replacement grows the field downward: ' + JSON.stringify({ atTop, grown }));
+  await page.evaluate(text => applyViewedPromptToComposer(text), short);
+  await frames();
+  const shrunk = await layout();
+  assert.ok(shrunk.y === atTop.y && Math.abs(shrunk.height - shortHeight) <= 1,
+    'A shorter replacement fits the field to its text: ' + JSON.stringify({ shortHeight, shrunk }));
+
+  // Typing never shrinks the field, and a height the user dragged survives a replacement.
+  await prompt.fill(long);
+  await frames();
+  const typedOver = (await layout()).height;
+  await prompt.press('Control+a');
+  await prompt.press('x');
+  await frames();
+  assert.ok(Math.abs((await layout()).height - typedOver) <= 1, 'Typing over a long prompt keeps its height.');
+  const dragged = await prompt.evaluate(field => {
+    field.style.height = parseFloat(getComputedStyle(field).height) + 200 + 'px';
+    return field.getBoundingClientRect().height;
+  });
+  await page.evaluate(text => applyViewedPromptToComposer(text), short);
+  await frames();
+  assert.ok(Math.abs((await layout()).height - dragged) <= 1, 'A replacement keeps a height the user dragged.');
+  await prompt.fill('');
+}
+
 async function typeAtBottom(field) {
   await field.focus();
   await field.press('Control+End');
@@ -159,6 +240,7 @@ async function typeAtBottom(field) {
       await pointerStays(page, prompt, 'a focused prompt next to the bottom of the view', { focused: true, nearBottom: true });
       await prompt.press('ArrowDown');
       await visible(prompt);
+      await replacementFits(page, prompt);
 
       await page.setViewportSize({ width: 390, height: 640 });
       await prompt.fill('A wrapping prompt with café, emoji 🐈, and tabs\t'.repeat(40) + '\n\n');
@@ -221,7 +303,7 @@ async function typeAtBottom(field) {
       await pointerStays(phone, phone.locator('#prompt'), 'a tapped phone prompt', { tap: true });
       await touch.close();
       assert.deepEqual(errors, []);
-      console.log(`PASS ${name}: Enter, wrapping, paste, spare lines, page/panel scrolling, sticky bottom bar, undo, drafts, resize, spelling, dynamic and hidden fields, clicks and taps that keep the page still.`);
+      console.log(`PASS ${name}: Enter, wrapping, paste, spare lines, page/panel scrolling, sticky bottom bar, undo, drafts, resize, spelling, dynamic and hidden fields, clicks and taps that keep the page still, replacements that fit the text.`);
     } finally {
       await browser.close();
     }

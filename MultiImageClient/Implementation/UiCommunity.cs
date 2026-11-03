@@ -113,7 +113,8 @@ namespace MultiImageClient
         public string Status { get; init; } = "";
         public string Error { get; init; } = "";
         // Empty for prompt edits (advice, flesh out, restore);
-        // DirectedPromptRewrite.CondensePurpose for condensed prompts.
+        // DirectedPromptRewrite.CondensePurpose for condensed prompts;
+        // PromptSplit.Purpose for splits, whose ResultPrompt is the plan JSON.
         public string Purpose { get; init; } = "";
     }
 

@@ -81,7 +81,8 @@ test("version 2 migration preserves endpoint settings and declares empty global 
       endpointConfigurations: [{ key: "gpt2", extraText: "", notes: "Private" }] } };
   const migrated = schema.parseStored(JSON.stringify(old));
   assert.equal(migrated.version, schema.Version);
-  assert.deepEqual(migrated.promptTools, { claudeAdviceInstruction: "Keep my instruction", globalAppendText: "" });
+  assert.deepEqual(migrated.promptTools, { claudeAdviceInstruction: "Keep my instruction", globalAppendText: "",
+    splitInstruction: "", splitStyleNote: "" });
   assert.deepEqual(migrated.generatorPreferences,
     { ...old.generatorPreferences, defaultSelectedKeys: ["gpt2", "ideogram-v45"] });
   assert.equal(old.version, 2);
@@ -99,10 +100,12 @@ function version3Document(generatorPreferences) {
 test("version 3 migration adds Ideogram 4.5 once to the saved default list", () => {
   const old = version3Document({ defaultView: "only-sota", hiddenGeneratorKeys: ["recraft"],
     defaultSelectedKeys: ["gpt2", "ideogram"], presets: [], endpointConfigurations: [] });
-  const migrated = schema.parseStored(JSON.stringify(old));
+  const migrated = schema.migrateVersion3(old);
   assert.equal(migrated.version, 4);
   assert.deepEqual(migrated, { ...old, version: 4,
     generatorPreferences: { ...old.generatorPreferences, defaultSelectedKeys: ["gpt2", "ideogram", "ideogram-v45"] } });
+  assert.deepEqual(schema.parseStored(JSON.stringify(old)), { ...migrated, version: 5,
+    promptTools: { ...old.promptTools, splitInstruction: "", splitStyleNote: "" } });
   assert.deepEqual(old.generatorPreferences.defaultSelectedKeys, ["gpt2", "ideogram"]);
   const empty = schema.migrateVersion3(version3Document({ hiddenGeneratorKeys: [], defaultSelectedKeys: [] }));
   assert.deepEqual(empty.generatorPreferences.defaultSelectedKeys, ["ideogram-v45"]);
@@ -122,8 +125,29 @@ test("a removal after the version 4 migration stays removed", () => {
   assert.deepEqual(migrated.generatorPreferences.defaultSelectedKeys, ["gpt2", "ideogram-v45"]);
   schema.saveGeneratorPreferences(storage, { hiddenGeneratorKeys: [], defaultSelectedKeys: ["gpt2"] });
   const saved = schema.parseStored(storage.getItem(schema.StorageKey));
-  assert.equal(saved.version, 4);
+  assert.equal(saved.version, schema.Version);
   assert.deepEqual(saved.generatorPreferences.defaultSelectedKeys, ["gpt2"]);
+});
+
+function version4Document(promptTools = { claudeAdviceInstruction: "Keep my instruction", globalAppendText: "Daylight." }) {
+  return { format: schema.Format, version: 4, creatingAs: "ernie", promptTools,
+    generatorPreferences: { hiddenGeneratorKeys: [], defaultSelectedKeys: ["gpt2"] } };
+}
+
+test("version 4 migration adds empty split text and changes nothing else", () => {
+  const old = version4Document();
+  const migrated = schema.parseStored(JSON.stringify(old));
+  assert.deepEqual(migrated, { ...old, version: 5,
+    promptTools: { ...old.promptTools, splitInstruction: "", splitStyleNote: "" } });
+  assert.equal(old.version, 4);
+  assert.deepEqual(old.promptTools, { claudeAdviceInstruction: "Keep my instruction", globalAppendText: "Daylight." });
+  assert.deepEqual(schema.migrateVersion4(old), migrated);
+  for (const promptTools of [undefined, [], { ...old.promptTools, splitInstruction: "Mine" },
+    { ...old.promptTools, splitStyleNote: "" }]) {
+    assert.throws(() => schema.migrateVersion4({ ...old, promptTools }), /invalid version 4/);
+  }
+  assert.throws(() => schema.migrateVersion4({ ...old, version: 3 }), /invalid version 4/);
+  assert.throws(() => schema.migrateVersion4({ ...old, format: "other" }), /invalid version 4/);
 });
 
 test("version 3 migration rejects documents without default or hidden lists", () => {
@@ -189,6 +213,10 @@ test("first chooser save preserves legacy browser preferences in the complete do
   assert.equal(saved.uiSettings.activitySound, true);
   assert.deepEqual(saved.spelling.customDictionary, ["specialword"]);
   assert.deepEqual(saved.videoAudio, { volume: 0.3, muted: true });
+  assert.deepEqual(Object.keys(saved.promptTools).sort(),
+    ["claudeAdviceInstruction", "globalAppendText", "splitInstruction", "splitStyleNote"]);
+  assert.equal(saved.promptTools.splitInstruction, "");
+  assert.equal(saved.promptTools.splitStyleNote, "");
   assert.deepEqual(Object.keys(saved).sort(), [
     "format", "version", "creatingAs", "peopleFilters", "generatorPreferences", "uiSettings",
     "promptTools", "spelling", "inspirationLibrary", "viewer", "videoAudio", "costSummaryCollapsed",

@@ -100,6 +100,18 @@ A red prompt-limit line can condense the prompt with Sonnet 5.5.
 - Their result reads **Condensed prompt · the prompt box kept the full prompt**.
 - Restoring a condensed result is an explicit edit: the composer then sends it to every target.
 
+## Splitting into several images (2026-11-03)
+
+**consider splitting into multiple images** asks Opus 5.5 whether the prompt needs several images.
+[prompt-split-prd.md](prompt-split-prd.md) holds the full contract.
+
+- Splitting uses the manager catalog client for its 64,000-token output cap, not this area's Messages request.
+- It has its own limit: one split per account and two per server.
+- Each request is saved in this area's history with `purpose = 'split'`.
+- Prompt history labels these entries **Split into images · Opus 5.5** and shows each part read-only.
+- The source prompt stays restorable. The server refuses to restore a split's result.
+- The prompt-rewrite environment switch also controls splitting.
+
 ## Provider contract
 
 - Use Anthropic Messages for flesh out and advice.
@@ -143,6 +155,7 @@ Optional `beforeTime` and `beforeId` form a complete cursor; both must be suppli
 Ordering uses descending request time and record ID, including equal timestamps.
 The existing `ui_claude_prompt_exchanges` table holds all model choices and restores.
 Since 2026-10-26 it also holds condensed prompts, marked by its `purpose` column.
+Since 2026-11-03 it also holds split plans, with `purpose = 'split'`.
 Startup adds that column to older databases with an empty default.
 Its historical name remains unchanged to preserve existing records.
 No new server history cache exists.

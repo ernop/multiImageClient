@@ -87,6 +87,35 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
     return section;
   }
 
+  // A split's result holds one prompt per image, so its parts have no
+  // restore button. Each part's job card has set active instead.
+  function splitParts(resultPrompt) {
+    let plan;
+    try {
+      plan = JSON.parse(resultPrompt);
+    } catch (error) {
+      const failure = document.createElement("p");
+      failure.textContent = `The saved split could not be read: ${error.message}`;
+      return [failure];
+    }
+    const reason = document.createElement("p");
+    reason.textContent = plan.imageCount === 1
+      ? `Recommended one image. ${plan.reason}`
+      : `Recommended ${plan.imageCount} images. ${plan.reason}`;
+    return [reason, ...plan.images.map((part, index) => {
+      const section = document.createElement("section");
+      const heading = document.createElement("div");
+      heading.className = "prompt-version-heading";
+      const name = document.createElement("strong");
+      name.textContent = `Part ${index + 1} of ${plan.imageCount} · ${part.title}`;
+      const pre = document.createElement("pre");
+      pre.textContent = part.prompt;
+      heading.append(name);
+      section.append(heading, pre);
+      return section;
+    })];
+  }
+
   async function loadHistory(reset = false) {
     if (reset) { cursors = [null]; page = 0; }
     const request = ++historyRequest;
@@ -107,11 +136,17 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
         article.className = "prompt-rewrite-exchange";
         const heading = document.createElement("h3");
         const condensed = exchange.purpose === "condense";
+        const split = exchange.purpose === "split";
+        const modelLabel = catalog.find(item => item.model === exchange.model)?.label || exchange.model;
         const kind = exchange.model === "restore" ? "Restored version"
-          : condensed ? `Condensed for prompt limits · ${exchange.model}` : exchange.model;
+          : condensed ? `Condensed for prompt limits · ${exchange.model}`
+          : split ? `Split into images · ${modelLabel}` : exchange.model;
         heading.textContent = `${kind} · ${new Date(exchange.requestedAtUnixMs).toLocaleString()}`;
-        article.append(heading, version(exchange.originalPrompt, "Before this change · exact source", exchange.id, "original"));
-        if (exchange.status === "succeeded") {
+        article.append(heading, version(exchange.originalPrompt,
+          split ? "Split source · exact prompt" : "Before this change · exact source", exchange.id, "original"));
+        if (exchange.status === "succeeded" && split) {
+          article.append(...splitParts(exchange.resultPrompt));
+        } else if (exchange.status === "succeeded") {
           article.append(version(exchange.resultPrompt,
             condensed ? "Condensed prompt · the prompt box kept the full prompt" : "Replacement", exchange.id, "result"));
         } else {

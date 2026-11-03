@@ -62,6 +62,7 @@ Typing must never leave the caret below the visible page or enclosing panel.
 | Visible viewport | Account for the browser's visual viewport, the site's sticky header, and marked sticky bottom bars (2026-10-08). |
 | Stable editing | Preserve native text, selection, undo, manual enlargement, and the composer's stretched row. |
 | Clearing | Restore the field's original height when its text becomes empty. |
+| Replacement | Replacing the whole text, such as an AI rewrite, fits the field to the new text. A dragged height stays (2026-11-03). |
 | Shared coverage | Apply automatically to editable textareas, including dynamically inserted and initially hidden fields. |
 | Read-only output | Leave read-only textareas unchanged. |
 | Layout changes | Recalculate after field resizing, viewport changes, and font loading. These passes never scroll to the caret (2026-10-08). |
@@ -80,7 +81,8 @@ The experimental Django text-input page loads the same file through its prefixed
 There are no separate sizing implementations or copied library files.
 
 Load the shared script after page markup on future pages with editable multiline fields.
-Dispatch a bubbling `input` event after programmatic text replacement in an already visible field.
+Replace a whole text through `MultiImageTextEntry.replace(field, text)`, which also dispatches the bubbling `input` event (2026-11-03).
+After a smaller programmatic edit in an already visible field, dispatch a bubbling `input` event.
 Use `data-text-entry="fixed"` only for a deliberately fixed editor with its own caret visibility contract.
 Future prompt editors must use the shared module; the binding rule appears in `AGENTS.md`.
 
@@ -88,6 +90,7 @@ Browser regression: `tools/test-text-entry-browser.cjs` exercises Chromium and F
 It checks Enter, wrapping, spare lines, page/panel scrolling, undo, draft restoration, resizing, spelling, and dynamic/hidden fields.
 Since 2026-10-08 it also checks that typing stays above the sticky phone Generate row at 390×640.
 Since 2026-11-02 it also checks that clicks and taps leave the page still.
+Since 2026-11-03 it also checks that a shorter AI rewrite fits the field to its text.
 
 Validation passed in Firefox and Chromium on 2026-09-20.
 Checks include synchronous input growth, actual video/rewrite dialogs, and the existing draft restoration suite.
@@ -133,6 +136,46 @@ A matrix of 12 clicks also passed: both engines, an old caret at either end, and
 None moved the page, every caret landed on the clicked character, and no console warning appeared.
 
 Implementation: `text-entry.js`, McPhee 3.12.2, and asset versions in `index.html`, `goal.html`, the Workflow Lab page, and the Django text-input template.
+
+## Replacing the prompt — 2026-11-03
+
+Owner request: when an AI rewrite makes the prompt shorter, shrink a prompt box that the longer text had stretched.
+
+Requirement: replacing the whole prompt fits the box to the new text.
+Typing and deleting still never shrink the box.
+
+| Action | Behavior |
+|---|---|
+| AI rewrite, Claude advice, restored version, **undo Claude edit** | Fit the box to the new text. |
+| **set as active prompt** in the viewer, set active on a job card, a reused shared prompt | Fit the box to the new text. |
+| Typing, deleting, paste, spelling corrections | Grow only, as before. Only clearing the text resets the height. |
+| Character descriptions, inspirations, sketch legend | Edit the text in place. Grow only, as before. |
+| Height the user dragged | Keep it. A replacement removes only the growth that the application added. |
+
+The box's top edge decides what stays still on screen.
+When that edge is above the visible area, the bottom edge keeps its place.
+The buttons under the prompt then stay where the user clicked.
+When the top edge is in view, the page does not scroll, and the box grows or shrinks downward.
+The page cannot scroll above its top, so a short result there moves the bottom edge up.
+
+Rationale: shrinking during typing or deleting would pull the text away from the caret.
+A replacement changes the whole text at once, so a fitted box hides nothing that the user is editing.
+The rewrite buttons sit under the prompt, so a still bottom edge keeps them in place.
+
+`text-entry.js` exports `MultiImageTextEntry.replace(field, text)`.
+The module records each height it grows a field to, so it can tell that growth from a dragged height.
+`replace` fits the box and corrects the page scroll first.
+It then dispatches the bubbling `input` event, so revealing a focused caret is the last scroll.
+`applyClaudeEdit`, `applyViewedPromptToComposer`, and `setActiveFromJob` in `app.js` use it.
+
+`tools/test-text-entry-browser.cjs` covers this in Chromium and Firefox.
+It clicks **flesh out · Sonnet 5.5** with a fixed local reply, so no provider receives the request.
+The shorter result must be as tall as the same text typed into an empty prompt.
+Its bottom edge must stay within 1 px of its old place.
+The spelling overlay must stay visible.
+Replacements with the box's top in view must leave the page still.
+Typing over a long prompt must keep its height, and a dragged height must survive a replacement.
+With the previous `text-entry.js` and `app.js`, the rewritten box stayed 2,775 px tall instead of 975 px.
 
 ## Phone layout — 2026-10-08
 

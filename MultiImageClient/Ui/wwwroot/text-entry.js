@@ -74,6 +74,13 @@
       const delta = adjustment(top, top + parent.clientHeight);
       if (delta) parent.scrollBy({ top: delta, behavior: "instant" });
     }
+    const { top, bottom } = visibleBand();
+    const delta = adjustment(top, bottom);
+    if (delta) window.scrollBy({ top: delta, behavior: "instant" });
+  }
+
+  // The part of the viewport that sticky headers and bottom bars leave uncovered.
+  function visibleBand() {
     const viewport = window.visualViewport;
     let top = viewport ? viewport.offsetTop : 0;
     let bottom = top + (viewport ? viewport.height : window.innerHeight);
@@ -93,8 +100,7 @@
         bottom = Math.max(top, rect.top);
       }
     }
-    const delta = adjustment(top, bottom);
-    if (delta) window.scrollBy({ top: delta, behavior: "instant" });
+    return { top, bottom };
   }
 
   function update(field, keepVisible = false) {
@@ -121,8 +127,12 @@
     const minimum = Math.max(state.minHeight, height) + "px";
     if (field.style.minHeight !== minimum) field.style.minHeight = minimum;
     // Keep manual enlargement and the composer's shared row height. Only clearing
-    // the text resets automatic growth; deletion within a draft never pulls it upward.
-    if (required > rect.height) field.style.height = height + "px";
+    // or replacing the text resets automatic growth; deletion within a draft never
+    // pulls it upward.
+    if (required > rect.height) {
+      field.style.height = height + "px";
+      state.grown = field.style.height;
+    }
     field.scrollTop = 0;
     if (keepVisible && document.activeElement === field && !placedByPointer(field)) {
       reveal(field, caretOffset(field), lineHeight);
@@ -226,4 +236,24 @@
   window.addEventListener("resize", resized);
   window.visualViewport?.addEventListener("resize", resized);
   document.fonts?.ready.then(resized);
+
+  // Replacing the whole text, as an AI rewrite does, fits the field to the new
+  // text. Only growth from this module is dropped; a height the user dragged
+  // stays. When the field's top was above the visible area, its bottom edge and
+  // the buttons under it keep their place on screen. The input event comes last,
+  // so revealing a focused caret is the final scroll.
+  function replace(field, text) {
+    const state = fields.get(field);
+    const before = field.getBoundingClientRect();
+    const keepBottom = before.top < visibleBand().top;
+    field.value = text;
+    if (state) {
+      if (field.style.height === state.grown) field.style.height = state.height;
+      update(field);
+      const moved = field.getBoundingClientRect().bottom - before.bottom;
+      if (keepBottom && moved) window.scrollBy({ top: moved, behavior: "instant" });
+    }
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  window.MultiImageTextEntry = { replace };
 })();

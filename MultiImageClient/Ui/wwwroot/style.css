@@ -1195,6 +1195,7 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 #prompt-tools #prompt-advice,
 #prompt-tools #prompt-advice-undo,
 #prompt-tools [data-rewrite-model],
+#prompt-tools #prompt-split,
 #prompt-tools #characters-toggle,
 #prompt-tools #prompt-history-toggle {
   font: inherit;
@@ -1209,12 +1210,14 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 }
 #prompt-tools #mcphee-panel-toggle:hover:not(:disabled),
 #prompt-tools #prompt-advice:hover:not(:disabled),
+#prompt-tools #prompt-split:hover:not(:disabled),
 #prompt-tools #prompt-advice-undo:hover { color: #fff; background: var(--accent); }
 #prompt-tools #mcphee-panel-toggle[aria-expanded="true"],
 #prompt-tools #characters-toggle:hover,
 #prompt-tools #characters-toggle[aria-expanded="true"] { color: #fff; background: var(--accent); }
 #prompt-tools #mcphee-panel-toggle:disabled,
-#prompt-tools #prompt-advice:disabled { opacity: 0.5; cursor: default; }
+#prompt-tools #prompt-advice:disabled,
+#prompt-tools #prompt-split:disabled { opacity: 0.5; cursor: default; }
 #send {
   font: inherit; font-size: 15px; font-weight: 600;
   background: var(--accent); color: #fff;
@@ -2463,6 +2466,7 @@ body.image-viewer-open { overflow: hidden; }
 
 #generator-config-dialog,
 #claude-advice-dialog,
+#prompt-split-dialog,
 #sketch-dialog {
   width: min(900px, calc(100vw - 28px));
   max-height: calc(100vh - 28px);
@@ -2475,9 +2479,11 @@ body.image-viewer-open { overflow: hidden; }
 }
 #generator-config-dialog::backdrop,
 #claude-advice-dialog::backdrop,
+#prompt-split-dialog::backdrop,
 #sketch-dialog::backdrop { background: rgba(20, 22, 31, 0.62); }
 #generator-config-form,
 #claude-advice-form,
+#prompt-split-form,
 #sketch-form { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; }
 
 /* ---------- composition sketch dialog ---------- */
@@ -3203,14 +3209,30 @@ body.image-viewer-open { overflow: hidden; }
   font-size: 13px;
   font-weight: 700;
 }
-#claude-advice-instruction {
+#claude-advice-instruction,
+#prompt-split-instruction,
+#prompt-split-style {
   font: inherit;
+  font-weight: 400;
   padding: 7px;
   color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 3px;
   resize: vertical;
 }
+.prompt-split-field-tools { margin-top: -5px; padding: 0 14px; }
+.prompt-split-field-tools button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.prompt-split-field-tools button:hover { color: #fff; background: var(--accent); }
 #claude-advice-dialog details { margin: 0 14px; font-size: 12px; }
 #claude-advice-dialog summary { color: var(--accent-dark); font-weight: 700; cursor: pointer; }
 #claude-advice-dialog pre {
@@ -3502,6 +3524,40 @@ body.image-viewer-open { overflow: hidden; }
 /* Full prompt text stays readable without inner scroll boxes or collapsed versions. */
 #prompt-rewrite-status:empty { display: none; }
 #prompt-rewrite-status { margin: 8px 0; color: var(--accent-dark); }
+#prompt-split-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 14px;
+  color: #000;
+}
+#prompt-split-progress[hidden] { display: none; }
+#prompt-split-progress[data-mode="error"] #prompt-split-progress-text { color: var(--err); font-weight: 700; }
+#prompt-split-elapsed { font-size: 16px; font-variant-numeric: tabular-nums; }
+#prompt-split-progress button {
+  padding: 4px 9px; border: 1px solid var(--accent); border-radius: 3px;
+  color: var(--accent-dark); background: var(--card); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+#prompt-split-progress button:hover:not(:disabled) { color: #fff; background: var(--accent); }
+
+/* One split submission: its parts in order under one heading. */
+.split-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  background: #f1f3ff;
+  border: 2px solid var(--accent);
+  border-radius: 5px;
+}
+.archive-day-jobs .split-group { margin: 6px 0; }
+.split-group > h3 { margin: 0; font-size: 15px; font-weight: 700; color: #000; }
+.split-group-reason { margin: 0; font-size: 13px; color: #000; overflow-wrap: anywhere; }
+.split-group-parts { display: flex; flex-direction: column; gap: 10px; }
+.split-group:not(:has(.job:not(.night-hidden):not(.user-filter-hidden))) { display: none; }
+.job-split-part { margin: 0 0 6px; font-size: 14px; font-weight: 700; color: var(--accent-dark); overflow-wrap: anywhere; }
 #prompt-rewrite-history { margin: 12px 0 20px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
 .prompt-history-heading, .prompt-version-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .prompt-history-heading h2 { margin: 0; font-size: 17px; }

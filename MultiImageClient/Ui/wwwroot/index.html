@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261026-prompt-condense">
+<link rel="stylesheet" href="style.css?v=20261103-prompt-split">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261102-mcphee-3-12-2">
 </head>
 <body class="composer-page">
@@ -259,6 +259,7 @@
               title="Give Claude your own editing instruction, with this exact prompt appended as source text">get Claude's advice</button>
             <button type="button" data-rewrite-model="claude-opus-5-5" disabled>flesh out · Opus 5.5</button>
             <button type="button" data-rewrite-model="claude-sonnet-5-5" disabled>flesh out · Sonnet 5.5</button>
+            <button id="prompt-split" type="button" disabled>consider splitting into multiple images</button>
             <button id="prompt-history-toggle" type="button" aria-expanded="false"
               aria-controls="prompt-rewrite-history">prompt history</button>
             <button id="prompt-advice-undo" type="button" hidden
@@ -269,6 +270,13 @@
     </div>
 
     <p id="prompt-rewrite-status" role="status" aria-live="polite"></p>
+    <div id="prompt-split-progress" hidden>
+      <span id="prompt-split-progress-text" role="status" aria-live="polite"></span>
+      <strong id="prompt-split-elapsed" hidden></strong>
+      <button id="prompt-split-cancel-run" type="button" hidden>cancel split</button>
+      <button id="prompt-split-retry" type="button" hidden>start the jobs again</button>
+      <button id="prompt-split-dismiss" type="button" hidden>dismiss</button>
+    </div>
     <section id="characters-panel" hidden aria-label="Characters">
       <div class="characters-heading">
         <h2>Characters</h2>
@@ -541,6 +549,37 @@
       <span id="claude-advice-status"></span>
       <button id="claude-advice-cancel" type="button">cancel</button>
       <button id="claude-advice-submit" type="submit">send to Claude</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="prompt-split-dialog" aria-labelledby="prompt-split-title">
+  <form id="prompt-split-form">
+    <div class="compact-dialog-head">
+      <h2 id="prompt-split-title">Consider splitting into multiple images</h2>
+      <button id="prompt-split-close" type="button" aria-label="Close">&times;</button>
+    </div>
+    <label class="claude-advice-instruction">
+      Tell Opus 5.5 how to decide
+      <textarea id="prompt-split-instruction" rows="4" maxlength="4000"></textarea>
+    </label>
+    <div class="prompt-split-field-tools">
+      <button id="prompt-split-default" type="button">use the default instruction</button>
+    </div>
+    <label class="claude-advice-instruction">
+      Style note for every image (optional)
+      <textarea id="prompt-split-style" rows="3" maxlength="2000"></textarea>
+    </label>
+    <p class="compact-dialog-note">
+      Your exact current prompt is appended as source text. Opus 5.5 chooses 1 to 8 images.
+      Each image prompt starts with the same style preface.
+      For 2 or more images, one job per image starts at once, in order.
+    </p>
+    <p id="prompt-split-targets" class="compact-dialog-note"></p>
+    <div class="compact-dialog-actions">
+      <span id="prompt-split-dialog-status"></span>
+      <button id="prompt-split-cancel" type="button">cancel</button>
+      <button id="prompt-split-submit" type="submit">ask Opus 5.5</button>
     </div>
   </form>
 </dialog>
@@ -880,11 +919,11 @@
 
 <script src="tab-activity.js?v=20261010-idle-polling"></script>
 <script src="text-drafts.js?v=20260912"></script>
-<script src="text-entry.js?v=20261102-pointer-caret"></script>
+<script src="text-entry.js?v=20261103-replace-fit"></script>
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20261102-mcphee-3-12-2"></script>
-<script src="personal-config.js?v=20261010-ideogram-45-defaults"></script>
-<script src="prompt-rewrites.js?v=20261026-prompt-condense"></script>
+<script src="personal-config.js?v=20261103-prompt-split"></script>
+<script src="prompt-rewrites.js?v=20261103-prompt-split"></script>
 <script src="generator-toggle.js?v=20260910"></script>
 <script src="generator-chooser.js?v=20261010-ideogram-45-defaults"></script>
     <div id="global-append-control" hidden>
@@ -917,6 +956,6 @@
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261026-prompt-condense"></script>
 <script src="prompt-characters.js?v=20261015-characters"></script>
-<script src="app.js?v=20261026-prompt-condense"></script>
+<script src="app.js?v=20261103-prompt-split"></script>
 </body>
 </html>

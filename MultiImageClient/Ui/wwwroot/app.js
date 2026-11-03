@@ -98,6 +98,7 @@ let setActiveJobVersion = 0;
 let setActiveJobController = null;
 let claudeAdvice = { available: false, availabilityProblem: "configuration not loaded" };
 let promptCondenseConfig = { available: false, availabilityProblem: "configuration not loaded" };
+let promptSplitConfig = { available: false, availabilityProblem: "configuration not loaded" };
 let promptRewriteModels = [];
 let generatorPreferences = null;
 const GeneratorPreferencesLocalKey = "mic_generator_preferences_v1";
@@ -542,6 +543,8 @@ async function loadConfig() {
   claudeAdvice = cfg.claudeAdvice || claudeAdvice;
   applyClaudeAdviceAvailability();
   promptCondenseConfig = cfg.promptCondense;
+  promptSplitConfig = cfg.promptSplit;
+  applyPromptSplitAvailability();
   promptRewriteModels = cfg.promptRewrites || [];
   promptRewrites.configure(promptRewriteModels);
   configureCharacters(cfg.promptSubjects);
@@ -803,6 +806,11 @@ function updateGeneratorCount() {
 const promptLimitNotice = el("prompt-limit-notice");
 const globalAppendText = el("global-append-text");
 globalAppendText.value = storedPersonalField("promptTools")?.globalAppendText ?? "";
+// The split dialog's saved text. An empty instruction means the server default.
+const promptSplitSettings = {
+  instruction: storedPersonalField("promptTools")?.splitInstruction ?? "",
+  styleNote: storedPersonalField("promptTools")?.splitStyleNote ?? "",
+};
 globalAppendText.addEventListener("input", () => {
   updatePromptLimitNotice();
   try {
@@ -1272,6 +1280,8 @@ function personalConfigurationFields() {
           storedPersonalField("promptTools")?.claudeAdviceInstruction ||
           localStorage.getItem(ClaudeAdviceInstructionKey) ||
           DefaultClaudeAdviceInstruction,
+        splitInstruction: promptSplitSettings.instruction,
+        splitStyleNote: promptSplitSettings.styleNote,
       }),
       normalize: normalizeImportedPromptTools,
     },
@@ -1393,7 +1403,7 @@ function normalizeImportedPromptTools(raw) {
   const promptTools = requireConfigObject(
     raw,
     "promptTools",
-    ["claudeAdviceInstruction", "globalAppendText"]);
+    ["claudeAdviceInstruction", "globalAppendText", "splitInstruction", "splitStyleNote"]);
   return {
     globalAppendText: requireConfigString(promptTools.globalAppendText, "promptTools.globalAppendText", 16000, true),
     claudeAdviceInstruction: requireConfigString(
@@ -1401,6 +1411,8 @@ function normalizeImportedPromptTools(raw) {
       "promptTools.claudeAdviceInstruction",
       4000,
       false),
+    splitInstruction: requireConfigString(promptTools.splitInstruction, "promptTools.splitInstruction", 4000, true),
+    splitStyleNote: requireConfigString(promptTools.splitStyleNote, "promptTools.splitStyleNote", 2000, true),
   };
 }
 
@@ -1580,11 +1592,15 @@ function normalizeImportedVideoAudio(raw) {
 }
 
 function migratePersonalConfiguration(raw, targetVersion) {
+  const { migrateVersion2, migrateVersion3, migrateVersion4 } = PersonalConfigurationSchema;
+  if (raw?.version === 4 && targetVersion === ConfigTransferVersion) {
+    return migrateVersion4(raw);
+  }
   if (raw?.version === 3 && targetVersion === ConfigTransferVersion) {
-    return PersonalConfigurationSchema.migrateVersion3(raw);
+    return migrateVersion4(migrateVersion3(raw));
   }
   if (raw?.version === 2 && targetVersion === ConfigTransferVersion) {
-    return PersonalConfigurationSchema.migrateVersion3(PersonalConfigurationSchema.migrateVersion2(raw));
+    return migrateVersion4(migrateVersion3(migrateVersion2(raw)));
   }
   if (raw?.version !== 1 || targetVersion !== ConfigTransferVersion) {
     throw new Error(
@@ -1621,12 +1637,12 @@ function migratePersonalConfiguration(raw, targetVersion) {
   const portable = { ...raw };
   delete portable.gptImage2Guidance;
   delete portable.version;
-  return PersonalConfigurationSchema.migrateVersion3({
+  return migrateVersion4(migrateVersion3({
     ...portable,
     version: 3,
     generatorPreferences: preferences,
     promptTools: { ...raw.promptTools, globalAppendText: "" },
-  });
+  }));
 }
 
 function normalizeImportedPersonalConfiguration(raw) {
@@ -8132,6 +8148,36 @@ function isDescribeGenKey(key) {
   return (generators.find((g) => g.key === key) || {}).kind === "describe";
 }
 
+// Combined endpoint and global extra text for each target, within the server's caps.
+function generatorExtraTextsFor(gens) {
+  const texts = {};
+  let total = 0;
+  for (const key of gens) {
+    const extraText = combinedEndpointExtraText(key);
+    if (extraText.length > generatorEndpointConfiguration.maxExtraTextChars) {
+      throw new Error(`Combined extra text for ${key} exceeds ${generatorEndpointConfiguration.maxExtraTextChars.toLocaleString()} characters`);
+    }
+    if (extraText) {
+      texts[key] = extraText;
+      total += extraText.length;
+    }
+  }
+  if (total > generatorEndpointConfiguration.maxJobExtraTextTotalChars) {
+    throw new Error(
+      `selected endpoint extra text exceeds ${generatorEndpointConfiguration.maxJobExtraTextTotalChars.toLocaleString()} characters in total`);
+  }
+  return texts;
+}
+
+function appendInputImages(form, items) {
+  items.forEach((item, index) => {
+    const name = item.file.name && item.file.name.includes(".")
+      ? item.file.name
+      : `input${index}.png`;
+    form.append("images", item.file, name);
+  });
+}
+
 async function submit() {
   sendError.textContent = "";
   const prompt = promptBox.value.trim();
@@ -8168,22 +8214,11 @@ async function submit() {
   form.append("quality", el("opt-quality").value);
   form.append("moderation", el("opt-moderation").value);
   form.append("n", el("opt-n").value);
-  const generatorExtraTexts = {};
-  let generatorExtraTextChars = 0;
-  for (const key of gens) {
-    const extraText = combinedEndpointExtraText(key);
-    if (extraText.length > generatorEndpointConfiguration.maxExtraTextChars) {
-      sendError.textContent = `Combined extra text for ${key} exceeds ${generatorEndpointConfiguration.maxExtraTextChars.toLocaleString()} characters`;
-      return;
-    }
-    if (extraText) {
-      generatorExtraTexts[key] = extraText;
-      generatorExtraTextChars += extraText.length;
-    }
-  }
-  if (generatorExtraTextChars > generatorEndpointConfiguration.maxJobExtraTextTotalChars) {
-    sendError.textContent =
-      `selected endpoint extra text exceeds ${generatorEndpointConfiguration.maxJobExtraTextTotalChars.toLocaleString()} characters in total`;
+  let generatorExtraTexts;
+  try {
+    generatorExtraTexts = generatorExtraTextsFor(gens);
+  } catch (error) {
+    sendError.textContent = error.message;
     return;
   }
   form.append("generatorExtraTexts", JSON.stringify(generatorExtraTexts));
@@ -8203,12 +8238,7 @@ async function submit() {
   if (sketchComposer) {
     form.append("sketchComposer", JSON.stringify(sketchComposer));
   }
-  inputImageItems.forEach((item, index) => {
-    const name = item.file.name && item.file.name.includes(".")
-      ? item.file.name
-      : `input${index}.png`;
-    form.append("images", item.file, name);
-  });
+  appendInputImages(form, inputImageItems);
 
   sendBtn.disabled = true;
   try {
@@ -8267,8 +8297,7 @@ const DefaultClaudeAdviceInstruction =
   "Fix spelling and obvious typos. Improve organization only where needed, while preserving the meaning and useful detail.";
 
 function applyClaudeEdit(text, exchangeId) {
-  promptBox.value = text;
-  promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+  MultiImageTextEntry.replace(promptBox, text);
   if (mcpheeCtl) mcpheeCtl.refresh();
   if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
   updatePromptLimitNotice();
@@ -8439,6 +8468,294 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
 promptAdviceUndoBtn.addEventListener("click", async () => {
   if (!promptAdviceExchangeId || promptRewrites.busy) return;
   await promptRewrites.run("restore", { exchangeId: promptAdviceExchangeId, side: "original" });
+});
+
+// ---------- split one prompt into several images ----------
+// See docs/prompt-split-prd.md. The dialog closes while the model plans, so
+// the page stays usable; progress shows under the prompt tools.
+
+const promptSplitBtn = el("prompt-split");
+const promptSplitDialog = el("prompt-split-dialog");
+const promptSplitForm = el("prompt-split-form");
+const promptSplitInstruction = el("prompt-split-instruction");
+const promptSplitStyle = el("prompt-split-style");
+const promptSplitTargets = el("prompt-split-targets");
+const promptSplitSubmit = el("prompt-split-submit");
+const promptSplitDialogStatus = el("prompt-split-dialog-status");
+const promptSplitProgress = el("prompt-split-progress");
+const promptSplitProgressText = el("prompt-split-progress-text");
+const promptSplitElapsed = el("prompt-split-elapsed");
+const promptSplitCancelRun = el("prompt-split-cancel-run");
+const promptSplitRetry = el("prompt-split-retry");
+const promptSplitDismiss = el("prompt-split-dismiss");
+// The page runs one split at a time; the server allows one per account.
+let promptSplitRun = null;
+let promptSplitRetryJobs = null;
+
+function applyPromptSplitAvailability() {
+  const available = !!promptSplitConfig?.available;
+  promptSplitBtn.disabled = !available || !!promptSplitRun;
+  if (!available) {
+    promptSplitBtn.title =
+      `Splitting is unavailable: ${promptSplitConfig?.availabilityProblem || "not configured"}`;
+    return;
+  }
+  promptSplitBtn.title = promptSplitRun
+    ? "A split is running. Its progress shows under the prompt."
+    : `Ask ${promptSplitConfig.label} whether this prompt needs several images, then start one job per image`;
+  promptSplitSubmit.textContent = `ask ${promptSplitConfig.label}`;
+}
+
+// A split is planned for this exact prompt, these targets, options, and
+// inputs. Later composer edits cannot change what its parts receive.
+function capturePromptSplitRequest() {
+  const prompt = promptBox.value.trim();
+  if (!prompt) throw new Error("Write a prompt first.");
+  const user = currentUsername();
+  if (!user) throw new Error("Choose a username first, at the top of the page.");
+  if (attachedSketchSubmission()) {
+    throw new Error("A composition sketch lays out one image. Remove the sketch to split the prompt.");
+  }
+  const checked = checkedGeneratorKeys();
+  const gens = checked.filter((key) => !isDescribeGenKey(key));
+  if (!gens.length) {
+    throw new Error("Select at least one image generator. Describe targets do not run on split parts.");
+  }
+  return {
+    prompt,
+    revision: promptRewrites.revision,
+    user,
+    gens,
+    skippedDescribe: checked.length > gens.length,
+    generatorExtraTexts: generatorExtraTextsFor(gens),
+    options: Object.fromEntries(
+      ["shape", "detail", "quality", "moderation"].map((name) => [name, el(`opt-${name}`).value])),
+    images: [...inputImageItems],
+  };
+}
+
+function describePromptSplitTargets(request) {
+  const notes = [
+    `Each image becomes its own job, with one result from each selected image generator: ${request.gens.map(genLabel).join(", ")}.`,
+    "The N setting does not apply.",
+  ];
+  if (request.images.length === 1) notes.push("Every part also receives the attached image.");
+  if (request.images.length > 1) notes.push(`Every part also receives all ${request.images.length} attached images.`);
+  if (request.skippedDescribe) notes.push("The selected describe targets do not run on the parts.");
+  return notes.join(" ");
+}
+
+// mode: "waiting" while the model plans, "starting" while the jobs are
+// created, and "done", "info", or "error" for a final message.
+function showPromptSplitProgress(message, mode, { retry = false } = {}) {
+  if (!retry) promptSplitRetryJobs = null;
+  promptSplitProgress.hidden = false;
+  promptSplitProgress.dataset.mode = mode;
+  promptSplitProgressText.replaceChildren(...[message].flat());
+  const waiting = mode === "waiting";
+  promptSplitElapsed.hidden = !waiting;
+  promptSplitCancelRun.hidden = !waiting;
+  promptSplitRetry.hidden = !retry;
+  promptSplitDismiss.hidden = waiting || mode === "starting";
+}
+
+function promptSplitErrorNodes(error) {
+  const nodes = [error instanceof Error ? error.message : String(error)];
+  if (error?.providerHint) {
+    nodes.push(` ${error.providerHint} `);
+    if (error.providerHintUrl) {
+      const a = document.createElement("a");
+      a.href = error.providerHintUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = new URL(error.providerHintUrl).hostname.replace(/^www\./, "");
+      nodes.push(a);
+    }
+  }
+  return nodes;
+}
+
+function paintPromptSplitElapsed() {
+  if (!promptSplitRun) return;
+  promptSplitElapsed.textContent = `${Math.floor((Date.now() - promptSplitRun.startedAt) / 1000)} s`;
+}
+
+async function startPromptSplitJobs(request, plan) {
+  showPromptSplitProgress(
+    `${plan.modelLabel} planned ${plan.imageCount} images. Starting ${plan.imageCount} jobs…`, "starting");
+  const form = new FormData();
+  form.append("prompt", request.prompt);
+  form.append("user", request.user);
+  form.append("generators", request.gens.join(","));
+  for (const [name, value] of Object.entries(request.options)) form.append(name, value);
+  form.append("n", "1");
+  form.append("generatorExtraTexts", JSON.stringify(request.generatorExtraTexts));
+  form.append("splitExchangeId", plan.exchangeId);
+  appendInputImages(form, request.images);
+  let body;
+  try {
+    const response = await fetch(apiUrl("api/jobs"), { method: "POST", body: form });
+    if (response.status === 401) { location.reload(); return; }
+    body = await response.json();
+    if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+  } catch (error) {
+    promptSplitRetryJobs = () => startPromptSplitJobs(request, plan);
+    showPromptSplitProgress(
+      `${plan.modelLabel} planned ${plan.imageCount} images, but the jobs did not start: ${error.message || error}`,
+      "error",
+      { retry: true });
+    return;
+  }
+  if (request.user === currentUsername()) promptRewrites.submitted(request.prompt, request.revision);
+  for (const job of body.jobs) {
+    ownedJobIds.add(job.id);
+    addJobCard(
+      job.id,
+      plan.images[job.split.index - 1].prompt,
+      request.gens,
+      request.images.length > 0,
+      Date.now(),
+      request.images.length,
+      {
+        user: body.user || request.user,
+        originalUser: body.originalUser || body.user || request.user,
+        ownerId: body.ownerId || "",
+        canHide: authInfo.localVisibilityManagement === true || !!authInfo.user,
+        split: job.split,
+      });
+  }
+  showPromptSplitProgress(
+    `${plan.modelLabel} split the prompt into ${body.jobs.length} images. ` +
+    `Parts 1 to ${body.jobs.length} run below, in order.`,
+    "done");
+}
+
+async function runPromptSplit(request, instruction, styleNote) {
+  const run = { controller: new AbortController(), startedAt: Date.now(), timer: 0 };
+  promptSplitRun = run;
+  applyPromptSplitAvailability();
+  showPromptSplitProgress(`${promptSplitConfig.label} is deciding how many images this prompt needs.`, "waiting");
+  paintPromptSplitElapsed();
+  run.timer = setInterval(paintPromptSplitElapsed, 1000);
+  try {
+    let plan;
+    try {
+      const form = new URLSearchParams({
+        prompt: request.prompt,
+        instruction,
+        styleNote,
+        user: request.user,
+        generators: request.gens.join(","),
+        generatorExtraTexts: JSON.stringify(request.generatorExtraTexts),
+        imageAttached: String(request.images.length > 0),
+      });
+      const response = await fetch(apiUrl("api/prompt/split"), {
+        method: "POST", body: form, signal: run.controller.signal,
+      });
+      if (response.status === 401) { location.reload(); return; }
+      plan = await response.json();
+      if (!response.ok) {
+        const failure = new Error(plan.error || `HTTP ${response.status}`);
+        failure.providerHint = plan.errorHint || "";
+        failure.providerHintUrl = plan.errorHintUrl || "";
+        throw failure;
+      }
+    } finally {
+      clearInterval(run.timer);
+    }
+    if (request.user !== currentUsername()) {
+      showPromptSplitProgress(
+        "The username changed during the split, so no jobs started. The plan is saved in prompt history.", "info");
+      return;
+    }
+    if (plan.imageCount === 1) {
+      showPromptSplitProgress(`${plan.modelLabel} recommends one image, so nothing was sent. ${plan.reason}`, "info");
+      return;
+    }
+    await startPromptSplitJobs(request, plan);
+  } catch (error) {
+    if (error?.name === "AbortError") showPromptSplitProgress("Split cancelled. Nothing was sent.", "info");
+    else showPromptSplitProgress(promptSplitErrorNodes(error), "error");
+  } finally {
+    promptSplitRun = null;
+    applyPromptSplitAvailability();
+    promptRewrites.refreshHistory();
+  }
+}
+
+function openPromptSplit() {
+  let request;
+  try {
+    request = capturePromptSplitRequest();
+  } catch (error) {
+    showPromptSplitProgress(error.message, "error");
+    return;
+  }
+  promptSplitInstruction.value = promptSplitSettings.instruction || promptSplitConfig.defaultInstruction;
+  promptSplitStyle.value = promptSplitSettings.styleNote;
+  promptSplitTargets.textContent = describePromptSplitTargets(request);
+  promptSplitDialogStatus.textContent = "";
+  promptSplitDialogStatus.className = "";
+  promptSplitDialog.showModal();
+  promptSplitInstruction.focus();
+}
+
+function savePromptSplitSettings() {
+  const instruction = promptSplitInstruction.value;
+  promptSplitSettings.instruction =
+    instruction.trim() === promptSplitConfig.defaultInstruction ? "" : instruction;
+  promptSplitSettings.styleNote = promptSplitStyle.value;
+  try {
+    persistPersonalConfigurationSnapshot();
+    promptSplitDialogStatus.textContent = "";
+    promptSplitDialogStatus.className = "";
+  } catch (error) {
+    promptSplitDialogStatus.textContent = `Could not save this text: ${error.message || error}`;
+    promptSplitDialogStatus.className = "error";
+  }
+}
+
+promptSplitBtn.addEventListener("click", openPromptSplit);
+el("prompt-split-close").addEventListener("click", () => promptSplitDialog.close());
+el("prompt-split-cancel").addEventListener("click", () => promptSplitDialog.close());
+el("prompt-split-default").addEventListener("click", () => {
+  MultiImageTextEntry.replace(promptSplitInstruction, promptSplitConfig.defaultInstruction);
+  promptSplitInstruction.focus();
+});
+promptSplitInstruction.addEventListener("input", savePromptSplitSettings);
+promptSplitStyle.addEventListener("input", savePromptSplitSettings);
+promptSplitForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (promptSplitRun) return;
+  const instruction = promptSplitInstruction.value.trim();
+  let request;
+  try {
+    if (!instruction) throw new Error("Write an instruction first.");
+    request = capturePromptSplitRequest();
+  } catch (error) {
+    promptSplitDialogStatus.textContent = error.message;
+    promptSplitDialogStatus.className = "error";
+    return;
+  }
+  promptSplitDialog.close();
+  runPromptSplit(request, instruction, promptSplitStyle.value.trim());
+});
+promptSplitCancelRun.addEventListener("click", () => promptSplitRun?.controller?.abort());
+promptSplitRetry.addEventListener("click", async () => {
+  const retry = promptSplitRetryJobs;
+  if (!retry || promptSplitRun) return;
+  promptSplitRun = { controller: null, startedAt: Date.now(), timer: 0 };
+  applyPromptSplitAvailability();
+  try {
+    await retry();
+  } finally {
+    promptSplitRun = null;
+    applyPromptSplitAvailability();
+  }
+});
+promptSplitDismiss.addEventListener("click", () => {
+  promptSplitProgress.hidden = true;
+  promptSplitRetryJobs = null;
 });
 
 // ---------- Characters: saved descriptions for recurring people, places, and things ----------
@@ -9410,6 +9727,7 @@ function getImageViewerPrompts() {
       generatorExtraTexts,
       generatorExtraTextsKnown: card.dataset.generatorExtraTextsKnown === "true",
       condensedPrompts: card.dataset.condensedPrompts ? JSON.parse(card.dataset.condensedPrompts) : [],
+      splitLabel: card.dataset.splitLabel || "",
       items,
     });
   }
@@ -10067,8 +10385,7 @@ function renderImageViewerActiveActions(target) {
 }
 
 function applyViewedPromptToComposer(prompt) {
-  promptBox.value = prompt;
-  promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+  MultiImageTextEntry.replace(promptBox, prompt);
   if (mcpheeCtl) mcpheeCtl.refresh();
   if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
 }
@@ -10273,9 +10590,12 @@ function paintImageViewerChrome(target) {
       imageViewerDescribe.appendChild(commentsDiv);
     }
   }
-  imageViewerGenerator.textContent = isText
+  const generatorText = isText
     ? `${genLabel(target.item.generator)} — description of the submitted image`
     : genLabel(target.item.generator);
+  imageViewerGenerator.textContent = target.prompt.splitLabel
+    ? `${generatorText} · ${target.prompt.splitLabel}`
+    : generatorText;
 }
 
 // The selected item's card thumb (≤640px) plus its chrome. Changing
@@ -11527,7 +11847,7 @@ function updateCostTotals() {
   // Archived cards get their per-job cost label too, but only live-feed
   // jobs count toward the session spend summary.
   for (const card of document.querySelectorAll("#jobs .job, #archive .job")) {
-    const inLiveFeed = card.parentElement === jobsSection;
+    const inLiveFeed = jobsSection.contains(card);
     let jobTotal = 0;
     for (const cell of card.querySelectorAll(".cell")) {
       const images = Number(cell.dataset.imgCount || 0);
@@ -11647,8 +11967,7 @@ async function setActiveFromJob(id, card) {
     }
 
     setImagesFromBlobs(blobs, { restoredSketch, sketchNotice });
-    promptBox.value = restoredPrompt;
-    promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+    MultiImageTextEntry.replace(promptBox, restoredPrompt);
     if (mcpheeCtl) mcpheeCtl.refresh();
     if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
     const recorded = card.dataset;
@@ -11707,9 +12026,34 @@ function updateJobPromptToggle(prompt) {
   toggle.setAttribute("aria-expanded", String(expanded));
 }
 
-// opts: { user, container }. user is the creator display name (shared-site
-// attribution + filter target); container is where the card renders — the
-// live feed by default, an archive day section otherwise.
+// The parts of one split submission sit together under one heading, in part
+// order, wherever the first part to arrive placed the group.
+function insertSplitPart(container, card, split) {
+  let group = [...container.children].find((node) =>
+    node.classList.contains("split-group") && node.dataset.splitGroup === split.groupId);
+  if (!group) {
+    group = document.createElement("section");
+    group.className = "split-group";
+    group.dataset.splitGroup = split.groupId;
+    const heading = document.createElement("h3");
+    heading.textContent = `${split.modelLabel} split one prompt into ${split.count} images`;
+    const reason = document.createElement("p");
+    reason.className = "split-group-reason";
+    reason.textContent = split.reason;
+    const parts = document.createElement("div");
+    parts.className = "split-group-parts";
+    group.append(heading, reason, parts);
+    container.prepend(group);
+  }
+  const parts = group.querySelector(".split-group-parts");
+  const later = [...parts.children].find((node) => Number(node.dataset.splitIndex) > split.index);
+  parts.insertBefore(card, later || null);
+}
+
+// opts: { user, container, split }. user is the creator display name
+// (shared-site attribution + filter target); container is where the card
+// renders — the live feed by default, an archive day section otherwise;
+// split places one part of a split submission inside its group.
 function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opts = {}) {
   if (isPromptHidden(id)) return null;
   const existing = el(`job-${id}`);
@@ -11756,6 +12100,17 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
   // Read by the image viewer's input-comparison mode (`c`).
   card.dataset.hasInputImage = String(!!hasImage || resolvedInputCount > 0);
   card.dataset.inputCount = String(resolvedInputCount);
+  const split = opts.split || null;
+  if (split) {
+    card.dataset.splitIndex = String(split.index);
+    card.dataset.splitLabel = `part ${split.index} of ${split.count} · ${split.title}`;
+    const partLabel = document.createElement("div");
+    partLabel.className = "job-split-part";
+    const partNumber = document.createElement("strong");
+    partNumber.textContent = `part ${split.index} of ${split.count}`;
+    partLabel.append(partNumber, ` · ${split.title}`);
+    card.appendChild(partLabel);
+  }
 
   const head = document.createElement("div");
   head.className = "job-head";
@@ -11928,7 +12283,8 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
   applyNightModeToCard(card);
   applyUserFilterToCard(card);
   registerUser(opts.user || "");
-  (opts.container || jobsSection).prepend(card);
+  if (split) insertSplitPart(opts.container || jobsSection, card, split);
+  else (opts.container || jobsSection).prepend(card);
   refreshJobDeletionControls(card);
   return card;
 }
@@ -12017,6 +12373,7 @@ async function pollJobEvents() {
             originalUser: j.originalUser,
             ownerId: j.ownerId,
             canHide: !!j.canHide,
+            split: j.split,
           });
         continue;
       }
@@ -12599,6 +12956,7 @@ async function loadArchiveDay(day, container) {
         ownerId: j.ownerId,
         canHide: !!j.canHide,
         container,
+        split: j.split,
       });
     if (!card) continue;
     for (const evt of item.events) {
