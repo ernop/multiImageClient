@@ -29,7 +29,7 @@ namespace MultiImageClient
     {
         static async Task Main(string[] args)
         {
-            TiffDecodingGuard.RefuseTiff();
+            TiffGuard.RefuseTiff();
 
             // Production publishes carry the Playwright revision they were
             // built against. Point Playwright at that immutable payload before

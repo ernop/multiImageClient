@@ -76,16 +76,29 @@ compromised friend account = a hostile user with complete member powers.
    execution lands in a low-privilege, mostly read-only jail rather than
    root.
 
-   **TIFF refused (2026-11-03).** ImageSharp 3.1.12 has advisory
-   GHSA-v76p-62qx-wwq2 (high). A tiled fax TIFF makes its decoder write
-   past a heap buffer. ImageSharp 3.2.0 fixes the bug. But 3.2.0 fails
-   every Release build without a Six Labors license key. Thus the app
-   stays on 3.1.12. `TiffDecodingGuard.RefuseTiff()` runs first in
-   `Program.Main`. It replaces the TIFF decoder in `Configuration.Default`.
-   Each TIFF load or identify then throws `UnknownImageFormatException`.
-   No feature needs TIFF. Remove the guard after a move to a fixed
-   ImageSharp version. A license key needs a sign-up with Six Labors, so
-   the owner decides on it.
+   **TIFF refused (2026-11-03).** ImageSharp 3.1.12 has six advisories,
+   all published 2026-10-07. ImageSharp 3.2.0 fixes all six. But 3.2.0
+   fails every Release build without a Six Labors license key. Thus the
+   app stays on 3.1.12. `TiffGuard.RefuseTiff()` runs first in
+   `Program.Main`. It replaces the TIFF decoder and encoder in
+   `Configuration.Default`. Each TIFF load, identify, or save then throws
+   `UnknownImageFormatException`. No feature reads or writes TIFF.
+
+   - GHSA-v76p-62qx-wwq2 (high): a tiled fax TIFF makes the decoder write
+     past a heap buffer. The refused decoder blocks it.
+   - GHSA-j3p4-wp97-rph4 (high): HistogramEqualization on a float TIFF
+     reads out of range. The refused decoder blocks it. The app does not
+     call HistogramEqualization.
+   - GHSA-j9gm-c75j-xc9q and GHSA-jjfr-hcj7-qf5w (high): the CCITT T4 and
+     T6 encoders write past their buffers. The refused encoder blocks them.
+   - GHSA-wmxv-xphr-5c9g (moderate): a BigTIFF entry count keeps a decoder
+     thread in a loop. The refused decoder blocks it.
+   - GHSA-gwg2-r3hj-4w44 (moderate): a bad embedded ICC profile (colour
+     profile) makes the profile parser allocate about 115 MB. The parser
+     runs only when code reads `IccProfile` entries. The app never does.
+
+   Remove the guard after a move to a fixed ImageSharp version. A license
+   key needs a sign-up with Six Labors, so the owner decides on it.
 2. **Auth-file leak.** `ui-auth.json` holds PBKDF2 password hashes and the
    HMAC secret. A reader of the file can still mint cookies if they also
    capture a live `mic_auth` cookie, and they can attempt offline cracking of
