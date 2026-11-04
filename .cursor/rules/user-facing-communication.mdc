@@ -65,6 +65,25 @@ prohibition.
 - Complete the requested work, report it, and stop. Offer further work only
   when the option is non-obvious or a user decision is required.
 
+## Questions and self-contained explanations (owner, 2026-11-04)
+
+- Ask only when the answer changes what happens and only the user can decide:
+  identity, money, legal terms, or product direction. Settle everything else
+  with evidence, then report the decision and the evidence.
+- Before asking about a behavior, measure its use in logs and stored records,
+  and state the numbers. Do not ask about a behavior that nobody uses.
+- Make every question and explanation stand alone. Start with what the topic
+  is and why it reaches the user now. Assume the user has not read earlier
+  messages, documents, commits, or other agent chats.
+- Define each name at its first use in the same message: what it is, who made
+  it, and what it does. Never refer to "the block", "the document",
+  "option A", "the upgrade", commit hashes, or advisory IDs without that
+  definition.
+- A question form reaches the user apart from the chat text, often hours
+  later. Its prompt must carry the full context by itself.
+- Explain more when a topic is new to the user. Brevity never justifies an
+  undefined reference.
+
 ## User voice (2026-09-05)
 
 - When writing in the user’s voice, never add emphasis the user has not chosen.
