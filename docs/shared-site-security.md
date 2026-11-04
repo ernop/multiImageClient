@@ -65,7 +65,7 @@ compromised friend account = a hostile user with complete member powers.
 ## Realistic paths to actual takeover (ranked)
 
 1. **Native image-codec exploitation — the one to respect.** Uploaded bytes
-   are decoded by ImageSharp (managed; worst case historically is DoS) and
+   are decoded by ImageSharp (managed code; see the TIFF note below) and
    also flow through **Magick.NET / native ImageMagick** during save/compose
    (`ImageSaving.cs`, `ImageCombiner.cs`). ImageMagick has a long CVE
    history; a crafted upload exploiting a fresh codec bug is the most
@@ -75,6 +75,17 @@ compromised friend account = a hostile user with complete member powers.
    `ProtectSystem=strict`, unprivileged user) so even successful code
    execution lands in a low-privilege, mostly read-only jail rather than
    root.
+
+   **TIFF refused (2026-11-03).** ImageSharp 3.1.12 has advisory
+   GHSA-v76p-62qx-wwq2 (high). A tiled fax TIFF makes its decoder write
+   past a heap buffer. ImageSharp 3.2.0 fixes the bug. But 3.2.0 fails
+   every Release build without a Six Labors license key. Thus the app
+   stays on 3.1.12. `TiffDecodingGuard.RefuseTiff()` runs first in
+   `Program.Main`. It replaces the TIFF decoder in `Configuration.Default`.
+   Each TIFF load or identify then throws `UnknownImageFormatException`.
+   No feature needs TIFF. Remove the guard after a move to a fixed
+   ImageSharp version. A license key needs a sign-up with Six Labors, so
+   the owner decides on it.
 2. **Auth-file leak.** `ui-auth.json` holds PBKDF2 password hashes and the
    HMAC secret. A reader of the file can still mint cookies if they also
    capture a live `mic_auth` cookie, and they can attempt offline cracking of

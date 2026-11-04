@@ -74,6 +74,16 @@ dotnet test MultiImageClient.sln --no-restore
 git status --short --branch
 ```
 
+Also build Release once from a clean worktree. Some package checks run
+only in Release builds. On 2026-11-03, the ImageSharp 3.2.0 license check
+passed the Debug tests and then failed both releases. Do not build Release
+in the repo itself: the local service runs from the repo's `bin/Release`.
+
+```bash
+wt=$(mktemp -d) && git worktree add -q --detach "$wt" HEAD &&
+  (cd "$wt" && dotnet build MultiImageClient.sln -c Release); git worktree remove --force "$wt"
+```
+
 Push the intended commit to GitHub only after those checks pass. From the
 current development workstation, release that commit with:
 
