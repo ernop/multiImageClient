@@ -2,11 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-using SixLabors.Fonts;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Drawing.Processing;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace MultiImageClient
 {
@@ -25,16 +21,16 @@ namespace MultiImageClient
         // Eight visually distinct fills, assigned to regions in reply order.
         // Text drawn on top of them is black or white by luminance (never
         // gray, per the visual policy).
-        private static readonly Color[] Palette =
+        private static readonly SKColor[] Palette =
         {
-            Color.ParseHex("E53935"), // red
-            Color.ParseHex("1E88E5"), // blue
-            Color.ParseHex("43A047"), // green
-            Color.ParseHex("FB8C00"), // orange
-            Color.ParseHex("8E24AA"), // purple
-            Color.ParseHex("00ACC1"), // cyan
-            Color.ParseHex("FDD835"), // yellow
-            Color.ParseHex("6D4C41"), // brown
+            SKColor.Parse("E53935"), // red
+            SKColor.Parse("1E88E5"), // blue
+            SKColor.Parse("43A047"), // green
+            SKColor.Parse("FB8C00"), // orange
+            SKColor.Parse("8E24AA"), // purple
+            SKColor.Parse("00ACC1"), // cyan
+            SKColor.Parse("FDD835"), // yellow
+            SKColor.Parse("6D4C41"), // brown
         };
 
         public static int MaxRegions => Palette.Length;
@@ -45,7 +41,7 @@ namespace MultiImageClient
         private const int LegendSwatch = 20;
         private const int LegendRowGap = 8;
 
-        public static Image<Rgba32> Render(
+        public static SKBitmap Render(
             int sourceWidth,
             int sourceHeight,
             IReadOnlyList<UiLayoutMapRegion> regions,
@@ -96,11 +92,9 @@ namespace MultiImageClient
                 + summaryHeight + descender
                 + Pad;
 
-            var image = ImageUtils.CreateStandardImage(mapWidth, mapHeight + legendHeight, Color.White);
-            image.Mutate(ctx =>
+            var image = ImageUtils.CreateStandardImage(mapWidth, mapHeight + legendHeight, SKColors.White);
+            using (var canvas = new SKCanvas(image))
             {
-                ctx.ApplyStandardGraphicsOptions();
-
                 // Paint larger regions first so smaller (typically foreground)
                 // sections stay visible on top; the numbering keeps the
                 // model's reply order either way.
@@ -119,20 +113,20 @@ namespace MultiImageClient
                 foreach (var (region, index) in paintOrder)
                 {
                     var bounds = RegionBounds(region, mapWidth, mapHeight);
-                    ctx.Fill(Palette[index], bounds);
-                    ctx.Draw(Color.Black, 3f, bounds);
+                    canvas.FillRect(bounds, Palette[index]);
+                    canvas.StrokeRect(bounds, SKColors.Black, 3f);
                 }
 
-                var placedLabels = new List<RectangleF>();
+                var placedLabels = new List<SKRect>();
                 foreach (var (region, index) in paintOrder)
                 {
                     var fill = Palette[index];
                     var bounds = RegionBounds(region, mapWidth, mapHeight);
-                    var textColor = LuminanceOf(fill) > 150 ? Color.Black : Color.White;
+                    var textColor = LuminanceOf(fill) > 150 ? SKColors.Black : SKColors.White;
                     var inBoxText = $"{index + 1} · {region.Label}";
                     var startingSize = (int)Math.Clamp(Math.Min(bounds.Width, bounds.Height) / 4f, 16f, 34f);
                     var font = ImageUtils.AutoSizeFont(inBoxText, (int)bounds.Width, startingSize);
-                    var measured = TextMeasurer.MeasureBounds(
+                    var measured = TextLayout.Measure(
                         inBoxText, FontUtils.CreateTextOptions(font));
                     // A label whose autosized minimum still overflows the box
                     // falls back to the bare number; the legend carries the
@@ -140,7 +134,7 @@ namespace MultiImageClient
                     var text = measured.Width <= bounds.Width - 8f ? inBoxText : $"{index + 1}";
                     if (text != inBoxText)
                     {
-                        measured = TextMeasurer.MeasureBounds(
+                        measured = TextLayout.Measure(
                             text, FontUtils.CreateTextOptions(font));
                     }
                     // Overlapping regions are normal (foreground boxes sit on
@@ -157,19 +151,19 @@ namespace MultiImageClient
                     var inset = 10f;
                     var candidates = new[]
                     {
-                        new PointF(
-                            bounds.X + (bounds.Width - textW) / 2f,
-                            bounds.Y + (bounds.Height - textH) / 2f),
-                        new PointF(bounds.X + inset, bounds.Y + inset),
-                        new PointF(bounds.Right - textW - inset, bounds.Y + inset),
-                        new PointF(bounds.X + inset, bounds.Bottom - textH - inset),
-                        new PointF(bounds.Right - textW - inset, bounds.Bottom - textH - inset),
+                        new SKPoint(
+                            bounds.Left + (bounds.Width - textW) / 2f,
+                            bounds.Top + (bounds.Height - textH) / 2f),
+                        new SKPoint(bounds.Left + inset, bounds.Top + inset),
+                        new SKPoint(bounds.Right - textW - inset, bounds.Top + inset),
+                        new SKPoint(bounds.Left + inset, bounds.Bottom - textH - inset),
+                        new SKPoint(bounds.Right - textW - inset, bounds.Bottom - textH - inset),
                     };
                     var best = candidates[0];
                     var bestCost = float.MaxValue;
                     foreach (var candidate in candidates)
                     {
-                        var rect = new RectangleF(candidate.X, candidate.Y, textW, textH);
+                        var rect = SKRect.Create(candidate.X, candidate.Y, textW, textH);
                         var cost = otherBounds.Sum(other => IntersectionArea(rect, other))
                             + placedLabels.Sum(other => IntersectionArea(rect, other) * 4f);
                         if (cost < bestCost)
@@ -178,10 +172,10 @@ namespace MultiImageClient
                             best = candidate;
                         }
                     }
-                    placedLabels.Add(new RectangleF(best.X, best.Y, textW, textH));
+                    placedLabels.Add(SKRect.Create(best.X, best.Y, textW, textH));
                     var options = FontUtils.CreateTextOptions(font);
                     options.Origin = best;
-                    ctx.DrawTextStandard(options, text, textColor);
+                    canvas.DrawTextStandard(options, text, textColor);
                 }
 
                 // Legend band on white below the map: numbered swatch rows in
@@ -189,43 +183,42 @@ namespace MultiImageClient
                 var rowY = (float)(mapHeight + Pad);
                 for (var i = 0; i < regions.Count; i++)
                 {
-                    var swatch = new RectangleF(Pad, rowY, LegendSwatch, LegendSwatch);
-                    ctx.Fill(Palette[i], swatch);
-                    ctx.Draw(Color.Black, 1.5f, swatch);
+                    var swatch = SKRect.Create(Pad, rowY, LegendSwatch, LegendSwatch);
+                    canvas.FillRect(swatch, Palette[i]);
+                    canvas.StrokeRect(swatch, SKColors.Black, 1.5f);
                     var rowOptions = FontUtils.CreateTextOptions(legendFont);
-                    rowOptions.Origin = new PointF(Pad + LegendSwatch + Pad, rowY);
+                    rowOptions.Origin = new SKPoint(Pad + LegendSwatch + Pad, rowY);
                     rowOptions.WrappingLength = legendTextWidth;
-                    ctx.DrawTextStandard(rowOptions, legendRows[i], Color.Black);
+                    canvas.DrawTextStandard(rowOptions, legendRows[i], SKColors.Black);
                     rowY += legendRowHeights[i];
                 }
                 var summaryOptions = FontUtils.CreateTextOptions(legendFont);
-                summaryOptions.Origin = new PointF(Pad, rowY);
+                summaryOptions.Origin = new SKPoint(Pad, rowY);
                 summaryOptions.WrappingLength = mapWidth - Pad * 2;
-                ctx.DrawTextStandard(summaryOptions, summary, Color.Black);
-            });
+                canvas.DrawTextStandard(summaryOptions, summary, SKColors.Black);
+            }
             return image;
         }
 
-        private static float IntersectionArea(RectangleF a, RectangleF b)
+        private static float IntersectionArea(SKRect a, SKRect b)
         {
             var w = Math.Min(a.Right, b.Right) - Math.Max(a.Left, b.Left);
             var h = Math.Min(a.Bottom, b.Bottom) - Math.Max(a.Top, b.Top);
             return w > 0 && h > 0 ? w * h : 0f;
         }
 
-        private static RectangleF RegionBounds(UiLayoutMapRegion region, int mapWidth, int mapHeight)
+        private static SKRect RegionBounds(UiLayoutMapRegion region, int mapWidth, int mapHeight)
         {
             var x = region.XMin / 1000f * mapWidth;
             var y = region.YMin / 1000f * mapHeight;
             var w = Math.Max(2f, (region.XMax - region.XMin) / 1000f * mapWidth);
             var h = Math.Max(2f, (region.YMax - region.YMin) / 1000f * mapHeight);
-            return new RectangleF(x, y, w, h);
+            return SKRect.Create(x, y, w, h);
         }
 
-        private static double LuminanceOf(Color color)
+        private static double LuminanceOf(SKColor color)
         {
-            var pixel = color.ToPixel<Rgba32>();
-            return 0.299 * pixel.R + 0.587 * pixel.G + 0.114 * pixel.B;
+            return 0.299 * color.Red + 0.587 * color.Green + 0.114 * color.Blue;
         }
     }
 }

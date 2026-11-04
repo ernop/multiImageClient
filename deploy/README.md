@@ -76,7 +76,8 @@ git status --short --branch
 
 Also build Release once from a clean worktree. Some package checks run
 only in Release builds. On 2026-11-03, the ImageSharp 3.2.0 license check
-passed the Debug tests and then failed both releases. Do not build Release
+passed the Debug tests and then failed both releases. ImageSharp was
+removed on 2026-11-04; the Release check remains. Do not build Release
 in the repo itself: the local service runs from the repo's `bin/Release`.
 
 ```bash

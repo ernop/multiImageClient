@@ -11,10 +11,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace MultiImageClient
 {
@@ -2332,62 +2329,74 @@ namespace MultiImageClient
                 return new ManagerChatImagePayload { Bytes = raw, Mime = info.Mime, Label = $"{identity}: {description}" };
             }
 
-            using var image = Image.Load<Rgba32>(raw);
+            using var decoded = Raster.Decode(raw);
             if (plan.Mode == "png")
             {
-                using var ms = new MemoryStream();
-                image.SaveAsPng(ms);
-                return new ManagerChatImagePayload { Bytes = ms.ToArray(), Mime = "image/png", Label = $"{identity}: {description}" };
+                return new ManagerChatImagePayload { Bytes = Raster.EncodePng(decoded), Mime = "image/png", Label = $"{identity}: {description}" };
             }
 
-            if (plan.Mode == "downscale" && (image.Width != plan.Width || image.Height != plan.Height))
-            {
-                image.Mutate(x => x.Resize(plan.Width, plan.Height));
-            }
             // JPEG has no alpha; composite onto white so transparent regions
             // do not turn black.
-            image.Mutate(x => x.BackgroundColor(Color.White));
+            SKBitmap image;
+            if (plan.Mode == "downscale" && (decoded.Width != plan.Width || decoded.Height != plan.Height))
+            {
+                using var resized = Raster.Resize(decoded, plan.Width, plan.Height);
+                image = Raster.Flatten(resized, SKColors.White);
+            }
+            else
+            {
+                image = Raster.Flatten(decoded, SKColors.White);
+            }
 
-            var extra = new List<string>();
-            foreach (var quality in new[] { JpegQualityFirst, JpegQualitySecond })
+            try
             {
-                var encoded = EncodeJpeg(image, quality);
-                if (FitsByteCaps(limits, encoded.Length))
+                var extra = new List<string>();
+                foreach (var quality in new[] { JpegQualityFirst, JpegQualitySecond })
                 {
-                    if (quality != JpegQualityFirst)
+                    var encoded = Raster.EncodeJpeg(image, quality);
+                    if (FitsByteCaps(limits, encoded.Length))
                     {
-                        extra.Add($"JPEG q{quality}");
+                        if (quality != JpegQualityFirst)
+                        {
+                            extra.Add($"JPEG q{quality}");
+                        }
+                        return new ManagerChatImagePayload
+                        {
+                            Bytes = encoded,
+                            Mime = "image/jpeg",
+                            Label = $"{identity}: {description}" + (extra.Count > 0 ? " (" + string.Join(", ", extra) + ")" : ""),
+                        };
                     }
-                    return new ManagerChatImagePayload
-                    {
-                        Bytes = encoded,
-                        Mime = "image/jpeg",
-                        Label = $"{identity}: {description}" + (extra.Count > 0 ? " (" + string.Join(", ", extra) + ")" : ""),
-                    };
                 }
-            }
-            // Full-resolution JPEG still over the per-image byte cap:
-            // progressive downscale until it fits (recorded).
-            var w = image.Width;
-            var h = image.Height;
-            for (var step = 0; step < 12; step++)
-            {
-                w = Math.Max(1, (int)Math.Floor(w * 0.85));
-                h = Math.Max(1, (int)Math.Floor(h * 0.85));
-                image.Mutate(x => x.Resize(w, h));
-                var encoded = EncodeJpeg(image, JpegQualitySecond);
-                if (FitsByteCaps(limits, encoded.Length))
+                // Full-resolution JPEG still over the per-image byte cap:
+                // progressive downscale until it fits (recorded).
+                var w = image.Width;
+                var h = image.Height;
+                for (var step = 0; step < 12; step++)
                 {
-                    return new ManagerChatImagePayload
+                    w = Math.Max(1, (int)Math.Floor(w * 0.85));
+                    h = Math.Max(1, (int)Math.Floor(h * 0.85));
+                    var smaller = Raster.Resize(image, w, h);
+                    image.Dispose();
+                    image = smaller;
+                    var encoded = Raster.EncodeJpeg(image, JpegQualitySecond);
+                    if (FitsByteCaps(limits, encoded.Length))
                     {
-                        Bytes = encoded,
-                        Mime = "image/jpeg",
-                        Label = $"{identity}: downscaled to {w}x{h} from {info.Width}x{info.Height} — JPEG q{JpegQualitySecond} at full resolution still exceeded the provider per-image byte cap; {plan.Reason}",
-                    };
+                        return new ManagerChatImagePayload
+                        {
+                            Bytes = encoded,
+                            Mime = "image/jpeg",
+                            Label = $"{identity}: downscaled to {w}x{h} from {info.Width}x{info.Height} — JPEG q{JpegQualitySecond} at full resolution still exceeded the provider per-image byte cap; {plan.Reason}",
+                        };
+                    }
                 }
+                throw new InvalidOperationException(
+                    $"{identity}: cannot fit the image within the provider's per-image byte cap even at {w}x{h}; the loop stops rather than drop the image");
             }
-            throw new InvalidOperationException(
-                $"{identity}: cannot fit the image within the provider's per-image byte cap even at {w}x{h}; the loop stops rather than drop the image");
+            finally
+            {
+                image.Dispose();
+            }
         }
 
         private static bool FitsByteCaps(ManagerImageLimits limits, long rawBytes)
@@ -2401,13 +2410,6 @@ namespace MultiImageClient
                 return false;
             }
             return true;
-        }
-
-        private static byte[] EncodeJpeg(Image<Rgba32> image, int quality)
-        {
-            using var ms = new MemoryStream();
-            image.SaveAsJpeg(ms, new JpegEncoder { Quality = quality });
-            return ms.ToArray();
         }
     }
 
@@ -3743,8 +3745,15 @@ namespace MultiImageClient
                 // preview); the transport plan re-encodes it losslessly.
                 mime = "image/unknown";
             }
-            var identified = Image.Identify(bytes.Bytes)
-                ?? throw new InvalidOperationException($"render job {jobId} image {gen}/{index} is not a decodable raster image");
+            RasterInfo identified;
+            try
+            {
+                identified = Raster.Identify(bytes.Bytes);
+            }
+            catch (InvalidDataException ex)
+            {
+                throw new InvalidOperationException($"render job {jobId} image {gen}/{index} is not a decodable raster image: {ex.Message}", ex);
+            }
             return (new UiGoalLoopImageInfo(mime, identified.Width, identified.Height, bytes.Bytes.LongLength), bytes.Bytes);
         }
 

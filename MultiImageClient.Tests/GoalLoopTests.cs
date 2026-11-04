@@ -5,7 +5,7 @@ using System.Text.Json;
 
 using MultiImageClient;
 
-using SixLabors.ImageSharp;
+using SkiaSharp;
 
 using Xunit;
 
@@ -165,18 +165,16 @@ namespace MultiImageClient.Tests
         [Fact]
         public void ApplyKeepsPixelDimensionsWhenReencoding()
         {
-            using var image = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(300, 200);
+            using var image = Raster.Create(300, 200, SKColors.Black);
             var rng = new System.Random(1);
             for (var y = 0; y < 200; y++)
             {
                 for (var x = 0; x < 300; x++)
                 {
-                    image[x, y] = new SixLabors.ImageSharp.PixelFormats.Rgba32((byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256), 255);
+                    image.SetPixel(x, y, new SKColor((byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256), 255));
                 }
             }
-            using var ms = new MemoryStream();
-            image.SaveAsPng(ms);
-            var raw = ms.ToArray();
+            var raw = Raster.EncodePng(image);
             var info = new UiGoalLoopImageInfo("image/png", 300, 200, raw.Length);
 
             var verbatim = UiGoalLoopImageTransport.Apply(new UiGoalLoopImageTransport.Plan("verbatim", 300, 200, ""), ManagerCatalog.OpenAiLimits, info, raw, "t");
@@ -185,7 +183,7 @@ namespace MultiImageClient.Tests
 
             var jpeg = UiGoalLoopImageTransport.Apply(new UiGoalLoopImageTransport.Plan("jpeg", 300, 200, "cap"), ManagerCatalog.AnthropicLimits, info, raw, "t");
             Assert.Equal("image/jpeg", jpeg.Mime);
-            var decoded = SixLabors.ImageSharp.Image.Identify(jpeg.Bytes);
+            var decoded = Raster.Identify(jpeg.Bytes);
             Assert.Equal(300, decoded.Width);
             Assert.Equal(200, decoded.Height);
             Assert.Contains("full 300x200", jpeg.Label);

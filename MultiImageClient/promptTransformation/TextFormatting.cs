@@ -1,26 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Threading.Tasks;
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using IdeogramAPIClient;
-using System.Text.RegularExpressions;
-using SixLabors.ImageSharp.Processing;
-using SixLabors.Fonts;
-using SixLabors.ImageSharp.Drawing.Processing;
-using System.Drawing;
-using RectangleF = SixLabors.ImageSharp.RectangleF;
-using Color = SixLabors.ImageSharp.Color;
-using PointF = SixLabors.ImageSharp.PointF;
-using SystemFonts = SixLabors.Fonts.SystemFonts;
-using Rectangle = SixLabors.ImageSharp.Rectangle;
-using Point = SixLabors.ImageSharp.Point;
-using Image = SixLabors.ImageSharp.Image;
-using FontStyle = SixLabors.Fonts.FontStyle;
+using SkiaSharp;
 
 
 namespace MultiImageClient
@@ -30,7 +13,7 @@ namespace MultiImageClient
         private static readonly float KEY_WIDTH_PROPORTION = 0.15f;
         private static readonly float VALUE_WIDTH_PROPORTION = 1f - KEY_WIDTH_PROPORTION;
 
-        private static void DrawKeyValuePair(IImageProcessingContext ctx, string key, string value, float fontSize, float x, float keyWidth, float valueWidth, ref float y)
+        private static void DrawKeyValuePair(SKCanvas canvas, string key, string value, float fontSize, float x, float keyWidth, float valueWidth, ref float y)
         {
             // just trunc. ugh.
             value = value.Length > 2500 ? value[..2500] + "..." : value;
@@ -39,37 +22,33 @@ namespace MultiImageClient
             const float PADDING = 4;
 
             // Measure text height with wrapping
-            var keyOptions = new RichTextOptions(font)
+            var keyOptions = new TextBlockOptions(font)
             {
                 WrappingLength = keyWidth - (2 * PADDING),
                 LineSpacing = 1.2f
             };
 
-            var valueOptions = new RichTextOptions(font)
+            var valueOptions = new TextBlockOptions(font)
             {
                 WrappingLength = valueWidth - (2 * PADDING),
                 LineSpacing = 1.2f
             };
 
-            // Using the correct TextMeasurer method from SixLabors.Fonts
-            var keyBounds = TextMeasurer.MeasureBounds(key, keyOptions);
-            var valueBounds = TextMeasurer.MeasureBounds(value, valueOptions);
+            var keyBounds = TextLayout.Measure(key, keyOptions);
+            var valueBounds = TextLayout.Measure(value, valueOptions);
             var rowHeight = Math.Max(keyBounds.Height, valueBounds.Height) + (2 * PADDING);
 
             // Draw the background boxes based on measured height
-            var keyRect = new RectangleF(x, y, keyWidth, rowHeight);
-            var valueRect = new RectangleF(x + keyWidth, y, valueWidth, rowHeight);
-
-            ctx.Fill(Color.Black, keyRect)
-               .Fill(Color.White, valueRect);
+            canvas.FillRect(SKRect.Create(x, y, keyWidth, rowHeight), SKColors.Black);
+            canvas.FillRect(SKRect.Create(x + keyWidth, y, valueWidth, rowHeight), SKColors.White);
 
             // Update options with final positions
-            keyOptions.Origin = new PointF(x + PADDING, y + PADDING);
-            valueOptions.Origin = new PointF(x + keyWidth + PADDING, y + PADDING);
+            keyOptions.Origin = new SKPoint(x + PADDING, y + PADDING);
+            valueOptions.Origin = new SKPoint(x + keyWidth + PADDING, y + PADDING);
 
             // Draw the text
-            ctx.DrawText(keyOptions, key, Color.White);
-            ctx.DrawText(valueOptions, value, Color.Black);
+            canvas.DrawTextStandard(keyOptions, key, SKColors.White);
+            canvas.DrawTextStandard(valueOptions, value, SKColors.Black);
 
             y += rowHeight + PADDING;
         }
@@ -77,74 +56,63 @@ namespace MultiImageClient
         public static async Task JustAddSimpleTextToBottomAsync(byte[] imageBytes, IEnumerable<PromptHistoryStep> historySteps, Dictionary<string, string> imageInfo, string outputPath, SaveType saveType)
         {
             Console.WriteLine(outputPath);
-            using var originalImage = Image.Load<Rgba32>(imageBytes);
+            using var originalImage = Raster.Decode(imageBytes);
             var imageWidth = originalImage.Width;
             var intendedFontSize = 24;
-            
+
             var theText = historySteps.First().Prompt ?? "failed to get text";
-            var fontFamily = FontUtils.GetSystemFont();
-            var testFont = fontFamily.CreateFont(intendedFontSize, FontStyle.Regular);
+            var testFont = FontUtils.CreateFont(intendedFontSize, FontStyle.Regular);
 
             var horizontalPadding = 10;
             var verticalPadding = 10;
             var availableXPixels = imageWidth - (horizontalPadding * 2);
 
-            //we can measure font length with:
-            var textOptions = new RichTextOptions(testFont)
+            var textOptions = new TextBlockOptions(testFont)
             {
                 WrappingLength = availableXPixels,
                 LineSpacing = 1.15f,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Dpi = UIConstants.TextDpi,
-                FallbackFontFamilies = new[] { SystemFonts.Families.First() }
             };
 
-            // Using the correct TextMeasurer method from SixLabors.Fonts
-            var keyBounds = TextMeasurer.MeasureBounds(theText, textOptions);
+            var keyBounds = TextLayout.Measure(theText, textOptions);
 
             int textHeight = (int)Math.Ceiling(keyBounds.Height);
             int yPixelsToAdd = textHeight + (verticalPadding * 2);
             int newHeight = originalImage.Height + yPixelsToAdd;
 
-            using var annotatedImage = new Image<Rgba32>(originalImage.Width, newHeight);
+            using var annotatedImage = ImageUtils.CreateStandardImage(originalImage.Width, newHeight);
 
-            annotatedImage.Mutate(ctx =>
+            using (var canvas = new SKCanvas(annotatedImage))
             {
-                // antialiasing.
-                ctx.SetGraphicsOptions(new GraphicsOptions
-                {
-                    Antialias = true,
-                    AntialiasSubpixelDepth = 16
-                });
-
                 // Draw original image
-                ctx.DrawImage(originalImage, new Point(0, 0), 1f);
+                canvas.DrawBitmapAt(originalImage, 0, 0);
 
                 // Set up the annotation area at the bottom
-                ctx.Fill(Color.Black, new Rectangle(0, originalImage.Height, originalImage.Width, yPixelsToAdd));
+                canvas.FillRect(SKRect.Create(0, originalImage.Height, originalImage.Width, yPixelsToAdd), SKColors.Black);
 
                 // Position text with proper padding
-                textOptions.Origin = new PointF(horizontalPadding, originalImage.Height + verticalPadding);
+                textOptions.Origin = new SKPoint(horizontalPadding, originalImage.Height + verticalPadding);
 
-                ctx.DrawText(textOptions, theText, Color.White);
+                canvas.DrawTextStandard(textOptions, theText, SKColors.White);
 
 
                 var meta = imageInfo["Producer"] ?? "no gen";
                 // Create smaller font for metadata
-                var metaFont = fontFamily.CreateFont(intendedFontSize * 0.75f, FontStyle.Regular);
-                var metaOptions = new RichTextOptions(metaFont)
+                var metaFont = FontUtils.CreateFont(intendedFontSize * 0.75f, FontStyle.Regular);
+                var metaOptions = new TextBlockOptions(metaFont)
                 {
                     HorizontalAlignment = HorizontalAlignment.Right,
                     VerticalAlignment = VerticalAlignment.Bottom,
                     Dpi = UIConstants.TextDpi,
-                    Origin = new PointF(imageWidth - horizontalPadding, newHeight - verticalPadding)
+                    Origin = new SKPoint(imageWidth - horizontalPadding, newHeight - verticalPadding)
                 };
 
-                ctx.DrawText(metaOptions, meta, new Color(new Rgba32(200, 200, 200)));
-            });
+                canvas.DrawTextStandard(metaOptions, meta, SKColors.White);
+            }
 
-            await annotatedImage.SaveAsPngAsync(outputPath);
+            await Task.Run(() => Raster.SavePng(annotatedImage, outputPath));
         }
 
         public static async Task SaveImageAndAnnotate(byte[] imageBytes, IEnumerable<PromptHistoryStep> historySteps, Dictionary<string, string> imageInfo, string outputPath, SaveType saveType)
@@ -153,72 +121,52 @@ namespace MultiImageClient
             {
                 throw new ArgumentException("Image bytes cannot be null or empty");
             }
-            
+
             try
             {
-                Image originalImage;
-                try
+                using var originalImage = Raster.Decode(imageBytes);
+
+                // Define dimensions
+                int annotationWidth = 850;
+                float fontSize = 15;
+
+                // Create new image with space for annotations
+                using var annotatedImage = ImageUtils.CreateStandardImage(originalImage.Width + annotationWidth, originalImage.Height);
+
+                using (var canvas = new SKCanvas(annotatedImage))
                 {
-                    originalImage = Image.Load(imageBytes);
-                }
-                catch (Exception ex2)
-                {
-                    Logger.Log($"{ex2} failed normal load");
-                    try
+                    // Draw original image
+                    canvas.DrawBitmapAt(originalImage, 0, 0);
+
+                    // Setup annotation area
+                    float leftMargin = originalImage.Width + 5;
+                    float rightMargin = annotatedImage.Width - 5;
+                    float totalWidth = rightMargin - leftMargin;
+                    float keyWidth = totalWidth * KEY_WIDTH_PROPORTION;
+                    float valueWidth = totalWidth * VALUE_WIDTH_PROPORTION;
+
+                    // Fill right side with black background
+                    canvas.FillRect(SKRect.Create(originalImage.Width, 0, annotationWidth, originalImage.Height), SKColors.Black);
+
+                    // Draw history steps
+                    float y = 5;
+                    foreach (var historyStep in historySteps)
                     {
-                        originalImage = Image.Load<Rgba32>(imageBytes);
+                        DrawKeyValuePair(canvas, historyStep.TransformationType.ToString(), historyStep.Explanation, fontSize, leftMargin, keyWidth, valueWidth, ref y);
+                        y += 2; // Small gap between entries
                     }
-                    catch (Exception ex3)
+
+                    // Draw image info if available
+                    if (imageInfo.Any())
                     {
-                        Logger.Log($"{ex3} failed rgba32 load");
-                        return;
+                        foreach (var kvp in imageInfo)
+                        {
+                            DrawKeyValuePair(canvas, kvp.Key, kvp.Value, fontSize, leftMargin, keyWidth, valueWidth, ref y);
+                        }
                     }
                 }
-                using (originalImage)
-                {
 
-                    // Define dimensions
-                    int annotationWidth = 850;
-                    float fontSize = 15;
-
-                    // Create new image with space for annotations
-                    using var annotatedImage = new Image<Rgba32>(originalImage.Width + annotationWidth, originalImage.Height);
-
-                    annotatedImage.Mutate(ctx =>
-                    {
-                        // Draw original image
-                        ctx.DrawImage(originalImage, new Point(0, 0), 1f);
-
-                        // Setup annotation area
-                        float leftMargin = originalImage.Width + 5;
-                        float rightMargin = annotatedImage.Width - 5;
-                        float totalWidth = rightMargin - leftMargin;
-                        float keyWidth = totalWidth * KEY_WIDTH_PROPORTION;
-                        float valueWidth = totalWidth * VALUE_WIDTH_PROPORTION;
-
-                        // Fill right side with black background
-                        ctx.Fill(Color.Black, new Rectangle(originalImage.Width, 0, annotationWidth, originalImage.Height));
-
-                        // Draw history steps
-                        float y = 5;
-                        foreach (var historyStep in historySteps)
-                        {
-                            DrawKeyValuePair(ctx, historyStep.TransformationType.ToString(), historyStep.Explanation, fontSize, leftMargin, keyWidth, valueWidth, ref y);
-                            y += 2; // Small gap between entries
-                        }
-
-                        // Draw image info if available
-                        if (imageInfo.Any())
-                        {
-                            foreach (var kvp in imageInfo)
-                            {
-                                DrawKeyValuePair(ctx, kvp.Key, kvp.Value, fontSize, leftMargin, keyWidth, valueWidth, ref y);
-                            }
-                        }
-                    });
-
-                    await annotatedImage.SaveAsPngAsync(outputPath);
-                }
+                await Task.Run(() => Raster.SavePng(annotatedImage, outputPath));
             }
             catch (Exception ex)
             {

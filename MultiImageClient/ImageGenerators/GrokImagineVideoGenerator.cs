@@ -1,7 +1,5 @@
 #nullable enable
-using SixLabors.Fonts;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 using System;
 using System.Collections.Generic;
@@ -310,31 +308,27 @@ namespace MultiImageClient
             var bodyFont = FontUtils.CreateFont(22, FontStyle.Regular);
             var pathFont = FontUtils.CreateFont(15, FontStyle.Regular);
 
-            image.Mutate(ctx =>
+            using (var canvas = new SKCanvas(image))
             {
-                ctx.ApplyStandardGraphicsOptions();
-
                 // Gold header band — film-leader feel, and gold is one of the
                 // approved semantic colors (see AGENTS.md typography policy).
-                ctx.DrawTextWithBackground(new RectangleF(0, 0, width, 70),
+                canvas.DrawTextWithBackground(SKRect.Create(0, 0, width, 70),
                     "VIDEO — xAI Grok Imagine", titleFont, UIConstants.Black, UIConstants.Gold);
 
                 var facts = $"{XAIGrokClient.ModelGrokImagineVideo}   {_aspectRatio}   {_resolution}   {durationSeconds}s   {sizeBytes / 1024} KB";
-                ctx.DrawTextWithBackground(new RectangleF(0, 90, width, 50),
+                canvas.DrawTextWithBackground(SKRect.Create(0, 90, width, 50),
                     facts, bodyFont, UIConstants.Black, UIConstants.White);
 
-                ctx.DrawTextWithBackground(new RectangleF(0, 160, width, 230),
+                canvas.DrawTextWithBackground(SKRect.Create(0, 160, width, 230),
                     Truncate(prompt, 320), bodyFont, UIConstants.Black, UIConstants.White,
-                    SixLabors.Fonts.HorizontalAlignment.Left);
+                    HorizontalAlignment.Left);
 
-                ctx.DrawTextWithBackground(new RectangleF(0, height - 160, width, 150),
+                canvas.DrawTextWithBackground(SKRect.Create(0, height - 160, width, 150),
                     $"saved to:\n{mp4Path}", pathFont, UIConstants.SuccessGreen, UIConstants.White,
-                    SixLabors.Fonts.HorizontalAlignment.Left);
-            });
+                    HorizontalAlignment.Left);
+            }
 
-            using var ms = new MemoryStream();
-            image.SaveAsPng(ms);
-            return ms.ToArray();
+            return Raster.EncodePng(image);
         }
 
         private static string Truncate(string s, int max)

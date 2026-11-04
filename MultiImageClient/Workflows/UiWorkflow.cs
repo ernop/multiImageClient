@@ -18,7 +18,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
-using SixLabors.ImageSharp;
 
 namespace MultiImageClient
 {
@@ -4973,10 +4972,11 @@ document.getElementById("f").addEventListener("submit", async (e) => {
         // hands over whatever it had (drag-dropping a web image can yield GIF,
         // BMP, AVIF, ...), and providers sniff the bytes: Ideogram, for one,
         // rejects anything that isn't PNG/JPEG/WEBP. PNG/JPEG/WEBP inputs are
-        // saved verbatim under their true type; other decodable formats are
+        // saved verbatim under their true type; GIF and BMP (first frame) are
         // deterministically re-encoded to PNG before any job starts (logged
         // pre-operation input conformance, same policy as the Recraft input
-        // conformer). Undecodable uploads are a hard 400 before the job exists.
+        // conformer). Every other format, and any undecodable upload, is a
+        // hard 400 before the job exists.
         private static async Task<(string Path, byte[] Bytes, string ContentType, int Width, int Height)> SaveConformedInputImageAsync(
             byte[] bytes,
             string namePart,
@@ -4987,24 +4987,14 @@ document.getElementById("f").addEventListener("submit", async (e) => {
             int height;
             try
             {
-                using var stream = new MemoryStream(bytes, writable: false);
-                var info = Image.Identify(stream);
-                if (info == null || info.Width <= 0 || info.Height <= 0)
-                {
-                    throw new InvalidDataException("Uploaded image has no readable dimensions.");
-                }
-                mime = info.Metadata.DecodedImageFormat?.DefaultMimeType
-                    ?? throw new InvalidDataException("Uploaded image format could not be identified.");
+                var info = Raster.Identify(bytes);
+                mime = info.MimeType;
                 width = info.Width;
                 height = info.Height;
             }
-            catch (InvalidDataException)
-            {
-                throw;
-            }
             catch (Exception ex)
             {
-                throw new InvalidDataException($"Uploaded image could not be decoded: {ex.Message}", ex);
+                throw new InvalidDataException($"Uploaded image could not be read: {ex.Message}", ex);
             }
 
             var ext = mime.ToLowerInvariant() switch
@@ -5017,14 +5007,16 @@ document.getElementById("f").addEventListener("submit", async (e) => {
             var contentType = mime.ToLowerInvariant();
             if (ext == "")
             {
-                using var image = Image.Load(bytes);
-                using var pngStream = new MemoryStream();
-                await image.SaveAsPngAsync(pngStream);
+                byte[] png;
+                using (var image = Raster.Decode(bytes))
+                {
+                    png = Raster.EncodePng(image);
+                }
                 Logger.Log(
                     $"UI input image arrived as {mime} ({width}x{height}); re-encoded to PNG "
-                    + $"({bytes.LongLength:N0} -> {pngStream.Length:N0} bytes) so every provider "
+                    + $"({bytes.LongLength:N0} -> {png.LongLength:N0} bytes) so every provider "
                     + "receives a correctly-labeled supported format.");
-                bytes = pngStream.ToArray();
+                bytes = png;
                 ext = ".png";
                 contentType = "image/png";
             }

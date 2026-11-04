@@ -2,7 +2,6 @@
 using Microsoft.Data.Sqlite;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using SixLabors.ImageSharp;
 
 using System;
 using System.Collections;
@@ -903,8 +902,8 @@ namespace MultiImageClient
         {
             try
             {
-                var info = Image.Identify(path);
-                return info == null ? (0, 0) : (info.Width, info.Height);
+                var info = Raster.Identify(path);
+                return (info.Width, info.Height);
             }
             catch
             {

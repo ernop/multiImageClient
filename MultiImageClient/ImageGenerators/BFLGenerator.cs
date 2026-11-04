@@ -1,7 +1,5 @@
 ﻿using BFLAPIClient;
 
-using SixLabors.ImageSharp;
-
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -149,24 +147,18 @@ namespace MultiImageClient
                 throw new InvalidOperationException($"BFL image remix file is missing: {path}");
             }
 
-            ImageInfo info;
+            RasterInfo info;
             try
             {
-                using var stream = File.OpenRead(path);
-                info = SixLabors.ImageSharp.Image.Identify(stream);
+                info = Raster.Identify(path);
             }
-            catch (UnknownImageFormatException ex)
+            catch (InvalidDataException ex)
             {
                 throw new InvalidOperationException(
                     $"BFL could not identify the attached image '{path}'.",
                     ex);
             }
 
-            if (info == null || info.Width < 1 || info.Height < 1)
-            {
-                throw new InvalidOperationException(
-                    $"BFL could not read pixel dimensions from '{path}'.");
-            }
             if (info.Width < MinImagePromptDimension || info.Height < MinImagePromptDimension)
             {
                 throw new InvalidOperationException(ImagePromptTooSmallMessage(info.Width, info.Height));

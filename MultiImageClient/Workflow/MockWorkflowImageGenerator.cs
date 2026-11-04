@@ -1,12 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Drawing.Processing;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+
+using SkiaSharp;
 
 namespace MultiImageClient
 {
@@ -51,21 +48,19 @@ namespace MultiImageClient
         private static byte[] CreatePng(string prompt)
         {
             var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(prompt));
-            var c1 = new Rgba32(hash[0], hash[1], hash[2]);
-            var c2 = new Rgba32(hash[3], hash[4], hash[5]);
-            var c3 = new Rgba32(hash[6], hash[7], hash[8]);
+            var c1 = new SKColor(hash[0], hash[1], hash[2]);
+            var c2 = new SKColor(hash[3], hash[4], hash[5]);
+            var c3 = new SKColor(hash[6], hash[7], hash[8]);
 
-            using var image = new Image<Rgba32>(768, 768, c1);
-            image.Mutate(ctx =>
+            using var image = Raster.Create(768, 768, c1);
+            using (var canvas = new SKCanvas(image))
             {
-                ctx.Fill(c2, new Rectangle(96, 96, 576, 576));
-                ctx.Fill(c3, new Rectangle(192, 192, 384, 384));
-                ctx.Fill(new Rgba32(255, 255, 255), new Rectangle(282, 282, 204, 204));
-            });
+                canvas.FillRect(SKRect.Create(96, 96, 576, 576), c2);
+                canvas.FillRect(SKRect.Create(192, 192, 384, 384), c3);
+                canvas.FillRect(SKRect.Create(282, 282, 204, 204), SKColors.White);
+            }
 
-            using var ms = new MemoryStream();
-            image.SaveAsPng(ms);
-            return ms.ToArray();
+            return Raster.EncodePng(image);
         }
     }
 }

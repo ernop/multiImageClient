@@ -76,7 +76,7 @@ Options identified, not implemented:
 
 - Draw the grid and prompt panel directly into the final canvas. This removes about 150 MB of duplicate pixels.
 - Render the sheet in horizontal strips and stream PNG rows to disk.
-  ImageSharp saves only whole images, so this needs a custom PNG writer.
+  SkiaSharp encodes only whole images, so this needs a custom PNG writer.
   Estimated peak: one strip plus downscaled sources, about 50–80 MiB.
   Pixel output must match the current renderer exactly.
 - Use 24-bit RGB canvases instead of 32-bit RGBA. Canvas memory falls by 25%.
@@ -146,7 +146,7 @@ Vibecoders changes from 768 MiB to 640 MiB at the next release.
 Scope of the limit:
 
 - It bounds the managed heap: base64 text, encoded image bytes, JSON, and HTTP buffers.
-- ImageSharp pixel buffers come from unmanaged memory, outside this limit.
+- Skia pixel buffers come from native memory, outside this limit.
 - Room below `memory.high` for unmanaged memory and the runtime grows from 256 MiB to 384 MiB.
 - Near the limit, the GC runs full blocking collections first.
 - An allocation beyond the limit throws `OutOfMemoryException` in the allocating code.
@@ -310,7 +310,8 @@ The fix was layered, in commit order (2026-07-31 → 2026-08-04):
    trim or spill to disk after job completion.
 2. **Bound compositing spikes** (`ff773e8`, `a47364b`, `14a1e44`):
    ImageSharp's allocator pool is capped at 64 MB and released after every
-   job; contact-sheet finalization — the largest transient allocation, since
+   job (superseded 2026-11-04: SkiaSharp replaced ImageSharp, and Skia frees
+   each bitmap on dispose without a pool); contact-sheet finalization — the largest transient allocation, since
    it composites many multi-MP originals — is gated by
    `UiMaxConcurrentJobs: 1` in production. That setting gates only
    finalization, so it does not serialize unrelated provider requests.
@@ -350,8 +351,8 @@ From `deploy/multiimageclient-ui.service` and
 - **`System.GC.HeapHardLimitPercent: 50` + `ConserveMemory: 6`** — with a
   cgroup limit set, .NET sizes its heap off `memory.max`. Pinning 50% caps
   the managed heap around 1280 MB (62.5% of `MemoryHigh`) and leaves about
-  768 MB below the operating ceiling for native allocations (ImageSharp/
-  Magick buffers, sockets, JIT).
+  768 MB below the operating ceiling for native allocations (Skia
+  bitmaps, sockets, JIT).
 - **`Nice=10`, `CPUQuota=150%`, `IOWeight=25`, `TasksMax=256`** — the same
   politeness principle applied to CPU, disk, and thread/process count.
 - **App-level caps** — verified live 2026-08-06: 1 finalizer job, 14 aggregate

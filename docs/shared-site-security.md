@@ -64,41 +64,89 @@ compromised friend account = a hostile user with complete member powers.
 
 ## Realistic paths to actual takeover (ranked)
 
-1. **Native image-codec exploitation — the one to respect.** Uploaded bytes
-   are decoded by ImageSharp (managed code; see the TIFF note below) and
-   also flow through **Magick.NET / native ImageMagick** during save/compose
-   (`ImageSaving.cs`, `ImageCombiner.cs`). ImageMagick has a long CVE
-   history; a crafted upload exploiting a fresh codec bug is the most
-   plausible RCE route. Mitigations: keep Magick.NET updated (the NU190x
-   advisories in the build are exactly this class of warning — bump it), and
-   run under the hardened systemd unit in `deploy/` (`NoNewPrivileges`,
-   `ProtectSystem=strict`, unprivileged user) so even successful code
-   execution lands in a low-privilege, mostly read-only jail rather than
-   root.
+1. **Native image-codec exploitation — the one to respect.** Uploads and
+   provider results are decoded by Skia, a C++ graphics library, through
+   SkiaSharp. A crafted file that exploits a fresh codec bug is the most
+   plausible RCE route. Mitigations:
+   - `Raster` decodes only five formats: PNG, JPEG, WebP, GIF, and BMP. It
+     refuses every other format before any pixel work. The refusal covers
+     Skia's own ICO, WBMP, HEIF, AVIF, and DNG codecs. Skia has no TIFF codec.
+   - `Raster` reads the header first. It refuses an image larger than
+     `Raster.MaxPixels` (134,217,728 pixels, 512 MiB at 4 bytes per pixel)
+     before decoding. A small file thus cannot expand into a huge bitmap.
+   - `SvgRaster` validates every SVG before Svg.Skia parses it (see below).
+   - Keep SkiaSharp, its native assets, and Svg.Skia current. The managed and
+     native SkiaSharp versions must match.
+   - The hardened systemd unit in `deploy/` (`NoNewPrivileges`,
+     `ProtectSystem=strict`, unprivileged user) confines successful code
+     execution to a low-privilege, mostly read-only jail.
 
-   **TIFF refused (2026-11-03).** ImageSharp 3.1.12 has six advisories,
-   all published 2026-10-07. ImageSharp 3.2.0 fixes all six. But 3.2.0
-   fails every Release build without a Six Labors license key. Thus the
-   app stays on 3.1.12. `TiffGuard.RefuseTiff()` runs first in
-   `Program.Main`. It replaces the TIFF decoder and encoder in
-   `Configuration.Default`. Each TIFF load, identify, or save then throws
-   `UnknownImageFormatException`. No feature reads or writes TIFF.
+   **Image library replacement (owner decision, 2026-11-04).** The app no
+   longer uses SixLabors.ImageSharp, ImageSharp.Drawing, SixLabors.Fonts, or
+   Magick.NET. ImageSharp 3.2.0 fixed six advisories in 3.1.12. But 3.2.0
+   requires a Six Labors license key in Release builds. The owner declined
+   that outside dependency. Magick.NET wraps native ImageMagick, which has a
+   long CVE history. The app used it only for SVG and format conversion.
+   The replacements are MIT-licensed: SkiaSharp 4.154.0 with its Linux native
+   assets, SkiaSharp.HarfBuzz for text shaping, and Svg.Skia 5.2.3 for SVG.
+   Three classes in `MultiImageClient/Utils/` own all image work: `Raster`,
+   `SvgRaster`, and `TextLayout` (fonts in `FontUtils`).
 
-   - GHSA-v76p-62qx-wwq2 (high): a tiled fax TIFF makes the decoder write
-     past a heap buffer. The refused decoder blocks it.
-   - GHSA-j3p4-wp97-rph4 (high): HistogramEqualization on a float TIFF
-     reads out of range. The refused decoder blocks it. The app does not
-     call HistogramEqualization.
-   - GHSA-j9gm-c75j-xc9q and GHSA-jjfr-hcj7-qf5w (high): the CCITT T4 and
-     T6 encoders write past their buffers. The refused encoder blocks them.
-   - GHSA-wmxv-xphr-5c9g (moderate): a BigTIFF entry count keeps a decoder
-     thread in a loop. The refused decoder blocks it.
-   - GHSA-gwg2-r3hj-4w44 (moderate): a bad embedded ICC profile (colour
-     profile) makes the profile parser allocate about 115 MB. The parser
-     runs only when code reads `IccProfile` entries. The app never does.
+   - The six ImageSharp 3.1.12 advisories no longer apply: GHSA-v76p-62qx-wwq2,
+     GHSA-j3p4-wp97-rph4, GHSA-j9gm-c75j-xc9q, GHSA-jjfr-hcj7-qf5w,
+     GHSA-wmxv-xphr-5c9g, and GHSA-gwg2-r3hj-4w44. The 2026-11-03 `TiffGuard`
+     workaround is deleted.
+   - **SVG contract.** Recraft vector results are SVG. `SvgRaster` refuses a
+     document larger than 64 MiB and any DTD. It also refuses processing
+     instructions and a root other than `<svg>` in the SVG namespace. It
+     refuses `script`, `foreignObject`, `image`, `feImage`, `iframe`,
+     `object`, `embed`, `audio`, `video`, `handler`, and `listener` elements.
+     It refuses `on*` attributes and `href` values that do not start with `#`.
+     It refuses `@import` and `url(` references outside the document. Svg.Skia
+     resolves no external entities, images, or elements. The SVG renders at
+     its intrinsic size, at most 16,384 px per edge, on white. All 12 local
+     Recraft vector SVGs pass and keep the sizes ImageMagick reported
+     (checked 2026-11-04).
 
-   Remove the guard after a move to a fixed ImageSharp version. A license
-   key needs a sign-up with Six Labors, so the owner decides on it.
+   **Image behavior changes (2026-11-04).**
+
+   - **Displayed dimensions.** `Raster.Identify` and `Raster.Decode` apply the
+     EXIF orientation. A JPEG rotated 90 or 270 degrees thus reports swapped
+     dimensions, as browsers show it. ImageSharp reported the stored
+     dimensions. All 121 local uploads that carry EXIF have orientation 1.
+   - **Upload intake.** PNG, JPEG, and WebP uploads are stored unchanged.
+     GIF and BMP uploads become PNG from their first frame. Every other
+     format gets HTTP 400.
+   - **Resizing.** Shrinking uses Lanczos3 widened by the shrink factor, so
+     every source pixel contributes. Enlarging uses Skia's Mitchell cubic.
+     Thumbnails and sheet cells decode JPEG and WebP at reduced scale, never
+     below twice the target box. Five local images were scored against a
+     Lanczos reference. The new thumbnails scored 0.06–0.25 dB closer than
+     ImageSharp's. A 640 px thumbnail of a 3216x2144 PNG takes about 140 ms
+     (ImageSharp: 221 ms).
+   - **Thumbnail metadata.** Thumbnails carry no EXIF block. ImageSharp copied
+     the source's EXIF block, including GPS coordinates, into each thumbnail.
+     Thumbnails embed the source's color profile, or sRGB when it has none.
+   - **Text.** HarfBuzz shapes each line. A character missing from the sheet
+     font comes from any installed font that has it. Japanese text and emoji
+     thus render where such fonts exist. ImageSharp drew them as boxes.
+     Production has IPA Gothic, WenQuanYi Zen Hei, Noto Color Emoji, and
+     Unifont (checked 2026-11-04). Both machines use the same fontconfig
+     fallback, but production rendering is not yet observed. Line height now
+     follows the font's line spacing. Text bands are thus slightly taller:
+     contact sheets about 1%, describe sheets about 8%.
+   - **No gray text.** The roundtrip "No Instructions" note is now black. The
+     annotation metadata is now white on black.
+   - **Memory.** Skia allocates each bitmap in native memory and frees it on
+     dispose. It keeps no pool, so the ImageSharp allocator settings are gone.
+     A loop decoded and resized 300 local images (885 megapixels). Resident
+     memory stayed between 220 and 237 MiB.
+
+   **Open (2026-11-04): upload metadata.** Uploaded PNG, JPEG, and WebP files
+   are stored, served to members, and sent to providers unchanged. Their EXIF
+   block can hold GPS coordinates and the camera model. 5 of 313 local uploads
+   carry GPS coordinates. The owner decides whether intake removes this
+   metadata.
 2. **Auth-file leak.** `ui-auth.json` holds PBKDF2 password hashes and the
    HMAC secret. A reader of the file can still mint cookies if they also
    capture a live `mic_auth` cookie, and they can attempt offline cracking of

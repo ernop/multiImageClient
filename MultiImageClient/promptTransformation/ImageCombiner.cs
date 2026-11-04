@@ -1,13 +1,8 @@
 #nullable enable
 using IdeogramAPIClient;
 
-using ImageMagick;
+using SkiaSharp;
 
-using SixLabors.Fonts;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Drawing.Processing;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -79,8 +74,7 @@ namespace MultiImageClient
         /// state the role — we never guess it here.
         private static LoadedImage LoadInputImageCell(string inputImagePath, string roleText)
         {
-            var bytes = File.ReadAllBytes(inputImagePath);
-            var image = Image.Load<Rgba32>(bytes);
+            var image = Raster.Decode(inputImagePath);
 
             var sourceWidth = image.Width;
             var sourceHeight = image.Height;
@@ -91,7 +85,7 @@ namespace MultiImageClient
                 var newHeight = 1024;
                 var newWidth = (int)(newHeight * aspectRatio);
                 Logger.Log($"Resizing input image from {image.Width}x{image.Height} to {newWidth}x{newHeight} for combining");
-                image.Mutate(x => x.Resize(newWidth, newHeight));
+                image = ReplaceWithResized(image, newWidth, newHeight);
             }
 
             return new LoadedImage
@@ -149,7 +143,7 @@ namespace MultiImageClient
                             }
                             foundBytes = true;
                             loadedImages.Add(PrepareLoadedResultImage(
-                                Image.Load<Rgba32>(imageBytes),
+                                Raster.Decode(imageBytes),
                                 result));
                         }
                         if (!foundBytes)
@@ -170,26 +164,44 @@ namespace MultiImageClient
             return loadedImages;
         }
 
-        private static Image<Rgba32> LoadResultImage(string path)
+        private static SKBitmap LoadResultImage(string path)
         {
             if (Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase))
             {
-                using var vector = new MagickImage(path);
-                return Image.Load<Rgba32>(vector.ToByteArray(MagickFormat.Png));
+                return SvgRaster.Rasterize(path);
             }
+            return Raster.Decode(path);
+        }
 
-            using var stream = new FileStream(
-                path,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                bufferSize: 64 * 1024,
-                FileOptions.SequentialScan);
-            return Image.Load<Rgba32>(stream);
+        private static SKBitmap LoadRoundtripOriginal(byte[] bytes)
+        {
+            var image = Raster.Decode(bytes);
+            if (image.Height <= 1024)
+            {
+                return image;
+            }
+            var aspectRatio = (float)image.Width / image.Height;
+            var newHeight = 1024;
+            var newWidth = (int)(newHeight * aspectRatio);
+            Logger.Log($"Resizing original image from {image.Width}x{image.Height} to {newWidth}x{newHeight} for combining");
+            return ReplaceWithResized(image, newWidth, newHeight);
+        }
+
+        // Takes ownership of image and returns its resized replacement.
+        private static SKBitmap ReplaceWithResized(SKBitmap image, int width, int height)
+        {
+            try
+            {
+                return Raster.Resize(image, width, height);
+            }
+            finally
+            {
+                image.Dispose();
+            }
         }
 
         private static LoadedImage PrepareLoadedResultImage(
-            Image<Rgba32> image,
+            SKBitmap image,
             TaskProcessResult result)
         {
             try
@@ -204,7 +216,7 @@ namespace MultiImageClient
                     Logger.Log(
                         $"Resizing image from {image.Width}x{image.Height} "
                         + $"to {newWidth}x{newHeight} for combining");
-                    image.Mutate(x => x.Resize(newWidth, newHeight));
+                    image = ReplaceWithResized(image, newWidth, newHeight);
                 }
 
                 return new LoadedImage
@@ -227,7 +239,7 @@ namespace MultiImageClient
             }
         }
 
-        private static Image<Rgba32> RenderHorizontalLayout(IEnumerable<LoadedImage> loadedImages, Font generatorFont)
+        private static SKBitmap RenderHorizontalLayout(IEnumerable<LoadedImage> loadedImages, SheetFont generatorFont)
         {
             int totalWidth = loadedImages.Sum(img => img.Width);
             totalWidth = Math.Max(totalWidth, PlaceholderWidth);
@@ -251,7 +263,7 @@ namespace MultiImageClient
 
             var layoutImage = ImageUtils.CreateStandardImage(totalWidth, totalHeight, UIConstants.White);
 
-            layoutImage.Mutate(ctx =>
+            using (var canvas = new SKCanvas(layoutImage))
             {
                 int currentX = 0;
 
@@ -259,13 +271,13 @@ namespace MultiImageClient
                 {
                     if (li.Success && li.Image != null)
                     {
-                        ctx.DrawImage(li.Image, new Point(currentX, 0), 1f);
+                        canvas.DrawBitmapAt(li.Image, currentX, 0);
                     }
                     else
                     {
-                        var rect = new RectangleF(currentX, 0, li.Width, maxImageHeight);
+                        var rect = SKRect.Create(currentX, 0, li.Width, maxImageHeight);
                         var errorText = li.Result;
-                        ctx.DrawErrorPlaceholder(rect, errorText, generatorFont);
+                        canvas.DrawErrorPlaceholder(rect, errorText, generatorFont);
                     }
 
                     float centerX = currentX + li.Width / 2f;
@@ -273,7 +285,7 @@ namespace MultiImageClient
 
                     var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
                     DrawCompositeLabelLine(
-                        ctx,
+                        canvas,
                         li.Generator,
                         BuildSecondaryLabel(li),
                         generatorFont,
@@ -285,7 +297,7 @@ namespace MultiImageClient
 
                     currentX += li.Width;
                 }
-            });
+            }
 
             return layoutImage;
         }
@@ -303,12 +315,12 @@ namespace MultiImageClient
         /// full producer label wraps above a separately wrapped secondary
         /// line. Nothing is clipped or abbreviated.
         private static void DrawCompositeLabelLine(
-            IImageProcessingContext ctx,
+            SKCanvas canvas,
             string fullLabel,
             string? timingLabel,
-            Font primaryFont,
-            Font secondaryFont,
-            Color color,
+            SheetFont primaryFont,
+            SheetFont secondaryFont,
+            SKColor color,
             float centerX,
             float labelY,
             float availableWidth)
@@ -342,22 +354,22 @@ namespace MultiImageClient
             // Measure each piece independently so we can lay them out on one
             // shared baseline.
             var primaryMeasureOpts = FontUtils.CreateTextOptions(primaryFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
-            primaryMeasureOpts.Origin = new PointF(0, 0);
+            primaryMeasureOpts.Origin = new SKPoint(0, 0);
             var primaryBounds = string.IsNullOrEmpty(primary)
-                ? new FontRectangle(0, 0, 0, 0)
-                : TextMeasurer.MeasureBounds(primary, primaryMeasureOpts);
+                ? SKRect.Empty
+                : TextLayout.Measure(primary, primaryMeasureOpts);
 
             float gap = secondaryPieces.Count == 0 || string.IsNullOrEmpty(primary)
                 ? 0f
                 : Math.Max(8f, primaryFont.Size * 0.6f);
 
             float secondaryWidth = 0f;
-            FontRectangle secondaryBounds = new FontRectangle(0, 0, 0, 0);
+            SKRect secondaryBounds = SKRect.Empty;
             if (!string.IsNullOrEmpty(secondary))
             {
                 var secondaryMeasureOpts = FontUtils.CreateTextOptions(secondaryFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
-                secondaryMeasureOpts.Origin = new PointF(0, 0);
-                secondaryBounds = TextMeasurer.MeasureBounds(secondary, secondaryMeasureOpts);
+                secondaryMeasureOpts.Origin = new SKPoint(0, 0);
+                secondaryBounds = TextLayout.Measure(secondary, secondaryMeasureOpts);
                 secondaryWidth = secondaryBounds.Width;
             }
 
@@ -369,9 +381,9 @@ namespace MultiImageClient
                     HorizontalAlignment.Center,
                     VerticalAlignment.Top,
                     UIConstants.LineSpacing);
-                wrappedPrimary.Origin = new PointF(centerX, labelY);
+                wrappedPrimary.Origin = new SKPoint(centerX, labelY);
                 wrappedPrimary.WrappingLength = availableWidth;
-                ctx.DrawTextStandard(wrappedPrimary, trimmed, color);
+                canvas.DrawTextStandard(wrappedPrimary, trimmed, color);
 
                 if (!string.IsNullOrWhiteSpace(timingLabel))
                 {
@@ -387,42 +399,41 @@ namespace MultiImageClient
                         HorizontalAlignment.Center,
                         VerticalAlignment.Top,
                         UIConstants.LineSpacing);
-                    wrappedSecondary.Origin = new PointF(
+                    wrappedSecondary.Origin = new SKPoint(
                         centerX,
                         labelY + primaryHeight + descenderReserve);
                     wrappedSecondary.WrappingLength = availableWidth;
-                    ctx.DrawTextStandard(wrappedSecondary, timingLabel, color);
+                    canvas.DrawTextStandard(wrappedSecondary, timingLabel, color);
                 }
                 return;
             }
 
             float startX = centerX - totalWidth / 2f;
 
-            // Draw primary first at (startX, labelY) with Top alignment so
-            // labelY is the top of its ascenders. Then use its actual bottom
-            // pixel as the shared baseline for the secondary text.
-            float sharedBottom = labelY + primaryBounds.Height;
+            // labelY is the top of the primary line; the secondary text sits
+            // on the primary's baseline.
+            var primaryDrawOpts = FontUtils.CreateTextOptions(primaryFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
+            primaryDrawOpts.Origin = new SKPoint(startX, labelY);
+            float baseline = labelY + TextLayout.BaselineOffset(primaryDrawOpts);
             if (!string.IsNullOrEmpty(primary))
             {
-                var primaryDrawOpts = FontUtils.CreateTextOptions(primaryFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
-                primaryDrawOpts.Origin = new PointF(startX, labelY);
-                ctx.DrawTextStandard(primaryDrawOpts, primary, color);
-                var drawnBounds = TextMeasurer.MeasureBounds(primary, primaryDrawOpts);
-                sharedBottom = drawnBounds.Bottom;
+                canvas.DrawTextStandard(primaryDrawOpts, primary, color);
             }
 
             if (!string.IsNullOrEmpty(secondary))
             {
-                var secondaryDrawOpts = FontUtils.CreateTextOptions(secondaryFont, HorizontalAlignment.Left, VerticalAlignment.Bottom, UIConstants.LineSpacing);
-                secondaryDrawOpts.Origin = new PointF(startX + primaryBounds.Width + gap, sharedBottom);
-                ctx.DrawTextStandard(secondaryDrawOpts, secondary, color);
+                var secondaryDrawOpts = FontUtils.CreateTextOptions(secondaryFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
+                secondaryDrawOpts.Origin = new SKPoint(
+                    startX + primaryBounds.Width + gap,
+                    baseline - TextLayout.BaselineOffset(secondaryDrawOpts));
+                canvas.DrawTextStandard(secondaryDrawOpts, secondary, color);
             }
         }
 
-        private static Image<Rgba32> RenderSquareLayout(
+        private static SKBitmap RenderSquareLayout(
             IEnumerable<LoadedImage> loadedImages,
-            Font generatorFont,
-            Font? promptFont = null,
+            SheetFont generatorFont,
+            SheetFont? promptFont = null,
             bool includeCellPrompts = false)
         {
             var images = loadedImages.ToList();
@@ -481,7 +492,7 @@ namespace MultiImageClient
             int layoutHeight = rowHeights.Sum() + rowTextHeights.Sum();
             var layoutImage = ImageUtils.CreateStandardImage(layoutWidth, layoutHeight, UIConstants.White);
 
-            layoutImage.Mutate(ctx =>
+            using (var canvas = new SKCanvas(layoutImage))
             {
                 int currentY = 0;
                 int imageIndex = 0;
@@ -507,23 +518,24 @@ namespace MultiImageClient
 
                         if (li.Success && li.Image != null)
                         {
-                            ctx.DrawImage(li.Image, new Point(imageX, imageY), 1f);
+                            canvas.DrawBitmapAt(li.Image, imageX, imageY);
                             if (li.IsInput)
                             {
                                 // Gold frame so the input image can never be
                                 // mistaken for a generated output.
                                 float borderWidth = 6f;
                                 float inset = borderWidth / 2f;
-                                ctx.Draw(
-                                    Pens.Solid(UIConstants.Gold, borderWidth),
-                                    new RectangleF(imageX + inset, imageY + inset, li.Width - borderWidth, li.Height - borderWidth));
+                                canvas.StrokeRect(
+                                    SKRect.Create(imageX + inset, imageY + inset, li.Width - borderWidth, li.Height - borderWidth),
+                                    UIConstants.Gold,
+                                    borderWidth);
                             }
                         }
                         else
                         {
-                            var rect = new RectangleF(columnX, imageY, Math.Max(columnWidth, 1), Math.Max(rowHeight, 1));
+                            var rect = SKRect.Create(columnX, imageY, Math.Max(columnWidth, 1), Math.Max(rowHeight, 1));
                             var errorText = li.Result;
-                            ctx.DrawErrorPlaceholder(rect, errorText, generatorFont);
+                            canvas.DrawErrorPlaceholder(rect, errorText, generatorFont);
                         }
 
                         float centerX = columnX + Math.Max(columnWidth, 1) / 2f;
@@ -532,7 +544,7 @@ namespace MultiImageClient
                             : li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
                         var labelY = textBandY + UIConstants.Padding;
                         DrawCompositeLabelLine(
-                            ctx,
+                            canvas,
                             li.Generator,
                             BuildSecondaryLabel(li),
                             generatorFont,
@@ -551,9 +563,9 @@ namespace MultiImageClient
                                 + MeasureCellLabelHeight(li, columnWidth, generatorFont, timingFont)
                                 + UIConstants.Padding / 2f;
                             var promptOpts = FontUtils.CreateTextOptions(cellPromptFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
-                            promptOpts.Origin = new PointF(columnX + UIConstants.Padding, promptY);
+                            promptOpts.Origin = new SKPoint(columnX + UIConstants.Padding, promptY);
                             promptOpts.WrappingLength = wrappingWidth;
-                            ctx.DrawTextStandard(promptOpts, li.PromptText, UIConstants.Black);
+                            canvas.DrawTextStandard(promptOpts, li.PromptText, UIConstants.Black);
                         }
 
                         imageIndex++;
@@ -561,7 +573,7 @@ namespace MultiImageClient
 
                     currentY += rowHeight + rowTextHeights[row];
                 }
-            });
+            }
 
             return layoutImage;
         }
@@ -582,11 +594,11 @@ namespace MultiImageClient
                     totalHeight,
                     UIConstants.White);
 
-                combinedImage.Mutate(ctx =>
+                using (var canvas = new SKCanvas(combinedImage))
                 {
-                    ctx.DrawImage(layoutImage, new Point(0, 0), 1f);
-                    ctx.DrawImage(promptPanel, new Point(0, layoutImage.Height), 1f);
-                });
+                    canvas.DrawBitmapAt(layoutImage, 0, 0);
+                    canvas.DrawBitmapAt(promptPanel, 0, layoutImage.Height);
+                }
 
                 return await SaveCombinedImageToDisk(combinedImage, prompt, settings);
             }
@@ -648,11 +660,11 @@ namespace MultiImageClient
                     totalHeight,
                     UIConstants.White);
 
-                combinedImage.Mutate(ctx =>
+                using (var canvas = new SKCanvas(combinedImage))
                 {
-                    ctx.DrawImage(layoutImage, new Point(0, 0), 1f);
-                    ctx.DrawImage(promptPanel, new Point(0, layoutImage.Height), 1f);
-                });
+                    canvas.DrawBitmapAt(layoutImage, 0, 0);
+                    canvas.DrawBitmapAt(promptPanel, 0, layoutImage.Height);
+                }
 
                 var outputPath = await SaveCombinedImageToDisk(combinedImage, prompt, settings);
                 if (openWhenDone)
@@ -722,14 +734,19 @@ namespace MultiImageClient
                         continue;
                     }
                     var bytes = await cell.LoadImage(ct);
-                    var image = Image.Load<Rgba32>(bytes);
-                    var longEdge = Math.Max(image.Width, image.Height);
+                    var info = Raster.Identify(bytes);
+                    var longEdge = Math.Max(info.Width, info.Height);
+                    SKBitmap image;
                     if (longEdge > 1300)
                     {
                         var scale = 1024.0 / longEdge;
-                        image.Mutate(x => x.Resize(
-                            Math.Max(1, (int)Math.Round(image.Width * scale)),
-                            Math.Max(1, (int)Math.Round(image.Height * scale))));
+                        var width = Math.Max(1, (int)Math.Round(info.Width * scale));
+                        var height = Math.Max(1, (int)Math.Round(info.Height * scale));
+                        image = ReplaceWithResized(Raster.DecodeForBox(bytes, width, height), width, height);
+                    }
+                    else
+                    {
+                        image = Raster.Decode(bytes);
                     }
                     loaded.Add(new LoadedImage
                     {
@@ -748,14 +765,14 @@ namespace MultiImageClient
                 using var header = RenderPromptPanel(layoutImage.Width, headerText, headerFont);
                 using var combined = ImageUtils.CreateStandardImage(
                     layoutImage.Width, header.Height + layoutImage.Height, UIConstants.White);
-                combined.Mutate(ctx =>
+                using (var canvas = new SKCanvas(combined))
                 {
-                    ctx.DrawImage(header, new Point(0, 0), 1f);
-                    ctx.DrawImage(layoutImage, new Point(0, header.Height), 1f);
-                });
+                    canvas.DrawBitmapAt(header, 0, 0);
+                    canvas.DrawBitmapAt(layoutImage, 0, header.Height);
+                }
                 Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
                 var tmp = outputPath + ".tmp";
-                await combined.SaveAsPngAsync(tmp);
+                Raster.SavePng(combined, tmp);
                 File.Move(tmp, outputPath, overwrite: true);
             }
             finally
@@ -775,22 +792,7 @@ namespace MultiImageClient
         public async static Task<string> CreateRoundtripLayoutImageAsync(byte[] originalImageBytes, IEnumerable<TaskProcessResult> results, string descriptionText, string descriptionInstructions, string describerModelName, Settings settings)
         {
             var labelFont = FontUtils.CreateFont(36, FontStyle.Bold); // Large font for labels
-            var originalImage = Image.Load<Rgba32>(originalImageBytes);
-            if (originalImage == null)
-            {
-                throw new Exception("no original image.");
-            }
-
-            // Resize original image if height > 1024px, keeping proportions
-            if (originalImage.Height > 1024)
-            {
-                var aspectRatio = (float)originalImage.Width / originalImage.Height;
-                var newHeight = 1024;
-                var newWidth = (int)(newHeight * aspectRatio);
-
-                Logger.Log($"Resizing original image from {originalImage.Width}x{originalImage.Height} to {newWidth}x{newHeight} for combining");
-                originalImage.Mutate(x => x.Resize(newWidth, newHeight));
-            }
+            using var originalImage = LoadRoundtripOriginal(originalImageBytes);
 
             var maxImageHeight = originalImage.Height;
             var descriptionWidth = 1024; // Fixed width for description
@@ -836,28 +838,25 @@ namespace MultiImageClient
                 var totalWidth = originalImage.Width + instructionsWidth + descriptionWidth + loadedImages.Sum(li => li.Width);
                 var totalHeight = maxImageHeight + maxLabelHeight + UIConstants.Padding * 2;
 
-            var layoutImage = new Image<Rgba32>(totalWidth, totalHeight);
+            using var layoutImage = ImageUtils.CreateStandardImage(totalWidth, totalHeight, UIConstants.White);
 
-            layoutImage.Mutate(ctx =>
+            using (var canvas = new SKCanvas(layoutImage))
             {
-                ctx.ApplyStandardGraphicsOptions();
-                ctx.Fill(UIConstants.White);
                 float currentX = 0;
 
                 // 1. Draw Original Image
-                ctx.DrawImage(originalImage!, new Point((int)currentX, 0), 1f);
-                var labelOptsOriginal = new RichTextOptions(labelFont)
+                canvas.DrawBitmapAt(originalImage!, (int)currentX, 0);
+                var labelOptsOriginal = new TextBlockOptions(labelFont)
                 {
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Top
                 };
                 labelOptsOriginal.Dpi = UIConstants.TextDpi; // Ensure same DPI as measurement!
-                labelOptsOriginal.Origin = new PointF(currentX + originalImage!.Width / 2f, maxImageHeight + UIConstants.Padding);
-                ctx.DrawTextStandard(labelOptsOriginal, "Original Image", Color.Black);
+                labelOptsOriginal.Origin = new SKPoint(currentX + originalImage!.Width / 2f, maxImageHeight + UIConstants.Padding);
+                canvas.DrawTextStandard(labelOptsOriginal, "Original Image", SKColors.Black);
                 currentX += originalImage.Width;
 
                 // 2a. Draw describer instructions
-                var instructionsWidth = 1024; // Same width as description
                 var instructionsHeight = maxImageHeight; // Same height as description
                 
                 if (!string.IsNullOrEmpty(descriptionInstructions))
@@ -905,52 +904,52 @@ namespace MultiImageClient
                     
                     // Create font and text options for describer instructions
                     var instructionsFont = FontUtils.CreateFont(instrOptimalFontSize, FontStyle.Regular);
-                    var instructionsTextOptions = new RichTextOptions(instructionsFont)
+                    var instructionsTextOptions = new TextBlockOptions(instructionsFont)
                     {
                         HorizontalAlignment = HorizontalAlignment.Left,
                         VerticalAlignment = VerticalAlignment.Top,
                         WrappingLength = instrWrappingWidth,
-                        Origin = new PointF(currentX + UIConstants.Padding, UIConstants.Padding),
+                        Origin = new SKPoint(currentX + UIConstants.Padding, UIConstants.Padding),
                         Dpi = UIConstants.TextDpi
                     };
                     
                     // Draw background and text for describer instructions
-                    ctx.Fill(Color.LightBlue, new RectangleF(currentX, 0, instructionsWidth, instructionsHeight));
-                    ctx.DrawTextStandard(instructionsTextOptions, descriptionInstructions, Color.Black);
+                    canvas.FillRect(SKRect.Create(currentX, 0, instructionsWidth, instructionsHeight), SKColors.LightBlue);
+                    canvas.DrawTextStandard(instructionsTextOptions, descriptionInstructions, SKColors.Black);
                     
                     // Draw label for describer instructions
-                    var instructionsLabelOpts = new RichTextOptions(labelFont)
+                    var instructionsLabelOpts = new TextBlockOptions(labelFont)
                     {
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Top
                     };
                     instructionsLabelOpts.Dpi = UIConstants.TextDpi;
-                    instructionsLabelOpts.Origin = new PointF(currentX + instructionsWidth / 2f, maxImageHeight + UIConstants.Padding);
-                    ctx.DrawTextStandard(instructionsLabelOpts, $"{describerModelName} Instructions", Color.Black);
+                    instructionsLabelOpts.Origin = new SKPoint(currentX + instructionsWidth / 2f, maxImageHeight + UIConstants.Padding);
+                    canvas.DrawTextStandard(instructionsLabelOpts, $"{describerModelName} Instructions", SKColors.Black);
                 }
                 else
                 {
                     // Draw placeholder if no instructions
-                    ctx.Fill(Color.LightGray, new RectangleF(currentX, 0, instructionsWidth, instructionsHeight));
+                    canvas.FillRect(SKRect.Create(currentX, 0, instructionsWidth, instructionsHeight), SKColors.LightGray);
                     var noInstructionsFont = FontUtils.CreateFont(18, FontStyle.Regular);
-                    var noInstructionsTextOptions = new RichTextOptions(noInstructionsFont)
+                    var noInstructionsTextOptions = new TextBlockOptions(noInstructionsFont)
                     {
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center,
                         Dpi = UIConstants.TextDpi
                     };
-                    noInstructionsTextOptions.Origin = new PointF(currentX + instructionsWidth / 2f, instructionsHeight / 2f);
-                    ctx.DrawTextStandard(noInstructionsTextOptions, "No Instructions", Color.Gray);
+                    noInstructionsTextOptions.Origin = new SKPoint(currentX + instructionsWidth / 2f, instructionsHeight / 2f);
+                    canvas.DrawTextStandard(noInstructionsTextOptions, "No Instructions", SKColors.Black);
                     
                     // Draw label even when no instructions
-                    var instructionsLabelOpts = new RichTextOptions(labelFont)
+                    var instructionsLabelOpts = new TextBlockOptions(labelFont)
                     {
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Top
                     };
                     instructionsLabelOpts.Dpi = UIConstants.TextDpi;
-                    instructionsLabelOpts.Origin = new PointF(currentX + instructionsWidth / 2f, instructionsHeight + UIConstants.Padding);
-                    ctx.DrawTextStandard(instructionsLabelOpts, $"{describerModelName} Instructions", Color.Black);
+                    instructionsLabelOpts.Origin = new SKPoint(currentX + instructionsWidth / 2f, instructionsHeight + UIConstants.Padding);
+                    canvas.DrawTextStandard(instructionsLabelOpts, $"{describerModelName} Instructions", SKColors.Black);
                 }
                 currentX += instructionsWidth;
 
@@ -1013,27 +1012,27 @@ namespace MultiImageClient
                 
                 // Create the final font and text options with the optimal size
                 var descriptionFont = FontUtils.CreateFont(optimalFontSize, FontStyle.Regular);
-                var descriptionTextOptions = new RichTextOptions(descriptionFont)
+                var descriptionTextOptions = new TextBlockOptions(descriptionFont)
                 {
                     HorizontalAlignment = HorizontalAlignment.Left,
                     VerticalAlignment = VerticalAlignment.Top,
                     WrappingLength = wrappingWidth,
-                    Origin = new PointF(currentX + UIConstants.Padding, UIConstants.Padding),
+                    Origin = new SKPoint(currentX + UIConstants.Padding, UIConstants.Padding),
                     Dpi = UIConstants.TextDpi  // Ensure same DPI as measurement!
                 };
 
 
-                ctx.Fill(Color.LightGray, new RectangleF(currentX, 0, descriptionWidth, descriptionHeight)); // Background for text
-                ctx.DrawTextStandard(descriptionTextOptions, descriptionText, Color.Black);
+                canvas.FillRect(SKRect.Create(currentX, 0, descriptionWidth, descriptionHeight), SKColors.LightGray); // Background for text
+                canvas.DrawTextStandard(descriptionTextOptions, descriptionText, SKColors.Black);
 
-                var labelOptsDescription = new RichTextOptions(labelFont)
+                var labelOptsDescription = new TextBlockOptions(labelFont)
                 {
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Top
                 };
                 labelOptsDescription.Dpi = UIConstants.TextDpi; // Ensure same DPI as measurement!
-                labelOptsDescription.Origin = new PointF(currentX + descriptionWidth / 2f, maxImageHeight + UIConstants.Padding);
-                ctx.DrawTextStandard(labelOptsDescription, $"{describerModelName} Description", Color.Black);
+                labelOptsDescription.Origin = new SKPoint(currentX + descriptionWidth / 2f, maxImageHeight + UIConstants.Padding);
+                canvas.DrawTextStandard(labelOptsDescription, $"{describerModelName} Description", SKColors.Black);
                 currentX += descriptionWidth;
 
 
@@ -1046,42 +1045,42 @@ namespace MultiImageClient
                     
                     if (li.Image != null)
                     {
-                        ctx.DrawImage(li.Image, new Point((int)currentX, imageYOffset), 1);
+                        canvas.DrawBitmapAt(li.Image, (int)currentX, imageYOffset);
                     }
                     else
                     {
                         // Draw placeholder for error images
-                        ctx.Fill(Color.LightGray, new Rectangle((int)currentX, imageYOffset, li.Width, li.Height));
-                        var errorTextOptions = new RichTextOptions(labelFont)
+                        canvas.FillRect(SKRect.Create((int)currentX, imageYOffset, li.Width, li.Height), SKColors.LightGray);
+                        var errorTextOptions = new TextBlockOptions(labelFont)
                         {
                             HorizontalAlignment = HorizontalAlignment.Center,
                             VerticalAlignment = VerticalAlignment.Center,
                             Dpi = UIConstants.TextDpi // Ensure same DPI as measurement!
                         };
-                        errorTextOptions.Origin = new PointF(currentX + li.Width / 2f, imageYOffset + li.Height / 2f);
-                        ctx.DrawTextStandard(errorTextOptions, "ERROR", Color.Red);
+                        errorTextOptions.Origin = new SKPoint(currentX + li.Width / 2f, imageYOffset + li.Height / 2f);
+                        canvas.DrawTextStandard(errorTextOptions, "ERROR", SKColors.Red);
                     }
 
                     var labelText = li.Result ?? "";
                     
-                    var labelOpts = new RichTextOptions(labelFont)
+                    var labelOpts = new TextBlockOptions(labelFont)
                     {
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Top,
                         WrappingLength = li.Width - 10, // Allow wrapping within image bounds
                         Dpi = UIConstants.TextDpi  // Ensure same DPI as measurement!
                     };
-                    labelOpts.Origin = new PointF(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding);
+                    labelOpts.Origin = new SKPoint(currentX + li.Width / 2f, maxImageHeight + UIConstants.Padding);
 
                     var labelColor = li.Success ? UIConstants.SuccessGreen : UIConstants.ErrorRed;
-                    ctx.DrawTextStandard(labelOpts, labelText, labelColor);
+                    canvas.DrawTextStandard(labelOpts, labelText, labelColor);
 
                     currentX += li.Width;
                 }
 
 
                
-            });
+            }
             var outputPath = await SaveCombinedImageToDisk(layoutImage, descriptionText, settings);
 
             foreach (var li in loadedImages)
@@ -1091,7 +1090,7 @@ namespace MultiImageClient
 
             return outputPath;
         }
-        private static Image<Rgba32> RenderPromptPanel(int width, string prompt, Font promptFont)
+        private static SKBitmap RenderPromptPanel(int width, string prompt, SheetFont promptFont)
         {
             width = Math.Max(width, PlaceholderWidth);
 
@@ -1105,14 +1104,14 @@ namespace MultiImageClient
 
             var promptPanel = ImageUtils.CreateStandardImage(width, totalHeight, UIConstants.White);
 
-            promptPanel.Mutate(ctx =>
+            using (var canvas = new SKCanvas(promptPanel))
             {
                 var promptOpts = FontUtils.CreateTextOptions(promptFont, HorizontalAlignment.Left, VerticalAlignment.Top, UIConstants.LineSpacing);
-                promptOpts.Origin = new PointF(UIConstants.Padding * 2, topPadding);
+                promptOpts.Origin = new SKPoint(UIConstants.Padding * 2, topPadding);
                 promptOpts.WrappingLength = wrappingWidth;
 
-                ctx.DrawTextStandard(promptOpts, prompt, UIConstants.Black);
-            });
+                canvas.DrawTextStandard(promptOpts, prompt, UIConstants.Black);
+            }
 
             return promptPanel;
         }
@@ -1195,9 +1194,9 @@ namespace MultiImageClient
         private static int MeasureCellTextHeight(
             LoadedImage loadedImage,
             int columnWidth,
-            Font generatorFont,
-            Font timingFont,
-            Font promptFont,
+            SheetFont generatorFont,
+            SheetFont timingFont,
+            SheetFont promptFont,
             bool includePrompt)
         {
             var labelHeight = MeasureCellLabelHeight(
@@ -1221,8 +1220,8 @@ namespace MultiImageClient
         private static int MeasureCellLabelHeight(
             LoadedImage loadedImage,
             int columnWidth,
-            Font generatorFont,
-            Font timingFont)
+            SheetFont generatorFont,
+            SheetFont timingFont)
         {
             var wrappingWidth = Math.Max(1, columnWidth - UIConstants.Padding * 2);
             return MeasureCompositeLabelHeight(
@@ -1236,8 +1235,8 @@ namespace MultiImageClient
         private static int MeasureCompositeLabelHeight(
             string fullLabel,
             string? secondaryLabel,
-            Font primaryFont,
-            Font secondaryFont,
+            SheetFont primaryFont,
+            SheetFont secondaryFont,
             float availableWidth)
         {
             var trimmed = (fullLabel ?? string.Empty).Trim();
@@ -1255,16 +1254,16 @@ namespace MultiImageClient
                 VerticalAlignment.Top,
                 UIConstants.LineSpacing);
             var primaryBounds = string.IsNullOrEmpty(primary)
-                ? new FontRectangle(0, 0, 0, 0)
-                : TextMeasurer.MeasureBounds(primary, primaryOptions);
+                ? SKRect.Empty
+                : TextLayout.Measure(primary, primaryOptions);
             var secondaryOptions = FontUtils.CreateTextOptions(
                 secondaryFont,
                 HorizontalAlignment.Left,
                 VerticalAlignment.Top,
                 UIConstants.LineSpacing);
             var secondaryBounds = string.IsNullOrEmpty(secondary)
-                ? new FontRectangle(0, 0, 0, 0)
-                : TextMeasurer.MeasureBounds(secondary, secondaryOptions);
+                ? SKRect.Empty
+                : TextLayout.Measure(secondary, secondaryOptions);
             var gap = string.IsNullOrEmpty(primary) || string.IsNullOrEmpty(secondary)
                 ? 0f
                 : Math.Max(8f, primaryFont.Size * 0.6f);
@@ -1330,23 +1329,23 @@ namespace MultiImageClient
             return mins > 0 ? $"{mins}m {secs}s" : $"{secs}s";
         }
 
-        private static Image<Rgba32> RenderEmptyLayout()
+        private static SKBitmap RenderEmptyLayout()
         {
             var empty = ImageUtils.CreateStandardImage(PlaceholderWidth, PlaceholderWidth + UIConstants.Padding * 2, UIConstants.White);
 
-            empty.Mutate(ctx =>
+            using (var canvas = new SKCanvas(empty))
             {
                 var font = FontUtils.CreateFont(LabelFontSize, FontStyle.Regular);
                 var opts = FontUtils.CreateTextOptions(font, HorizontalAlignment.Center, VerticalAlignment.Center, UIConstants.LineSpacing);
-                opts.Origin = new PointF(empty.Width / 2f, empty.Height / 2f);
-                ctx.DrawTextStandard(opts, "No images", UIConstants.ErrorRed);
-            });
+                opts.Origin = new SKPoint(empty.Width / 2f, empty.Height / 2f);
+                canvas.DrawTextStandard(opts, "No images", UIConstants.ErrorRed);
+            }
 
             return empty;
         }
 
 
-        private static async Task<string> SaveCombinedImageToDisk(Image<Rgba32> image, string prompt, Settings settings)
+        private static async Task<string> SaveCombinedImageToDisk(SKBitmap image, string prompt, Settings settings)
         {
             string todayFolder = DateTime.Now.ToString("yyyy-MM-dd-dddd");
             string baseFolder = Path.Combine(settings.ImageDownloadBaseFolder, todayFolder, "Combined");
@@ -1364,7 +1363,7 @@ namespace MultiImageClient
                 counter++;
             }
 
-            await image.SaveAsPngAsync(outputPath);
+            await Task.Run(() => Raster.SavePng(image, outputPath));
             Logger.Log($"Combined image saved: {outputPath}");
             DlMirror.Copy(outputPath, settings.FlatImageMirrorPath);
 
@@ -1385,7 +1384,7 @@ namespace MultiImageClient
             /// null if we have no usable timing for this result.
             public string? TimingLabel { get; set; }
             public string? SourceResolutionLabel { get; set; }
-            public Image<Rgba32>? Image { get; set; }
+            public SKBitmap? Image { get; set; }
             public int Width { get; set; }
             public int Height { get; set; }
         }

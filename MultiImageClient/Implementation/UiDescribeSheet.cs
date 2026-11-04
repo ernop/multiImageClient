@@ -6,12 +6,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using SixLabors.Fonts;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats;
-using SixLabors.ImageSharp.Drawing.Processing;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+
+using SkiaSharp;
 
 namespace MultiImageClient
 {
@@ -29,10 +25,10 @@ namespace MultiImageClient
         private const int Gap = 32;
         private const int Pad = 28;
         private const int MaxPixels = 32_000_000;
-        private static readonly Color Ink = Color.ParseHex("142B3B");
-        private static readonly Color Blue = Color.ParseHex("075787");
-        private static readonly Color Red = Color.ParseHex("A22222");
-        private static readonly Color Paper = Color.ParseHex("F3F7FA");
+        private static readonly SKColor Ink = SKColor.Parse("142B3B");
+        private static readonly SKColor Blue = SKColor.Parse("075787");
+        private static readonly SKColor Red = SKColor.Parse("A22222");
+        private static readonly SKColor Paper = SKColor.Parse("F3F7FA");
 
         public static UiDescribeSheetData Read(
             string prompt, int inputCount, IReadOnlyList<string> keys, IEnumerable<string> events)
@@ -103,12 +99,17 @@ namespace MultiImageClient
             return new(prompt, inputCount, endpoints);
         }
 
-        private sealed record TextPlacement(string Text, Font Font, Color Color, Rectangle Bounds);
-        private sealed record ImagePlacement(string Path, Rectangle Bounds);
+        private sealed record TextPlacement(string Text, SheetFont Font, SKColor Color, SKRectI Bounds);
+        private sealed record ImagePlacement(string Path, SKRectI Bounds);
 
-        public static async Task RenderAsync(
+        public static Task RenderAsync(
             UiDescribeSheetData data, IReadOnlyList<string> inputPaths,
             IReadOnlyDictionary<int, string> layoutPaths, string outputPath, CancellationToken cancellationToken = default)
+            => Task.Run(() => Render(data, inputPaths, layoutPaths, outputPath, cancellationToken), cancellationToken);
+
+        private static void Render(
+            UiDescribeSheetData data, IReadOnlyList<string> inputPaths,
+            IReadOnlyDictionary<int, string> layoutPaths, string outputPath, CancellationToken cancellationToken)
         {
             if (inputPaths.Count != data.InputCount)
                 throw new InvalidDataException("The sheet inputs do not match the recorded input count.");
@@ -123,29 +124,29 @@ namespace MultiImageClient
             var titleFont = FontUtils.CreateFont(46, FontStyle.Bold);
             var texts = new List<TextPlacement>();
             var images = new List<ImagePlacement>();
-            var panels = new List<Rectangle>();
+            var panels = new List<SKRectI>();
 
-            int AddText(string text, Font font, Color color, int x, int y, int wrap)
+            int AddText(string text, SheetFont font, SKColor color, int x, int y, int wrap)
             {
                 if (text.Length == 0) return y;
                 if (text.Length > 100_000)
                     throw new InvalidDataException("A text section exceeds the describe sheet limit; no text was shortened.");
                 var options = TextOptions(font, wrap);
-                var bounds = TextMeasurer.MeasureBounds(text, options);
+                var bounds = TextLayout.Measure(text, options);
                 var height = checked((int)Math.Ceiling(bounds.Height + font.Size * 0.5f + 8));
-                texts.Add(new(text, font, color, new Rectangle(x, y, wrap, height)));
+                texts.Add(new(text, font, color, SKRectI.Create(x, y, wrap, height)));
                 return checked(y + height);
             }
 
             int AddImage(string path, int x, int y, int maxWidth, int maxHeight)
             {
-                var info = Image.Identify(path);
+                var info = Raster.Identify(path);
                 if (info.Width <= 0 || info.Height <= 0)
                     throw new InvalidDataException("A sheet image has invalid dimensions.");
                 var scale = Math.Min((double)maxWidth / info.Width, (double)maxHeight / info.Height);
                 var w = Math.Max(1, (int)Math.Round(info.Width * scale));
                 var h = Math.Max(1, (int)Math.Round(info.Height * scale));
-                images.Add(new(path, new Rectangle(x + (maxWidth - w) / 2, y, w, h)));
+                images.Add(new(path, SKRectI.Create(x + (maxWidth - w) / 2, y, w, h)));
                 return checked(y + h);
             }
 
@@ -208,7 +209,7 @@ namespace MultiImageClient
                     var x = Margin + column * (cardWidth + Gap);
                     var y = next[column];
                     var end = AddEndpointText(endpoint, input, x + Pad, y + Pad, cardWidth - Pad * 2) + Pad;
-                    panels.Add(new Rectangle(x, y, cardWidth, end - y));
+                    panels.Add(SKRectI.Create(x, y, cardWidth, end - y));
                     next[column] = end + Gap;
                 }
                 top = next.Max() + Gap;
@@ -217,34 +218,34 @@ namespace MultiImageClient
             if ((long)width * height > MaxPixels)
                 throw new InvalidDataException("The complete describe sheet exceeds 32 megapixels. No image was exported or text shortened.");
 
-            using var canvas = new Image<Rgba32>(width, height, Color.White);
-            canvas.Mutate(ctx =>
+            using var sheet = Raster.Create(width, height, SKColors.White);
+            using (var canvas = new SKCanvas(sheet))
             {
-                foreach (var panel in panels) ctx.Fill(Paper, panel);
+                foreach (var panel in panels) canvas.FillRect(panel, Paper);
                 foreach (var text in texts)
                 {
                     var options = TextOptions(text.Font, text.Bounds.Width);
-                    options.Origin = new PointF(text.Bounds.X, text.Bounds.Y);
-                    ctx.DrawText(options, text.Text, text.Color);
+                    options.Origin = new SKPoint(text.Bounds.Left, text.Bounds.Top);
+                    canvas.DrawTextStandard(options, text.Text, text.Color);
                 }
-            });
-            foreach (var image in images)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var options = new DecoderOptions { TargetSize = new Size(image.Bounds.Width, image.Bounds.Height), MaxFrames = 1 };
-                using var source = await Image.LoadAsync<Rgba32>(options, image.Path, cancellationToken);
-                source.Mutate(ctx => ctx.Resize(image.Bounds.Width, image.Bounds.Height));
-                canvas.Mutate(ctx => ctx.DrawImage(source, image.Bounds.Location, 1f));
+                foreach (var image in images)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    using var decoded = Raster.DecodeForBox(image.Path, image.Bounds.Width, image.Bounds.Height);
+                    using var source = Raster.Resize(decoded, image.Bounds.Width, image.Bounds.Height);
+                    canvas.DrawBitmapAt(source, image.Bounds.Left, image.Bounds.Top);
+                }
             }
-            await canvas.SaveAsPngAsync(outputPath, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            Raster.SavePng(sheet, outputPath);
         }
 
-        private static RichTextOptions TextOptions(Font font, int width) => new(font)
+        // Words longer than the column break between characters.
+        private static TextBlockOptions TextOptions(SheetFont font, int width) => new(font)
         {
             Dpi = 72,
             WrappingLength = width,
             LineSpacing = 1.25f,
-            WordBreaking = WordBreaking.BreakWord,
         };
     }
 }

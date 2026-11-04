@@ -11,8 +11,6 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
-using SixLabors.ImageSharp;
-
 namespace IdeogramAPIClient
 {
     /// Image generator backed by Ideogram 4.5 (released 2026-09-30). Text
@@ -361,7 +359,7 @@ namespace IdeogramAPIClient
                     throw new InvalidDataException(
                         $"Ideogram 4.5 image {index} was served as '{declared}' but its bytes are {detected}.");
                 }
-                var info = Image.Identify(bytes);
+                var info = Raster.Identify(bytes);
                 if (info.Width != expectedWidth || info.Height != expectedHeight)
                 {
                     throw new InvalidDataException(

@@ -8,8 +8,6 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
 
 namespace IdeogramAPIClient
 {
@@ -314,7 +312,7 @@ namespace IdeogramAPIClient
                 return bytes;
             }
 
-            using var image = Image.Load(bytes);
+            using var image = Raster.Decode(bytes);
             var scale = Math.Min(
                 0.95,
                 Math.Sqrt((double)MaxInputImageBytes / bytes.LongLength) * 0.95);
@@ -322,10 +320,8 @@ namespace IdeogramAPIClient
             {
                 var width = Math.Max(1, (int)Math.Floor(image.Width * scale));
                 var height = Math.Max(1, (int)Math.Floor(image.Height * scale));
-                using var resized = image.Clone(ctx => ctx.Resize(width, height));
-                using var stream = new MemoryStream();
-                resized.SaveAsPng(stream);
-                var encoded = stream.ToArray();
+                using var resized = Raster.Resize(image, width, height);
+                var encoded = Raster.EncodePng(resized);
                 if (encoded.LongLength <= MaxInputImageBytes)
                 {
                     Logger.Log(

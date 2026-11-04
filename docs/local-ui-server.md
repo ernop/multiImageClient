@@ -84,7 +84,7 @@ The 2026-09-10 review updates these libraries across all referencing projects.
 | SixLabors.ImageSharp.Drawing | 2.1.4 | 2.1.7 | [NuGet](https://www.nuget.org/packages/SixLabors.ImageSharp.Drawing/2.1.7) |
 | SQLitePCLRaw.provider.dynamic_cdecl | 3.0.4 | 3.0.5 | [NuGet](https://www.nuget.org/packages/SQLitePCLRaw.provider.dynamic_cdecl/3.0.5) |
 
-ImageSharp 4 and Drawing 3 require a separate major-version migration.
+Superseded 2026-11-04: SkiaSharp and Svg.Skia replaced Magick.NET, ImageSharp, and ImageSharp.Drawing. See [shared-site security](shared-site-security.md).
 Provider SDK upgrades remain outside this server maintenance change.
 These library updates preserve provider request contracts.
 The baseline NuGet audit reported no known vulnerabilities in direct or transitive application packages.

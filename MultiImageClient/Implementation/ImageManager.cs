@@ -1,6 +1,4 @@
-﻿using ImageMagick;
-
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 
 using System;
 using System.Collections.Generic;
@@ -55,7 +53,7 @@ namespace MultiImageClient
                 return thesePaths;
             }
 
-            // Annotated variants decode to PNG for ImageSharp/Magick overlays.
+            // Annotated variants are drawn over a PNG copy of the result.
             var annotatedBytes = ConvertBytesForAnnotatedVariants(imageBytes, contentType);
             const string annotatedContentType = "image/png";
 
@@ -76,22 +74,16 @@ namespace MultiImageClient
                 return imageBytes;
             }
 
-            if (contentType == "image/jpeg")
+            if (contentType == "image/jpeg" || contentType == "image/webp")
             {
-                using var image = new MagickImage(imageBytes, MagickFormat.Jpg);
-                return image.ToByteArray(MagickFormat.Png);
-            }
-
-            if (contentType == "image/webp")
-            {
-                using var image = new MagickImage(imageBytes, MagickFormat.WebP);
-                return image.ToByteArray(MagickFormat.Png);
+                using var image = Raster.Decode(imageBytes);
+                return Raster.EncodePng(image);
             }
 
             if (contentType == "image/svg+xml")
             {
-                using var image = new MagickImage(imageBytes, MagickFormat.Svg);
-                return image.ToByteArray(MagickFormat.Png);
+                using var image = SvgRaster.Rasterize(imageBytes, "annotated variant");
+                return Raster.EncodePng(image);
             }
 
             Logger.Log($"\tUnexpected content type for annotation conversion: {contentType}; using bytes as-is.");

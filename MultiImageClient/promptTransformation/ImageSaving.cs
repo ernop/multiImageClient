@@ -1,13 +1,8 @@
 ﻿#nullable enable
 using IdeogramAPIClient;
 
-using ImageMagick;
+using SkiaSharp;
 
-using SixLabors.Fonts;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Drawing.Processing;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -32,13 +27,6 @@ namespace MultiImageClient
         private const int LabelFontSize = 12;
         private const int LabelRightFontSize = 10;
         
-
-        public static void ConvertWebpTopng(string inputFp)
-        {
-            using var im = new MagickImage(inputFp);
-            var newFp = Path.ChangeExtension(inputFp, ".png");
-            im.Write(newFp);
-        }
 
         public static async Task<byte[]> DownloadImageAsync(TaskProcessResult result)
         {
@@ -152,21 +140,19 @@ namespace MultiImageClient
                         var costPart = $"{generator.GetCost()} $USD";
                         rightParts.Add(costPart);
                         rightParts.Add("MultiImageClient");
-                        using var originalImage = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
-                        var label = MakeLabelGeneral(originalImage.Width, promptDetails.Prompt, rightParts);
+                        using var originalImage = Raster.Decode(imageBytes);
+                        using var labelImage = MakeLabelGeneral(originalImage.Width, promptDetails.Prompt, rightParts);
 
-                        using var labelImage = SixLabors.ImageSharp.Image.Load<Rgba32>(label);
                         int newHeight = originalImage.Height + labelImage.Height;
-                        using var combinedImage = new Image<Rgba32>(originalImage.Width, newHeight);
-                        combinedImage.Mutate(ctx =>
+                        using var combinedImage = ImageUtils.CreateStandardImage(originalImage.Width, newHeight);
+                        using (var canvas = new SKCanvas(combinedImage))
                         {
-                            ctx.ApplyStandardGraphicsOptions();
-                            ctx.DrawImage(originalImage, new Point(0, 0), 1f);
-                            ctx.DrawImage(labelImage, new Point(0, originalImage.Height), 1f);
-                        });
+                            canvas.DrawBitmapAt(originalImage, 0, 0);
+                            canvas.DrawBitmapAt(labelImage, 0, originalImage.Height);
+                        }
 
                         // Save the combined image
-                        await combinedImage.SaveAsPngAsync(fullPath);
+                        await Task.Run(() => Raster.SavePng(combinedImage, fullPath));
                     }
                     else
                     {
@@ -193,7 +179,7 @@ namespace MultiImageClient
             return fullPath;
         }
 
-        public static byte[] MakeLabelGeneral(int width, string prompt, List<string> rightParts)
+        public static SKBitmap MakeLabelGeneral(int width, string prompt, List<string> rightParts)
         {
             var leftSideWidth = width - LabelRightSideWidth;
             var fontSize = LabelFontSize;
@@ -228,29 +214,26 @@ namespace MultiImageClient
             int contentHeight = Math.Max(leftTextHeight, rightTextHeight);
             int totalHeight = contentHeight + (UIConstants.Padding * 2);
 
-            using var image = ImageUtils.CreateStandardImage(width, totalHeight, UIConstants.Black);
+            var image = ImageUtils.CreateStandardImage(width, totalHeight, UIConstants.Black);
 
-            image.Mutate(ctx =>
+            using (var canvas = new SKCanvas(image))
             {
-                var leftRect = new RectangleF(0, 0, leftSideWidth + 5, totalHeight);
-                ctx.DrawTextWithBackground(leftRect, prompt, font, UIConstants.White, UIConstants.Black, HorizontalAlignment.Left, LabelTotalLineSpacing);
+                var leftRect = SKRect.Create(0, 0, leftSideWidth + 5, totalHeight);
+                canvas.DrawTextWithBackground(leftRect, prompt, font, UIConstants.White, UIConstants.Black, HorizontalAlignment.Left, LabelTotalLineSpacing);
 
                 // Draw right side text
                 var yOffset = UIConstants.Padding;
                 foreach (var text in rightParts.Where(s => !string.IsNullOrEmpty(s)))
                 {
                     var rightTextOptions = FontUtils.CreateTextOptions(labelRightFont, HorizontalAlignment.Right, VerticalAlignment.Top, LabelTotalLineSpacing);
-                    rightTextOptions.Origin = new PointF(width - UIConstants.Padding, yOffset);
+                    rightTextOptions.Origin = new SKPoint(width - UIConstants.Padding, yOffset);
 
-                    ctx.DrawTextStandard(rightTextOptions, text, UIConstants.Gold);
+                    canvas.DrawTextStandard(rightTextOptions, text, UIConstants.Gold);
                     yOffset += rightLineHeight;
                 }
-            });
+            }
 
-            // Convert to byte array
-            using var ms = new MemoryStream();
-            image.SaveAsPng(ms);
-            return ms.ToArray();
+            return image;
         }
 
         private static IEnumerable<PromptHistoryStep> GetUsingSteps(SaveType saveType, PromptDetails promptDetails)

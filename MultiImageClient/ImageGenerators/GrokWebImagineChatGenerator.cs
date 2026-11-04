@@ -1,6 +1,4 @@
 #nullable enable
-using SixLabors.ImageSharp;
-
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -182,12 +180,7 @@ namespace MultiImageClient
 
         internal static string DeriveAspectRatio(string imagePath)
         {
-            var info = Image.Identify(imagePath);
-            if (info == null || info.Width <= 0 || info.Height <= 0)
-            {
-                throw new InvalidDataException(
-                    $"Could not read source image dimensions from '{imagePath}'.");
-            }
+            var info = Raster.Identify(imagePath);
             return UiShapeMapping.GrokAspectForInput(info.Width, info.Height);
         }
 

@@ -14,13 +14,9 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using IdeogramAPIClient;
-using ImageMagick;
 using RecraftAPIClient;
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace MultiImageClient
 {
@@ -602,8 +598,8 @@ namespace MultiImageClient
 
             try
             {
-                using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(mem.Bytes);
-                if (Math.Max(image.Width, image.Height) <= CardPreviewMaxEdge)
+                var info = Raster.Identify(mem.Bytes);
+                if (Math.Max(info.Width, info.Height) <= CardPreviewMaxEdge)
                 {
                     // Ephemeral and already small — serve as-is, cache only if compact.
                     bytes = mem.Bytes;
@@ -615,8 +611,10 @@ namespace MultiImageClient
                     return true;
                 }
 
-                DownscaleInPlace(image);
-                var (previewBytes, previewType) = EncodeCardPreview(image);
+                var (width, height) = CardPreviewSize(info.Width, info.Height);
+                using var decoded = Raster.DecodeForBox(mem.Bytes, width, height);
+                using var preview = Raster.Resize(decoded, width, height);
+                var (previewBytes, previewType) = EncodeCardPreview(preview);
                 if (previewBytes.Length <= MaxCacheablePreviewBytes)
                 {
                     UiCardPreviewCache.Set(cacheKey, previewBytes, previewType);
@@ -652,12 +650,7 @@ namespace MultiImageClient
 
             try
             {
-                using var image = LoadCardPreviewSource(originalPath, originalContentType);
-                if (Math.Max(image.Width, image.Height) > CardPreviewMaxEdge)
-                {
-                    DownscaleInPlace(image);
-                }
-
+                using var image = LoadCardPreview(originalPath, originalContentType);
                 var (encoded, type) = EncodeCardPreview(image);
                 if (!_storage.TrySaveCardPreview(imageKey, encoded, type, out thumbPath))
                 {
@@ -674,49 +667,44 @@ namespace MultiImageClient
             }
         }
 
-        private static Image<Rgba32> LoadCardPreviewSource(string path, string contentType)
+        // Returns the card preview bitmap: long edge at most CardPreviewMaxEdge.
+        // Raster originals decode at a reduced size when the codec allows, so
+        // a multi-megapixel original never sits in memory at full size.
+        private static SKBitmap LoadCardPreview(string path, string contentType)
         {
             if (contentType.Equals("image/svg+xml", StringComparison.OrdinalIgnoreCase))
             {
-                using var vector = new MagickImage(path);
-                return SixLabors.ImageSharp.Image.Load<Rgba32>(
-                    vector.ToByteArray(MagickFormat.Png));
+                using var vector = SvgRaster.Rasterize(path);
+                var (svgWidth, svgHeight) = CardPreviewSize(vector.Width, vector.Height);
+                return Raster.Resize(vector, svgWidth, svgHeight);
             }
 
-            using var stream = File.OpenRead(path);
-            return SixLabors.ImageSharp.Image.Load<Rgba32>(stream);
+            var info = Raster.Identify(path);
+            var (width, height) = CardPreviewSize(info.Width, info.Height);
+            using var decoded = Raster.DecodeForBox(path, width, height);
+            return Raster.Resize(decoded, width, height);
         }
 
-        private void DownscaleInPlace(Image<Rgba32> image)
+        private static (int Width, int Height) CardPreviewSize(int width, int height)
         {
-            var scale = (double)CardPreviewMaxEdge / Math.Max(image.Width, image.Height);
-            image.Mutate(x => x.Resize(
-                Math.Max(1, (int)Math.Round(image.Width * scale)),
-                Math.Max(1, (int)Math.Round(image.Height * scale))));
-        }
-
-        private static (byte[] Bytes, string ContentType) EncodeCardPreview(Image<Rgba32> image)
-        {
-            bool hasAlpha = false;
-            image.ProcessPixelRows(accessor =>
+            var longEdge = Math.Max(width, height);
+            if (longEdge <= CardPreviewMaxEdge)
             {
-                for (int y = 0; y < accessor.Height && !hasAlpha; y++)
-                {
-                    foreach (ref var p in accessor.GetRowSpan(y))
-                    {
-                        if (p.A < 255) { hasAlpha = true; break; }
-                    }
-                }
-            });
-
-            using var ms = new MemoryStream();
-            if (hasAlpha)
-            {
-                image.SaveAsPng(ms);
-                return (ms.ToArray(), "image/png");
+                return (width, height);
             }
-            image.SaveAsJpeg(ms, new JpegEncoder { Quality = 80 });
-            return (ms.ToArray(), "image/jpeg");
+            var scale = (double)CardPreviewMaxEdge / longEdge;
+            return (
+                Math.Max(1, (int)Math.Round(width * scale)),
+                Math.Max(1, (int)Math.Round(height * scale)));
+        }
+
+        private static (byte[] Bytes, string ContentType) EncodeCardPreview(SKBitmap image)
+        {
+            if (Raster.HasTranslucentPixels(image))
+            {
+                return (Raster.EncodePng(image), "image/png");
+            }
+            return (Raster.EncodeJpeg(image, 80), "image/jpeg");
         }
 
         internal void AttachStorage(UiJobStorage storage) => _storage = storage;
@@ -1554,7 +1542,7 @@ namespace MultiImageClient
                     {
                         try
                         {
-                            var identified = Image.Identify(info.Path);
+                            var identified = Raster.Identify(info.Path);
                             if (identified.Width > 0 && identified.Height > 0)
                             {
                                 size = $"{identified.Width}x{identified.Height}";
@@ -3827,7 +3815,7 @@ namespace MultiImageClient
         private string? _cachedComfyProbeProblem;
 
         // Endpoint work is scheduled independently by provider/account. The
-        // finalization gate protects ImageSharp contact-sheet memory without
+        // finalization gate protects contact-sheet bitmap memory without
         // blocking unrelated remote targets, while admission bounds retained
         // job tasks and queued descriptors on a resident shared host.
         private readonly SemaphoreSlim _finalizationLimit;
@@ -4215,12 +4203,11 @@ namespace MultiImageClient
                 job.MarkDone();
                 if (finalizationAcquired)
                 {
-                    // Completed UI jobs no longer own any ImageSharp canvases.
-                    // Keep cleanup under the same gate as contact-sheet rendering
-                    // so concurrent jobs cannot multiply peak native allocations.
+                    // Collect the finished job's image buffers under the same
+                    // gate as contact-sheet rendering, so concurrent jobs cannot
+                    // multiply peak allocations.
                     try
                     {
-                        Configuration.Default.MemoryAllocator.ReleaseRetainedResources();
                         GC.Collect(
                             GC.MaxGeneration,
                             GCCollectionMode.Aggressive,
@@ -4781,8 +4768,7 @@ namespace MultiImageClient
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                     { Logger.Log($"[ui #{job.Id}] describe sheet temporary-file cleanup failed: {ex.Message}"); }
                 }
-                try { Configuration.Default.MemoryAllocator.ReleaseRetainedResources(); }
-                finally { _finalizationLimit.Release(); }
+                _finalizationLimit.Release();
             }
         }
 
@@ -5682,15 +5668,15 @@ namespace MultiImageClient
                 for (var i = 0; i < job.InputImageCount; i++)
                 {
                     var imageBytes = await File.ReadAllBytesAsync(job.InputImagePaths[i]);
-                    ImageInfo info;
-                    using (var infoStream = new MemoryStream(imageBytes, writable: false))
+                    RasterInfo info;
+                    try
                     {
-                        info = Image.Identify(infoStream);
+                        info = Raster.Identify(imageBytes);
                     }
-                    if (info == null || info.Width <= 0 || info.Height <= 0)
+                    catch (InvalidDataException ex)
                     {
                         throw new InvalidDataException(
-                            $"input image {i + 1} of {job.InputImageCount} could not be decoded for its dimensions.");
+                            $"input image {i + 1} of {job.InputImageCount} could not be decoded for its dimensions: {ex.Message}", ex);
                     }
                     var raw = await describer.DescribeImageAsync(
                         imageBytes,
@@ -5711,7 +5697,7 @@ namespace MultiImageClient
                         $"{DateTime.Now:HHmmss_fff}_{job.Id}_map{i}.png");
                     using (var map = UiLayoutMapRenderer.Render(info.Width, info.Height, regions, summary))
                     {
-                        await map.SaveAsPngAsync(mapPath);
+                        Raster.SavePng(map, mapPath);
                         rendered.Add((mapPath, $"{map.Width}x{map.Height}"));
                     }
                 }
@@ -6271,15 +6257,11 @@ namespace MultiImageClient
             {
                 if (Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase))
                 {
-                    using var vector = new MagickImage(path);
-                    return vector.Width > 0 && vector.Height > 0
-                        ? $"{vector.Width}x{vector.Height}"
-                        : null;
+                    var (width, height) = SvgRaster.IntrinsicSize(path);
+                    return $"{width}x{height}";
                 }
-                var info = Image.Identify(path);
-                return info.Width > 0 && info.Height > 0
-                    ? $"{info.Width}x{info.Height}"
-                    : null;
+                var info = Raster.Identify(path);
+                return $"{info.Width}x{info.Height}";
             }
             catch (Exception ex)
             {

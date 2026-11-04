@@ -1,4 +1,4 @@
-using SixLabors.ImageSharp;
+using SkiaSharp;
 
 namespace MultiImageClient
 {
@@ -12,13 +12,13 @@ namespace MultiImageClient
         public const int LabelHeight = 20; // Default height for labels under images
 
         // Colors
-        public static readonly Color White = Color.White;
-        public static readonly Color Black = Color.Black;
-        public static readonly Color SuccessGreen = Color.FromRgb(0, 120, 0);
-        public static readonly Color ErrorRed = Color.FromRgb(180, 0, 0);
-        public static readonly Color PlaceholderFill = Color.FromRgb(240, 240, 240);
-        public static readonly Color PlaceholderBorder = Color.FromRgb(200, 200, 200);
-        public static readonly Color Gold = Color.FromRgb(255, 215, 0);
+        public static readonly SKColor White = SKColors.White;
+        public static readonly SKColor Black = SKColors.Black;
+        public static readonly SKColor SuccessGreen = new SKColor(0, 120, 0);
+        public static readonly SKColor ErrorRed = new SKColor(180, 0, 0);
+        public static readonly SKColor PlaceholderFill = new SKColor(240, 240, 240);
+        public static readonly SKColor PlaceholderBorder = new SKColor(200, 200, 200);
+        public static readonly SKColor Gold = new SKColor(255, 215, 0);
         // We do NOT use gray for text. See AGENTS.md > Visual & Typography Policy.
         // Secondary labels must get their visual hierarchy from smaller font size and/or
         // by reusing the existing semantic color (SuccessGreen, ErrorRed, Black, Gold).

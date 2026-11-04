@@ -1,10 +1,6 @@
 ﻿using IdeogramAPIClient;
 
-
 using RecraftAPIClient;
-
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
 
 using System;
 using System.Collections.Generic;
@@ -397,30 +393,29 @@ namespace MultiImageClient
 
         internal static byte[] ConformImageToImageInput(byte[] bytes, string sourcePath)
         {
-            using var image = SixLabors.ImageSharp.Image.Load(bytes);
-            if (image.Width < MinInputDimension || image.Height < MinInputDimension)
+            var info = Raster.Identify(bytes);
+            if (info.Width < MinInputDimension || info.Height < MinInputDimension)
             {
                 throw new InvalidOperationException(
                     $"Recraft imageToImage requires both dimensions to be at least {MinInputDimension}px; "
-                    + $"'{sourcePath}' is {image.Width}x{image.Height}.");
+                    + $"'{sourcePath}' is {info.Width}x{info.Height}.");
             }
 
             var scale = Math.Min(1.0, Math.Min(
-                (double)MaxInputDimension / Math.Max(image.Width, image.Height),
-                Math.Sqrt((double)MaxInputPixels / ((long)image.Width * image.Height))));
+                (double)MaxInputDimension / Math.Max(info.Width, info.Height),
+                Math.Sqrt((double)MaxInputPixels / ((long)info.Width * info.Height))));
             if (scale >= 1.0 && bytes.LongLength <= MaxInputBytes)
             {
                 return bytes;
             }
 
+            using var image = Raster.Decode(bytes);
             while (true)
             {
                 var width = Math.Max(MinInputDimension, (int)Math.Floor(image.Width * scale));
                 var height = Math.Max(MinInputDimension, (int)Math.Floor(image.Height * scale));
-                using var resized = image.Clone(ctx => ctx.Resize(width, height));
-                using var ms = new MemoryStream();
-                resized.SaveAsPng(ms);
-                var encoded = ms.ToArray();
+                using var resized = Raster.Resize(image, width, height);
+                var encoded = Raster.EncodePng(resized);
                 if (encoded.LongLength <= MaxInputBytes)
                 {
                     Logger.Log(

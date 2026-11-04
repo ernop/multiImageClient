@@ -5,8 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using MultiImageClient;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using Xunit;
 
 namespace MultiImageClientTests
@@ -72,8 +71,8 @@ namespace MultiImageClientTests
             {
                 var inputPath = Path.Combine(folder, "input.png");
                 var mapPath = Path.Combine(folder, "map.png");
-                using (var input = new Image<Rgba32>(180, 90, Color.Red)) await input.SaveAsPngAsync(inputPath);
-                using (var map = new Image<Rgba32>(100, 180, Color.Green)) await map.SaveAsPngAsync(mapPath);
+                using (var input = Raster.Create(180, 90, SKColors.Red)) Raster.SavePng(input, inputPath);
+                using (var map = Raster.Create(100, 180, SKColors.Green)) Raster.SavePng(map, mapPath);
                 var endpoints = new[]
                 {
                     new UiDescribeSheetEndpoint("describe-openai", "Recorded OpenAI", "", "", new[] {
@@ -86,25 +85,23 @@ namespace MultiImageClientTests
                 var maps = new Dictionary<int, string> { [0] = mapPath, [1] = mapPath };
                 var output = Path.Combine(folder, "sheet.png");
                 await UiDescribeSheet.RenderAsync(data, paths, maps, output);
-                using var sheet = Image.Load<Rgba32>(output);
+                using var sheet = Raster.Decode(output);
                 Assert.Equal(1800, sheet.Width);
                 Assert.True(sheet.Height > 3000);
                 var redRows = new HashSet<int>();
                 var greenRows = new HashSet<int>();
-                sheet.ProcessPixelRows(accessor => {
-                    for (var y = 0; y < accessor.Height; y++)
-                        foreach (var pixel in accessor.GetRowSpan(y))
-                        {
-                            if (pixel == Color.Red.ToPixel<Rgba32>()) redRows.Add(y);
-                            if (pixel == Color.Green.ToPixel<Rgba32>()) greenRows.Add(y);
-                        }
-                });
+                var pixels = sheet.Pixels;
+                for (var i = 0; i < pixels.Length; i++)
+                {
+                    if (pixels[i] == SKColors.Red) redRows.Add(i / sheet.Width);
+                    if (pixels[i] == SKColors.Green) greenRows.Add(i / sheet.Width);
+                }
                 Assert.True(redRows.Count > 600);
                 Assert.True(greenRows.Count > 2000);
                 var longReply = new UiDescribeSheetReply(0, string.Join("\n", Enumerable.Repeat("Full returned text, without shortening.", 120)), "Last comment.");
                 var longData = data with { InputCount = 1, Endpoints = new[] { endpoints[0] with { Replies = new[] { longReply } } } };
                 await UiDescribeSheet.RenderAsync(longData, new[] { inputPath }, new Dictionary<int, string>(), output);
-                Assert.True(Image.Identify(output).Height > sheet.Height);
+                Assert.True(Raster.Identify(output).Height > sheet.Height);
                 var oversized = longData with { Endpoints = new[] { endpoints[0] with { Replies = new[] { longReply with { Text = new string('x', 100_001) } } } } };
                 await Assert.ThrowsAsync<InvalidDataException>(() => UiDescribeSheet.RenderAsync(oversized, new[] { inputPath }, maps, output));
             }

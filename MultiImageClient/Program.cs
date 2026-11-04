@@ -10,8 +10,6 @@ using IdeogramAPIClient;
 
 using System;
 using System.IO;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Memory;
 //using System.Collections.Generic;
 //using System.Diagnostics.Metrics;
 //using System.Drawing.Printing;
@@ -29,8 +27,6 @@ namespace MultiImageClient
     {
         static async Task Main(string[] args)
         {
-            TiffGuard.RefuseTiff();
-
             // Production publishes carry the Playwright revision they were
             // built against. Point Playwright at that immutable payload before
             // either the Grok or Meta browser client is initialized.
@@ -47,22 +43,6 @@ namespace MultiImageClient
             }
 
             var options = RunOptions.Parse(args);
-
-            if (options.Ui)
-            {
-                // The shared-site daemon repeatedly decodes large originals to
-                // build annotations, grids, and thumbs. ImageSharp's 64-bit
-                // default permits a very large process-wide retained pool,
-                // which drove the 1.2 GiB service into reclaim thrash after
-                // browsing only ~50 jobs. Keep enough reuse for throughput
-                // while bounding the resident pool for the long-lived server.
-                Configuration.Default.MemoryAllocator = MemoryAllocator.Create(
-                    new MemoryAllocatorOptions
-                    {
-                        MaximumPoolSizeMegabytes = 64,
-                        AllocationLimitMegabytes = 512,
-                    });
-            }
 
             if (options.PlaywrightInstall)
             {

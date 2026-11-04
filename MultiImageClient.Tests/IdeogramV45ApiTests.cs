@@ -1,8 +1,7 @@
 using System.Net;
 using System.Text;
 using IdeogramAPIClient;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 
 namespace MultiImageClient;
 
@@ -462,10 +461,8 @@ public class IdeogramV45ApiTests
 
     private static byte[] Png(int width, int height)
     {
-        using var image = new Image<Rgba32>(width, height, new Rgba32(30, 140, 220));
-        using var stream = new MemoryStream();
-        image.SaveAsPng(stream);
-        return stream.ToArray();
+        using var image = Raster.Create(width, height, new SKColor(30, 140, 220));
+        return Raster.EncodePng(image);
     }
 
     private static string ImageReply(string resolution)
