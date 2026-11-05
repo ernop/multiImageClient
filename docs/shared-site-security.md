@@ -131,8 +131,13 @@ compromised friend account = a hostile user with complete member powers.
      font comes from any installed font that has it. Japanese text and emoji
      thus render where such fonts exist. ImageSharp drew them as boxes.
      Production has IPA Gothic, WenQuanYi Zen Hei, Noto Color Emoji, and
-     Unifont (checked 2026-11-04). Both machines use the same fontconfig
-     fallback, but production rendering is not yet observed. Line height now
+     Unifont (checked 2026-11-04). On 2026-11-05 the deployed build drew
+     text under the Vibecoders service account and sandbox. Japanese came
+     from WenQuanYi Zen Hei. Every emoji found a font with its glyph, but
+     all drew in black and white: DejaVu Sans, or Unifont Upper in a blocky
+     pixel style. The host's fontconfig ranks both above Noto Color Emoji.
+     This PC draws some emoji, such as 🎨 and 🚀, from Noto Color Emoji in
+     color, so the two machines' sheets differ. Line height now
      follows the font's line spacing. Text bands are thus slightly taller:
      contact sheets about 1%, describe sheets about 8%.
    - **No gray text.** The roundtrip "No Instructions" note is now black. The
