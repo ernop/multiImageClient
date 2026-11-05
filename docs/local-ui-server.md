@@ -28,9 +28,10 @@ p = 0.022. Production already used Microsoft's build.
   `infrastructure/dev-app-services/install-dev-app-services.sh`, rendered with
   `DOTNET_BIN=$HOME/.dotnet/dotnet`. That adds the same environment lines.
 - Ubuntu's packages stay installed; nothing on this PC calls them by path.
-- Apt does not update `~/.dotnet`. Run Microsoft's install script after each
-  monthly .NET release, then restart the local service:
-  `curl -sSfL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && bash /tmp/dotnet-install.sh --channel 10.0 --install-dir ~/.dotnet`.
+- Apt does not update `~/.dotnet`. After each monthly .NET release, run
+  `bash deploy/update-dotnet.sh`, then restart the local service. The script
+  runs Microsoft's `dotnet-install.sh --channel 10.0` and replaces the running
+  `dotnet` launcher by rename; see `deploy/README.md`.
 - Installed on 2026-11-04: SDK 10.0.403 with runtime 10.0.14.
 
 ## Local request guard

@@ -214,8 +214,14 @@ Install the newest .NET 10 beside the current one:
 
 ```bash
 ssh tpbeta-root \
-  'sudo -u tparkour -H env DOTNET_CLI_TELEMETRY_OPTOUT=1 bash -c "curl -sSfL https://dot.net/v1/dotnet-install.sh -o /home/tparkour/dotnet-install.sh && bash /home/tparkour/dotnet-install.sh --channel 10.0 --install-dir /home/tparkour/.dotnet; rm -f /home/tparkour/dotnet-install.sh"'
+  'sudo -u tparkour -H bash /home/tparkour/multiImageClient/deploy/update-dotnet.sh'
 ```
+
+`update-dotnet.sh` runs Microsoft's `dotnet-install.sh --channel 10.0` with `--skip-non-versioned-files`.
+Linux refuses to overwrite a running program, and both services run the `dotnet` launcher.
+The script therefore takes the new launcher from the downloaded archive and replaces the old one by rename.
+Running services keep the old file until the release restarts them.
+The script also deletes usage reports that the SDK queued before the opt-out.
 
 Then release both instances as usual.
 The app starts on the newest installed 10.0 runtime, so the release restart applies the patch.
