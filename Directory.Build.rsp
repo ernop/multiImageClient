@@ -1,0 +1,7 @@
+# Every command-line build of this repository (agent shells, the local
+# `dotnet run` service, production publishes) must leave no helper processes
+# behind. These are the switches `--disable-build-servers` passes.
+# See docs/build-helper-processes.md.
+-nodeReuse:false
+-p:UseSharedCompilation=false
+-p:UseRazorBuildServer=false

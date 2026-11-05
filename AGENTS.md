@@ -16,6 +16,8 @@ C# desktop app that chains together image generation steps across multiple APIs 
 
 - [docs/local-ui-server.md](docs/local-ui-server.md) — **2026-11-04:** this PC builds with Microsoft's .NET SDK in `~/.dotnet`. Ubuntu's 10.0.114 package crashed MSBuild in 6 of 25 test runs; Microsoft's crashed in none. **2026-11-03:** with auth off, the UI refuses requests whose Host is not localhost (DNS rebinding) and writes from other sites. **2026-10-11:** a startup failure after shutdown keeps no release copy; rebuild from the repository. **2026-09-10:** isolated local publishes, exact-process restarts, compatible library updates, and runtime/status verification.
 
+- [docs/build-helper-processes.md](docs/build-helper-processes.md) — **2026-11-05:** `Directory.Build.rsp` turns off MSBuild worker reuse and the compiler server, so builds leave no helper processes. The user timer `dotnet-build-helper-reaper.timer` stops helpers that crashed or killed builds orphan; install it with `tools/install-build-helper-reaper.sh`.
+
 - [docs/ui-polling-prd.md](docs/ui-polling-prd.md) — **2026-10-10:** idle tabs stop polling after 10 minutes without input. Input or tab reveal resumes every loop; cursor polls catch up. The composer keeps polling while the user's own jobs run, at most 60 minutes after input. New poll loops must check `MultiImageTabActivity.shouldPoll()` and register a resume handler.
 
 - [docs/grok-web-prompt-limits.md](docs/grok-web-prompt-limits.md) — **2026-09-09:** automatically truncate Grok-web text-to-image prompts to 8,192 UTF-8 bytes without splitting Unicode characters. Grok-web edits send the full prompt (2026-10-12).
