@@ -205,6 +205,34 @@ No site keeps a recovery copy of any build (owner decision, 2026-10-11).
 Recover from a failed release by rebuilding and redeploying from the repository.
 Any further environment updates only when explicitly selected, through the same `create-environment.py update` command.
 
+## Updating .NET on the host (2026-11-04)
+
+Both instances run framework-dependent on the shared .NET in `/home/tparkour/.dotnet`.
+No other service on the host uses that copy, and apt does not update it.
+Microsoft publishes .NET patches monthly, usually on the second Tuesday, and sometimes between.
+Install the newest .NET 10 beside the current one:
+
+```bash
+ssh tpbeta-root \
+  'sudo -u tparkour -H env DOTNET_CLI_TELEMETRY_OPTOUT=1 bash -c "curl -sSfL https://dot.net/v1/dotnet-install.sh -o /home/tparkour/dotnet-install.sh && bash /home/tparkour/dotnet-install.sh --channel 10.0 --install-dir /home/tparkour/.dotnet; rm -f /home/tparkour/dotnet-install.sh"'
+```
+
+Then release both instances as usual.
+The app starts on the newest installed 10.0 runtime, so the release restart applies the patch.
+Check the runtime each running service loaded:
+
+```bash
+ssh tpbeta-root 'for s in multiimageclient-ui multiimageclient-env-vibecoders-ai-generation; do p=$(systemctl show -p MainPID --value $s.service); echo "$s $(grep -m1 -o "Microsoft.NETCore.App/[0-9.]*" /proc/$p/maps)"; done'
+```
+
+The original sleeps after 15 idle minutes; run the check right after the release.
+The install script keeps older runtimes and SDKs beside the new ones.
+`agent-redeploy.sh` exports `DOTNET_CLI_TELEMETRY_OPTOUT=1` and `DOTNET_NOLOGO=1`; without them the SDK sends usage data to Microsoft.
+
+| Date | Runtime before | Runtime after | SDK after |
+|---|---|---|---|
+| 2026-11-04 | 10.0.10 (installed 2026-08-05) | 10.0.14 | 10.0.403 |
+
 ## Passwordless redeploy helper installation
 
 After the shared site is installed, give the deploy user **one** interactive

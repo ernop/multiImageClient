@@ -13,6 +13,26 @@ The old restart script killed all matching UI processes and any process occupyin
 It also stopped the server before building.
 A failed build therefore left the local site unavailable.
 
+## .NET toolchain on this PC (owner decision, 2026-11-04)
+
+This PC builds with Microsoft's .NET SDK in `~/.dotnet`, not Ubuntu's
+`dotnet-sdk-10.0` package. Ubuntu's 10.0.114 build crashed MSBuild in 6 of 25
+`dotnet test` runs with "Internal CLR error (0x80131506)". The five examined
+crashes stopped the runtime at the same instructions. Microsoft's build of the
+same version crashed in 0 of 25 runs. Fisher's exact test gives two-sided
+p = 0.022. Production already used Microsoft's build.
+
+- `~/.zshrc` and `~/.profile` put `~/.dotnet` first on `PATH` and set
+  `DOTNET_ROOT`, `DOTNET_CLI_TELEMETRY_OPTOUT=1`, and `DOTNET_NOLOGO=1`.
+- The local service unit comes from mybrowser's
+  `infrastructure/dev-app-services/install-dev-app-services.sh`, rendered with
+  `DOTNET_BIN=$HOME/.dotnet/dotnet`. That adds the same environment lines.
+- Ubuntu's packages stay installed; nothing on this PC calls them by path.
+- Apt does not update `~/.dotnet`. Run Microsoft's install script after each
+  monthly .NET release, then restart the local service:
+  `curl -sSfL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && bash /tmp/dotnet-install.sh --channel 10.0 --install-dir ~/.dotnet`.
+- Installed on 2026-11-04: SDK 10.0.403 with runtime 10.0.14.
+
 ## Local request guard
 
 Decided 2026-11-03. With a blank `UiAuthFilePath` the UI has no login, so it

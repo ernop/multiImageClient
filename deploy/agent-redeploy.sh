@@ -29,6 +29,8 @@ fi
 
 repo="${MULTIIMAGECLIENT_REPO:-$HOME/multiImageClient}"
 dotnet="${DOTNET_ROOT:-$HOME/.dotnet}/dotnet"
+# The .NET SDK sends usage data to Microsoft unless this is set.
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 staging="$HOME/multiimageclient-publish-staging"
 helper=/usr/local/sbin/multiimageclient-update
 checker=/usr/local/lib/multiimageclient-update/check-unfinished-work.py

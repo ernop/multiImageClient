@@ -142,11 +142,15 @@ compromised friend account = a hostile user with complete member powers.
      A loop decoded and resized 300 local images (885 megapixels). Resident
      memory stayed between 220 and 237 MiB.
 
-   **Open (2026-11-04): upload metadata.** Uploaded PNG, JPEG, and WebP files
-   are stored, served to members, and sent to providers unchanged. Their EXIF
-   block can hold GPS coordinates and the camera model. 5 of 313 local uploads
-   carry GPS coordinates. The owner decides whether intake removes this
-   metadata.
+   **Upload metadata (owner decision, 2026-11-04).** Uploaded PNG, JPEG, and
+   WebP files stay unchanged, EXIF included. Members can open them, and
+   image-capable targets receive the stored bytes. EXIF can hold GPS
+   coordinates, the camera model, and the capture time. Counts on 2026-11-04:
+   local, 5 of 313 uploads carry GPS coordinates; AVE, 6 of 289 carry GPS and
+   19 name a camera; Vibecoders, none of 39 carry EXIF. GPS-tagged uploads
+   reached OpenAI, Google, grok.com, Ideogram, and Recraft. The owner saw
+   these counts and kept uploads unchanged. Do not add metadata removal
+   without a new owner decision.
 2. **Auth-file leak.** `ui-auth.json` holds PBKDF2 password hashes and the
    HMAC secret. A reader of the file can still mint cookies if they also
    capture a live `mic_auth` cookie, and they can attempt offline cracking of
@@ -162,7 +166,16 @@ compromised friend account = a hostile user with complete member powers.
    config if it escapes.
 4. **Kestrel/ASP.NET or nginx vulnerabilities.** Standard patching story;
    nothing app-specific. The app itself never listens publicly (loopback
-   only).
+   only). Both production instances use the shared .NET runtime in
+   `/home/tparkour/.dotnet`; no other host service uses it. On 2026-11-04 it
+   was still 10.0.10 from August 5. The four later releases (10.0.11 through
+   10.0.14) list 59 CVEs, including ASP.NET Core remote code execution and
+   denial of service. The owner approved the update to runtime 10.0.14 (SDK
+   10.0.403) that day. Patch it after each monthly .NET release; see
+   `deploy/README.md`. `agent-redeploy.sh` sets
+   `DOTNET_CLI_TELEMETRY_OPTOUT=1` since 2026-11-04, because the SDK otherwise
+   sends usage data to Microsoft. Before that, production builds ran without
+   it.
 
 ## Deliberate non-mitigations (fail-closed elsewhere, open by design here)
 
