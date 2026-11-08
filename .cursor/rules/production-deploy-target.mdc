@@ -30,6 +30,13 @@ alwaysApply: true
   start, loopback, and private vhost; then run `deploy/update-vibecoders.sh`
   as root, which installs that same build into Vibecoders and verifies it;
   verify local `/healthz`.
+- **Commit and push without a separate request (owner, 2026-11-08).** The
+  owner wrote: "in general for this, just autocommit and push please." When
+  a task in this repository ends with a verified change, run the commit and
+  push release above without asking. This includes a fix made while
+  answering a question. Commit only the task's own files. Do not commit
+  when verification failed or the user excluded the step. The idle gate and
+  both-instance rules still apply.
 - If the original release or its verification fails, stop. Do not update
   Vibecoders, and report the release as failed.
 - Exception (2026-10-12): `agent-redeploy.sh` stops before publishing when

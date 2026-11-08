@@ -97,8 +97,9 @@ push updated `origin/master` — redeploy the original
 (`multiimageclient-ui.service`) through `deploy/agent-redeploy.sh`, then
 Vibecoders through `deploy/update-vibecoders.sh`. Since 2026-10-11 (owner
 decision), publishing always means both instances at the same commit; never
-release one alone. Never deploy or restart a neighboring site, vhost, or
-service. Since 2026-10-12, `agent-redeploy.sh` stops before publishing when
+release one alone. Since 2026-11-08 (owner instruction), a task that ends
+with a verified change runs this sequence without a separate request. Never
+deploy or restart a neighboring site, vhost, or service. Since 2026-10-12, `agent-redeploy.sh` stops before publishing when
 the root-owned `/usr/local/sbin/multiimageclient-update` or its root-owned
 idle checker `/usr/local/lib/multiimageclient-update/check-unfinished-work.py`
 differs from `deploy/update-shared-host.sh` or

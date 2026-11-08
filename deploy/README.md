@@ -30,6 +30,8 @@ Access is gated by three independent layers.
 
 A request to commit and push, including the Cursor diff-tab commit-and-push
 action, is a full local+production release unless the user excludes a step.
+Since 2026-11-08 (owner instruction), agents also run this sequence after
+every task that ends with a verified change, without a separate request.
 
 1. Commit the requested files under the repository git safety rules.
 2. Run the release gate below.
