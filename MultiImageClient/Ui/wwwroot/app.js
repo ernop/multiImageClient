@@ -128,6 +128,7 @@ const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
 // CreatedBy attribution.
 let authInfo = { enabled: false, user: "", profile: null };
 let clientInstanceId = "";
+let clientBuildCommit = "";
 let profileServerVersion = -1;
 let profileDisplays = new Map(); // opaque owner id -> current display name
 let profilePollInFlight = false;
@@ -344,6 +345,8 @@ const activityRequestInbox = el("activity-request-inbox");
 const activityRequestList = el("activity-request-list");
 const activityRequestCount = el("activity-request-count");
 let lastLogSequence = 0;
+// Each server process numbers its log lines from 1.
+let logsProcessGeneration = 0;
 
 // ---------- live process log ----------
 
@@ -445,11 +448,13 @@ async function pollLogs() {
     return;
   }
   logsPollInFlight = true;
+  const generation = logsProcessGeneration;
   try {
     const resp = await fetch(apiUrl(`api/logs/poll?after=${lastLogSequence}`));
     if (resp.status === 401) { location.reload(); return; }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const body = await resp.json();
+    if (generation !== logsProcessGeneration) return;
     for (const entry of body.entries) appendLogLine(entry);
     if (body.next > lastLogSequence) lastLogSequence = body.next;
     logsConnection.textContent = "live";
@@ -463,6 +468,12 @@ async function pollLogs() {
       logsPollTimer = setTimeout(pollLogs, 1000);
     }
   }
+}
+
+function restartLogsForNewServerProcess() {
+  logsProcessGeneration++;
+  lastLogSequence = 0;
+  logsLines.textContent = "";
 }
 
 function setLogsOpen(open) {
@@ -532,6 +543,7 @@ async function loadConfig() {
     throw new Error("/api/config returned no valid client instance identity");
   }
   clientInstanceId = cfg.clientInstanceId;
+  clientBuildCommit = cfg.build?.commit || "";
   generators = cfg.generators;
   standardGeneratorGroups = normalizeStandardGeneratorGroups(cfg.standardGeneratorGroups);
   generatorEndpointConfiguration =
@@ -12332,6 +12344,29 @@ tabActivity.onResume(() => {
   pollLogs();
 });
 
+// The job poll answers 401 when this window's server-process token is stale or
+// its login has ended. A new process of the same committed build serves the
+// same page code, so the window keeps its state and replays today's events
+// from cursor 0, as a fresh load does. Any other cursor that counts within one
+// process must also restart here; activity, requests, and profiles count in
+// SQLite, and favorite, deletion, and Vibecoders versions carry the token.
+// Anything else reloads. See docs/ui-polling-prd.md.
+async function adoptRestartedServerProcess() {
+  const resp = await fetch(apiUrl("api/config"));
+  if (resp.status === 401) return false;
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const cfg = await resp.json();
+  const sameCommittedBuild = /^[0-9a-f]{7,64}$/.test(clientBuildCommit)
+    && cfg.build?.commit === clientBuildCommit;
+  if (!sameCommittedBuild || cfg.clientInstanceId === clientInstanceId) return false;
+  clientInstanceId = cfg.clientInstanceId;
+  jobsPollCursor = 0;
+  // The replay is history, as on a fresh load: no own-job notifications.
+  jobActivityHydrated = false;
+  restartLogsForNewServerProcess();
+  return true;
+}
+
 async function pollJobEvents() {
   if (jobsPollInFlight) return;
   if (jobsPollTimer) {
@@ -12347,6 +12382,7 @@ async function pollJobEvents() {
     return;
   }
   jobsPollInFlight = true;
+  let replayNow = false;
   try {
     const visibilityQuery = visibilityServerVersion
       ? `&visibilityVersion=${encodeURIComponent(visibilityServerVersion)}`
@@ -12355,11 +12391,15 @@ async function pollJobEvents() {
       `api/events/poll?cursor=${jobsPollCursor}`
       + `&clientInstance=${encodeURIComponent(clientInstanceId)}`
       + visibilityQuery));
-    if (resp.status === 401) { location.reload(); return; }
+    if (resp.status === 401) {
+      if (!(await adoptRestartedServerProcess())) { location.reload(); return; }
+      replayNow = true;
+      return;
+    }
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const body = await resp.json();
-    // Out-of-range cursors can resync within this exact process. A process
-    // change rejects the instance token above and forces a full page reload.
+    // Out-of-range cursors resync from 0 within one process. A new process
+    // rejects the instance token above; see adoptRestartedServerProcess.
     jobsPollCursor = body.cursor;
     applyVisibilitySnapshot(body.visibility);
     for (const envelope of body.envelopes) {
@@ -12398,7 +12438,7 @@ async function pollJobEvents() {
     jobsPollInFlight = false;
     // Back off in hidden tabs; the visibilitychange handler polls
     // immediately when the tab comes back.
-    jobsPollTimer = setTimeout(pollJobEvents, document.hidden ? 5000 : 1000);
+    jobsPollTimer = setTimeout(pollJobEvents, replayNow ? 0 : document.hidden ? 5000 : 1000);
   }
 }
 
@@ -12744,6 +12784,7 @@ function applyJobEvent(id, card, evt) {
       time.classList.add("err");
       status.className = "cell-status err";
       status.textContent = evt.error || "failed";
+      cell.querySelector(".cell-hint")?.remove();
       // Payment/auth failures arrive with a server-classified next step and
       // the URL that fixes it (billing page, key console, cookie re-export).
       if (evt.errorHint) {

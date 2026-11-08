@@ -32,7 +32,8 @@ namespace MultiImageClient
     ///   POST /api/video-jobs                  grok-web image result -> video job
     ///   GET  /api/events/poll?cursor=N&clientInstance=...  cursor-based poll over every job's envelope log
     ///                                          (cursor=0 replays the full history, so refresh-safe;
-    ///                                          stale/missing process identity returns 401 to force reload;
+    ///                                          stale/missing process identity returns 401: the page replays
+    ///                                          from 0 for the same committed build, else reloads;
     ///                                          polling instead of SSE because the browser's
     ///                                          ~6-connection HTTP/1.1 pool is shared across ALL
     ///                                          tabs and must stay free for image loads)
@@ -241,11 +242,12 @@ namespace MultiImageClient
                 Console.Error.WriteLine($"UI aborted: environment default lists could not be migrated: {ex.Message}");
                 return;
             }
-            // Browser-window state is disposable. Every process instance gets
-            // a new token; stale and pre-token clients receive 401 from the
-            // always-running job poll, whose established response is a full
-            // page reload. Durable jobs, prompts, media, and history stay on
-            // disk and hydrate again after that reload.
+            // Every process instance gets a new token; stale and pre-token
+            // clients receive 401 from the always-running job poll. The page
+            // then reads /api/config: for the same committed build it adopts
+            // the new token and replays from cursor 0, and otherwise it
+            // reloads. Durable jobs, prompts, media, and history stay on disk
+            // and hydrate again either way.
             var clientInstanceId = Guid.NewGuid().ToString("N");
             var accountActivity = auth == null ? null : new UiAccountActivity(settings.ImageDownloadBaseFolder);
             if (auth?.LoginLinks != null)
@@ -2826,8 +2828,8 @@ namespace MultiImageClient
             // Envelopes are {jobId, kind:"job-known"|"event", job?|event?};
             // a job-known announcement precedes each job's events, so cursor=0
             // replays the full history and hydrates a fresh window. Out-of-range
-            // cursors within one process resync from 0; a process change uses
-            // the instance check below to require a complete page reload.
+            // cursors within one process resync from 0; a process change fails
+            // the instance check below, and the page replays or reloads.
             app.MapGet("/api/events/poll", (
                 int? cursor,
                 string? visibilityVersion,
