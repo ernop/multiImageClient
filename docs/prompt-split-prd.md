@@ -1,6 +1,6 @@
 # Splitting one prompt into several images
 
-Settled 2026-11-03.
+Settled 2026-11-03. Updated 2026-11-10: results group by image generator.
 
 ## Owner request (2026-11-03)
 
@@ -19,6 +19,19 @@ The default instruction is the owner's sample, with its spelling corrected and "
 
 > The following prompt may be better served by having 2, 3, or more images. Please make a decision about that and return your recommendation.
 
+## Owner request (2026-11-10): group results by image generator
+
+Before this change, each part card held one result cell per image generator.
+The feed therefore grouped results by part.
+With three generators, one generator's pages sat in three separate cards.
+The owner asked for one row per image generator instead:
+
+> endpoint A: page 1,2,3 of results
+> endpoint B
+
+Each generator's pages now read side by side, in part order.
+The viewer follows the same order.
+
 ## Requirements and behavior
 
 | Requirement | Behavior |
@@ -33,8 +46,8 @@ The default instruction is the owner's sample, with its spelling corrected and "
 | Shared style | Every part prompt begins with the same preface, including the style note. |
 | N | Every part runs with N = 1 on each selected image generator. The N setting does not apply. |
 | Inputs | Every part receives all attached images, the same generators and options, and the same endpoint extra text. |
-| Feed | The parts appear in one group, in part order. Results fill in as each generator finishes. |
-| Navigation | The image viewer steps from part 1 to the last part. Its generator line names the part. |
+| Feed | The parts appear in one group. Each image generator has one row with parts 1 to k in order (2026-11-10). Results fill in as each generator finishes. |
+| Navigation | The image viewer steps through one generator's parts from 1 to k, then the next generator's (2026-11-10). Its generator line names the part. |
 | Waiting | The dialog closes at once. A progress line shows elapsed seconds and **cancel split**. The composer stays usable. |
 | History | Prompt history keeps every split, including failures. The source prompt can be restored. Parts are read-only. |
 | Fail closed | A malformed reply, a part over the limit, or a changed prompt starts nothing and shows the error. |
@@ -173,7 +186,7 @@ The progress line sits under the prompt tools. It reports each stage:
 
 - Waiting: "Opus 5.5 is deciding how many images this prompt needs.", elapsed seconds, and **cancel split**.
 - Starting: "Opus 5.5 planned k images. Starting k jobs…"
-- Done: "Opus 5.5 split the prompt into k images. Parts 1 to k run below, in order."
+- Done: "Opus 5.5 split the prompt into k images. Below, each image generator shows parts 1 to k in order."
 - One image: "Opus 5.5 recommends one image, so nothing was sent.", followed by the reason.
 
 - **cancel split** aborts the request. The server then cancels the Opus call.
@@ -185,16 +198,46 @@ The progress line sits under the prompt tools. It reports each stage:
 
 ## Feed and viewer
 
+Updated 2026-11-10: results group by image generator, not by part.
+
 - The parts share one `section.split-group`.
 - Its heading reads "Opus 5.5 split one prompt into k images". The reason follows.
-- The group lists the parts in part order, whatever order they arrive in.
-- Each part card shows **part i of k · title** above its job head.
+- A line of part heads comes next, in part order, whatever order the parts arrive in.
+- Each part head shows **part i of k · title**, the part's prompt, and its controls.
+- Each part's contact-sheet link sits under its part head.
+- Each image generator then gets a heading with its name and one row of result cells.
+- A row holds that generator's cells for parts 1 to k, in part order.
+- Part i's cell sits in the same column as part i's head.
+- Each cell names its part as **part i**. The row heading names the generator.
+- Rows follow the job's generator order, which is the chooser order at submission.
+- Part prompts show at most six lines at every screen width. **show full prompt** reveals the rest.
+- Every column is at least 240 px wide. Heads, links, and rows share the same columns.
+- When k columns do not fit, the parts wrap onto lines of balanced length.
+- For example, five parts with room for four columns form lines of three and two.
+- A phone shows one column: the part heads, then each generator's parts in order.
+- A part hidden by the night or people filter leaves its column empty.
+- The other parts keep their columns, so positions stay stable when a filter changes.
+- A group hides when the night or people filters hide all its parts.
 - The live feed puts a new group at the top when its first part arrives.
 - Archive days put a group where its first part falls.
-- A group hides when the night or people filters hide all its parts.
-- The image viewer walks cards in page order. Arrow keys step from part 1 to the last part.
+- The image viewer walks a group the way its rows read: generator A's parts 1 to k, then generator B's.
+- Left and right arrows step through every image in that order.
+- Ctrl+Left and Ctrl+Right jump between cells in the same order. Each jump lands on the cell's first image.
 - The viewer's generator line adds "· part i of k · title".
 - Session cost totals include parts inside groups.
+- Tab focus still moves part by part: a part's head, then its cells, then the next part.
+- Only the screen order and the viewer walk follow the generator rows.
+
+How the layout works:
+
+- Each part card and its cell list use `display: contents`.
+- Their heads, links, and cells therefore become items of the group's CSS grid.
+- Each cell stays inside its own job card in the page source.
+- Per-job code, filters, deletion, and event replays therefore work unchanged.
+- `app.js` sets `--split-column` and `--split-line` on each card, and `order` on each cell and generator heading.
+- A `ResizeObserver` recomputes the column count when the group's width changes.
+- CSS `reading-flow: grid-rows` did not put Tab focus in screen order in Chromium 156.
+- With it, Tab visited part 1's cells twice. The page therefore does not use it.
 
 ## Personal configuration version 5
 
@@ -229,14 +272,29 @@ The request left these points open. The agent chose them:
 - Give each submission its own feed group.
 - Correct the spelling of the sample instruction.
 
+## Agent decisions (2026-11-10)
+
+The generator-row request left these points open. The agent chose them:
+
+- Keep each cell inside its part's job card and place it with the CSS grid.
+- About 20 code paths find a cell through its card, and filters hide whole cards.
+- Moving cells into separate row elements would break those paths.
+- Put the part heads in one line above the rows, aligned with the part columns.
+- Label each cell **part i**, and label each row with the generator's name.
+- Clamp part prompts to six lines at every width, so long prompts do not push the rows down.
+- Use a 240 px minimum column width and lines of balanced length.
+- Leave a hidden part's column empty, so parts keep their places when a filter changes.
+- Make the viewer and Ctrl+arrows follow the rows. Leave Tab focus part by part.
+- Change the done message to name the new order.
+
 ## Files
 
 - `TextLLMs/PromptSplit.cs`: contract, system prompt, part budget, user message, reply parser, stored plan, intake verification, concurrency limits, and job metadata.
 - `Workflows/UiWorkflow.cs`: `/api/config` entry, environment switch, split route, restore refusal, job intake, and the `GET /api/jobs` metadata.
 - `Implementation/UiJobs.cs`: `UiJob.Split`, its `job.json` persistence, and the `job-known` metadata.
 - `Implementation/UiCommunity.cs`: the `purpose` value for splits.
-- `Ui/wwwroot/app.js`: dialog, request capture, progress line, job submission, feed groups, part labels, viewer label, and cost totals.
-- `Ui/wwwroot/index.html` and `style.css`: button, dialog, progress line, and group layout.
+- `Ui/wwwroot/app.js`: dialog, request capture, progress line, job submission, feed groups, generator rows, column layout, part labels, viewer walk order and label, and cost totals.
+- `Ui/wwwroot/index.html` and `style.css`: button, dialog, progress line, and the group's grid of part heads and generator rows.
 - `Ui/wwwroot/personal-config.js`: version 5 and `migrateVersion4`.
 - `Ui/wwwroot/prompt-rewrites.js`: history entries for splits.
 - `Ui/wwwroot/environment-storage.js`: hides the button and progress line when prompt rewriting is off.
@@ -258,3 +316,16 @@ It had inherited bold (700) from its label, so the label was not heavier than th
   - `test-generator-chooser.cjs` lacked `promptSubjects` since the characters change of 2026-10-15.
   - `test-global-append-preload.cjs` loaded the composer in its shared-viewer page. Its startup then wrote to a replaced document.
 - No live Opus 5.5 request was made.
+
+## Verification (2026-11-10)
+
+- `tools/test-prompt-split-browser.cjs` now selects two image generators.
+- It checks the generator headings, the **part i** cell labels, and the column positions at 1400, 760, and 390 px.
+- At 760 px it checks that part 3 wraps under part 1 in every row.
+- It checks that a hidden part leaves its column empty and that the viewer skips it.
+- It checks the viewer walk with arrows and Ctrl+arrows, including a cell with two images.
+- The test passed with mocked Opus and job replies.
+- The full solution passed 713 C# tests. The JavaScript unit tests passed 46; the deploy tests passed 26.
+- Eight other browser tests passed: phone layout, text entry, server restart, idle polling, drafts, chooser, visibility, and FableBot viewer.
+- `test-share-links.cjs` passed with Playwright's bundled Chromium 156.
+- With Google Chrome 157 it failed one unrelated step: a 404 with an empty body became a navigation error.

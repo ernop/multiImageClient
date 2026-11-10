@@ -3542,7 +3542,12 @@ body.image-viewer-open { overflow: hidden; }
 }
 #prompt-split-progress button:hover:not(:disabled) { color: #fff; background: var(--accent); }
 
-/* One split submission: its parts in order under one heading. */
+/* One split submission: the part heads in part order, then one row per image
+   generator holding its parts in part order. Part cards render with
+   display: contents, so their heads and cells are items of the
+   .split-group-parts grid. app.js sets --split-columns on the grid,
+   --split-column and --split-line on each card, and the order of each
+   generator heading and cell. */
 .split-group {
   display: flex;
   flex-direction: column;
@@ -3555,9 +3560,67 @@ body.image-viewer-open { overflow: hidden; }
 .archive-day-jobs .split-group { margin: 6px 0; }
 .split-group > h3 { margin: 0; font-size: 15px; font-weight: 700; color: #000; }
 .split-group-reason { margin: 0; font-size: 13px; color: #000; overflow-wrap: anywhere; }
-.split-group-parts { display: flex; flex-direction: column; gap: 10px; }
+.split-group-parts {
+  display: grid;
+  grid-template-columns: repeat(var(--split-columns, 1), minmax(0, 1fr));
+  gap: 8px 10px;
+}
+.split-group-parts > .job:not(.night-hidden):not(.user-filter-hidden),
+.split-group-parts > .job > .job-cells { display: contents; }
+.split-group-parts > .job > * {
+  grid-column: var(--split-column, auto);
+  order: calc(var(--split-line, 0) * 2 + 1);
+}
+.split-group-parts > .job > .split-part-head { order: calc(var(--split-line, 0) * 2); }
+.split-group-parts > .job > .job-cells > .cell {
+  grid-column: var(--split-column, auto);
+  min-width: 0;
+  background: var(--card);
+}
+.split-group-parts .grid-link { margin-top: 0; }
 .split-group:not(:has(.job:not(.night-hidden):not(.user-filter-hidden))) { display: none; }
+.split-part-head {
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
 .job-split-part { margin: 0 0 6px; font-size: 14px; font-weight: 700; color: var(--accent-dark); overflow-wrap: anywhere; }
+.split-maker {
+  grid-column: 1 / -1;
+  margin: 8px 0 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: #000;
+  overflow-wrap: anywhere;
+}
+/* The row heading names the generator; each cell names its part. */
+.split-group-parts .cell-name { display: none; }
+.cell-part { font-weight: 700; white-space: nowrap; }
+/* Part heads use the phone card head at every width: up to six prompt lines,
+   then the prompt actions and job status on the lines below. */
+.split-group-parts .job-head { flex-wrap: wrap; column-gap: 8px; row-gap: 0; }
+.split-group-parts .job-head::after { content: ""; order: 1; flex-basis: 100%; height: 6px; }
+.split-group-parts .job-input-thumb { max-width: 64px; max-height: 64px; }
+.split-group-parts .job-prompt { flex: 1 1 0; min-width: 0; }
+.split-group-parts .job-head > .job-prompt:not(.prompt-expanded) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+}
+.split-group-parts .job-prompt-toggle,
+.split-group-parts .copy-prompt-wrap { order: 2; }
+.split-group-parts .job-meta {
+  order: 2;
+  flex: 1 1 auto;
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 4px 10px;
+  white-space: normal;
+}
+.split-group-parts .job-meta > * { white-space: nowrap; }
 #prompt-rewrite-history { margin: 12px 0 20px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
 .prompt-history-heading, .prompt-version-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .prompt-history-heading h2 { margin: 0; font-size: 17px; }

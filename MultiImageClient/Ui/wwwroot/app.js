@@ -8638,7 +8638,7 @@ async function startPromptSplitJobs(request, plan) {
   }
   showPromptSplitProgress(
     `${plan.modelLabel} split the prompt into ${body.jobs.length} images. ` +
-    `Parts 1 to ${body.jobs.length} run below, in order.`,
+    `Below, each image generator shows parts 1 to ${body.jobs.length} in order.`,
     "done");
 }
 
@@ -9699,66 +9699,95 @@ function getImageViewerPrompts() {
   const cardSelector = favoriteBrowseUser === null
     ? "#jobs .job, #archive .job"
     : "#favorites-grid .favorite-gallery-card";
+  const walkedSplitGroups = new Set();
   for (const card of document.querySelectorAll(cardSelector)) {
-    // Night-hidden and person-filtered jobs are invisible to the viewer's
-    // keyboard walk too, as are jobs inside a collapsed archive day.
-    if (card.classList.contains("night-hidden")) continue;
-    if (card.classList.contains("user-filter-hidden")) continue;
-    const dayContainer = card.closest(".archive-day-jobs");
-    if (dayContainer && dayContainer.hidden) continue;
-    const jobId = card.dataset.jobId || card.id.substring("job-".length);
-    const items = [...card.querySelectorAll('a[data-viewer-image="true"]')].map((link) => ({
-      jobId,
-      generator: link.dataset.generator,
-      imageIndex: Number(link.dataset.imageIndex),
-      generatorCount: Number(link.dataset.generatorCount),
-      url: link.href,
-      thumbUrl: link.querySelector("img")?.getAttribute("src") || "",
-      // Describe results ride the same walk: kind "text" items point their
-      // url at the described INPUT image and carry the description text plus
-      // the model's separated meta comments.
-      kind: link.dataset.resultKind || "image",
-      describeText: link.dataset.describeText || "",
-      describeComments: link.dataset.describeComments || "",
-    }));
-    if (items.length === 0) continue;
-    let generatorExtraTexts = {};
-    if (card.dataset.generatorExtraTexts) {
-      try {
-        generatorExtraTexts = JSON.parse(card.dataset.generatorExtraTexts);
-      } catch {
-        generatorExtraTexts = {};
+    if (!imageViewerWalksCard(card)) continue;
+    // A split group walks the way its rows read: each image generator's
+    // parts in part order, then the next generator.
+    const group = card.closest(".split-group");
+    if (!group) {
+      pushImageViewerPrompt(prompts, card, card);
+      continue;
+    }
+    if (walkedSplitGroups.has(group)) continue;
+    walkedSplitGroups.add(group);
+    const parts = [...group.querySelectorAll(".split-group-parts > .job")].filter(imageViewerWalksCard);
+    for (const maker of group.querySelectorAll(".split-maker")) {
+      for (const part of parts) {
+        const cell = part.querySelector(`.cell[data-gen="${CSS.escape(maker.dataset.gen)}"]`);
+        if (cell) pushImageViewerPrompt(prompts, part, cell);
       }
     }
-    prompts.push({
-      jobId,
-      prompt: card.querySelector(".job-prompt").textContent,
-      hasInput: card.dataset.hasInputImage === "true",
-      gpt2Guidance: card.dataset.gpt2Guidance || "",         // "sent" | "off" | "" (unknown)
-      gpt2GuidanceText: card.dataset.gpt2GuidanceText || "",
-      generatorExtraTexts,
-      generatorExtraTextsKnown: card.dataset.generatorExtraTextsKnown === "true",
-      condensedPrompts: card.dataset.condensedPrompts ? JSON.parse(card.dataset.condensedPrompts) : [],
-      splitLabel: card.dataset.splitLabel || "",
-      items,
-    });
   }
   return prompts;
+}
+
+// Night-hidden and person-filtered jobs are invisible to the viewer's
+// keyboard walk too, as are jobs inside a collapsed archive day.
+function imageViewerWalksCard(card) {
+  if (card.classList.contains("night-hidden")) return false;
+  if (card.classList.contains("user-filter-hidden")) return false;
+  const dayContainer = card.closest(".archive-day-jobs");
+  return !(dayContainer && dayContainer.hidden);
+}
+
+// One walk entry: the card's prompt and the results inside scope, which is
+// the card itself or one of its cells.
+function pushImageViewerPrompt(prompts, card, scope) {
+  const jobId = card.dataset.jobId || card.id.substring("job-".length);
+  const items = [...scope.querySelectorAll('a[data-viewer-image="true"]')].map((link) => ({
+    jobId,
+    generator: link.dataset.generator,
+    imageIndex: Number(link.dataset.imageIndex),
+    generatorCount: Number(link.dataset.generatorCount),
+    url: link.href,
+    thumbUrl: link.querySelector("img")?.getAttribute("src") || "",
+    // Describe results ride the same walk: kind "text" items point their
+    // url at the described INPUT image and carry the description text plus
+    // the model's separated meta comments.
+    kind: link.dataset.resultKind || "image",
+    describeText: link.dataset.describeText || "",
+    describeComments: link.dataset.describeComments || "",
+  }));
+  if (items.length === 0) return;
+  let generatorExtraTexts = {};
+  if (card.dataset.generatorExtraTexts) {
+    try {
+      generatorExtraTexts = JSON.parse(card.dataset.generatorExtraTexts);
+    } catch {
+      generatorExtraTexts = {};
+    }
+  }
+  prompts.push({
+    jobId,
+    prompt: card.querySelector(".job-prompt").textContent,
+    hasInput: card.dataset.hasInputImage === "true",
+    gpt2Guidance: card.dataset.gpt2Guidance || "",         // "sent" | "off" | "" (unknown)
+    gpt2GuidanceText: card.dataset.gpt2GuidanceText || "",
+    generatorExtraTexts,
+    generatorExtraTextsKnown: card.dataset.generatorExtraTextsKnown === "true",
+    condensedPrompts: card.dataset.condensedPrompts ? JSON.parse(card.dataset.condensedPrompts) : [],
+    splitLabel: card.dataset.splitLabel || "",
+    items,
+  });
 }
 
 function getImageViewerFlatItems() {
   return getImageViewerPrompts().flatMap((prompt) => prompt.items);
 }
 
+// A split part's job has one walk entry per image generator, so the match is
+// the entry that holds this exact item.
 function locateImageViewerState(prompts) {
   if (!imageViewerState) return null;
-  const promptIndex = prompts.findIndex((prompt) => prompt.jobId === imageViewerState.jobId);
-  if (promptIndex < 0) return null;
-  const itemIndex = prompts[promptIndex].items.findIndex((item) =>
-    item.generator === imageViewerState.generator &&
-    item.imageIndex === imageViewerState.imageIndex);
-  if (itemIndex < 0) return null;
-  return { promptIndex, itemIndex, prompt: prompts[promptIndex], item: prompts[promptIndex].items[itemIndex] };
+  for (const [promptIndex, prompt] of prompts.entries()) {
+    if (prompt.jobId !== imageViewerState.jobId) continue;
+    const itemIndex = prompt.items.findIndex((item) =>
+      item.generator === imageViewerState.generator &&
+      item.imageIndex === imageViewerState.imageIndex);
+    if (itemIndex >= 0) return { promptIndex, itemIndex, prompt, item: prompt.items[itemIndex] };
+  }
+  return null;
 }
 
 function loadViewerSeen() {
@@ -12018,8 +12047,9 @@ async function setActiveFromJob(id, card) {
   }
 }
 
-// Phone layouts clamp long job prompts to six lines in style.css. Each toggle
-// shows only while its clamp hides text, or while its prompt is expanded.
+// Phone layouts and split groups clamp long job prompts to six lines in
+// style.css. Each toggle shows only while its clamp hides text, or while its
+// prompt is expanded.
 const jobPromptToggles = new WeakMap();
 const jobPromptClampObserver = new ResizeObserver(entries => {
   for (const { target } of entries) {
@@ -12032,14 +12062,49 @@ function updateJobPromptToggle(prompt) {
   const toggle = jobPromptToggles.get(prompt);
   if (!toggle) return;
   const expanded = prompt.classList.contains("prompt-expanded");
-  toggle.hidden = !PhoneLayoutQuery.matches
+  const clamped = PhoneLayoutQuery.matches || !!prompt.closest(".split-group");
+  toggle.hidden = !clamped
     || (!expanded && prompt.scrollHeight <= prompt.clientHeight + 1);
   toggle.textContent = expanded ? "show less" : "show full prompt";
   toggle.setAttribute("aria-expanded", String(expanded));
 }
 
-// The parts of one split submission sit together under one heading, in part
-// order, wherever the first part to arrive placed the group.
+// A split group shows each part's head in part order, then one row per image
+// generator with that generator's results for parts 1 to k. Part cards render
+// with display: contents, so their heads and cells are items of the group's
+// grid while every job update still finds them inside their own card. CSS
+// order arranges the rows: part heads by line, then each generator's heading
+// and cells.
+const SplitMakerOrder = 1000;
+const SplitPartMinWidth = 240;
+
+const splitGroupResizeObserver = new ResizeObserver(entries => {
+  for (const { target, contentRect } of entries) {
+    if (target.isConnected && contentRect.width > 0) layoutSplitGroupColumns(target, contentRect.width);
+    else if (!target.isConnected) splitGroupResizeObserver.unobserve(target);
+  }
+});
+
+// Columns fit the group's width. Parts that do not fit on one line wrap into
+// balanced lines, so a phone-width group shows one part per line.
+function layoutSplitGroupColumns(parts, width) {
+  const count = Number(parts.dataset.splitCount);
+  const gap = parseFloat(getComputedStyle(parts).columnGap) || 0;
+  const fit = Math.max(1, Math.floor((width + gap) / (SplitPartMinWidth + gap)));
+  const columns = Math.ceil(count / Math.ceil(count / fit));
+  if (parts.dataset.columns === String(columns)) return;
+  parts.dataset.columns = String(columns);
+  parts.style.setProperty("--split-columns", String(columns));
+  for (const card of parts.querySelectorAll(":scope > .job")) placeSplitPart(card, columns);
+}
+
+function placeSplitPart(card, columns) {
+  const index = Number(card.dataset.splitIndex) - 1;
+  card.style.setProperty("--split-column", String(index % columns + 1));
+  card.style.setProperty("--split-line", String(Math.floor(index / columns)));
+}
+
+// The group sits wherever the first part to arrive placed it.
 function insertSplitPart(container, card, split) {
   let group = [...container.children].find((node) =>
     node.classList.contains("split-group") && node.dataset.splitGroup === split.groupId);
@@ -12054,11 +12119,31 @@ function insertSplitPart(container, card, split) {
     reason.textContent = split.reason;
     const parts = document.createElement("div");
     parts.className = "split-group-parts";
+    parts.dataset.splitCount = String(split.count);
+    parts.dataset.columns = String(split.count);
+    parts.style.setProperty("--split-columns", String(split.count));
     group.append(heading, reason, parts);
     container.prepend(group);
+    splitGroupResizeObserver.observe(parts);
   }
   const parts = group.querySelector(".split-group-parts");
-  const later = [...parts.children].find((node) => Number(node.dataset.splitIndex) > split.index);
+  const makers = [...parts.querySelectorAll(":scope > .split-maker")];
+  for (const cell of card.querySelectorAll(".job-cells > .cell")) {
+    let maker = makers.find((node) => node.dataset.gen === cell.dataset.gen);
+    if (!maker) {
+      maker = document.createElement("h4");
+      maker.className = "split-maker";
+      maker.dataset.gen = cell.dataset.gen;
+      maker.textContent = genLabel(cell.dataset.gen);
+      maker.style.order = String(SplitMakerOrder + 2 * makers.length);
+      parts.insertBefore(maker, parts.querySelector(":scope > .job"));
+      makers.push(maker);
+    }
+    cell.style.order = String(Number(maker.style.order) + 1);
+  }
+  placeSplitPart(card, Number(parts.dataset.columns));
+  const later = [...parts.querySelectorAll(":scope > .job")]
+    .find((node) => Number(node.dataset.splitIndex) > split.index);
   parts.insertBefore(card, later || null);
 }
 
@@ -12113,15 +12198,15 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
   card.dataset.hasInputImage = String(!!hasImage || resolvedInputCount > 0);
   card.dataset.inputCount = String(resolvedInputCount);
   const split = opts.split || null;
+  let partLabel = null;
   if (split) {
     card.dataset.splitIndex = String(split.index);
     card.dataset.splitLabel = `part ${split.index} of ${split.count} · ${split.title}`;
-    const partLabel = document.createElement("div");
+    partLabel = document.createElement("div");
     partLabel.className = "job-split-part";
     const partNumber = document.createElement("strong");
     partNumber.textContent = `part ${split.index} of ${split.count}`;
     partLabel.append(partNumber, ` · ${split.title}`);
-    card.appendChild(partLabel);
   }
 
   const head = document.createElement("div");
@@ -12259,7 +12344,15 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
     meta.appendChild(share);
   }
   head.appendChild(meta);
-  card.appendChild(head);
+  if (split) {
+    // A split part's label and head form one grid item: its column heading.
+    const partHead = document.createElement("div");
+    partHead.className = "split-part-head";
+    partHead.append(partLabel, head);
+    card.appendChild(partHead);
+  } else {
+    card.appendChild(head);
+  }
 
   const cells = document.createElement("div");
   cells.className = "job-cells";
@@ -12278,6 +12371,15 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
       <div class="cell-status"><div class="spinner"></div><span>queued</span></div>
       <div class="cell-images"></div>`;
     cell.querySelector(".cell-name").textContent = genLabel(key);
+    if (split) {
+      // In a split group the generator's row heading names the generator, so
+      // the cell names its part instead.
+      const part = document.createElement("span");
+      part.className = "cell-part";
+      part.textContent = `part ${split.index}`;
+      part.title = card.dataset.splitLabel;
+      cell.querySelector(".cell-name").before(part);
+    }
     const genCfg = generators.find((g) => g.key === key);
     if (hasImage && genCfg && !genCfg.imageCapable) {
       // Text-only marker: this target ran from the prompt alone; the job's
@@ -13135,7 +13237,8 @@ async function openSharedJobFromUrl() {
   if (!card) throw new Error("that job card did not render");
   if (card.classList.contains("night-hidden")) throw new Error("your night filter hides the linked prompt");
   if (card.classList.contains("user-filter-hidden")) throw new Error("your people filter hides the linked prompt");
-  card.scrollIntoView({ block: "center" });
+  // A split part card has no box of its own; its head does.
+  (card.querySelector(":scope > .split-part-head") || card).scrollIntoView({ block: "center" });
   if (!generator || !Number.isInteger(imageIndex) || imageIndex < 0) return;
   const link = card.querySelector(
     `a[data-viewer-image="true"][data-generator="${CSS.escape(generator)}"][data-image-index="${imageIndex}"]`);
