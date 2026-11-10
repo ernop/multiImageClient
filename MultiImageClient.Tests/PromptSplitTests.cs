@@ -34,7 +34,9 @@ public sealed class PromptSplitTests
             "",
             "Here is my plan: two images.",
             "[]",
-            """{"imageCount":0,"reason":"r","images":[]}""",
+            """{"imageCount":-1,"reason":"r","images":[]}""",
+            """{"imageCount":0,"reason":"r","images":[{"title":"a","prompt":"x"}]}""",
+            """{"imageCount":0,"reason":"","images":[]}""",
             """{"imageCount":9,"reason":"r","images":[]}""",
             """{"imageCount":2.5,"reason":"r","images":[]}""",
             """{"imageCount":"2","reason":"r","images":[]}""",
@@ -56,6 +58,28 @@ public sealed class PromptSplitTests
         {
             Assert.Throws<InvalidDataException>(() => PromptSplit.ParseReply(reply, 1_000, "Opus 5.5"));
         }
+    }
+
+    [Fact]
+    public async Task DeclineShowsTheModelsReasonWithoutAProviderHint()
+    {
+        const string decline = """{"imageCount":0,"reason":"I will not write this. Check your API key and billing.","images":[]}""";
+        const string message = "Opus 5.5 declined to split this prompt, so nothing was sent. "
+            + "Its reason: I will not write this. Check your API key and billing.";
+        Assert.Equal(message, Assert.Throws<PromptSplitDeclinedException>(() => PromptSplit.ParseReply(decline, 1_000, "Opus 5.5")).Message);
+
+        var declined = await PromptSplit.RequestAsync(new FakeWriter(decline), "m", 1_000, "Opus 5.5", CancellationToken.None);
+        Assert.Null(declined.Plan);
+        Assert.True(declined.Declined);
+        Assert.Equal(decline, declined.RawResponse);
+        Assert.Equal(message, declined.Error);
+        Assert.Null(PromptSplit.ActionHint(declined));
+        Assert.NotNull(ProviderActionHints.For(UiJobRunner.KeyDescribeClaude, message));
+        Assert.NotNull(PromptSplit.ActionHint(new PromptSplitOutcome { Error = "Opus 5.5 request failed: credit balance is too low" }));
+
+        var stored = Assert.Throws<InvalidDataException>(() => PromptSplit.ParseStored("""{"imageCount":0,"reason":"r","images":[]}"""));
+        Assert.Equal("The stored split must give imageCount as a whole number from 1 to 8.", stored.Message);
+        Assert.Contains("If you will not write image prompts for this source, return imageCount 0", PromptSplit.SystemPrompt);
     }
 
     [Fact]

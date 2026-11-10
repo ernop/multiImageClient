@@ -2566,7 +2566,7 @@ namespace MultiImageClient
                     + $"{outcome.OutputTokens?.ToString("N0") ?? "unknown"} output tokens";
                 if (outcome.Plan == null)
                 {
-                    var actionHint = ProviderActionHints.For(UiJobRunner.KeyDescribeClaude, outcome.Error);
+                    var actionHint = PromptSplit.ActionHint(outcome);
                     Logger.Log($"UI prompt split {exchange.Id} failed for '{actorDisplay}' ({tokens}): {outcome.Error}"
                         + (actionHint != null
                             ? $"\nUI prompt split next step: {actionHint.Text} -> {actionHint.Url}"

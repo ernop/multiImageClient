@@ -52,6 +52,21 @@ The viewer follows the same order.
 | History | Prompt history keeps every split, including failures. The source prompt can be restored. Parts are read-only. |
 | Fail closed | A malformed reply, a part over the limit, or a changed prompt starts nothing and shows the error. |
 
+## Declines (2026-11-10)
+
+On 2026-11-10, Opus 5.5 declined one local split on content grounds.
+Its reply was complete JSON: `imageCount` 0, a reason, and an empty `images` list.
+The request used 1,543 input and 566 output tokens. The provider reported no early stop.
+The contract then allowed only 1 to 8, so the page showed a format error.
+That error read "Opus 5.5's reply must give imageCount as a whole number from 1 to 8."
+It suggested a defect and hid Opus's reason.
+
+Now the system prompt defines this reply as a decline.
+The error quotes the reason, and nothing is sent.
+The prompt box keeps the source prompt. **Generate** still sends it as one job.
+Nothing falls back to the unsplit prompt on its own.
+Prompt history records the decline as a failed split with the full reply.
+
 ## Model, cost, and call budget
 
 - The request uses the manager catalog entry `manager-claude-opus-5-5`: Anthropic Messages with adaptive thinking.
@@ -105,6 +120,7 @@ The system prompt (`PromptSplit.SystemPrompt`) sets these rules:
 
 - Return only one JSON object with `imageCount`, `reason`, and `images`.
 - Return one image with an empty `images` list when one image serves the source best.
+- Return `imageCount` 0 with an empty list and a reason when it will not write prompts for the source (2026-11-10).
 - Otherwise write exactly `imageCount` images in viewing order, each with `title` and `prompt`.
 - Use the fewest images that keep every part clear. One image can still hold several comic panels.
 - Begin every prompt with the same shared preface, because each model sees one prompt alone.
@@ -118,8 +134,11 @@ The server checks the reply strictly:
 
 - It removes a Markdown fence at either end. Any other text outside the JSON fails.
 - The object has exactly the three keys. Each image has exactly `title` and `prompt`.
-- `imageCount` is a whole number from 1 to 8.
-- One image requires an empty list. A larger count requires exactly that many entries.
+- `imageCount` is a whole number from 0 to 8. A stored plan accepts only 1 to 8.
+- Zero declines the split and requires an empty list. One image also requires an empty list.
+- A larger count requires exactly that many entries.
+- A decline fails with "Opus 5.5 declined to split this prompt, so nothing was sent. Its reason: …".
+- A decline shows no provider hint. Its reason is model text, which can contain billing or key words.
 - `reason` is text of 1 to 1,000 characters.
 - A title is one line of at most 80 characters.
 - A prompt over the part budget fails. The server never truncates it.
@@ -188,6 +207,7 @@ The progress line sits under the prompt tools. It reports each stage:
 - Starting: "Opus 5.5 planned k images. Starting k jobs…"
 - Done: "Opus 5.5 split the prompt into k images. Below, each image generator shows parts 1 to k in order."
 - One image: "Opus 5.5 recommends one image, so nothing was sent.", followed by the reason.
+- Declined, as an error: "Opus 5.5 declined to split this prompt, so nothing was sent. Its reason: …"
 
 - **cancel split** aborts the request. The server then cancels the Opus call.
 - A cancelled split sends nothing. Prompt history records it as failed.
@@ -274,7 +294,7 @@ The request left these points open. The agent chose them:
 
 ## Agent decisions (2026-11-10)
 
-The generator-row request left these points open. The agent chose them:
+The generator-row request and the first decline left these points open. The agent chose them:
 
 - Keep each cell inside its part's job card and place it with the CSS grid.
 - About 20 code paths find a cell through its card, and filters hide whole cards.
@@ -286,6 +306,8 @@ The generator-row request left these points open. The agent chose them:
 - Leave a hidden part's column empty, so parts keep their places when a filter changes.
 - Make the viewer and Ctrl+arrows follow the rows. Leave Tab focus part by part.
 - Change the done message to name the new order.
+- Define `imageCount` 0 as an explicit decline, because Opus 5.5 chose that form unprompted.
+- Quote the decline reason in the error and send nothing. Show no provider hint for a decline.
 
 ## Files
 
@@ -329,3 +351,6 @@ It had inherited bold (700) from its label, so the label was not heavier than th
 - Eight other browser tests passed: phone layout, text entry, server restart, idle polling, drafts, chooser, visibility, and FableBot viewer.
 - `test-share-links.cjs` passed with Playwright's bundled Chromium 156.
 - With Google Chrome 157 it failed one unrelated step: a 404 with an empty body became a navigation error.
+- Declines: `PromptSplitTests` checks the quoted reason, the `Declined` flag, and the missing provider hint.
+- It also checks that a decline with images or without a reason fails, and that stored plans reject 0.
+- After the decline change, the full solution passed 714 C# tests. No live Opus 5.5 request was made.

@@ -21,8 +21,15 @@ namespace MultiImageClient
         public string RawResponse { get; init; } = "";
         public PromptSplitPlan? Plan { get; init; }
         public string Error { get; init; } = "";
+        // The model chose imageCount 0: Error quotes its reason.
+        public bool Declined { get; init; }
         public int? InputTokens { get; init; }
         public int? OutputTokens { get; init; }
+    }
+
+    public sealed class PromptSplitDeclinedException : Exception
+    {
+        public PromptSplitDeclinedException(string message) : base(message) { }
     }
 
     // A job made from one part of a split: its place in the exact stored plan.
@@ -76,6 +83,7 @@ namespace MultiImageClient
 
             Rules:
             - If one image serves the source best, return imageCount 1 and an empty images list. The user then keeps the source prompt as it is.
+            - If you will not write image prompts for this source, return imageCount 0, an empty images list, and your reason. The user sees the reason, and nothing is sent.
             - Otherwise "images" holds exactly imageCount entries, in the order a reader should view them.
             - Split when the source holds more than one image can show clearly: for example many comic panels, separate scenes, steps, moments in time, or unrelated subjects. One image can still hold several panels, such as a comic page with a grid of panels. Group neighboring content so that each image stays clear and readable. Use the fewest images that keep every part clear.
             - An image model receives each prompt alone. It never sees the other prompts or the source. Begin every prompt with the same shared preface: the medium, art style, color palette, lighting, setting, each recurring character's exact appearance and clothing, and the user's style note. Then describe only this image's content.
@@ -256,17 +264,23 @@ namespace MultiImageClient
                     OutputTokens = reply.OutputTokens,
                 };
             }
-            catch (InvalidDataException ex)
+            catch (Exception ex) when (ex is InvalidDataException or PromptSplitDeclinedException)
             {
                 return new PromptSplitOutcome
                 {
                     RawResponse = reply.Text,
                     Error = ex.Message,
+                    Declined = ex is PromptSplitDeclinedException,
                     InputTokens = reply.InputTokens,
                     OutputTokens = reply.OutputTokens,
                 };
             }
         }
+
+        // A decline quotes the model's own words, which can contain the
+        // billing or key phrases that select a provider hint.
+        public static ProviderActionHints.Hint? ActionHint(PromptSplitOutcome outcome)
+            => outcome.Declined ? null : ProviderActionHints.For(UiJobRunner.KeyDescribeClaude, outcome.Error);
 
         public static PromptSplitPlan ParseReply(string? text, int partBudget, string modelLabel)
         {
@@ -275,7 +289,12 @@ namespace MultiImageClient
             {
                 throw new InvalidDataException($"{modelLabel} returned an empty reply. Nothing was sent.");
             }
-            var plan = ParsePlan(stripped, $"{modelLabel}'s reply");
+            var plan = ParsePlan(stripped, $"{modelLabel}'s reply", allowDecline: true);
+            if (plan.ImageCount == 0)
+            {
+                throw new PromptSplitDeclinedException(
+                    $"{modelLabel} declined to split this prompt, so nothing was sent. Its reason: {plan.Reason}");
+            }
             for (var i = 0; i < plan.Parts.Count; i++)
             {
                 var count = plan.Parts[i].Prompt.EnumerateRunes().Count();
@@ -297,7 +316,8 @@ namespace MultiImageClient
 
         public static PromptSplitPlan ParseStored(string json) => ParsePlan(json, "The stored split");
 
-        private static PromptSplitPlan ParsePlan(string json, string source)
+        // A stored plan is always a success, so only a model reply may decline.
+        private static PromptSplitPlan ParsePlan(string json, string source, bool allowDecline = false)
         {
             JsonDocument document;
             try
@@ -317,12 +337,13 @@ namespace MultiImageClient
                 }
                 RequireExactFields(root, source, "imageCount", "reason", "images");
                 var countElement = root.GetProperty("imageCount");
+                var lowest = allowDecline ? 0 : 1;
                 if (countElement.ValueKind != JsonValueKind.Number
                     || !countElement.TryGetInt32(out var imageCount)
-                    || imageCount < 1
+                    || imageCount < lowest
                     || imageCount > MaxImages)
                 {
-                    throw new InvalidDataException($"{source} must give imageCount as a whole number from 1 to {MaxImages}.");
+                    throw new InvalidDataException($"{source} must give imageCount as a whole number from {lowest} to {MaxImages}.");
                 }
                 var reason = RequireText(root, "reason", source);
                 if (reason.Length > MaxReasonChars)
@@ -335,6 +356,10 @@ namespace MultiImageClient
                     throw new InvalidDataException($"{source} must give images as a list.");
                 }
                 var written = images.GetArrayLength();
+                if (imageCount == 0 && written != 0)
+                {
+                    throw new InvalidDataException($"{source} declined with imageCount 0, so its images list must be empty.");
+                }
                 if (imageCount == 1 && written != 0)
                 {
                     throw new InvalidDataException($"{source} chose one image, so its images list must be empty.");
