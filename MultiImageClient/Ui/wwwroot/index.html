@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261119-models">
+<link rel="stylesheet" href="style.css?v=20261119-pipeline">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261102-mcphee-3-12-2">
 </head>
 <body class="composer-page">
@@ -280,13 +280,6 @@
     </div>
 
     <p id="prompt-rewrite-status" role="status" aria-live="polite"></p>
-    <div id="prompt-split-progress" hidden>
-      <span id="prompt-split-progress-text" role="status" aria-live="polite"></span>
-      <strong id="prompt-split-elapsed" hidden></strong>
-      <button id="prompt-split-cancel-run" type="button" hidden>cancel split</button>
-      <button id="prompt-split-retry" type="button" hidden>start the jobs again</button>
-      <button id="prompt-split-dismiss" type="button" hidden>dismiss</button>
-    </div>
     <section id="characters-panel" hidden aria-label="Characters">
       <div class="characters-heading">
         <h2>Characters</h2>
@@ -349,6 +342,51 @@
         <button id="prompt-history-newer" type="button" disabled>newer changes</button>
         <button id="prompt-history-older" type="button" disabled>older changes</button>
       </nav>
+    </section>
+
+    <section id="stage1-bar" aria-label="Stage 1: text step">
+      <div id="stage1-head">
+        <strong id="stage1-title">Stage 1: text step</strong>
+        <div id="stage1-modes" role="tablist" aria-label="Prompt step mode">
+          <button type="button" role="tab" data-stage1-mode="direct" aria-selected="true" class="active">Direct</button>
+          <button type="button" role="tab" data-stage1-mode="rewrite" aria-selected="false">Rewrite</button>
+          <button type="button" role="tab" data-stage1-mode="split" aria-selected="false">Split multi-page</button>
+        </div>
+        <span id="stage1-summary"></span>
+      </div>
+      <div id="stage1-body" hidden>
+        <div id="stage1-writers-row">
+          <strong class="stage1-field-label">Text models</strong>
+          <div id="stage1-writer-chips"></div>
+          <button id="stage1-add-writer" type="button">+ add model</button>
+          <button id="stage1-make-default" type="button" hidden>make default</button>
+        </div>
+        <div id="stage1-rewrite-fields" hidden>
+          <div class="stage1-field-head">
+            <label for="stage1-rewrite-instruction"><strong>Editing instruction</strong> (optional — blank runs standard flesh-out)</label>
+            <button id="stage1-rewrite-clear" type="button" hidden>clear</button>
+          </div>
+          <textarea id="stage1-rewrite-instruction" rows="2" maxlength="4000"
+            placeholder="Optional editing instruction; leave blank for standard flesh-out…"></textarea>
+        </div>
+        <div id="stage1-split-fields" hidden>
+          <div class="stage1-field-head">
+            <label for="stage1-split-instruction"><strong id="stage1-split-instruction-label">Split instruction</strong></label>
+            <button id="stage1-split-default" type="button">use default</button>
+          </div>
+          <textarea id="stage1-split-instruction" rows="3" maxlength="4000"></textarea>
+          <div class="stage1-field-head">
+            <label for="stage1-split-style"><strong>Style note for every image</strong> (optional)</label>
+          </div>
+          <textarea id="stage1-split-style" rows="2" maxlength="2000"
+            placeholder="Shared visual style, characters, lighting, or palette applied across every part…"></textarea>
+        </div>
+        <div id="stage1-actions">
+          <button id="stage1-run" type="button" class="primary">Split with Opus 5.5</button>
+          <span id="stage1-run-note"></span>
+          <span id="stage1-error" role="alert"></span>
+        </div>
+      </div>
     </section>
 
     <div id="endpoint-picker">
@@ -429,6 +467,15 @@
         <span id="send-error"></span>
       </div>
     </div>
+  </section>
+
+  <section id="stage1-results" hidden aria-label="Stage 1 review tray">
+    <div id="stage1-results-head">
+      <strong id="stage1-results-title">Text step results</strong>
+      <span id="stage1-results-count"></span>
+      <button id="stage1-results-clear" type="button">dismiss finished</button>
+    </div>
+    <div id="stage1-results-list"></div>
   </section>
 
   <section id="cost-summary" hidden>
@@ -555,35 +602,6 @@
       <span id="claude-advice-status"></span>
       <button id="claude-advice-cancel" type="button">cancel</button>
       <button id="claude-advice-submit" type="submit">send to Opus 5.5</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog id="prompt-split-dialog" aria-labelledby="prompt-split-title">
-  <form id="prompt-split-form">
-    <div class="compact-dialog-head">
-      <h2 id="prompt-split-title">Consider splitting into multiple images</h2>
-      <button id="prompt-split-close" type="button" aria-label="Close">&times;</button>
-    </div>
-    <label class="claude-advice-instruction">
-      <span id="prompt-split-instruction-label">Tell Opus 5.5 how to decide</span>
-      <textarea id="prompt-split-instruction" rows="4" maxlength="4000"></textarea>
-    </label>
-    <div class="prompt-split-field-tools">
-      <button id="prompt-split-default" type="button">use the default instruction</button>
-    </div>
-    <label class="claude-advice-instruction">
-      Style note for every image (optional)
-      <textarea id="prompt-split-style" rows="3" maxlength="2000"></textarea>
-    </label>
-    <p id="prompt-split-note" class="compact-dialog-note">
-      Appends your prompt as source text; Opus 5.5 chooses 1–8 parts and starts one job per part.
-    </p>
-    <p id="prompt-split-targets" class="compact-dialog-note"></p>
-    <div class="compact-dialog-actions">
-      <span id="prompt-split-dialog-status"></span>
-      <button id="prompt-split-cancel" type="button">cancel</button>
-      <button id="prompt-split-submit" type="submit">ask Opus 5.5</button>
     </div>
   </form>
 </dialog>
@@ -948,6 +966,10 @@
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261026-prompt-condense"></script>
 <script src="prompt-characters.js?v=20261015-characters"></script>
-<script src="app.js?v=20261119-arch"></script>
+<script src="app.js?v=20261119-pipeline"></script>
+<script src="activity-center.js?v=20261119-pipeline"></script>
+<script src="sketch-composer.js?v=20261119-pipeline"></script>
+<script src="image-viewer.js?v=20261119-pipeline"></script>
+<script src="prompt-pipeline.js?v=20261119-pipeline"></script>
 </body>
 </html>

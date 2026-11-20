@@ -1,6 +1,8 @@
-// Browser test for "consider splitting into multiple images".
-// Reads the local server's configuration and history; every POST is answered
-// here, so no provider call, job, or message leaves the test.
+// Browser test for Stage-1 text pipeline (Direct / Rewrite / Split multi-page),
+// intermediate review tray with independent child-model pickers, and feed
+// split-group round-trip controls.
+// Reads the local server's configuration and history; every POST and fixture GET
+// is answered here, so no provider call, job, or message leaves the test.
 const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -16,14 +18,27 @@ const parts = [
   { title: 'Panels 5 to 8', prompt: 'Shared preface: ink and watercolor, bright daylight.\n\nPanels 5 to 8: the dog paddles out.' },
   { title: 'Panels 9 to 12', prompt: 'Shared preface: ink and watercolor, bright daylight.\n\nPanels 9 to 12: the dog rides a wave.' },
 ];
-const split = index => ({
-  groupId: 'fixturegrp1', exchangeId: 'fixture-exchange', index, count: 3, title: parts[index - 1].title,
+const altParts = [
+  { title: 'Act 1: Shore', prompt: 'Bright daylight watercolor. Dog looks at waves.' },
+  { title: 'Act 2: Surfing', prompt: 'Bright daylight watercolor. Dog rides crest.' },
+];
+const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') => ({
+  groupId, exchangeId, index, count: 3, title: parts[index - 1].title,
   model: 'claude-opus-5-5', modelLabel: 'Opus 5.5', reason,
 });
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  const state = { split: 'plan', jobs: 'ok', splitRequests: [], jobRequests: [], held: [] };
+  const state = {
+    split: 'plan',
+    jobs: 'ok',
+    splitRequests: [],
+    adviceRequests: [],
+    jobRequests: [],
+    splitGetRequests: [],
+    held: [],
+    jobSeq: 0,
+  };
   try {
     const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
     await context.route('**/*', async route => {
@@ -33,13 +48,30 @@ const split = index => ({
         const response = await route.fetch();
         const json = await response.json();
         json.promptSplit = {
-          available: true, availabilityProblem: null, model: 'claude-opus-5-5', label: 'Opus 5.5',
+          available: true, availabilityProblem: null, key: 'manager-claude-opus-5-5',
+          model: 'claude-opus-5-5', label: 'Opus 5.5',
           defaultInstruction, maxImages: 8, maxInstructionChars: 4000, maxStyleNoteChars: 2000,
         };
+        if (!Array.isArray(json.promptAssistantModels) || json.promptAssistantModels.filter(m => m.available).length < 2) {
+          json.promptAssistantModels = [
+            { key: 'manager-claude-opus-5-5', model: 'claude-opus-5-5', label: 'Opus 5.5', provider: 'anthropic', available: true, availabilityProblem: null },
+            { key: 'manager-claude-sonnet-5-5', model: 'claude-sonnet-5-5', label: 'Sonnet 5.5', provider: 'anthropic', available: true, availabilityProblem: null },
+            { key: 'manager-gemini-4-neon', model: 'gemini-4-neon', label: 'Gemini 4 Neon', provider: 'google', available: true, availabilityProblem: null },
+          ];
+          json.promptAssistantDefaults = {
+            advice: 'manager-claude-opus-5-5',
+            fleshOutPrimary: 'manager-claude-opus-5-5',
+            fleshOutSecondary: 'manager-claude-sonnet-5-5',
+            condense: 'manager-claude-sonnet-5-5',
+            split: 'manager-claude-opus-5-5',
+            characterWriter: 'manager-claude-opus-5-5',
+          };
+        }
         return route.fulfill({ response, json });
       }
       if (url.pathname === '/api/prompt/split' && request.method() === 'POST') {
-        state.splitRequests.push(new URLSearchParams(request.postData() || ''));
+        const params = new URLSearchParams(request.postData() || '');
+        state.splitRequests.push(params);
         if (state.split === 'hold') { state.held.push(route); return; }
         if (state.split === 'fail') {
           return route.fulfill({ status: 502, json: {
@@ -48,21 +80,83 @@ const split = index => ({
           } });
         }
         const one = state.split === 'one';
+        const modelParam = params.get('model') || 'manager-claude-opus-5-5';
+        const isSecond = modelParam !== 'manager-claude-opus-5-5' && modelParam !== 'claude-opus-5-5';
+        if (isSecond && !one) {
+          return route.fulfill({ json: {
+            exchangeId: 'fixture-exchange-b',
+            modelKey: modelParam,
+            model: modelParam,
+            modelLabel: 'Alt Writer',
+            partBudget: 10000,
+            imageCount: 2,
+            reason: 'Two clear acts fit two scenes.',
+            images: altParts,
+          } });
+        }
         return route.fulfill({ json: {
-          exchangeId: 'fixture-exchange', model: 'claude-opus-5-5', modelLabel: 'Opus 5.5', partBudget: 31000,
-          imageCount: one ? 1 : 3, reason: one ? 'One clear scene fits one image.' : reason, images: one ? [] : parts,
+          exchangeId: 'fixture-exchange',
+          modelKey: 'manager-claude-opus-5-5',
+          model: 'claude-opus-5-5',
+          modelLabel: 'Opus 5.5',
+          partBudget: 31000,
+          imageCount: one ? 1 : 3,
+          reason: one ? 'One clear scene fits one image.' : reason,
+          images: one ? [] : parts,
+        } });
+      }
+      if (url.pathname === '/api/prompt/split/fixture-exchange' && request.method() === 'GET') {
+        state.splitGetRequests.push(url.search);
+        return route.fulfill({ json: {
+          exchangeId: 'fixture-exchange',
+          status: 'succeeded',
+          model: 'claude-opus-5-5',
+          modelKey: 'manager-claude-opus-5-5',
+          modelLabel: 'Opus 5.5',
+          sourcePrompt: 'A twelve-panel comic about a dog learning to surf.',
+          instruction: defaultInstruction,
+          styleNote: 'Ink and watercolor.',
+          createdAtUnixMs: Date.now() - 5000,
+          error: '',
+          imageCount: 3,
+          reason,
+          images: parts,
+        } });
+      }
+      if (url.pathname === '/api/prompt/advice' && request.method() === 'POST') {
+        const params = new URLSearchParams(request.postData() || '');
+        state.adviceRequests.push(params);
+        return route.fulfill({ json: {
+          replacement: 'A crisp sunlit coastal comic about a Shiba Inu learning to surf.',
+          model: params.get('model') || 'claude-opus-5-5',
+          modelLabel: 'Opus 5.5',
+          originalPrompt: params.get('prompt') || '',
+          exchangeId: 'fixture-rewrite-1',
         } });
       }
       if (url.pathname === '/api/jobs' && request.method() === 'POST') {
-        state.jobRequests.push(request.postDataBuffer().toString('utf8'));
+        const raw = request.postDataBuffer().toString('utf8');
+        state.jobRequests.push(raw);
         if (state.jobs === 'busy') {
           return route.fulfill({ status: 503, json: {
             error: 'The UI queue has no room for 3 more jobs (64 pending jobs at most). Nothing was started. Try again after jobs finish.',
           } });
         }
-        // Out of order on purpose: the feed must sort parts by index.
+        const hasSplit = raw.includes('name="splitExchangeId"');
+        if (hasSplit) {
+          const isFirstBatch = state.jobSeq === 0;
+          state.jobSeq += 1;
+          const groupId = isFirstBatch ? 'fixturegrp1' : `fixturegrp${state.jobSeq}`;
+          const prefix = isFirstBatch ? 'splitfx' : `splitfx${state.jobSeq}_`;
+          // Out of order on purpose: the feed must sort parts by index.
+          return route.fulfill({ json: {
+            jobs: [2, 3, 1].map(index => ({ id: `${prefix}${index}`, split: split(index, 'fixture-exchange', groupId) })),
+            user: 'Fixture', originalUser: 'Fixture', ownerId: '',
+          } });
+        }
+        state.jobSeq += 1;
         return route.fulfill({ json: {
-          jobs: [2, 3, 1].map(index => ({ id: `splitfx${index}`, split: split(index) })),
+          id: `plainfx${state.jobSeq}`,
           user: 'Fixture', originalUser: 'Fixture', ownerId: '',
         } });
       }
@@ -86,14 +180,16 @@ const split = index => ({
         const listed = key => allGeneratorInputs().some(input => input.value === key);
         const images = generators
           .filter(g => g.kind !== 'describe' && g.available && !g.requiresImage && listed(g.key))
-          .slice(0, 2);
-        if (images.length < 2) throw new Error('This test needs two available, listed image generators.');
+          .slice(0, 3);
+        if (images.length < 2) throw new Error('This test needs at least two available, listed image generators.');
         const describe = generators.find(g => g.kind === 'describe' && listed(g.key));
         for (const input of allGeneratorInputs()) {
-          input.checked = images.some(g => g.key === input.value) || input.value === describe?.key;
+          input.checked = images.slice(0, 2).some(g => g.key === input.value) || input.value === describe?.key;
+          input.closest('.gen-toggle')?.classList.toggle('checked', input.checked);
         }
-        window.fixtureImageKeys = checkedGeneratorKeys().filter(key => !isDescribeGenKey(key));
+        window.fixtureImageKeys = images.slice(0, 2).map(g => g.key);
         window.fixtureImageLabels = fixtureImageKeys.map(genLabel);
+        window.fixtureThirdKey = images[2]?.key || '';
         window.fixtureDescribeKey = describe?.key || '';
         usernameInput.value = 'Fixture';
         el('opt-n').value = '3';
@@ -101,43 +197,35 @@ const split = index => ({
         promptBox.dispatchEvent(new Event('input', { bubbles: true }));
       });
     };
-    const openDialog = async () => {
+    const openSplitStage = async () => {
       await page.locator('#prompt-split').click();
-      await page.waitForFunction(() => el('prompt-split-dialog').open);
+      await page.waitForFunction(() => !el('stage1-body').hidden && !el('stage1-split-fields').hidden);
     };
-    const progressText = () => page.locator('#prompt-split-progress-text').textContent();
 
     await page.goto(base);
     await ready();
     assert.equal(await page.locator('#prompt-split').isEnabled(), true);
+    assert.equal(await page.locator('#stage1-body').isHidden(), true);
 
-    // Saved dialog text: an unchanged default instruction stores as empty.
-    await openDialog();
-    assert.equal(await page.locator('#prompt-split-instruction').inputValue(), defaultInstruction);
-    assert.equal(await page.locator('#prompt-split-style').inputValue(), '');
-    const targets = await page.locator('#prompt-split-targets').textContent();
-    for (const label of await page.evaluate(() => fixtureImageLabels)) assert.ok(targets.includes(label), targets);
-    assert.ok(targets.includes('The N setting does not apply.'), targets);
-    if (await page.evaluate(() => fixtureDescribeKey)) {
-      assert.ok(targets.includes('describe targets do not run on the parts'), targets);
-    }
-    await page.locator('#prompt-split-style').fill('Ink and watercolor, warm palette.');
-    await page.locator('#prompt-split-cancel').click();
+    // Saved Stage-1 split text: unchanged default instruction stores as empty.
+    await openSplitStage();
+    assert.equal(await page.locator('#stage1-split-instruction').inputValue(), defaultInstruction);
+    assert.equal(await page.locator('#stage1-split-style').inputValue(), '');
+    await page.locator('#stage1-split-style').fill('Ink and watercolor, warm palette.');
     await page.reload();
     await ready();
-    await openDialog();
-    assert.equal(await page.locator('#prompt-split-style').inputValue(), 'Ink and watercolor, warm palette.');
+    await openSplitStage();
+    assert.equal(await page.locator('#stage1-split-style').inputValue(), 'Ink and watercolor, warm palette.');
     assert.deepEqual(await page.evaluate(() => {
       const { splitInstruction, splitStyleNote } = buildPersonalConfiguration().promptTools;
       return { splitInstruction, splitStyleNote };
     }), { splitInstruction: '', splitStyleNote: 'Ink and watercolor, warm palette.' });
-    await page.locator('#prompt-split-instruction').fill('Split only when the panels cannot fit.');
+    await page.locator('#stage1-split-instruction').fill('Split only when the panels cannot fit.');
     assert.equal(await page.evaluate(() => buildPersonalConfiguration().promptTools.splitInstruction),
       'Split only when the panels cannot fit.');
-    await page.locator('#prompt-split-default').click();
-    assert.equal(await page.locator('#prompt-split-instruction').inputValue(), defaultInstruction);
+    await page.locator('#stage1-split-default').click();
+    assert.equal(await page.locator('#stage1-split-instruction').inputValue(), defaultInstruction);
     assert.equal(await page.evaluate(() => buildPersonalConfiguration().promptTools.splitInstruction), '');
-    await page.locator('#prompt-split-cancel').click();
 
     // Portable configuration: round trip, version 4 migration, strict rejection.
     await page.evaluate(() => {
@@ -181,71 +269,85 @@ const split = index => ({
     await ready();
     assert.deepEqual(await page.evaluate(() => ({ ...promptSplitSettings })),
       { instruction: 'Imported instruction.', styleNote: 'Imported style.' });
-    await openDialog();
-    assert.equal(await page.locator('#prompt-split-instruction').inputValue(), 'Imported instruction.');
-    await page.locator('#prompt-split-default').click();
-    await page.locator('#prompt-split-style').fill('');
-    await page.locator('#prompt-split-cancel').click();
+    await openSplitStage();
+    assert.equal(await page.locator('#stage1-split-instruction').inputValue(), 'Imported instruction.');
+    await page.locator('#stage1-split-default').click();
+    await page.locator('#stage1-split-style').fill('');
 
-    // No image generator selected: nothing opens and the reason shows under the prompt.
+    // Splitting with zero image generators checked in composer succeeds (user picks child models on review card).
     await page.evaluate(() => { for (const input of allGeneratorInputs()) input.checked = false; });
-    await page.locator('#prompt-split').click();
-    assert.equal(await page.evaluate(() => el('prompt-split-dialog').open), false);
-    assert.match(await progressText(), /Select at least one image generator/);
+    state.split = 'plan';
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => document.querySelectorAll('#stage1-results-list .stage1-card[data-status="ready"]').length === 1);
+    assert.equal(state.splitRequests.at(-1).get('generators'), '');
+    assert.equal(state.jobRequests.length, 0);
+    assert.equal(await page.locator('.stage1-card .stage1-card-render').isDisabled(), true);
+    await page.locator('.stage1-card .stage1-card-bail').click();
+    assert.equal(await page.locator('#stage1-results').isHidden(), true);
     await ready();
 
-    // A provider failure shows its message and hint; nothing is sent.
+    // Provider failure shows message + provider hint inside review card; Bail dismisses cleanly.
     state.split = 'fail';
-    await openDialog();
-    await page.locator('#prompt-split-submit').click();
-    await page.waitForFunction(() => el('prompt-split-progress').dataset.mode === 'error');
-    assert.match(await progressText(), /Opus 5\.5 request failed: overloaded Check the provider status page\. status\.anthropic\.com/);
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => document.querySelector('.stage1-card')?.dataset.status === 'error');
+    const failText = await page.locator('.stage1-card .stage1-card-error').textContent();
+    assert.match(failText, /Opus 5\.5 request failed: overloaded Check the provider status page\. status\.anthropic\.com/);
     assert.equal(state.jobRequests.length, 0);
+    await page.locator('.stage1-card .stage1-card-bail').click();
 
-    // One image: the reason shows and nothing is sent.
+    // One-image recommendation shows reason and optional Render unsplit; nothing auto-sent.
     state.split = 'one';
-    await openDialog();
-    await page.locator('#prompt-split-submit').click();
-    await page.waitForFunction(() => el('prompt-split-progress').dataset.mode === 'info');
-    assert.equal(await progressText(), 'Opus 5.5 recommends one image, so nothing was sent. One clear scene fits one image.');
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => document.querySelector('.stage1-card')?.dataset.status === 'ready');
+    assert.equal(await page.locator('.stage1-card .stage1-card-badge').textContent(), '1 image (no split)');
+    assert.equal(await page.locator('.stage1-card .stage1-card-reason').textContent(), 'One clear scene fits one image.');
+    assert.match(await page.locator('.stage1-card .stage1-card-render').textContent(), /Render unsplit/);
     assert.equal(state.jobRequests.length, 0);
+    await page.locator('.stage1-card .stage1-card-bail').click();
 
-    // Cancel while Opus plans: the dialog is closed, time counts, nothing is sent.
+    // Cancel while waiting: live timer shows, cancel stops without generating.
     state.split = 'hold';
-    await openDialog();
-    await page.locator('#prompt-split-submit').click();
-    await page.waitForFunction(() => el('prompt-split-progress').dataset.mode === 'waiting');
-    assert.equal(await page.evaluate(() => el('prompt-split-dialog').open), false);
-    assert.equal(await page.locator('#prompt-split').isDisabled(), true);
-    assert.match(await page.locator('#prompt-split-elapsed').textContent(), /^\d+ s$/);
-    await page.locator('#prompt-split-cancel-run').click();
-    await page.waitForFunction(() => el('prompt-split-progress').dataset.mode === 'info');
-    assert.equal(await progressText(), 'Split cancelled. Nothing was sent.');
-    assert.equal(await page.locator('#prompt-split').isEnabled(), true);
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => document.querySelector('.stage1-card')?.dataset.status === 'running');
+    assert.match(await page.locator('.stage1-card .stage1-card-badge').textContent(), /Planning… \d+ s/);
+    await page.locator('.stage1-card .stage1-card-cancel').click();
+    await page.waitForFunction(() => document.querySelector('.stage1-card')?.dataset.status === 'cancelled');
     assert.equal(state.jobRequests.length, 0);
+    await page.locator('.stage1-card .stage1-card-bail').click();
 
-    // A full queue keeps the plan; "start the jobs again" sends the same request.
+    // Multi-writer parallel split (2 text models) -> 2 independent review cards!
+    // User bails on Model 2 and renders Model 1 (testing 503 retry + second child-model render).
     state.split = 'plan';
     state.jobs = 'busy';
-    await openDialog();
-    await page.locator('#prompt-split-style').fill('Ink and watercolor.');
-    await page.locator('#prompt-split-submit').click();
-    await page.waitForFunction(() => !el('prompt-split-retry').hidden);
-    assert.match(await progressText(), /Opus 5\.5 planned 3 images, but the jobs did not start: The UI queue has no room/);
-    const sent = state.splitRequests.at(-1);
+    await page.locator('#stage1-split-style').fill('Ink and watercolor.');
+    await page.locator('#stage1-add-writer').click();
+    assert.equal(await page.locator('#stage1-writer-chips .stage1-writer-chip').count(), 2);
+    assert.equal(await page.locator('#stage1-run').textContent(), 'Split with 2 models');
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => document.querySelectorAll('#stage1-results-list .stage1-card[data-status="ready"]').length === 2);
+    assert.equal(state.jobRequests.length, 0); // Intermediate step: NOTHING generated automatically!
+
+    // Screenshot the Stage-1 bar + 2-card review tray before bailing on the 2nd card.
+    await page.locator('#stage1-bar').screenshot({ path: '/tmp/stage1-bar.png' });
+    await page.locator('#stage1-results').screenshot({ path: '/tmp/stage1-results.png' });
+
+    const card1 = page.locator('#stage1-results-list .stage1-card').nth(0);
+    const card2 = page.locator('#stage1-results-list .stage1-card').nth(1);
+    assert.equal(await card1.locator('.stage1-card-badge').textContent(), '3 parts');
+    assert.equal(await card2.locator('.stage1-card-badge').textContent(), '2 parts');
+
+    // Bail on Card 2 independently while keeping Card 1 intact.
+    await card2.locator('.stage1-card-bail').click();
+    assert.equal(await page.locator('#stage1-results-list .stage1-card').count(), 1);
+
+    // Render Card 1 -> 503 busy error stays on card; retry sends identical splitExchangeId request.
     const imageKeys = await page.evaluate(() => fixtureImageKeys.join(','));
-    assert.equal(sent.get('prompt'), 'A twelve-panel comic about a dog learning to surf.');
-    assert.equal(sent.get('instruction'), defaultInstruction);
-    assert.equal(sent.get('styleNote'), 'Ink and watercolor.');
-    assert.equal(sent.get('user'), 'Fixture');
-    assert.equal(sent.get('generators'), imageKeys);
-    assert.equal(sent.get('imageAttached'), 'false');
-    assert.equal(typeof JSON.parse(sent.get('generatorExtraTexts')), 'object');
+    await card1.locator('.stage1-card-render').click();
+    await page.waitForFunction(() => document.querySelector('.stage1-card-action-status')?.dataset.mode === 'error');
+    assert.match(await card1.locator('.stage1-card-action-status').textContent(), /The UI queue has no room/);
     state.jobs = 'ok';
-    await page.locator('#prompt-split-retry').click();
-    await page.waitForFunction(() => el('prompt-split-progress').dataset.mode === 'done');
-    assert.equal(await progressText(),
-      'Opus 5.5 split the prompt into 3 images. Below, each image generator shows parts 1 to 3 in order.');
+    await card1.locator('.stage1-card-render').click();
+    await page.waitForFunction(() => document.querySelector('.stage1-card-action-status')?.dataset.mode === 'done');
     assert.equal(state.jobRequests.length, 2);
     const withoutBoundary = body => body.replaceAll(/-+WebKitFormBoundary\w+/g, '--boundary');
     assert.equal(withoutBoundary(state.jobRequests[0]), withoutBoundary(state.jobRequests[1]));
@@ -258,20 +360,75 @@ const split = index => ({
     assert.equal(field('condensedPrompts'), undefined);
     assert.equal(field('sketchComposer'), undefined);
 
-    // The parts form one group at the top of the feed, in part order.
+    // Card 1 stays open so user can pick different child models and render again at $0 LLM cost!
+    const splitsBeforeRerender = state.splitRequests.length;
+    await card1.locator('.stage1-child-quick button', { hasText: 'none' }).click();
+    assert.equal(await card1.locator('.stage1-card-render').isDisabled(), true);
+    const firstKey = await page.evaluate(() => fixtureImageKeys[0]);
+    await card1.locator(`.stage1-gen-pill input[value="${firstKey}"]`).check();
+    assert.equal(await card1.locator('.stage1-card-render').textContent(), 'Render 3 parts × 1 model');
+    await card1.locator('.stage1-card-render').click();
+    await page.waitForFunction(() => document.querySelectorAll('#jobs > .split-group').length === 2);
+    assert.equal(state.splitRequests.length, splitsBeforeRerender); // Zero extra LLM split calls!
+    // Remove the second render group so layout tests target fixturegrp1 cleanly.
+    await page.evaluate(() => {
+      document.querySelector('#jobs > .split-group[data-split-group="fixturegrp2"]')?.remove();
+    });
+    await card1.locator('.stage1-card-bail').click();
+
+    // Stage-1 Rewrite mode: runs through /api/prompt/advice into a review card with editable text + Use in prompt.
+    await page.locator('#stage1-modes button[data-stage1-mode="rewrite"]').click();
+    await page.locator('#stage1-rewrite-instruction').fill('Make it brighter and punchier.');
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => document.querySelector('.stage1-card[data-kind="rewrite"]')?.dataset.status === 'ready');
+    assert.equal(state.adviceRequests.at(-1).get('instruction'), 'Make it brighter and punchier.');
+    const rewriteCard = page.locator('.stage1-card[data-kind="rewrite"]');
+    assert.equal(await rewriteCard.locator('.stage1-rewrite-text').inputValue(),
+      'A crisp sunlit coastal comic about a Shiba Inu learning to surf.');
+    await rewriteCard.locator('.stage1-card-use-prompt').click();
+    assert.equal(await page.locator('#prompt').inputValue(),
+      'A crisp sunlit coastal comic about a Shiba Inu learning to surf.');
+    await rewriteCard.locator('.stage1-card-bail').click();
+    await page.locator('#stage1-modes button[data-stage1-mode="direct"]').click();
+
+    // Feed split-group round-trip controls on fixturegrp1:
+    // 1) source prompt disclosure (lazy GET)
     const group = page.locator('#jobs > .split-group[data-split-group="fixturegrp1"]');
-    assert.equal(await page.evaluate(() => el('jobs').firstElementChild.dataset.splitGroup), 'fixturegrp1');
     assert.equal(await group.locator('h3').textContent(), 'Opus 5.5 split one prompt into 3 images');
     assert.equal(await group.locator('.split-group-reason').textContent(), reason);
+    await group.locator('.split-group-source-btn').click();
+    await page.waitForFunction(() => !document.querySelector('.split-group[data-split-group="fixturegrp1"] .split-group-source-panel').hidden);
+    assert.equal(state.splitGetRequests.length, 1);
+    assert.match(await group.locator('.split-group-source-panel').textContent(), /A twelve-panel comic about a dog learning to surf\./);
+    assert.match(await group.locator('.split-group-source-panel').textContent(), /Ink and watercolor\./);
+    await group.locator('.split-group-source-btn').click();
+    assert.equal(await group.locator('.split-group-source-panel').isHidden(), true);
+
+    // 2) set source active restores the unsplit source prompt into #prompt.
+    await group.locator('.split-group-set-source').click();
+    assert.equal(await page.locator('#prompt').inputValue(), 'A twelve-panel comic about a dog learning to surf.');
+
+    // 3) re-split loads source prompt + instruction + style note into Stage-1 Split mode.
+    await group.locator('.split-group-resplit').click();
+    await page.waitForFunction(() => !el('stage1-body').hidden && !el('stage1-split-fields').hidden);
+    assert.equal(await page.locator('#stage1-split-style').inputValue(), 'Ink and watercolor.');
+    await page.locator('#stage1-modes button[data-stage1-mode="direct"]').click();
+
+    // 4) re-render plan opens a ready-to-render card in #stage1-results at $0 LLM cost.
+    const splitsBeforePlanCard = state.splitRequests.length;
+    await group.locator('.split-group-rerender').click();
+    await page.waitForFunction(() => document.querySelectorAll('#stage1-results-list .stage1-card[data-status="ready"]').length === 1);
+    assert.equal(state.splitRequests.length, splitsBeforePlanCard);
+    await page.locator('#stage1-results-list .stage1-card .stage1-card-bail').click();
+
+    // Verify feed group parts, order, and replayed announcement idempotence.
     const cards = group.locator('.split-group-parts > .job');
     assert.deepEqual(await cards.evaluateAll(nodes => nodes.map(node => node.dataset.jobId)), ['splitfx1', 'splitfx2', 'splitfx3']);
     assert.deepEqual(await cards.locator('.job-split-part').allTextContents(),
       ['part 1 of 3 · Panels 1 to 4', 'part 2 of 3 · Panels 5 to 8', 'part 3 of 3 · Panels 9 to 12']);
     assert.deepEqual(await cards.locator('.job-prompt').allTextContents(), parts.map(part => part.prompt));
     assert.equal(await page.evaluate(() => ['splitfx1', 'splitfx2', 'splitfx3'].every(id => ownedJobIds.has(id))), true);
-    assert.equal(await page.evaluate(() => promptBox.classList.contains('prompt-not-submitted')), false);
 
-    // A replayed announcement updates the existing card instead of adding one.
     await page.evaluate(() => addJobCard('splitfx2', 'ignored', fixtureImageKeys, false, Date.now(), 0, {
       user: 'Fixture', split: { groupId: 'fixturegrp1', exchangeId: 'fixture-exchange', index: 2, count: 3,
         title: 'Panels 5 to 8', model: 'claude-opus-5-5', modelLabel: 'Opus 5.5', reason: 'ignored' },
@@ -288,6 +445,7 @@ const split = index => ({
       assert.deepEqual(await group.locator(`.cell[data-gen="${key}"] .cell-part`).allTextContents(),
         ['part 1', 'part 2', 'part 3']);
     }
+
     // Generator A returns two images for part 1; every other cell returns one.
     await page.evaluate(() => {
       for (const id of ['splitfx1', 'splitfx2', 'splitfx3']) {
@@ -375,7 +533,6 @@ const split = index => ({
     await page.keyboard.press('ArrowLeft');
     await viewerShows(labelA, 'part 1 of 3 · Panels 1 to 4');
     assert.equal(await viewerItem(), `splitfx1 ${keyA} 1`);
-    // Control+arrow moves to the first image of the same generator's next or previous part.
     await page.keyboard.press('Control+ArrowRight');
     await viewerShows(labelA, 'part 2 of 3 · Panels 5 to 8');
     await page.keyboard.press('Control+ArrowLeft');
@@ -404,11 +561,10 @@ const split = index => ({
     assert.equal(await group.evaluate(node => getComputedStyle(node).display), 'none');
     await page.evaluate(() => el('job-splitfx2').classList.remove('night-hidden'));
     assert.equal(await group.evaluate(node => getComputedStyle(node).display), 'flex');
-
     await page.evaluate(() => {
       for (const id of ['splitfx1', 'splitfx3']) el(`job-${id}`).classList.remove('night-hidden');
     });
-    await page.locator('#prompt-split-progress').screenshot({ path: '/tmp/prompt-split-progress.png' });
+
     const groupBox = await page.evaluate(() => {
       const header = document.querySelector('body > header').getBoundingClientRect().bottom;
       const node = document.querySelector('.split-group[data-split-group="fixturegrp1"]');
@@ -417,12 +573,10 @@ const split = index => ({
       return { x: box.left, y: box.top, width: box.width, height: Math.min(box.height, window.innerHeight - box.top) };
     });
     await page.screenshot({ path: '/tmp/prompt-split-group.png', clip: groupBox });
-    await openDialog();
-    await page.locator('#prompt-split-dialog').screenshot({ path: '/tmp/prompt-split-dialog.png' });
-    await page.locator('#prompt-split-cancel').click();
+
     assert.deepEqual(errors, []);
-    console.log('PASS: split dialog text persistence and import, failure, one-image, cancel, retry, generator rows, ' +
-      'column layout at three widths, hidden parts, and viewer order.');
+    console.log('PASS: Stage-1 pipeline (Direct/Rewrite/Split), multi-writer parallel split, intermediate review cards, ' +
+      'per-card child model pickers, bail, re-render, feed split-group round-trip controls, layout at 3 widths, and viewer order.');
   } finally {
     for (const route of state.held) await route.abort().catch(() => {});
     await browser.close();

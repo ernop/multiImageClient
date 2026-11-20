@@ -1,6 +1,10 @@
 # Directed prompt rewrites
 
-Settled 2026-09-05. Updated 2026-10-06 (defaults Opus 5.5 / Sonnet 5.5, in-place editing) and **2026-11-19 (configurable per-tool models across all providers; see [docs/model-catalog-2026-11.md](model-catalog-2026-11.md))**.
+Settled 2026-09-05. Updated 2026-10-06 (defaults Opus 5.5 / Sonnet 5.5, in-place editing) and **2026-11-19 (configurable per-tool models across all providers; inline Stage-1 Rewrite mode with parallel multi-writer review cards and per-card child image model pickers; see [docs/model-catalog-2026-11.md](model-catalog-2026-11.md) and [docs/prompt-split-prd.md](prompt-split-prd.md))**.
+
+## Stage-1 Rewrite mode (2026-11-19)
+
+Alongside the immediate in-place **flesh out** buttons and **prompt advice** dialog, `#stage1-bar` above `#endpoint-picker` offers a **Rewrite** mode. Users pick 1 to 4 text models in parallel (`POST /api/prompt/advice`, blank editing instruction runs standard flesh-out, non-blank runs custom instruction). Each writer produces an independent review card in `#stage1-results` with an editable prompt textarea, its own child image model picker (**Render × M models** directly without replacing `#prompt`), **Use in prompt** (undoable via **undo edit**), **retry rewrite**, and **Bail**.
 
 ## Requirements and behavior
 

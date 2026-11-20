@@ -178,24 +178,50 @@ public sealed class PromptSplitTests
     }
 
     [Fact]
-    public void OneSplitRunsPerAccountAndTwoPerServer()
+    public void UpToFourSplitsRunPerAccountAndEightPerServer()
     {
-        using (var first = PromptSplit.TryBegin("login:split-a", out _))
+        var leases = new List<IDisposable>();
+        try
         {
-            Assert.NotNull(first);
-            Assert.Null(PromptSplit.TryBegin("login:split-a", out var same));
-            Assert.StartsWith("A split for your account is already running", same);
-            using (var second = PromptSplit.TryBegin("login:split-b", out _))
+            for (var i = 0; i < PromptSplit.MaxConcurrentSplitsPerAccount; i++)
             {
-                Assert.NotNull(second);
-                Assert.Null(PromptSplit.TryBegin("login:split-c", out var full));
-                Assert.StartsWith("2 splits are already running on this server.", full);
+                var lease = PromptSplit.TryBegin("login:split-a", out _);
+                Assert.NotNull(lease);
+                leases.Add(lease!);
             }
-            using var third = PromptSplit.TryBegin("login:split-c", out _);
-            Assert.NotNull(third);
+            Assert.Null(PromptSplit.TryBegin("login:split-a", out var same));
+            Assert.StartsWith($"{PromptSplit.MaxConcurrentSplitsPerAccount} splits for your account are already running", same);
+
+            for (var i = 0; i < PromptSplit.MaxConcurrentSplits - PromptSplit.MaxConcurrentSplitsPerAccount; i++)
+            {
+                var lease = PromptSplit.TryBegin("login:split-b", out _);
+                Assert.NotNull(lease);
+                leases.Add(lease!);
+            }
+            Assert.Null(PromptSplit.TryBegin("login:split-c", out var full));
+            Assert.StartsWith($"{PromptSplit.MaxConcurrentSplits} splits are already running on this server.", full);
+
+            leases[^1].Dispose();
+            leases.RemoveAt(leases.Count - 1);
+            using var freed = PromptSplit.TryBegin("login:split-c", out _);
+            Assert.NotNull(freed);
+        }
+        finally
+        {
+            foreach (var lease in leases) lease.Dispose();
         }
         using var again = PromptSplit.TryBegin("login:split-a", out _);
         Assert.NotNull(again);
+    }
+
+    [Fact]
+    public void RecordedInstructionRoundTripsInstructionAndStyleNote()
+    {
+        var plain = PromptSplit.RecordedInstruction("Split this comic.", "");
+        Assert.Equal(("Split this comic.", ""), PromptSplit.ParseRecordedInstruction(plain));
+
+        var styled = PromptSplit.RecordedInstruction("Split this comic.", "Ink and watercolor.");
+        Assert.Equal(("Split this comic.", "Ink and watercolor."), PromptSplit.ParseRecordedInstruction(styled));
     }
 
     [Fact]

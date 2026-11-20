@@ -11,7 +11,9 @@ assert.ok(['127.0.0.1', 'localhost'].includes(new URL(base).hostname), 'Use a lo
   try {
     const context = await browser.newContext();
     const errors = [];
-    const assets = new Map(['index.html', 'goal.html', 'app.js', 'goal.js', 'text-drafts.js']
+    const assets = new Map([
+      'index.html', 'goal.html', 'app.js', 'activity-center.js', 'sketch-composer.js', 'image-viewer.js', 'prompt-pipeline.js', 'goal.js', 'text-drafts.js'
+    ]
       .map(name => [name, path.join(root, name)]));
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());

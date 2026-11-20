@@ -394,16 +394,23 @@ namespace MultiImageClient
                 int partBudget;
                 try
                 {
-                    if (!form.ContainsKey("generatorExtraTexts"))
-                    {
-                        throw new InvalidDataException("A split request must include generatorExtraTexts.");
-                    }
                     var keys = form["generators"].ToString()
                         .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                    partBudget = PromptSplit.PartBudget(
-                        keys,
-                        ParseGeneratorExtraTexts(form, keys),
-                        imageAttached: form["imageAttached"].ToString() == "true");
+                    if (keys.Length == 0)
+                    {
+                        partBudget = PromptSplit.DefaultUnconstrainedPartBudget;
+                    }
+                    else
+                    {
+                        if (!form.ContainsKey("generatorExtraTexts"))
+                        {
+                            throw new InvalidDataException("A split request must include generatorExtraTexts.");
+                        }
+                        partBudget = PromptSplit.PartBudget(
+                            keys,
+                            ParseGeneratorExtraTexts(form, keys),
+                            imageAttached: form["imageAttached"].ToString() == "true");
+                    }
                 }
                 catch (InvalidDataException ex)
                 {
@@ -461,12 +468,80 @@ namespace MultiImageClient
                 return Results.Json(new
                 {
                     exchangeId = exchange.Id,
+                    modelKey = definition.Key,
                     model = definition.Model,
                     modelLabel = definition.Label,
                     partBudget,
                     imageCount = outcome.Plan.ImageCount,
                     reason = outcome.Plan.Reason,
                     images = outcome.Plan.Parts.Select(part => new { title = part.Title, prompt = part.Prompt }),
+                });
+            });
+
+            // Returns the stored source prompt, instruction, style note, and plan
+            // for one split exchange so split groups in the feed can inspect,
+            // re-split, or re-render without hunting in prompt history.
+            app.MapGet("/api/prompt/split/{exchangeId}", (string exchangeId, string? jobId, HttpContext ctx) =>
+            {
+                var exchange = community.GetClaudePromptExchangeById(exchangeId);
+                if (exchange == null || exchange.Purpose != PromptSplit.Purpose)
+                {
+                    return Results.NotFound(new { error = $"Split {exchangeId} was not found." });
+                }
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                var permitted = auth == null;
+                if (!permitted && authUser.Length > 0)
+                {
+                    var callerIdentity = PromptExchangeIdentityKey(authUser, authUser);
+                    if (string.Equals(exchange.IdentityKey, callerIdentity, StringComparison.Ordinal))
+                    {
+                        permitted = true;
+                    }
+                }
+                if (!permitted)
+                {
+                    var candidate = !string.IsNullOrWhiteSpace(jobId) ? jobs.Get(jobId.Trim()) : null;
+                    if (candidate != null
+                        && !visibility.IsPromptHidden(candidate.Id)
+                        && string.Equals(candidate.Split?.ExchangeId, exchange.Id, StringComparison.Ordinal))
+                    {
+                        permitted = true;
+                    }
+                    else
+                    {
+                        permitted = jobs.ListChronological().Any(j =>
+                            !visibility.IsPromptHidden(j.Id)
+                            && string.Equals(j.Split?.ExchangeId, exchange.Id, StringComparison.Ordinal));
+                    }
+                }
+                if (!permitted)
+                {
+                    return Results.NotFound(new { error = $"Split {exchangeId} was not found." });
+                }
+                var (instruction, styleNote) = PromptSplit.ParseRecordedInstruction(exchange.Instruction);
+                PromptSplitPlan? plan = null;
+                if (exchange.Status == "succeeded" && !string.IsNullOrWhiteSpace(exchange.ResultPrompt))
+                {
+                    try { plan = PromptSplit.ParseStored(exchange.ResultPrompt); }
+                    catch (InvalidDataException) { plan = null; }
+                }
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Results.Json(new
+                {
+                    exchangeId = exchange.Id,
+                    status = exchange.Status,
+                    model = exchange.Model,
+                    modelKey = ManagerCatalog.FindByModel(exchange.Model)?.Key ?? "",
+                    modelLabel = PromptSplit.ModelLabel(exchange.Model),
+                    sourcePrompt = exchange.OriginalPrompt,
+                    instruction,
+                    styleNote,
+                    createdAtUnixMs = exchange.RequestedAtUnixMs,
+                    error = exchange.Error,
+                    imageCount = plan?.ImageCount ?? 0,
+                    reason = plan?.Reason ?? "",
+                    images = plan?.Parts.Select(part => new { title = part.Title, prompt = part.Prompt }).ToArray()
+                        ?? Array.Empty<object>(),
                 });
             });
 

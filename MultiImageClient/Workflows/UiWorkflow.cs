@@ -1097,15 +1097,35 @@ namespace MultiImageClient
                         var exchangeIdentity = PromptExchangeIdentityKey(
                             request.HttpContext.Items["micUser"] as string ?? "",
                             createdBy);
+                        var splitSourceJobId = form["splitSourceJobId"].ToString().Trim();
                         var resolved = PromptSplit.ResolveSubmission(
                             splitExchangeId,
                             prompt,
                             genKeys,
                             generatorExtraTexts,
                             imageAttached: uploadFiles.Count > 0,
-                            exchangeId => community
-                                .ReadClaudePromptExchanges(exchangeIdentity, 1, exchangeId: exchangeId)
-                                .SingleOrDefault());
+                            exchangeId =>
+                            {
+                                var own = community
+                                    .ReadClaudePromptExchanges(exchangeIdentity, 1, exchangeId: exchangeId)
+                                    .SingleOrDefault();
+                                if (own != null) return own;
+                                if (auth == null)
+                                {
+                                    return community.GetClaudePromptExchangeById(exchangeId);
+                                }
+                                if (splitSourceJobId.Length > 0)
+                                {
+                                    var sourceJob = jobs.Get(splitSourceJobId);
+                                    if (sourceJob != null
+                                        && !visibility.IsPromptHidden(sourceJob.Id)
+                                        && string.Equals(sourceJob.Split?.ExchangeId, exchangeId, StringComparison.Ordinal))
+                                    {
+                                        return community.GetClaudePromptExchangeById(exchangeId);
+                                    }
+                                }
+                                return null;
+                            });
                         splitPlan = resolved.Plan;
                         splitModel = resolved.Exchange.Model;
                     }

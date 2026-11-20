@@ -59,8 +59,12 @@ namespace MultiImageClient
         public const int MaxReasonChars = 1_000;
         // No image target accepts a longer prompt than the GPT image models.
         public const int MaxPartChars = GptImage2Generator.MaxPromptChars;
+        // Safe default when splitting before choosing specific child image targets
+        // (fits Ideogram 4.5/4.6, Recraft V4.x, Grok, FLUX 3, and GPT Image).
+        public const int DefaultUnconstrainedPartBudget = 10_000;
         public const int MinPartChars = UiJobRunner.MinCondensedPromptChars;
-        private const int MaxConcurrentSplits = 2;
+        public const int MaxConcurrentSplitsPerAccount = 4;
+        public const int MaxConcurrentSplits = 8;
 
         public const string DefaultInstruction =
             "The following prompt may be better served by having 2, 3, or more images. "
@@ -94,7 +98,8 @@ namespace MultiImageClient
             - Every prompt must fit within the character limit in the user message.
             """;
 
-        private static readonly ConcurrentDictionary<string, byte> RunningByIdentity = new(StringComparer.Ordinal);
+        private static readonly object ConcurrencyLock = new();
+        private static readonly Dictionary<string, int> RunningByIdentity = new(StringComparer.Ordinal);
         private static int _running;
 
         public static ManagerDefinition Definition => ManagerCatalog.Find(ModelKey)
@@ -126,25 +131,29 @@ namespace MultiImageClient
             };
         }
 
-        // One split per account and MaxConcurrentSplits across the server, so
-        // extra tabs or repeated clicks cannot multiply Opus requests. Dispose
-        // the result to release.
+        // Up to MaxConcurrentSplitsPerAccount per account (so a user can fan one
+        // prompt across several splitting models in parallel) and MaxConcurrentSplits
+        // across the server. Dispose the result to release.
         public static IDisposable? TryBegin(string identityKey, out string problem)
         {
-            if (!RunningByIdentity.TryAdd(identityKey, 0))
+            lock (ConcurrencyLock)
             {
-                problem = "A split for your account is already running, possibly in another tab. Wait for it to finish.";
-                return null;
+                RunningByIdentity.TryGetValue(identityKey, out var mine);
+                if (mine >= MaxConcurrentSplitsPerAccount)
+                {
+                    problem = $"{MaxConcurrentSplitsPerAccount} splits for your account are already running. Wait for one to finish.";
+                    return null;
+                }
+                if (_running >= MaxConcurrentSplits)
+                {
+                    problem = $"{MaxConcurrentSplits} splits are already running on this server. Try again in a minute.";
+                    return null;
+                }
+                RunningByIdentity[identityKey] = mine + 1;
+                _running++;
+                problem = "";
+                return new Lease(identityKey);
             }
-            if (Interlocked.Increment(ref _running) > MaxConcurrentSplits)
-            {
-                Interlocked.Decrement(ref _running);
-                RunningByIdentity.TryRemove(identityKey, out _);
-                problem = $"{MaxConcurrentSplits} splits are already running on this server. Try again in a minute.";
-                return null;
-            }
-            problem = "";
-            return new Lease(identityKey);
         }
 
         private sealed class Lease : IDisposable
@@ -155,8 +164,15 @@ namespace MultiImageClient
             {
                 var key = Interlocked.Exchange(ref _identityKey, null);
                 if (key == null) return;
-                Interlocked.Decrement(ref _running);
-                RunningByIdentity.TryRemove(key, out _);
+                lock (ConcurrencyLock)
+                {
+                    _running = Math.Max(0, _running - 1);
+                    if (RunningByIdentity.TryGetValue(key, out var count))
+                    {
+                        if (count <= 1) RunningByIdentity.Remove(key);
+                        else RunningByIdentity[key] = count - 1;
+                    }
+                }
             }
         }
 
@@ -212,10 +228,20 @@ namespace MultiImageClient
         private static int ExtraTextChars(string? extraText)
             => string.IsNullOrWhiteSpace(extraText) ? 0 : 2 + extraText.Trim().EnumerateRunes().Count();
 
+        private const string StyleNoteSeparator = "\n\nStyle note: ";
+
         // The exchange record keeps one instruction text, so the style note
         // rides with it.
         public static string RecordedInstruction(string instruction, string styleNote)
-            => styleNote.Length == 0 ? instruction : $"{instruction}\n\nStyle note: {styleNote}";
+            => styleNote.Length == 0 ? instruction : $"{instruction}{StyleNoteSeparator}{styleNote}";
+
+        public static (string Instruction, string StyleNote) ParseRecordedInstruction(string recorded)
+        {
+            if (string.IsNullOrEmpty(recorded)) return ("", "");
+            var idx = recorded.LastIndexOf(StyleNoteSeparator, StringComparison.Ordinal);
+            if (idx < 0) return (recorded, "");
+            return (recorded[..idx], recorded[(idx + StyleNoteSeparator.Length)..]);
+        }
 
         public static string BuildUserMessage(string instruction, string styleNote, int partBudget, string sourcePrompt)
         {

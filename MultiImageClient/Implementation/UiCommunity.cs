@@ -643,6 +643,30 @@ namespace MultiImageClient
             }
         }
 
+        public UiClaudePromptExchangeRecord? GetClaudePromptExchangeById(string exchangeId)
+        {
+            exchangeId = (exchangeId ?? "").Trim();
+            if (exchangeId.Length == 0)
+            {
+                return null;
+            }
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText =
+                    $"""
+                    SELECT {ClaudePromptExchangeColumns}
+                    FROM ui_claude_prompt_exchanges
+                    WHERE id = $id
+                    LIMIT 1;
+                    """;
+                command.Parameters.AddWithValue("$id", exchangeId);
+                using var reader = command.ExecuteReader();
+                return reader.Read() ? ReadClaudePromptExchange(reader) : null;
+            }
+        }
+
         // Exact inputs only. "Condense again" stores another answer to the same
         // inputs, and the newest one is the user's latest choice.
         public UiClaudePromptExchangeRecord? FindSucceededClaudePromptExchange(
