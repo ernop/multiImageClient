@@ -298,10 +298,6 @@ function initializeGeneratorConfig() {
       <h2>Generator configuration</h2>
       <button id="generator-config-close" type="button" aria-label="Close">&times;</button>
     </div>
-    <p class="compact-dialog-note">
-      Choose what appears in your generator pickers. Choose defaults and named groups.
-      Configure extra text and notes for image and describe endpoints.
-    </p>
     <div id="generator-config-tabs" role="tablist" aria-label="Generator chooser settings">
       <button type="button" role="tab" data-generator-config-view="shown" aria-selected="true">shown</button>
       <button type="button" role="tab" data-generator-config-view="defaults" aria-selected="false">defaults</button>
@@ -313,8 +309,7 @@ function initializeGeneratorConfig() {
         <option value="only-sota">only SOTA</option>
         <option value="all">all models</option>
       </select></label>
-      <p>Only this panel changes which generators and describers appear in your pickers.</p>
-      <p>Group buttons select and clear shown generators; they never show or hide any.</p>
+      <p>Group buttons only toggle checkboxes; visibility is set here.</p>
       <div class="generator-config-sections">
         <label><input id="generator-config-show-image" type="checkbox"> show image-generation section</label>
         <label><input id="generator-config-show-describe" type="checkbox"> show describe section when images are attached</label>
@@ -322,7 +317,6 @@ function initializeGeneratorConfig() {
       <div id="generator-config-shown"></div>
     </section>
     <section id="generator-config-defaults-panel" class="generator-config-panel" role="tabpanel" hidden>
-      <p>Toggle which visible targets start selected when you open a fresh page.</p>
       <div id="generator-config-defaults"></div>
     </section>
     <section id="generator-config-groups-panel" class="generator-config-panel" role="tabpanel" hidden>
@@ -333,11 +327,7 @@ function initializeGeneratorConfig() {
       <div id="generator-config-preset-list"></div>
     </section>
     <section id="generator-config-endpoint-panel" class="generator-config-panel" role="tabpanel" hidden>
-      <p>
-        Extra text is appended only to the selected endpoint's copy of each prompt.
-        Describe endpoints use the same extra-text and notes fields.
-        Notes are private configuration: they are never sent to a provider or attached to a job.
-      </p>
+      <p>Extra text appends to that endpoint's prompt; notes stay private.</p>
       <div class="generator-endpoint-layout">
         <div id="generator-config-endpoint-list" aria-label="Image and describe endpoints"></div>
         <div id="generator-config-endpoint-editor"></div>

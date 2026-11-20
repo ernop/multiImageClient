@@ -62,16 +62,12 @@
   <div id="night-filter-preferences">
   <label class="settings-row">
     <input id="night-hide-enabled" type="checkbox">
-    <span><strong>hide night mode</strong> — hide entire jobs (prompt and result images) from this page
-      whenever the prompt contains any word from the hidden-word list.
-      The night filter button in the header toggles this too.</span>
+    <span><strong>hide night mode</strong> — hide jobs whose prompt matches a hidden word.</span>
   </label>
   <div class="settings-words">
     <button id="night-words-toggle" type="button">modify hidden-word list…</button>
     <div id="night-words-editor" hidden>
-      <p>One word or phrase per line, case-insensitive. A single word also matches at word starts
-        ("cat" hides "cats"); a phrase matches anywhere in the prompt.
-        The list stays out of sight until you open this editor.</p>
+      <p>One word or phrase per line, case-insensitive. Single words also match word starts ("cat" matches "cats").</p>
       <textarea id="night-words" rows="7" spellcheck="false" autocomplete="off"
         aria-label="Hidden words, one per line"></textarea>
     </div>
@@ -79,25 +75,20 @@
   </div>
   <label class="settings-row">
     <input id="show-costs" type="checkbox">
-    <span><strong>show estimated costs</strong> — per-result, per-job, and session spend estimates.
-      Off by default; estimates are still computed server-side either way.</span>
+    <span><strong>show estimated costs</strong> — per-result, per-job, and session estimates.</span>
   </label>
   <label class="settings-width-row" for="content-width">
-    <span><strong>page content width</strong> — adjust the side margins immediately.</span>
+    <span><strong>page content width</strong></span>
     <input id="content-width" type="range" min="960" max="2560" step="40">
     <output id="content-width-value" for="content-width"></output>
   </label>
   <label class="settings-row">
     <input id="viewer-return-sync" type="checkbox">
-    <span><strong>image viewer close handback</strong> — when you close the zoom viewer
-      (Esc or click outside) after arrowing to a different image, scroll this page to that
-      image and focus it. Off = the page stays exactly where it was.
-      Press <kbd>s</kbd> inside the viewer to toggle instantly.</span>
+    <span><strong>viewer close handback</strong> — scroll to the viewed image on close (<kbd>s</kbd> in viewer toggles).</span>
   </label>
   <section id="prompt-assistant-models" aria-labelledby="prompt-assistant-models-heading">
     <div class="settings-subhead">
       <strong id="prompt-assistant-models-heading">Prompt assistant models</strong>
-      <span>Choose which model runs each prompt tool locally in this browser.</span>
     </div>
     <div class="prompt-model-grid">
       <label class="prompt-model-row" for="prompt-model-advice">
@@ -133,7 +124,6 @@
   <section id="config-transfer" aria-labelledby="config-transfer-heading">
     <div class="settings-subhead">
       <strong id="config-transfer-heading">personal configuration import / export</strong>
-      <span>Move the complete configuration shown by this page to another browser.</span>
     </div>
     <label class="config-transfer-field" for="config-export-json">
       export JSON
@@ -147,21 +137,16 @@
     <label class="config-transfer-field" for="config-import-json">
       import JSON
       <textarea id="config-import-json" rows="7" spellcheck="false"
-        placeholder="Paste a MultiImageClient personalized configuration object here"></textarea>
+        placeholder="Paste exported configuration JSON"></textarea>
     </label>
     <div class="config-transfer-actions">
       <span id="config-transfer-status" role="status"></span>
       <button id="config-import-apply" type="button">import config</button>
     </div>
     <p class="settings-note" id="config-transfer-note">
-      Includes the creating-as name, generator chooser, display and activity settings,
-      prompt tools and assistant models, personal spelling data and checker settings, inspiration library, viewer behavior, and media preferences.
-      It never includes login credentials, cookies, jobs, favorites, characters, or viewed-image history.
+      Includes creating-as name, generator chooser, display/activity settings, prompt assistant models, spelling dictionary/settings, inspiration library, viewer behavior, and media preferences. Excludes logins, cookies, jobs, favorites, characters, and view history.
     </p>
   </section>
-  <p class="settings-note">Browser settings stay in one versioned localStorage document.
-    Authenticated generator chooser settings also persist to the signed-in account.
-    Hidden jobs still exist on the server and on disk.</p>
 </div>
 
 <section id="logs-panel" hidden aria-label="Live application logs">
@@ -201,16 +186,6 @@
       <label><input id="activity-sound" type="checkbox"> subtle sound</label>
       <label><input id="activity-browser-popup" type="checkbox"> Firefox/browser popup notification</label>
       <div id="activity-notification-permission"></div>
-      <p class="activity-note">
-        Every switch is stored permanently in this browser until you change it.
-        Sound starts off. Browser popups start on, but cannot appear unless the browser grants permission.
-        Alerts never take focus, and repeated updates for the same generator are condensed.
-        Turn off any category here without disabling the activity center.
-      </p>
-      <p class="activity-note">
-        Drag the “activity” label to move this panel. Drag the corner to resize it.
-        Position and size stay in this browser.
-      </p>
     </div>
 
     <form id="activity-request-form">
@@ -238,7 +213,7 @@
   <section id="composer">
     <div id="compose-top">
       <div id="compose-left">
-        <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop a file, or click to browse. Up to 4 images; the gpt-image family (gpt-image-2 and 2.5) receives all, other generators only the first.">
+        <div id="paste-zone" tabindex="0" title="Paste (Ctrl+V), drop, or browse. Up to 5 images; GPT Image 2/2.5/2.6, Ideogram 4.5/4.6, Grok 2.0, and FLUX 2/3 accept multiple inputs in order; other image targets use only the first.">
           <div id="paste-hint">
             <span class="paste-hint-pointer"><strong>Ctrl+V</strong> to paste an image<br>
             or drop / click to browse</span>
@@ -246,8 +221,7 @@
           </div>
           <div id="input-thumbs" hidden></div>
           <p id="multi-input-hint" hidden>
-            The gpt-image family (2 and 2.5) gets these in order — say how to
-            use each in the prompt. Other generators only receive the first.
+            GPT Image (2/2.5/2.6), Ideogram (4.5/4.6), Grok 2.0, and FLUX (2/3) receive all images in order; other image targets receive only the first.
           </p>
           <button id="clear-image" type="button" hidden>&times; clear all</button>
           <input id="file-input" type="file" accept="image/*" hidden>
@@ -255,7 +229,7 @@
         <div id="input-library-control">
           <button id="input-library-toggle" type="button" aria-expanded="false"
             aria-controls="input-library-panel"
-            title="Pick from every image you've previously uploaded (deduplicated, newest first)">
+            title="Pick from previously uploaded images (newest first)">
             load a previous image
           </button>
           <div id="input-library-panel" hidden>
@@ -267,14 +241,14 @@
           </div>
         </div>
         <button id="sketch-open" type="button"
-          title="Draw rough colored regions for where things should go, name what each color means, and attach the sketch plus its legend to this job">
+          title="Draw colored layout regions, label each color, and attach the sketch plus legend">
           sketch a composition
         </button>
       </div>
 
       <div id="compose-right">
         <textarea id="prompt" rows="8" data-text-draft="composer-prompt"
-          placeholder="Prompt… (Ctrl+Enter to send). With image(s) attached this is an edit instruction (the gpt-image family sees all of them in order); without one it's plain text-to-image."></textarea>
+          placeholder="Prompt… (Ctrl+Enter to send)"></textarea>
         <div id="character-strip" hidden aria-live="polite"></div>
         <div id="prompt-limit-notice" hidden></div>
         <div id="spelling-panel" hidden>
@@ -318,8 +292,7 @@
         <h2>Characters</h2>
         <button id="character-new" type="button">new character</button>
       </div>
-      <p class="characters-intro">Save the people, pets, places, and things you draw again and again.
-        Type a saved name in the prompt, then select <strong>describe</strong> under the prompt to add its look.</p>
+      <p class="characters-intro">Type a saved name in the prompt, then click <strong>describe</strong> below it to insert its description.</p>
       <div id="characters-list"></div>
       <form id="character-form" hidden autocomplete="off">
         <h3 id="character-form-title">New character</h3>
@@ -343,8 +316,7 @@
           <textarea id="character-description" rows="3"
             placeholder="e.g. a small cream Shiba Inu with a red collar and a curled tail"></textarea>
         </label>
-        <p class="character-hint">Write words that read well after the name, in parentheses:
-          Biscuit (a small cream Shiba Inu with a red collar and a curled tail).</p>
+        <p class="character-hint">Reads after the name in parentheses: Biscuit (a small cream Shiba Inu…).</p>
         <div class="character-form-row">
           <button id="character-find" type="button"
             title="List your past prompts that mention this name or its other names">find in my prompts</button>
@@ -372,7 +344,6 @@
         <h2>Prompt versions</h2>
         <button id="prompt-history-refresh" type="button">refresh history</button>
       </div>
-      <p>Each change keeps its exact source and replacement. Restore any version to explore another direction.</p>
       <div id="prompt-rewrite-list"></div>
       <nav aria-label="Prompt history pages">
         <button id="prompt-history-newer" type="button" disabled>newer changes</button>
@@ -399,10 +370,9 @@
             <div id="inspiration-tabs" role="tablist" aria-label="Inspiration categories"></div>
             <div id="inspiration-results" role="listbox" aria-label="Prompt directions"></div>
             <div id="inspiration-custom" hidden>
-              <span>Use your exact text as a personal direction.</span>
+              <span>Save exact text as a custom direction.</span>
               <button id="inspiration-add-custom" type="button">Add to my library</button>
             </div>
-            <p class="inspiration-note">Choose to insert · favorite · your additions, favorites, and recents stay in this browser.</p>
           </div>
         </div>
         <label>output AR <select id="opt-shape"></select></label>
@@ -428,11 +398,11 @@
               <button id="opts-help-close" type="button" aria-label="Close options help">&times;</button>
             </div>
             <ul>
-              <li><strong>output AR</strong> — without an input image, auto lets the model choose (grok-web can't do prompt-aware auto, so it defaults to square 1:1 there). Attach an image and that same default becomes <em>match input image</em>: gpt-image-2 and BFL derive source-matching dimensions; Grok, Ideogram 4.0 / 3.0, and Google choose the closest ratio their APIs accept. Any explicit choice overrides matching where the endpoint has an AR control. Recraft image-to-image and Ideogram 4.5 Precise Edit keep the source size and have no size override, so both disable for image jobs with an explicit AR.</li>
-              <li><strong>detail</strong> — sets the resolution tier where one exists: gpt-image-2, grok-api (1k/2k), BFL (~1/~4 MP), Google (1K/2K/4K). This UI maps Ideogram 4.5 and 4.0 to their 2K-class resolutions; Recraft and gpt-image-1 are ~1K.</li>
-              <li><strong>quality &amp; moderation</strong> — quality applies to OpenAI image models, grok-api 2.0, and Ideogram 4.5. grok-api 2.0 sends medium for high, xhigh, and max. Ideogram 4.5 sends high for xhigh and max. Moderation applies to OpenAI image models only.</li>
-              <li><strong>n</strong> — OpenAI models and grok-api up to 10, Recraft up to 6, and Ideogram 4.5 / 4.0 / 3.0 up to 8. Ideogram 4.0 performs separate single-image requests because its current API has no count field. BFL and Google return one; grok-web requests up to 4 in side-by-side mode; meta-web decides itself.</li>
-              <li><strong>input images</strong> — gpt-image-2 and grok-api do true edits; Ideogram 4.5 uses Precise Edit: it edits the first image at its own size, keeps unchanged pixels exact, and sends up to four more images as references; Recraft runs image-to-image; Ideogram 4.0 uses Remix; Ideogram 3.0, BFL, and Google use the pasted image as a style/reference guide; grok-web edit rides the imagine WebSocket. Text-to-image-only targets (slashed icon) stay selectable but run from the prompt alone — the attached image is not sent to them. Only Recraft and Ideogram 4.5 disable, and only for image jobs with an explicit AR they can't honor.</li>
+              <li><strong>output AR</strong> — without an input image, <em>auto</em> lets the model pick (grok-web defaults to 1:1). With an input image, <em>auto</em> becomes <em>match input image</em> across image-capable targets. Explicit choices override matching where supported; Recraft image-to-image, Ideogram 4.5/4.6 Precise Edit, and grok-web chat keep source size and disable for image jobs with an explicit AR.</li>
+              <li><strong>detail</strong> — resolution tier where supported: GPT Image 2/2.5/2.6 (~1K/2K/4K-class), FLUX 3 / Klein (1K/2K/4K text; edits cap at 2K), Google (1K/2K/4K), Ideogram 4.6 (2K for standard/high; native 4K for max), grok-api (1K/2K), FLUX 2 (~1/~4 MP). Ideogram 4.5/4.0 use 2K; Recraft and GPT Image 1 Mini are ~1K.</li>
+              <li><strong>quality &amp; moderation</strong> — quality applies to GPT Image (2.5/2.6 support all 5 tiers; 2/1-mini cap at high), grok-api 2.0 (low/medium), and Ideogram 4.5/4.6 (low/medium/high). Moderation applies to OpenAI image models only.</li>
+              <li><strong>n</strong> — OpenAI and grok-api up to 10; Ideogram up to 8 (4.0 sends separate calls); Recraft up to 6. BFL and Google return 1; grok-web requests up to 4 in side-by-side mode.</li>
+              <li><strong>input images</strong> — GPT Image 2/2.5/2.6, Ideogram 4.5/4.6 Precise Edit, grok-api 2.0, and FLUX 2/3 accept multiple ordered inputs (up to 5 uploaded here). Ideogram 4.0 uses Remix; Recraft raster/vector uses image-to-image (Recraft V4.1 Flash V2 is text-only); Google and Ideogram 3.0 use the first image as a reference; grok-web edits via app-chat. Text-only targets (slashed icon) still run from the prompt alone.</li>
             </ul>
           </div>
         </span>
@@ -571,7 +541,7 @@
       <textarea id="claude-advice-instruction" rows="6" maxlength="4000"></textarea>
     </label>
     <p id="claude-advice-note" class="compact-dialog-note">
-      Your exact current prompt is force-appended after this instruction. Opus 5.5 must return only the replacement prompt.
+      Appends your current prompt as source text; Opus 5.5 returns only the replacement.
     </p>
     <details>
       <summary>exact original prompt and message frame</summary>
@@ -607,9 +577,7 @@
       <textarea id="prompt-split-style" rows="3" maxlength="2000"></textarea>
     </label>
     <p id="prompt-split-note" class="compact-dialog-note">
-      Your exact current prompt is appended as source text. Opus 5.5 chooses 1 to 8 images.
-      Each image prompt starts with the same style preface.
-      For 2 or more images, one job per image starts at once, in order.
+      Appends your prompt as source text; Opus 5.5 chooses 1–8 parts and starts one job per part.
     </p>
     <p id="prompt-split-targets" class="compact-dialog-note"></p>
     <div class="compact-dialog-actions">
@@ -630,14 +598,6 @@
         <button id="sketch-close" type="button" aria-label="Close">&times;</button>
       </div>
     </div>
-    <p class="compact-dialog-note">
-      Build a spatial map of where things should go, then say what each color means.
-      Paste or load a reference image onto the canvas, then crop, rotate, dither, or paint over it.
-      Copy image puts the current canvas pixels back on the clipboard as a PNG.
-      Attaching adds the sketch as an input image and writes one legend paragraph into your prompt:
-      image models use its placement and coverage while choosing the final palette and rendering style
-      from the rest of your prompt.
-    </p>
     <div id="sketch-body">
       <div id="sketch-left">
         <div id="sketch-tools">
@@ -872,17 +832,13 @@
         </div>
       </div>
       <div id="sketch-right">
-        <p id="sketch-legend-help">Pick a color, draw, and write what that color's area is
-          (e.g. red = <em>the planet</em>). After pasting a photo, <em>regen template from image colors</em>
-          replaces the stock red/blue/green legend with the image's own top colors so you can label each.
-          Only colors actually on the canvas go into the legend.</p>
+        <p id="sketch-legend-help">Pick a color, draw, and label its meaning (e.g. red = <em>the planet</em>). Only colors present on the canvas enter the legend.</p>
         <div id="sketch-legend-fields"><!-- one row per palette color, injected --></div>
         <section id="sketch-action-panel" aria-label="Sketch action stack">
           <div id="sketch-action-head">
             <strong>actions — back to front</strong>
             <span id="sketch-action-count">0</span>
           </div>
-          <p>Every committed mark is listed. Hide, remove, or move actions to rerender the map deterministically.</p>
           <ol id="sketch-action-list"></ol>
         </section>
       </div>
@@ -961,12 +917,12 @@
 <script src="personal-config.js?v=20261119-models"></script>
 <script src="prompt-rewrites.js?v=20261119-models"></script>
 <script src="generator-toggle.js?v=20260910"></script>
-<script src="generator-chooser.js?v=20261010-ideogram-45-defaults"></script>
+<script src="generator-chooser.js?v=20261119-arch"></script>
     <div id="global-append-control" hidden>
       <label for="global-append-text">Append to all endpoints</label>
       <textarea id="global-append-text" rows="2" maxlength="16000"
         placeholder="General directives for every selected endpoint" aria-describedby="global-append-help"></textarea>
-      <small id="global-append-help">Saved automatically in this browser. Applies to every future image and describe job, after endpoint extra text.</small>
+      <small id="global-append-help">Appended after per-endpoint extra text on image and describe jobs.</small>
       <p id="global-append-status" role="status"></p>
     </div>
 <dialog id="public-share-dialog" aria-labelledby="public-share-title">
@@ -992,6 +948,6 @@
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261026-prompt-condense"></script>
 <script src="prompt-characters.js?v=20261015-characters"></script>
-<script src="app.js?v=20261119-models"></script>
+<script src="app.js?v=20261119-arch"></script>
 </body>
 </html>

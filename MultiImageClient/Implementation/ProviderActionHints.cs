@@ -111,92 +111,59 @@ namespace MultiImageClient
             _ => null,
         };
 
-        private static ProviderAccount? AccountFor(string generatorKey) => generatorKey switch
-        {
-            UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt25Sunburst
-                or UiJobRunner.KeyGpt25Flare
-                or UiJobRunner.KeyGpt26Sunburst
-                or UiJobRunner.KeyGpt26Flare
-                or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini
-                or UiJobRunner.KeyDescribeOpenAi
-                or UiJobRunner.KeyDescribeOpenAiAstra =>
-                new(
+        private static ProviderAccount? AccountFor(string generatorKey)
+            => UiTargetCatalog.Find(generatorKey)?.ProviderAccountKey switch
+            {
+                UiTargetCatalog.AccountOpenAi => new(
                     "OpenAI",
                     nameof(Settings.OpenAIApiKey),
                     "https://platform.openai.com/settings/organization/billing/overview",
                     "https://platform.openai.com/api-keys",
                     "add API credits or enable auto-recharge"),
-            UiJobRunner.KeyIdeogramV46 or UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
-                or UiJobRunner.KeyIdeogramV3 or UiJobRunner.KeyIdeogramV2
-                or UiJobRunner.KeyDescribeIdeogram =>
-                new(
+                UiTargetCatalog.AccountIdeogram => new(
                     "Ideogram",
                     nameof(Settings.IdeogramApiKey),
                     "https://ideogram.ai/manage-api",
                     "https://ideogram.ai/manage-api",
                     "add prepaid API credits or enable auto-recharge"),
-            UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Utility
-                or UiJobRunner.KeyRecraftV41Pro or UiJobRunner.KeyRecraftV41Vector
-                or UiJobRunner.KeyRecraftV41Flash
-                or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4
-                or UiJobRunner.KeyRecraftV4Pro =>
-                new(
+                UiTargetCatalog.AccountRecraft => new(
                     "Recraft",
                     nameof(Settings.RecraftApiKey),
                     "https://app.recraft.ai/profile/api",
                     "https://app.recraft.ai/profile/api",
                     "buy more API units"),
-            UiJobRunner.KeyBflFlux3 or UiJobRunner.KeyBflFlux3Klein
-                or UiJobRunner.KeyBfl or UiJobRunner.KeyBflFlux2Pro
-                or UiJobRunner.KeyBflFlux2Max or UiJobRunner.KeyBflFlux2Flex
-                or UiJobRunner.KeyBflFlux2Klein4b or UiJobRunner.KeyBflFlux2Klein9bPreview
-                or UiJobRunner.KeyBflFlux2Klein9b or UiJobRunner.KeyBflKontextPro
-                or UiJobRunner.KeyBflKontextMax or UiJobRunner.KeyBflFlux11Ultra
-                or UiJobRunner.KeyBflFlux11 or UiJobRunner.KeyBflFluxPro
-                or UiJobRunner.KeyBflFluxDev =>
-                new(
+                UiTargetCatalog.AccountBfl => new(
                     "Black Forest Labs",
                     nameof(Settings.BFLApiKey),
                     "https://dashboard.bfl.ai",
                     "https://dashboard.bfl.ai",
                     "open API → Credits and add credits"),
-            UiJobRunner.KeyKrea or UiJobRunner.KeyKreaTurbo or UiJobRunner.KeyKreaLarge =>
-                new(
+                UiTargetCatalog.AccountKrea => new(
                     "Krea",
                     nameof(Settings.KreaApiKey),
                     "https://www.krea.ai/app/api/",
                     "https://www.krea.ai/app/api/tokens",
                     "add workspace API balance"),
-            UiJobRunner.KeyGoogle or UiJobRunner.KeyGooglePro
-                or UiJobRunner.KeyDescribeGemini
-                or UiJobRunner.KeyDescribeGeminiNeon
-                or UiJobRunner.KeyDescribeGeminiCarbon
-                or UiJobRunner.KeyDescribeGeminiHydrogen
-                or UiJobRunner.KeyDescribeGeminiArgon
-                or UiJobRunner.KeyLayoutMap =>
-                new(
+                UiTargetCatalog.AccountGoogle => new(
                     "Google AI Studio",
                     nameof(Settings.GoogleGeminiApiKey),
                     "https://aistudio.google.com/billing",
                     "https://aistudio.google.com/apikey",
                     "buy credits or restore billing for the key's project"),
-            UiJobRunner.KeyGrokApi or UiJobRunner.KeyGrokApiPro
-                or UiJobRunner.KeyDescribeGrok =>
-                new(
+                UiTargetCatalog.AccountXai => new(
                     "xAI",
                     nameof(Settings.XAIGrokApiKey),
                     "https://console.x.ai/team/default/billing",
                     "https://console.x.ai/team/default/api-keys",
                     "buy prepaid API credits or raise the invoiced billing limit"),
-            UiJobRunner.KeyDescribeClaude =>
-                new(
+                UiTargetCatalog.AccountAnthropic => new(
                     "Anthropic",
                     nameof(Settings.AnthropicApiKey),
                     "https://platform.claude.com/settings/billing",
                     "https://platform.claude.com/settings/keys",
                     "buy API credits, fix payment details, or raise the API spend limit"),
-            _ => null,
-        };
+                _ => null,
+            };
 
         private static bool IsGrokWebKey(string generatorKey)
             => generatorKey is UiJobRunner.KeyGrokWeb

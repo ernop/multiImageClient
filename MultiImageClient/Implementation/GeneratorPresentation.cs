@@ -7,117 +7,15 @@ namespace MultiImageClient
     /// then add the provider and any non-duplicate per-call detail.
     public static class GeneratorPresentation
     {
-        public static string UiDisplayName(string key) => key switch
-        {
-            UiJobRunner.KeyGpt26Sunburst => "gpt-image-2.6 sunburst",
-            UiJobRunner.KeyGpt26Flare => "gpt-image-2.6 flare",
-            UiJobRunner.KeyGpt2 => "gpt-image-2",
-            UiJobRunner.KeyGpt25Sunburst => "gpt-image-2.5 sunburst",
-            UiJobRunner.KeyGpt25Flare => "gpt-image-2.5 flare",
-            UiJobRunner.KeyGpt1 => "gpt-image-1",
-            UiJobRunner.KeyGpt1Mini => "gpt-image-1-mini",
-            UiJobRunner.KeyIdeogramV46 => "Ideogram 4.6",
-            UiJobRunner.KeyIdeogramV45 => "Ideogram 4.5",
-            UiJobRunner.KeyIdeogram => "Ideogram 4.0",
-            UiJobRunner.KeyIdeogramV3 => "Ideogram V3",
-            UiJobRunner.KeyIdeogramV2 => "Ideogram V2",
-            UiJobRunner.KeyRecraft => "Recraft V4.1",
-            UiJobRunner.KeyRecraftV41Flash => "Recraft V4.1 Flash V2",
-            UiJobRunner.KeyRecraftV41Utility => "Recraft V4.1 Utility",
-            UiJobRunner.KeyRecraftV41Pro => "Recraft V4.1 Pro",
-            UiJobRunner.KeyRecraftV41Vector => "Recraft V4.1 Vector Woke",
-            UiJobRunner.KeyRecraftV3 => "Recraft V3",
-            UiJobRunner.KeyRecraftV4 => "Recraft V4",
-            UiJobRunner.KeyRecraftV4Pro => "Recraft V4 Pro",
-            UiJobRunner.KeyBflFlux3 => "FLUX 3 Image",
-            UiJobRunner.KeyBflFlux3Klein => "FLUX 3 Image Klein",
-            UiJobRunner.KeyBfl => "FLUX.2 Pro Preview",
-            UiJobRunner.KeyBflFlux2Pro => "FLUX.2 Pro (pinned)",
-            UiJobRunner.KeyBflFlux2Max => "FLUX.2 Max",
-            UiJobRunner.KeyBflFlux2Flex => "FLUX.2 Flex",
-            UiJobRunner.KeyBflFlux2Klein4b => "FLUX.2 Klein 4B",
-            UiJobRunner.KeyBflFlux2Klein9bPreview => "FLUX.2 Klein 9B Preview",
-            UiJobRunner.KeyBflFlux2Klein9b => "FLUX.2 Klein 9B (pinned)",
-            UiJobRunner.KeyBflKontextPro => "FLUX.1 Kontext Pro",
-            UiJobRunner.KeyBflKontextMax => "FLUX.1 Kontext Max",
-            UiJobRunner.KeyBflFlux11Ultra => "FLUX1.1 Pro Ultra",
-            UiJobRunner.KeyBflFlux11 => "FLUX1.1 Pro",
-            UiJobRunner.KeyBflFluxPro => "FLUX.1 Pro (compatibility)",
-            UiJobRunner.KeyBflFluxDev => "FLUX.1 Dev",
-            UiJobRunner.KeyKrea => "Krea 2 Medium",
-            UiJobRunner.KeyKreaTurbo => "Krea 2 Medium Turbo",
-            UiJobRunner.KeyKreaLarge => "Krea 2 Large",
-            UiJobRunner.KeyGoogle => "Nano Banana 2.1",
-            UiJobRunner.KeyGooglePro => "Nano Banana Pro",
-            UiJobRunner.KeyLocalKlein => "local FLUX.2 Klein",
-            UiJobRunner.KeyLocalZImage => "local Z-Image Turbo",
-            UiJobRunner.KeyGrokWeb => "grok-web pro",
-            UiJobRunner.KeyGrokWebChat => "grok-web chat",
-            UiJobRunner.KeyGrokWebVideo => "grok-web video",
-            UiJobRunner.KeyGrokApi => "grok-api",
-            UiJobRunner.KeyGrokApiPro => "grok-api 2.0",
-            UiJobRunner.KeyMetaWeb => "Meta AI Muse Image (meta-web)",
-            UiJobRunner.KeyDescribeIdeogram => "Ideogram describe",
-            UiJobRunner.KeyDescribeOpenAi => $"OpenAI describe ({OpenAIVisionDescriber.DefaultModel})",
-            UiJobRunner.KeyDescribeOpenAiAstra => $"OpenAI describe ({OpenAIVisionDescriber.AstraModel})",
-            UiJobRunner.KeyDescribeClaude => $"Claude describe ({ClaudeVisionDescriber.DefaultModel})",
-            UiJobRunner.KeyDescribeGemini => $"Gemini describe ({GeminiVisionDescriber.DefaultModel})",
-            UiJobRunner.KeyDescribeGeminiNeon => $"Gemini describe ({GeminiVisionDescriber.NeonModel})",
-            UiJobRunner.KeyDescribeGeminiCarbon => $"Gemini describe ({GeminiVisionDescriber.CarbonModel})",
-            UiJobRunner.KeyDescribeGeminiHydrogen => $"Gemini describe ({GeminiVisionDescriber.HydrogenModel})",
-            UiJobRunner.KeyDescribeGeminiArgon => $"Gemini describe ({GeminiVisionDescriber.ArgonModel})",
-            UiJobRunner.KeyDescribeGrok => $"Grok describe ({GrokVisionDescriber.DefaultModel})",
-            UiJobRunner.KeyLayoutMap => $"Layout map ({GeminiVisionDescriber.DefaultModel})",
-            _ => throw new ArgumentException($"Unknown UI generator key '{key}'.", nameof(key)),
-        };
+        public static string UiDisplayName(string key)
+            => UiTargetCatalog.GetRequired(key).DisplayName;
 
         public static string UiContactSheetLabel(string key, string? technicalLabel = null)
         {
-            var displayName = UiDisplayName(key);
-            var provider = key switch
-            {
-                UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt25Sunburst
-                    or UiJobRunner.KeyGpt25Flare or UiJobRunner.KeyGpt26Sunburst
-                    or UiJobRunner.KeyGpt26Flare
-                    or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini
-                    or UiJobRunner.KeyDescribeOpenAi or UiJobRunner.KeyDescribeOpenAiAstra => "OpenAI",
-                UiJobRunner.KeyGrokApi => "xAI API · grok-imagine-image",
-                UiJobRunner.KeyGrokApiPro => "xAI API · grok-imagine-image-2.0",
-                UiJobRunner.KeyGrokWeb or UiJobRunner.KeyGrokWebChat
-                    or UiJobRunner.KeyGrokWebVideo => "xAI via grok.com",
-                UiJobRunner.KeyDescribeGrok => "xAI API",
-                UiJobRunner.KeyGoogle => "Google · gemini-nano-banana-2.1",
-                UiJobRunner.KeyGooglePro => "Google · gemini-3-pro-image",
-                UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyDescribeGeminiNeon
-                    or UiJobRunner.KeyDescribeGeminiCarbon or UiJobRunner.KeyDescribeGeminiHydrogen
-                    or UiJobRunner.KeyDescribeGeminiArgon
-                    or UiJobRunner.KeyLayoutMap => "Google",
-                UiJobRunner.KeyIdeogramV46 or UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
-                    or UiJobRunner.KeyIdeogramV3 or UiJobRunner.KeyIdeogramV2
-                    or UiJobRunner.KeyDescribeIdeogram => "Ideogram",
-                UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Flash or UiJobRunner.KeyRecraftV41Utility
-                    or UiJobRunner.KeyRecraftV41Pro or UiJobRunner.KeyRecraftV41Vector
-                    or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4
-                    or UiJobRunner.KeyRecraftV4Pro => "Recraft",
-                UiJobRunner.KeyBflFlux3 or UiJobRunner.KeyBflFlux3Klein
-                    or UiJobRunner.KeyBfl or UiJobRunner.KeyBflFlux2Pro
-                    or UiJobRunner.KeyBflFlux2Max or UiJobRunner.KeyBflFlux2Flex
-                    or UiJobRunner.KeyBflFlux2Klein4b or UiJobRunner.KeyBflFlux2Klein9bPreview
-                    or UiJobRunner.KeyBflFlux2Klein9b or UiJobRunner.KeyBflKontextPro
-                    or UiJobRunner.KeyBflKontextMax or UiJobRunner.KeyBflFlux11Ultra
-                    or UiJobRunner.KeyBflFlux11 or UiJobRunner.KeyBflFluxPro
-                    or UiJobRunner.KeyBflFluxDev => "Black Forest Labs",
-                UiJobRunner.KeyKrea or UiJobRunner.KeyKreaTurbo
-                    or UiJobRunner.KeyKreaLarge => "Krea",
-                UiJobRunner.KeyLocalKlein => "Black Forest Labs model via local ComfyUI",
-                UiJobRunner.KeyLocalZImage => "Tongyi-MAI model via local ComfyUI",
-                UiJobRunner.KeyMetaWeb => "Meta via meta.ai",
-                UiJobRunner.KeyDescribeClaude => "Anthropic",
-                _ => throw new ArgumentException($"Unknown UI generator key '{key}'.", nameof(key)),
-            };
+            var descriptor = UiTargetCatalog.GetRequired(key);
             return AppendTechnicalDetail(
-                $"{displayName} — {provider}",
-                displayName,
+                $"{descriptor.DisplayName} — {descriptor.ContactSheetProvider}",
+                descriptor.DisplayName,
                 technicalLabel,
                 key);
         }

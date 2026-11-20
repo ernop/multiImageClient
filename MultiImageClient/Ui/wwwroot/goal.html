@@ -49,7 +49,7 @@
           <span class="goal-label">Image generators <span id="goal-generators-count" class="goal-generators-count"></span></span>
           <div id="generator-controls-host"></div>
           <div id="gens-row" role="group" aria-label="image generators"></div>
-          <span class="goal-help">Chooser settings are shared with the main page. Endpoint extra text applies only on the main page.</span>
+          <span class="goal-help">Shares main-page chooser settings; endpoint extra text is main-page only.</span>
           <span id="goal-search-help" class="goal-help"></span>
         </div>
         <label class="goal-field">
@@ -60,7 +60,7 @@
         <div class="goal-field">
           <span class="goal-label">Critics (optional) <span id="goal-critics-count" class="goal-generators-count"></span></span>
           <div id="goal-critics" class="goal-generators" role="group" aria-label="independent critics"></div>
-          <span class="goal-help">Critics judge the goal and images independently. The manager receives their feedback before choosing the next design.</span>
+          <span class="goal-help">Critics score each render independently before the manager chooses the next design.</span>
         </div>
         <div class="goal-options">
           <label id="goal-samples-field" class="goal-field goal-field-small" hidden>
@@ -69,7 +69,7 @@
               <option value="0" selected>Auto: grok-web 2, others 1</option>
               <option value="1">1</option><option value="2">2</option><option value="4">4</option>
             </select>
-            <span class="goal-help">Up to 24 images per round. Each image receives separate feedback.</span>
+            <span class="goal-help">Max 24 images per round.</span>
           </label>
           <label id="goal-candidates-field" class="goal-field goal-field-small" hidden>
             <span class="goal-label">candidate limit</span>
@@ -78,7 +78,6 @@
               <option value="2">2</option>
               <option value="3" selected>3</option>
             </select>
-            <span class="goal-help">The manager chooses how many to test each round.</span>
           </label>
           <label class="goal-field goal-field-small">
             <span class="goal-label">max turns</span>
@@ -156,7 +155,7 @@
 <script src="goal-tree.js"></script>
 <script src="goal-feedback.js"></script>
 <script src="generator-toggle.js?v=20260910"></script>
-<script src="generator-chooser.js?v=20261010-ideogram-45-defaults"></script>
+<script src="generator-chooser.js?v=20261119-arch"></script>
 <script src="goal.js?v=20261010-idle-polling"></script>
 </body>
 </html>

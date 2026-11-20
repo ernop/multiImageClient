@@ -13,6 +13,20 @@ The old restart script killed all matching UI processes and any process occupyin
 It also stopped the server before building.
 A failed build therefore left the local site unavailable.
 
+## Startup history index cache (2026-11-19)
+
+`UiHistory/index-cache.sqlite3` (`UiHistoryIndexCache`) caches lightweight metadata headers for completed prior-day jobs so startup avoids opening every archived `UiHistory/*/job.json` sequentially on spinning disks or during AVE's 15-minute idle-sleep wakeups.
+
+- Disk `job.json` remains the sole source of truth.
+- Startup scans directory names once, serves completed prior-day entries from the cache, and always re-reads `job.json` for new folders, current-day jobs, and unfinished (`Done == false`) jobs.
+- `SaveMetadataStrict` and `RewritePersistedCreatorLogin` write through to the cache.
+- Missing folders are pruned from the cache on scan; corrupt or schema-mismatched cache files are deleted and rebuilt from disk `job.json`.
+- Connections disable pooling (`Pooling = false`) so no SQLite page cache remains resident in process RAM.
+
+## Continuous integration (2026-11-19)
+
+`.github/workflows/ci.yml` runs on `push` to `master` and on pull requests (`ubuntu-latest`, .NET 10, Node 22, Python 3.12): restores NuGet packages, runs `bash tools/release-gate.sh --skip-worktree-release` (JS syntax checks, JS unit tests, Python deploy tests, C# unit tests), and executes `dotnet build MultiImageClient.sln -c Release --no-restore`.
+
 ## .NET toolchain on this PC (owner decision, 2026-11-04)
 
 This PC builds with Microsoft's .NET SDK in `~/.dotnet`, not Ubuntu's

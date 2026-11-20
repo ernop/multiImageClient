@@ -119,17 +119,17 @@ let generatorEndpointConfiguration = {
 let describeConfig = { defaultInstruction: "" };
 let notificationConfig = { isDeveloper: false, maxRequestChars: 4000, returnAfterHours: 6 };
 const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
-// Targets whose edit/reference endpoints accept multiple ordered input images.
-// Mirrors the server's multi-input dispatch in UiJobs.cs.
-const GptImageFamilyKeys = ["gpt2", "gpt25-sunburst", "gpt25-flare", "gpt26-sunburst", "gpt26-flare"];
-const MultiInputImageKeys = [
-  ...GptImageFamilyKeys,
-  "grok-api-pro",
-  "ideogram-v45",
-  "ideogram-v46",
-  "bfl-flux3",
-  "bfl-flux3-klein",
-];
+function generatorMetaByKey(key) {
+  return generators.find((entry) => entry.key === key) || null;
+}
+
+function generatorAcceptsMultipleInputs(key) {
+  return (generatorMetaByKey(key)?.maxInputImages || 1) > 1;
+}
+
+function generatorHasDefaultExtraText(key) {
+  return Boolean(generatorMetaByKey(key)?.defaultExtraText);
+}
 // Legacy per-browser keys are migrated into the gpt-image-2 endpoint
 // configuration so an existing explicit off-switch or custom suffix survives.
 const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
@@ -775,7 +775,7 @@ function updateGeneratorCompatibility() {
         cb.value,
         `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`);
     }
-    else if (hasImage && inputImageItems.length > 1 && !MultiInputImageKeys.includes(cb.value) && imageCapable && !isDescribe)
+    else if (hasImage && inputImageItems.length > 1 && !generatorAcceptsMultipleInputs(cb.value) && imageCapable && !isDescribe)
     {
       label.title = generatorChooserTitle(
         cb.value,
@@ -8508,7 +8508,7 @@ function applyClaudeAdviceAvailability() {
   const noteEl = el("claude-advice-note");
   if (noteEl) {
     noteEl.textContent =
-      `Your exact current prompt is force-appended after this instruction. ${label} must return only the replacement prompt.`;
+      `Appends your current prompt as source text; ${label} returns only the replacement.`;
   }
   claudeAdviceSubmit.textContent = `send to ${label}`;
   if (!claudeAdvice.available) {
@@ -8705,9 +8705,7 @@ function applyPromptSplitAvailability() {
   const noteEl = el("prompt-split-note");
   if (noteEl) {
     noteEl.textContent =
-      `Your exact current prompt is appended as source text. ${label} chooses 1 to 8 images. ` +
-      "Each image prompt starts with the same style preface. " +
-      "For 2 or more images, one job per image starts at once, in order.";
+      `Appends your prompt as source text; ${label} chooses 1–8 parts and starts one job per part.`;
   }
   promptSplitSubmit.textContent = `ask ${label}`;
   if (!available) {
@@ -10575,7 +10573,7 @@ function renderImageViewerGuidance(current) {
     part.className = "guidance-sent";
     part.textContent = `+ appended extra text for ${genLabel(key)}: ${sentText}`;
     parts.push(part);
-  } else if (GptImageFamilyKeys.includes(key) &&
+  } else if (generatorHasDefaultExtraText(key) &&
       (current?.prompt?.generatorExtraTextsKnown || legacyGpt2State === "off")) {
     const part = document.createElement("div");
     part.className = "guidance-off";
