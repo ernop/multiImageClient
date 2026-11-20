@@ -394,6 +394,10 @@ namespace MultiImageClient
                 sb.Append(block);
                 budget -= block.Length;
             }
+            // OpenAI /v1/responses requires the word JSON in a user-role message when
+            // text.format is json_object.
+            sb.AppendLine();
+            sb.AppendLine("Return one JSON object with keys kind, description, and summary.");
             return sb.ToString();
         }
 

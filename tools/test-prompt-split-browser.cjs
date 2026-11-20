@@ -240,18 +240,25 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
       delete old.promptTools.splitInstruction;
       delete old.promptTools.splitStyleNote;
       delete old.promptTools.models;
+      delete old.promptTools.stage1AutoRender;
       const migrated = normalizeImportedPersonalConfiguration(old).promptTools;
-      if (migrated.splitInstruction !== '' || migrated.splitStyleNote !== '' || migrated.models.split !== '') throw Error('migration');
+      if (migrated.splitInstruction !== '' || migrated.splitStyleNote !== '' || migrated.models.split !== '' || migrated.stage1AutoRender !== false) throw Error('migration');
+      const v6 = structuredClone(config);
+      v6.version = 6;
+      delete v6.promptTools.stage1AutoRender;
+      if (normalizeImportedPersonalConfiguration(v6).promptTools.stage1AutoRender !== false) throw Error('v6 migration');
       const changes = [
         c => { c.promptTools.splitInstruction = 42; },
         c => { c.promptTools.splitInstruction = 'x'.repeat(4001); },
         c => { c.promptTools.splitStyleNote = 'x'.repeat(2001); },
         c => { delete c.promptTools.splitStyleNote; },
         c => { delete c.promptTools.models; },
+        c => { delete c.promptTools.stage1AutoRender; },
+        c => { c.promptTools.stage1AutoRender = 'yes'; },
         c => { c.promptTools.models.advice = 'not-a-real-model'; },
         c => { c.promptTools.surprise = ''; },
         c => { c.version = 4; },
-        c => { c.version = 7; },
+        c => { c.version = 8; },
       ];
       for (const change of changes) {
         const invalid = structuredClone(config);
@@ -263,6 +270,7 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
       const imported = structuredClone(config);
       imported.promptTools.splitInstruction = 'Imported instruction.';
       imported.promptTools.splitStyleNote = 'Imported style.';
+      imported.promptTools.stage1AutoRender = true;
       el('config-import-json').value = JSON.stringify(imported);
     });
     const reloaded = page.waitForEvent('framenavigated');
@@ -271,9 +279,13 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     await page.waitForLoadState('load');
     await ready();
     assert.deepEqual(await page.evaluate(() => ({ ...promptSplitSettings })),
-      { instruction: 'Imported instruction.', styleNote: 'Imported style.' });
+      { instruction: 'Imported instruction.', styleNote: 'Imported style.', stage1AutoRender: true });
     await openSplitStage();
     assert.equal(await page.locator('#stage1-split-instruction').inputValue(), 'Imported instruction.');
+    assert.equal(await page.locator('#stage1-auto-render').isChecked(), true);
+    // Reset auto-render back to false for the manual review assertions below.
+    await page.locator('#stage1-auto-render').uncheck();
+    assert.equal(await page.evaluate(() => promptSplitSettings.stage1AutoRender), false);
     await page.locator('#stage1-split-default').click();
     await page.locator('#stage1-split-style').fill('');
 
@@ -662,6 +674,7 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
 
     // Phone width check: #prompt-field-actions fits inside viewport without horizontal overflow.
     await page.setViewportSize({ width: 390, height: 900 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const phoneOverflow = await page.evaluate(() => {
       const bar = el('prompt-field-actions').getBoundingClientRect();
       return { overflowX: document.documentElement.scrollWidth - window.innerWidth, barRight: Math.round(bar.right) };
@@ -680,9 +693,75 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     });
     await page.screenshot({ path: '/tmp/prompt-split-group.png', clip: groupBox });
 
+    // Direct auto-render (Split multi-page and Rewrite) + duplicate in-flight guard + cancel running.
+    await page.locator('[data-stage1-mode="split"]').click();
+    await page.locator('#stage1-auto-render').check();
+    assert.equal(await page.evaluate(() => promptSplitSettings.stage1AutoRender), true);
+
+    // Zero checked image models fails closed before any split call.
+    await page.evaluate(() => {
+      for (const input of allGeneratorInputs()) input.checked = false;
+      updateGeneratorCount();
+    });
+    const splitCallsBeforeGuard = state.splitRequests.length;
+    await page.locator('#stage1-run').click();
+    assert.equal(state.splitRequests.length, splitCallsBeforeGuard);
+    assert.match(await page.locator('#stage1-error').textContent(), /Select at least one image model/i);
+
+    // Select one available image model and verify button shows live render count.
+    await page.evaluate(() => {
+      const first = allGeneratorInputs().find((input) => input.dataset.kind !== 'describe' && !input.disabled);
+      if (first) first.checked = true;
+      updateGeneratorCount();
+    });
+    assert.match(await page.locator('#stage1-run').textContent(), /& render \(1\)/);
+
+    // Hold split to verify duplicate in-flight guard and tray "cancel running".
+    state.split = 'hold';
+    await page.locator('#prompt').fill('Story for auto-render and duplicate guard.');
+    const splitsBeforeHold = state.splitRequests.length;
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => document.querySelectorAll('#stage1-results-list .stage1-card[data-status="running"]').length === 1);
+    assert.equal(await page.locator('#stage1-results-cancel-running').isVisible(), true);
+    // Clicking Run again on the exact same prompt must NOT fire a duplicate request.
+    await page.locator('#stage1-run').click();
+    assert.equal(state.splitRequests.length, splitsBeforeHold + 1);
+    assert.match(await page.locator('#stage1-error').textContent(), /already running/i);
+    await page.locator('#stage1-results-cancel-running').click();
+    await page.waitForFunction(() => document.querySelectorAll('#stage1-results-list .stage1-card[data-status="running"]').length === 0);
+    assert.equal(await page.locator('#stage1-results-cancel-running').isHidden(), true);
+    await page.locator('#stage1-results-clear').click();
+    state.held.length = 0;
+
+    // Auto-render Split multi-page: submits pages to /api/jobs automatically with zero intermediate click.
+    state.split = 'plan';
+    const jobsBeforeAutoSplit = state.jobRequests.length;
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction((n) => window.__stage1AutoSplitCheck ? true : document.querySelectorAll('#stage1-results-list .stage1-card[data-status="ready"]').length === 1, jobsBeforeAutoSplit);
+    await page.waitForFunction(() => {
+      const status = document.querySelector('#stage1-results-list .stage1-card .stage1-card-action-status');
+      return status && !status.hidden && /Auto-started 3 jobs/i.test(status.textContent || '');
+    });
+    assert.equal(state.jobRequests.length, jobsBeforeAutoSplit + 1);
+    assert.match(state.jobRequests.at(-1), /name="splitExchangeId"/);
+
+    // Auto-render Rewrite: submits rewritten prompt to /api/jobs automatically with zero intermediate click.
+    await page.locator('[data-stage1-mode="rewrite"]').click();
+    const jobsBeforeAutoRewrite = state.jobRequests.length;
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => {
+      const statuses = [...document.querySelectorAll('#stage1-results-list .stage1-card[data-kind="rewrite"] .stage1-card-action-status')];
+      return statuses.some((s) => !s.hidden && /Auto-started job/i.test(s.textContent || ''));
+    });
+    assert.equal(state.jobRequests.length, jobsBeforeAutoRewrite + 1);
+    assert.match(state.jobRequests.at(-1), /Shiba Inu learning to surf/);
+    await page.locator('#stage1-auto-render').uncheck();
+    await page.locator('#stage1-results-clear').click();
+
     assert.deepEqual(errors, []);
-    console.log('PASS: Stage-1 pipeline (Direct/Rewrite/Split), multi-writer parallel split, intermediate review cards, ' +
-      'copy-all-pages, series contact-sheet links, prompt field actions with undo, layout at 3 widths, and viewer order.');
+    console.log('PASS: Stage-1 pipeline (Direct/Rewrite/Split), direct auto-render, duplicate guard, cancel running, ' +
+      'multi-writer parallel split, intermediate review cards, copy-all-pages, series contact-sheet links, ' +
+      'prompt field actions with undo, layout at 3 widths, and viewer order.');
   } finally {
     for (const route of state.held) await route.abort().catch(() => {});
     await browser.close();

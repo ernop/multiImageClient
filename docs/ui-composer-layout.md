@@ -298,3 +298,13 @@ Owner request: add direct buttons on the main `#prompt` input area to clear the 
 Implementation: `index.html`, `app.js`, `style.css`.
 Browser coverage: `tools/test-prompt-split-browser.cjs` (copy, select all, clear, undo clear, paste, undo paste, and 390 px phone fit).
 
+## Visual polish, starter copy removal, and contrast audit — 2026-11-20
+
+Owner request: remove obvious starter filler text (`#getting-started`: "enter prompt, choose image generators, and click generate") and review/improve layout, style, and visual hierarchy.
+
+- Removed `<p id="getting-started">` from `index.html`, its styles from `style.css`, and verbose obvious copy from Stage-1 Direct mode.
+- Switched `--ink` to `#000000` and replaced low-opacity faded disabled/collapsed styles (`.gen-toggle.unavailable`, disabled prompt/send/history buttons, collapsed `#activity-panel`) with pure `#000` ink + dashed/hatched surfaces so no gray text renders on any light background.
+- Unified header control rhythm (`#night-toggle` bordered button matching header links; `#ram-status` and `#build-info` tabular diagnostic pills) and raised `#settings-panel` `z-index` above `#activity-panel` (1110 vs 1100) while widening `#username-input` to `196px`.
+- Left-aligned `#prompt-tools` directly beneath `#prompt-field-actions` (eliminating the right-flush gap on desktop) and gave portrait phones (`<= 700px`) a compact 2-column grid for `#prompt-tools`.
+- Aligned `#people-bar` and `#favorites-bar` label columns (`min-width: 64px`), widened `#gens-row` grid minimum to `196px` with uniform `.gen-toggle` height so multi-word SOTA model names sit on one line, added visible scale ticks and numerical labels (`960`–`2560 px`) under the `#content-width` slider, and removed the inherited `max-width` cap on `prompt-archive.html`'s `.pa-main`.
+

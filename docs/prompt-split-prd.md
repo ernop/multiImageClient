@@ -1,6 +1,20 @@
 # Splitting one prompt into several images
 
-Settled 2026-11-03. Updated 2026-11-10 (results group by image generator), 2026-11-19 (inline Stage-1 text step, parallel multi-writer splits up to 4 per account, explicit intermediate review tray with independent child image model selection and bail, feed split-group round-trip controls, and configurable writer models in personal configuration version 6), and **2026-11-20 (on-demand multi-page series contact sheets with full-text and no-text modes, plus one-click copy of all split pages' text in review cards and feed groups)**.
+Settled 2026-11-03. Updated 2026-11-10 (results group by image generator), 2026-11-19 (inline Stage-1 text step, parallel multi-writer splits up to 4 per account, explicit intermediate review tray with independent child image model selection and bail, feed split-group round-trip controls, and configurable writer models in personal configuration version 6), and **2026-11-20 (on-demand multi-page series contact sheets, copy-all-pages, OpenAI JSON user-message fix, expanded parallel split/rewrite concurrency, duplicate in-flight guard + cancel-running, and optional Stage-1 direct auto-render persisted in personal configuration version 7)**.
+
+## Owner decisions (2026-11-20): direct auto-render, OpenAI JSON fix, and parallel split reliability
+
+1. **Direct auto-render toggle (`#stage1-auto-render`, personal configuration version 7):**
+   - Sits directly beside `#stage1-run` inside `#stage1-actions` for both **Split multi-page** and **Rewrite** modes (`promptTools.stage1AutoRender`, boolean, default `false`, migrated from v6 via `migrateVersion6`).
+   - When unchecked (default), Stage-1 runs stop at the `#stage1-results` review tray until the user clicks **Render**.
+   - When checked, `#stage1-run` displays the live count of selected image models (`& render (N)`), requires at least one selected image model before starting, captures the checked image models and output options at click time, and automatically submits each text model's finished output to `POST /api/jobs` as soon as it arrives (all split pages for `imageCount >= 2`, the unsplit prompt for `imageCount == 1`, or the rewritten prompt for Rewrite). Declined splits (`imageCount == 0`), aspect-ratio removals leaving zero targets, and prompt-limit failures fail closed without submitting and surface the error on the Stage-1 card.
+   - The Stage-1 card still appears in `#stage1-results` for visibility, **copy all pages**, **Use in prompt**, or re-rendering to different models.
+2. **OpenAI `/v1/responses` JSON contract fix (`PromptSplit.BuildUserMessage` and `PromptSubjectSynthesis.BuildSynthesisUserMessage`):**
+   - OpenAI's `/v1/responses` endpoint rejects `text.format: { type: "json_object" }` with HTTP 400 unless a user-role input message mentions `JSON`. Both `PromptSplit.BuildUserMessage` and `PromptSubjectSynthesis.BuildSynthesisUserMessage` now explicitly state the required JSON object keys in the user message (also reminding split models to include `"images": []` on 0- or 1-image replies).
+3. **Parallel split/rewrite concurrency and duplicate guard:**
+   - Raised `PromptSplit.MaxConcurrentSplitsPerAccount` from `4` to `8`, `PromptSplit.MaxConcurrentSplits` from `8` to `16`, and `DirectedPromptRewrite.Slots` from `2` to `8`, preventing HTTP 409/502 slot collisions when running 3–4 parallel Stage-1 writers or starting a second batch while slower models finish.
+   - `startStage1Run` skips firing duplicate HTTP requests for models already running on the exact same mode, prompt, instruction, and style note.
+   - `#stage1-results-head` exposes **cancel running** (`#stage1-results-cancel-running`) while any Stage-1 card is in flight to abort active requests and free server slots immediately.
 
 ## Owner decisions (2026-11-20): series contact sheets and copy-all-pages
 

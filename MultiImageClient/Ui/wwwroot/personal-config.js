@@ -9,7 +9,7 @@
   }
 })(typeof globalThis === "object" ? globalThis : this, function createPersonalConfigurationSchema() {
   const Format = "MultiImageClient personalized configuration";
-  const Version = 6;
+  const Version = 7;
   // Owner decision 2026-10-10: version 4 adds Ideogram 4.5 once to each saved
   // default list. The version records that the addition happened, so a later
   // removal stays removed. See docs/ideogram-45-support.md.
@@ -19,6 +19,9 @@
   // See docs/prompt-split-prd.md.
   // Version 6 (2026-11-19) adds per-tool model overrides under
   // promptTools.models. Empty string means the server default for that tool.
+  // Version 7 (2026-11-20) adds promptTools.stage1AutoRender (boolean, default
+  // false) to let Stage-1 Rewrite and Split multi-page send results directly
+  // to the selected image models without waiting for the review step.
   const PromptAssistantModelSlots = Object.freeze([
     "advice",
     "fleshOutPrimary",
@@ -121,6 +124,7 @@
     if (parsed.version === 3) parsed = migrateVersion3(parsed);
     if (parsed.version === 4) parsed = migrateVersion4(parsed);
     if (parsed.version === 5) parsed = migrateVersion5(parsed);
+    if (parsed.version === 6) parsed = migrateVersion6(parsed);
     if (parsed.version !== Version) {
       throw new Error(
         `stored personal configuration version ${String(parsed.version)} is unsupported; expected ${Version}`);
@@ -184,6 +188,22 @@
     };
   }
 
+  function migrateVersion6(raw) {
+    if (raw?.format !== Format || raw?.version !== 6 ||
+        !raw.promptTools || typeof raw.promptTools !== "object" || Array.isArray(raw.promptTools) ||
+        Object.hasOwn(raw.promptTools, "stage1AutoRender")) {
+      throw new Error("invalid version 6 prompt tools");
+    }
+    return {
+      ...raw,
+      version: 7,
+      promptTools: {
+        ...raw.promptTools,
+        stage1AutoRender: false,
+      },
+    };
+  }
+
   // A first visit can start on the goal page before the composer writes its
   // complete document. Preserve legacy browser fields during that migration.
   function saveGeneratorPreferences(storage, preferences) {
@@ -226,6 +246,7 @@
         splitInstruction: "",
         splitStyleNote: "",
         models: defaultPromptAssistantModels(),
+        stage1AutoRender: false,
       },
       spelling: {
         enabled: storage.getItem("mic_mcphee_enabled") !== "false",
@@ -268,6 +289,7 @@
     migrateVersion3,
     migrateVersion4,
     migrateVersion5,
+    migrateVersion6,
     addVersion4DefaultKey,
     browserFields,
     saveGeneratorPreferences,

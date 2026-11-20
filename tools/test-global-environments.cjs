@@ -141,8 +141,11 @@ async function loginStatus(server, username, password) {
   assert.deepEqual(await alice.evaluate(()=>window.MicEnvironment.environments.map(e=>e.id)),['two']);
   assert.equal(await alice.evaluate(()=>window.MicEnvironment.adminUrl),null);
   assert.equal(await alice.locator('#environment-switcher').count(),0);
-  for(const path of ['api/control/state','api/admin/summary','api/logs/poll','api/people'])
+  for(const path of ['api/control/state','api/admin/summary','api/admin/prompt-archive/stats','api/admin/prompt-archive/random','api/admin/prompt-archive/search','api/admin/prompt-archive/items/1','prompt-archive.html','api/logs/poll','api/people'])
    assert.equal(await alice.evaluate(async path=>(await fetch(path)).status,path),403,path);
+  assert.equal(await alice.evaluate(async()=> (await fetch('api/admin/prompt-archive/sync',{method:'POST',headers:{'X-Mic-Manage':'1'}})).status),403);
+  assert.equal(await alice.evaluate(async()=> (await (await fetch('api/config')).json()).promptArchive),null);
+  assert.equal(await alice.locator('#prompt-archive-link').isVisible(),false);
   assert.equal(await alice.evaluate(async()=> (await fetch('/one/api/jobs')).status),403);
   assert.equal(await alice.evaluate(async()=> (await fetch('api/activity/poll')).status),200);
   assert.equal(await alice.locator('#logs-toggle').isVisible(),false);
@@ -151,7 +154,7 @@ async function loginStatus(server, username, password) {
   assert.equal(await alice.locator('#logout').count(),0);
   assert.equal(await alice.locator('#favorites-hint').count(),0);
   assert.equal(await alice.locator('header h1').innerText(),'Vibecoders AI Generation');
-  assert.equal(await alice.locator('#getting-started').innerText(),'enter prompt, choose image generators, and click generate');
+  assert.equal(await alice.locator('#getting-started').count(),0);
   await alice.locator('#settings-toggle').click();
   assert.equal(await alice.locator('#settings-panel #username-input').isVisible(),true);
   await alice.locator('#settings-close').click();

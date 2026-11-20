@@ -61,7 +61,7 @@ namespace MultiImageClient
                 + "Return only the condensed prompt.";
         }
 
-        private static readonly SemaphoreSlim Slots = new(2, 2);
+        private static readonly SemaphoreSlim Slots = new(8, 8);
 
         // Resolves either a ManagerCatalog key (e.g. "manager-gemini-4-neon")
         // or an exact provider model ID (e.g. "gemini-4-neon"). Returns null
@@ -83,7 +83,7 @@ namespace MultiImageClient
                 ?? throw new InvalidOperationException("Unknown rewrite model.");
             var problem = ManagerCatalog.DescribeAvailabilityProblem(definition, settings);
             if (problem != null) throw new InvalidOperationException(problem);
-            if (!await Slots.WaitAsync(0, ct)) throw new InvalidOperationException("Two prompt rewrites are already running. Try again after one finishes.");
+            if (!await Slots.WaitAsync(0, ct)) throw new InvalidOperationException("Eight prompt rewrites are already running. Try again after one finishes.");
             var wire = ClaudeService.BuildPromptAdviceWirePrompt(instruction, prompt);
             var raw = "";
             try

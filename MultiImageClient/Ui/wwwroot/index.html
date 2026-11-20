@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261120-series-sheets">
+<link rel="stylesheet" href="style.css?v=20261120-stage1-auto">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261102-mcphee-3-12-2">
 </head>
 <body class="composer-page">
@@ -27,7 +27,6 @@
     title="Private lifetime prompt archive and random recall (admin only)">prompt archive</a>
   <a id="people-link" href="people.html" hidden>people</a>
 </header>
-<p id="getting-started">enter prompt, choose image generators, and click generate</p>
 
 <!-- Shared-site people bar: who you create as, and whose work is shown.
      Everything everyone makes is visible to everyone — that's the point. -->
@@ -79,11 +78,23 @@
     <input id="show-costs" type="checkbox">
     <span><strong>show estimated costs</strong> — per-result, per-job, and session estimates.</span>
   </label>
-  <label class="settings-width-row" for="content-width">
-    <span><strong>page content width</strong></span>
-    <input id="content-width" type="range" min="960" max="2560" step="40">
-    <output id="content-width-value" for="content-width"></output>
-  </label>
+  <div class="settings-width-block">
+    <label class="settings-width-row" for="content-width">
+      <span><strong>page content width</strong></span>
+      <output id="content-width-value" for="content-width"></output>
+    </label>
+    <input id="content-width" type="range" min="960" max="2560" step="40" list="content-width-ticks">
+    <datalist id="content-width-ticks">
+      <option value="960" label="960"></option>
+      <option value="1360" label="1360"></option>
+      <option value="1760" label="1760"></option>
+      <option value="2160" label="2160"></option>
+      <option value="2560" label="2560"></option>
+    </datalist>
+    <div class="slider-scale" aria-hidden="true">
+      <span>960</span><span>1360</span><span>1760</span><span>2160</span><span>2560 px</span>
+    </div>
+  </div>
   <label class="settings-row">
     <input id="viewer-return-sync" type="checkbox">
     <span><strong>viewer close handback</strong> — scroll to the viewed image on close (<kbd>s</kbd> in viewer toggles).</span>
@@ -146,7 +157,7 @@
       <button id="config-import-apply" type="button">import config</button>
     </div>
     <p class="settings-note" id="config-transfer-note">
-      Includes creating-as name, generator chooser, display/activity settings, prompt assistant models, spelling dictionary/settings, inspiration library, viewer behavior, and media preferences. Excludes logins, cookies, jobs, favorites, characters, and view history.
+      Includes creating-as name, generator chooser, display/activity settings, prompt tools and Stage-1 auto-render, prompt assistant models, spelling dictionary/settings, inspiration library, viewer behavior, and media preferences. Excludes logins, cookies, jobs, favorites, characters, and view history.
     </p>
   </section>
 </div>
@@ -398,6 +409,11 @@
         </div>
         <div id="stage1-actions">
           <button id="stage1-run" type="button" class="primary">Split with Opus 5.5</button>
+          <label id="stage1-auto-render-label" for="stage1-auto-render"
+            title="Skip waiting for the review step: automatically send each finished rewrite or split directly to the selected image models below">
+            <input id="stage1-auto-render" type="checkbox">
+            <span>auto-render directly to selected image models</span>
+          </label>
           <span id="stage1-run-note"></span>
           <span id="stage1-error" role="alert"></span>
         </div>
@@ -488,6 +504,7 @@
     <div id="stage1-results-head">
       <strong id="stage1-results-title">Text step results</strong>
       <span id="stage1-results-count"></span>
+      <button id="stage1-results-cancel-running" type="button" hidden>cancel running</button>
       <button id="stage1-results-clear" type="button">dismiss finished</button>
     </div>
     <div id="stage1-results-list"></div>
@@ -947,7 +964,7 @@
 <script src="text-entry.js?v=20261103-replace-fit"></script>
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20261102-mcphee-3-12-2"></script>
-<script src="personal-config.js?v=20261119-models"></script>
+<script src="personal-config.js?v=20261120-stage1-auto"></script>
 <script src="prompt-rewrites.js?v=20261119-models"></script>
 <script src="generator-toggle.js?v=20260910"></script>
 <script src="generator-chooser.js?v=20261119-arch"></script>
@@ -981,10 +998,10 @@
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261026-prompt-condense"></script>
 <script src="prompt-characters.js?v=20261015-characters"></script>
-<script src="app.js?v=20261120-series-sheets"></script>
+<script src="app.js?v=20261120-stage1-auto"></script>
 <script src="activity-center.js?v=20261119-pipeline"></script>
 <script src="sketch-composer.js?v=20261119-pipeline"></script>
 <script src="image-viewer.js?v=20261119-pipeline"></script>
-<script src="prompt-pipeline.js?v=20261120-series-sheets"></script>
+<script src="prompt-pipeline.js?v=20261120-stage1-auto"></script>
 </body>
 </html>

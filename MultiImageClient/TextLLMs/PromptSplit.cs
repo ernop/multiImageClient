@@ -63,8 +63,8 @@ namespace MultiImageClient
         // (fits Ideogram 4.5/4.6, Recraft V4.x, Grok, FLUX 3, and GPT Image).
         public const int DefaultUnconstrainedPartBudget = 10_000;
         public const int MinPartChars = UiJobRunner.MinCondensedPromptChars;
-        public const int MaxConcurrentSplitsPerAccount = 4;
-        public const int MaxConcurrentSplits = 8;
+        public const int MaxConcurrentSplitsPerAccount = 8;
+        public const int MaxConcurrentSplits = 16;
 
         public const string DefaultInstruction =
             "The following prompt may be better served by having 2, 3, or more images. "
@@ -252,6 +252,10 @@ namespace MultiImageClient
                 message.Append("Style note for every image:\n").Append(styleNote).Append("\n\n");
             }
             message.Append($"Limits: at most {MaxImages} images. Each image prompt may have at most {partBudget:N0} characters, counting spaces and line breaks.\n\n");
+            // OpenAI /v1/responses rejects text.format json_object unless a user-role
+            // message mentions JSON; naming the keys also prevents models from omitting
+            // "images": [] on 0- or 1-image replies.
+            message.Append("Return one JSON object with keys imageCount, reason, and images (use an empty array for images when imageCount is 0 or 1).\n\n");
             message.Append("<source_prompt>\n").Append(sourcePrompt).Append("\n</source_prompt>");
             return message.ToString();
         }

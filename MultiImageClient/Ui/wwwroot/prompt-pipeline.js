@@ -21,10 +21,12 @@ const stage1SplitInstruction = el("stage1-split-instruction");
 const stage1SplitDefaultBtn = el("stage1-split-default");
 const stage1SplitStyle = el("stage1-split-style");
 const stage1RunBtn = el("stage1-run");
+const stage1AutoRenderInput = el("stage1-auto-render");
 const stage1RunNote = el("stage1-run-note");
 const stage1Error = el("stage1-error");
 const stage1ResultsSection = el("stage1-results");
 const stage1ResultsCount = el("stage1-results-count");
+const stage1ResultsCancelRunningBtn = el("stage1-results-cancel-running");
 const stage1ResultsClearBtn = el("stage1-results-clear");
 const stage1ResultsList = el("stage1-results-list");
 
@@ -143,6 +145,9 @@ function ensureStage1WritersForMode(mode) {
 }
 
 function syncStage1SplitInputsFromSettings({ force = false } = {}) {
+  if (stage1AutoRenderInput) {
+    stage1AutoRenderInput.checked = !!promptSplitSettings.stage1AutoRender;
+  }
   if (!stage1SplitInstruction || !stage1SplitStyle) return;
   const def = promptSplitConfig?.defaultInstruction || "";
   if (!stage1SplitInputsHydrated || force) {
@@ -160,6 +165,18 @@ function syncStage1SplitInputsFromSettings({ force = false } = {}) {
       stage1SyncingSplitInputs = false;
     }
   }
+}
+
+function saveStage1AutoRenderSetting() {
+  if (!stage1AutoRenderInput) return;
+  promptSplitSettings.stage1AutoRender = !!stage1AutoRenderInput.checked;
+  try {
+    persistPersonalConfigurationSnapshot();
+    stage1Error.textContent = "";
+  } catch (error) {
+    stage1Error.textContent = `Could not save auto-render setting: ${error.message || error}`;
+  }
+  renderStage1ActionRow();
 }
 
 function saveStage1SplitSettings() {
@@ -262,8 +279,11 @@ function renderStage1Writers() {
 
 function renderStage1ActionRow() {
   const mode = stage1Mode;
+  if (stage1AutoRenderInput) {
+    stage1AutoRenderInput.checked = !!promptSplitSettings.stage1AutoRender;
+  }
   if (mode === "direct") {
-    stage1Summary.textContent = "Prompt goes straight to the selected image models below.";
+    stage1Summary.textContent = "";
     return;
   }
   const writers = ensureStage1WritersForMode(mode);
@@ -281,16 +301,25 @@ function renderStage1ActionRow() {
     stage1Summary.textContent = problem;
     return;
   }
+  const autoRender = !!promptSplitSettings.stage1AutoRender;
+  const selectedImageGens = checkedGeneratorKeys().filter((key) => !isDescribeGenKey(key));
   stage1RunBtn.disabled = false;
-  if (entries.length === 1) {
-    stage1RunBtn.textContent = `${verb} with ${entries[0].label}`;
+  const baseLabel = entries.length === 1
+    ? `${verb} with ${entries[0].label}`
+    : `${verb} with ${entries.length} models`;
+  if (autoRender) {
+    stage1RunBtn.textContent = selectedImageGens.length > 0
+      ? `${baseLabel} & render (${selectedImageGens.length})`
+      : `${baseLabel} & render`;
+    stage1RunNote.textContent = selectedImageGens.length > 0
+      ? `Auto-renders directly to ${selectedImageGens.map(genLabel).join(", ")}.`
+      : "Select at least one image model below to auto-render.";
   } else {
-    stage1RunBtn.textContent = `${verb} with ${entries.length} models`;
+    stage1RunBtn.textContent = baseLabel;
+    stage1RunNote.textContent = "Review results below before rendering.";
   }
-  stage1RunNote.textContent = mode === "split"
-    ? "Splits first; nothing generates until you pick image models and click Render on a split below."
-    : "Shows each rewrite below; render any result with chosen image models or apply it to the prompt.";
-  stage1Summary.textContent = entries.map((entry) => entry.label).join(" · ");
+  const writerNames = entries.map((entry) => entry.label).join(" · ");
+  stage1Summary.textContent = autoRender ? `${writerNames} · auto-render` : writerNames;
   if (stage1SplitInstructionLabel && mode === "split") {
     stage1SplitInstructionLabel.textContent = entries.length === 1
       ? `Tell ${entries[0].label} how to split`
@@ -361,6 +390,9 @@ function updateStage1TrayHeader() {
   stage1ResultsCount.textContent = running > 0
     ? `${total} result${total === 1 ? "" : "s"} (${running} running)`
     : `${total} result${total === 1 ? "" : "s"}`;
+  if (stage1ResultsCancelRunningBtn) {
+    stage1ResultsCancelRunningBtn.hidden = running === 0;
+  }
   const hasDismissible = stage1Cards.some((card) => card.status !== "running");
   stage1ResultsClearBtn.disabled = !hasDismissible;
 }
@@ -606,7 +638,7 @@ function currentOutputOptions(includeN) {
   return Object.fromEntries(names.map((name) => [name, el(`opt-${name}`).value]));
 }
 
-async function renderStage1Card(cardState) {
+async function renderStage1Card(cardState, { auto = false } = {}) {
   if (cardState.rendering || cardState.status !== "ready") return;
   const gens = [...cardState.selectedGens];
   if (!gens.length) return;
@@ -616,8 +648,21 @@ async function renderStage1Card(cardState) {
     return;
   }
   cardState.rendering = true;
-  setStage1CardActionStatus(cardState, "", "");
+  setStage1CardActionStatus(
+    cardState,
+    auto ? `Auto-rendering to ${gens.map(genLabel).join(", ")}…` : "",
+    auto ? "done" : "");
   refreshStage1CardRenderState(cardState);
+
+  const optsFor = (includeN) => {
+    if (auto && cardState.capturedOptions) {
+      const names = includeN
+        ? ["shape", "detail", "quality", "moderation", "n"]
+        : ["shape", "detail", "quality", "moderation"];
+      return Object.fromEntries(names.map((name) => [name, cardState.capturedOptions[name]]));
+    }
+    return currentOutputOptions(includeN);
+  };
 
   try {
     if (cardState.kind === "split" && cardState.plan?.imageCount >= 2) {
@@ -625,7 +670,7 @@ async function renderStage1Card(cardState) {
       form.append("prompt", cardState.sourcePrompt);
       form.append("user", user);
       form.append("generators", gens.join(","));
-      for (const [name, value] of Object.entries(currentOutputOptions(false))) {
+      for (const [name, value] of Object.entries(optsFor(false))) {
         form.append(name, value);
       }
       form.append("n", "1");
@@ -663,7 +708,9 @@ async function renderStage1Card(cardState) {
         `${body.jobs.length} parts × ${gens.map(genLabel).join(", ")}`);
       setStage1CardActionStatus(
         cardState,
-        `Started ${body.jobs.length} jobs (${gens.map(genLabel).join(", ")}). Pick other image models to render this plan again, or Bail.`,
+        auto
+          ? `Auto-started ${body.jobs.length} jobs (${gens.map(genLabel).join(", ")}).`
+          : `Started ${body.jobs.length} jobs (${gens.map(genLabel).join(", ")}). Pick other image models to render again, or Bail.`,
         "done");
     } else {
       const promptText = cardState.kind === "rewrite"
@@ -676,7 +723,7 @@ async function renderStage1Card(cardState) {
       form.append("prompt", promptText);
       form.append("user", user);
       form.append("generators", gens.join(","));
-      for (const [name, value] of Object.entries(currentOutputOptions(true))) {
+      for (const [name, value] of Object.entries(optsFor(true))) {
         form.append(name, value);
       }
       form.append("generatorExtraTexts", JSON.stringify(generatorExtraTextsFor(gens)));
@@ -700,9 +747,12 @@ async function renderStage1Card(cardState) {
           canHide: authInfo.localVisibilityManagement === true || !!authInfo.user,
         });
       cardState.renderHistory.push(`1 job × ${gens.map(genLabel).join(", ")}`);
+      const unsplitNote = cardState.kind === "split" ? "Model recommended 1 image; auto-started unsplit job" : "Auto-started job";
       setStage1CardActionStatus(
         cardState,
-        `Started job for ${gens.map(genLabel).join(", ")}. Pick other image models to render again, or Bail.`,
+        auto
+          ? `${unsplitNote} (${gens.map(genLabel).join(", ")}).`
+          : `Started job for ${gens.map(genLabel).join(", ")}. Pick other image models to render again, or Bail.`,
         "done");
     }
   } catch (error) {
@@ -815,9 +865,16 @@ function paintStage1Card(cardState) {
   if (cardState.status === "running") {
     const waiting = document.createElement("p");
     waiting.className = "stage1-card-waiting";
-    waiting.textContent = cardState.kind === "split"
-      ? `${cardState.modelLabel} is deciding how to split this prompt. Nothing will generate until you review the parts and click Render.`
-      : `${cardState.modelLabel} is rewriting this prompt.`;
+    if (cardState.autoRender && cardState.selectedGens.size > 0) {
+      const targetNames = [...cardState.selectedGens].map(genLabel).join(", ");
+      waiting.textContent = cardState.kind === "split"
+        ? `${cardState.modelLabel} is splitting this prompt. Pages will auto-render to ${targetNames} as soon as ready.`
+        : `${cardState.modelLabel} is rewriting this prompt. Output will auto-render to ${targetNames} as soon as ready.`;
+    } else {
+      waiting.textContent = cardState.kind === "split"
+        ? `${cardState.modelLabel} is deciding how to split this prompt.`
+        : `${cardState.modelLabel} is rewriting this prompt.`;
+    }
     body.appendChild(waiting);
     card.appendChild(body);
     return;
@@ -1047,6 +1104,24 @@ async function runStage1Card(cardState) {
     }
     promptRewrites.refreshHistory();
   }
+  if (cardState.status === "ready"
+      && cardState.autoRender
+      && cardState.renderHistory.length === 0
+      && cardState.el?.isConnected) {
+    if (cardState.selectedGens.size === 0) {
+      setStage1CardActionStatus(
+        cardState,
+        "Auto-render paused: no compatible image models remain selected. Pick image models below and click Render.",
+        "error");
+    } else if (checkStage1CardPromptLimits(cardState).some((issue) => issue.action === "fail")) {
+      setStage1CardActionStatus(
+        cardState,
+        "Auto-render paused: a prompt exceeds a selected image model's limit. Adjust image models below and click Render.",
+        "error");
+    } else {
+      void renderStage1Card(cardState, { auto: true });
+    }
+  }
 }
 
 function addStage1Card(cardState) {
@@ -1097,13 +1172,46 @@ function startStage1Run() {
   }
 
   const initialGens = checkedGeneratorKeys().filter((key) => !isDescribeGenKey(key));
+  const autoRender = !!promptSplitSettings.stage1AutoRender;
+  if (autoRender && !initialGens.length) {
+    stage1Error.textContent = "Select at least one image model below to auto-render, or uncheck auto-render to review first.";
+    return;
+  }
+
+  // Prevent accidental duplicate requests for models already running on this exact input.
+  const alreadyRunning = [];
+  const writersToStart = [];
+  for (const writer of writers) {
+    const modelKey = writer.key || writer.model;
+    const duplicate = stage1Cards.some((card) =>
+      card.status === "running"
+      && card.kind === mode
+      && card.modelKey === modelKey
+      && card.sourcePrompt === prompt
+      && card.instruction === instruction
+      && card.styleNote === styleNote);
+    if (duplicate) alreadyRunning.push(writer);
+    else writersToStart.push(writer);
+  }
+  if (!writersToStart.length) {
+    stage1Error.textContent = alreadyRunning.length === 1
+      ? `${alreadyRunning[0].label} is already running for this exact prompt.`
+      : "All selected text models are already running for this exact prompt.";
+    stage1ResultsSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+  if (alreadyRunning.length > 0) {
+    stage1RunNote.textContent = `Skipped ${alreadyRunning.map((w) => w.label).join(", ")} (already running for this prompt).`;
+  }
+
   const capturedImages = [...inputImageItems];
+  const capturedOptions = currentOutputOptions(true);
   const revision = promptRewrites.revision;
 
   // Add cards in reverse so Writer 1 appears first at the top-left of the tray.
   const created = [];
-  for (let i = writers.length - 1; i >= 0; i--) {
-    const writer = writers[i];
+  for (let i = writersToStart.length - 1; i >= 0; i--) {
+    const writer = writersToStart[i];
     const cardState = {
       id: `s1-${++stage1CardSeq}`,
       kind: mode,
@@ -1116,6 +1224,8 @@ function startStage1Run() {
       styleNote,
       images: capturedImages,
       selectedGens: new Set(initialGens),
+      autoRender,
+      capturedOptions,
       status: "running",
       plan: null,
       rewriteText: "",
@@ -1593,6 +1703,17 @@ stage1SplitDefaultBtn.addEventListener("click", () => {
 });
 
 stage1RunBtn.addEventListener("click", startStage1Run);
+if (stage1AutoRenderInput) {
+  stage1AutoRenderInput.addEventListener("change", saveStage1AutoRenderSetting);
+}
+
+if (stage1ResultsCancelRunningBtn) {
+  stage1ResultsCancelRunningBtn.addEventListener("click", () => {
+    for (const card of [...stage1Cards]) {
+      if (card.status === "running") card.controller?.abort();
+    }
+  });
+}
 
 stage1ResultsClearBtn.addEventListener("click", () => {
   for (const card of [...stage1Cards]) {
@@ -1601,3 +1722,6 @@ stage1ResultsClearBtn.addEventListener("click", () => {
 });
 
 el("opt-shape").addEventListener("change", refreshAllStage1CardPickers);
+if (stage1AutoRenderInput) {
+  stage1AutoRenderInput.checked = !!promptSplitSettings.stage1AutoRender;
+}

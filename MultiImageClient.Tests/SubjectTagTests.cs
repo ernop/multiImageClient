@@ -147,6 +147,7 @@ public sealed class SubjectTagTests
         Assert.Equal("character", result.Kind);
         Assert.Equal(ManagerCatalog.KeyClaudeOpus55, result.Model);
         Assert.Contains("Jing at the beach", client.LastUserMessage);
+        Assert.Contains("JSON", client.LastUserMessage, StringComparison.OrdinalIgnoreCase);
 
         await Assert.ThrowsAsync<InvalidDataException>(() => PromptSubjectSynthesis.SynthesizeSubjectAsync(
             new Settings(), "Jing", "character", "", ManagerCatalog.KeyClaudeOpus55,

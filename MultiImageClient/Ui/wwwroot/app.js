@@ -829,8 +829,9 @@ function updateShapeOptionLabel() {
 function updateGeneratorCount() {
   // The visible "N of M enabled" counter was removed (2026-07-31), but every
   // generator-selection change still funnels through here, so this remains
-  // the recompute point for the prompt-length notice.
+  // the recompute point for the prompt-length notice and Stage-1 auto-render.
   updatePromptLimitNotice();
+  if (typeof renderStage1ActionRow === "function") renderStage1ActionRow();
 }
 
 // ---------- prompt length limits (non-blocking) ----------
@@ -841,10 +842,12 @@ function updateGeneratorCount() {
 const promptLimitNotice = el("prompt-limit-notice");
 const globalAppendText = el("global-append-text");
 globalAppendText.value = storedPersonalField("promptTools")?.globalAppendText ?? "";
-// The split dialog's saved text. An empty instruction means the server default.
+// The split dialog's saved text and Stage-1 auto-render preference.
+// An empty instruction means the server default.
 const promptSplitSettings = {
   instruction: storedPersonalField("promptTools")?.splitInstruction ?? "",
   styleNote: storedPersonalField("promptTools")?.splitStyleNote ?? "",
+  stage1AutoRender: storedPersonalField("promptTools")?.stage1AutoRender === true,
 };
 const promptToolModels = {
   ...PersonalConfigurationSchema.defaultPromptAssistantModels(),
@@ -1465,6 +1468,7 @@ function personalConfigurationFields() {
         splitInstruction: promptSplitSettings.instruction,
         splitStyleNote: promptSplitSettings.styleNote,
         models: { ...promptToolModels },
+        stage1AutoRender: !!promptSplitSettings.stage1AutoRender,
       }),
       normalize: normalizeImportedPromptTools,
     },
@@ -1603,7 +1607,7 @@ function normalizeImportedPromptTools(raw) {
   const promptTools = requireConfigObject(
     raw,
     "promptTools",
-    ["claudeAdviceInstruction", "globalAppendText", "splitInstruction", "splitStyleNote", "models"]);
+    ["claudeAdviceInstruction", "globalAppendText", "splitInstruction", "splitStyleNote", "models", "stage1AutoRender"]);
   return {
     globalAppendText: requireConfigString(promptTools.globalAppendText, "promptTools.globalAppendText", 16000, true),
     claudeAdviceInstruction: requireConfigString(
@@ -1614,6 +1618,7 @@ function normalizeImportedPromptTools(raw) {
     splitInstruction: requireConfigString(promptTools.splitInstruction, "promptTools.splitInstruction", 4000, true),
     splitStyleNote: requireConfigString(promptTools.splitStyleNote, "promptTools.splitStyleNote", 2000, true),
     models: normalizeImportedPromptAssistantModels(promptTools.models),
+    stage1AutoRender: requireConfigBoolean(promptTools.stage1AutoRender, "promptTools.stage1AutoRender"),
   };
 }
 
@@ -1793,18 +1798,21 @@ function normalizeImportedVideoAudio(raw) {
 }
 
 function migratePersonalConfiguration(raw, targetVersion) {
-  const { migrateVersion2, migrateVersion3, migrateVersion4, migrateVersion5 } = PersonalConfigurationSchema;
+  const { migrateVersion2, migrateVersion3, migrateVersion4, migrateVersion5, migrateVersion6 } = PersonalConfigurationSchema;
+  if (raw?.version === 6 && targetVersion === ConfigTransferVersion) {
+    return migrateVersion6(raw);
+  }
   if (raw?.version === 5 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion5(raw);
+    return migrateVersion6(migrateVersion5(raw));
   }
   if (raw?.version === 4 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion5(migrateVersion4(raw));
+    return migrateVersion6(migrateVersion5(migrateVersion4(raw)));
   }
   if (raw?.version === 3 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion5(migrateVersion4(migrateVersion3(raw)));
+    return migrateVersion6(migrateVersion5(migrateVersion4(migrateVersion3(raw))));
   }
   if (raw?.version === 2 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion5(migrateVersion4(migrateVersion3(migrateVersion2(raw))));
+    return migrateVersion6(migrateVersion5(migrateVersion4(migrateVersion3(migrateVersion2(raw)))));
   }
   if (raw?.version !== 1 || targetVersion !== ConfigTransferVersion) {
     throw new Error(
@@ -1841,12 +1849,12 @@ function migratePersonalConfiguration(raw, targetVersion) {
   const portable = { ...raw };
   delete portable.gptImage2Guidance;
   delete portable.version;
-  return migrateVersion5(migrateVersion4(migrateVersion3({
+  return migrateVersion6(migrateVersion5(migrateVersion4(migrateVersion3({
     ...portable,
     version: 3,
     generatorPreferences: preferences,
     promptTools: { ...raw.promptTools, globalAppendText: "" },
-  })));
+  }))));
 }
 
 function normalizeImportedPersonalConfiguration(raw) {

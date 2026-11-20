@@ -132,6 +132,9 @@ public sealed class PromptSplitTests
 
         Assert.StartsWith(PromptSplit.DefaultInstruction + "\n\nStyle note for every image:\nInk and watercolor.\n\n", message);
         Assert.Contains($"Limits: at most {PromptSplit.MaxImages} images. Each image prompt may have at most {990:N0} characters", message);
+        Assert.Contains("JSON", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("imageCount", message);
+        Assert.Contains("images", message);
         Assert.EndsWith($"<source_prompt>\n{Source}\n</source_prompt>", message);
         Assert.DoesNotContain("Style note", PromptSplit.BuildUserMessage("Split it.", "", 990, Source));
         Assert.Equal("Split it.", PromptSplit.RecordedInstruction("Split it.", ""));
@@ -178,8 +181,10 @@ public sealed class PromptSplitTests
     }
 
     [Fact]
-    public void UpToFourSplitsRunPerAccountAndEightPerServer()
+    public void UpToMaxSplitsRunPerAccountAndPerServer()
     {
+        Assert.Equal(8, PromptSplit.MaxConcurrentSplitsPerAccount);
+        Assert.Equal(16, PromptSplit.MaxConcurrentSplits);
         var leases = new List<IDisposable>();
         try
         {

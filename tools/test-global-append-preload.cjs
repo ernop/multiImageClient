@@ -44,8 +44,9 @@ const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><r
       delete old.promptTools.splitInstruction;
       delete old.promptTools.splitStyleNote;
       delete old.promptTools.models;
+      delete old.promptTools.stage1AutoRender;
       const migrated = normalizeImportedPersonalConfiguration(old).promptTools;
-      if (migrated.globalAppendText !== '' || migrated.splitInstruction !== '' || migrated.splitStyleNote !== '' || migrated.models.advice !== '') throw Error('migration');
+      if (migrated.globalAppendText !== '' || migrated.splitInstruction !== '' || migrated.splitStyleNote !== '' || migrated.models.advice !== '' || migrated.stage1AutoRender !== false) throw Error('migration');
       for (const bad of [42, 'x'.repeat(16001)]) {
         const invalid = structuredClone(config);
         invalid.promptTools.globalAppendText = bad;
