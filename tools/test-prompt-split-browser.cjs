@@ -94,6 +94,7 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
             partBudget: 10000,
             imageCount: 2,
             reason: 'Two clear acts fit two scenes.',
+            suggestedShape: 'wide',
             images: altParts,
           } });
         }
@@ -105,6 +106,7 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
           partBudget: 31000,
           imageCount: one ? 1 : 3,
           reason: one ? 'One clear scene fits one image.' : reason,
+          suggestedShape: one ? 'auto' : 'portrait',
           images: one ? [] : parts,
         } });
       }
@@ -123,6 +125,7 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
           error: '',
           imageCount: 3,
           reason,
+          suggestedShape: 'portrait',
           images: parts,
         } });
       }
@@ -350,6 +353,11 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     const card2 = page.locator('#stage1-results-list .stage1-card').nth(1);
     assert.equal(await card1.locator('.stage1-card-badge').textContent(), '3 parts');
     assert.equal(await card2.locator('.stage1-card-badge').textContent(), '2 parts');
+    // Series AR dropdown defaults to each splitter's suggested shape when composer AR is auto.
+    assert.equal(state.splitRequests.at(-1).get('shape'), 'auto');
+    assert.equal(await card1.locator('.stage1-series-ar-select').inputValue(), 'portrait');
+    assert.match(await card1.locator('.stage1-series-ar-note').textContent(), /applies to all pages/);
+    assert.equal(await card2.locator('.stage1-series-ar-select').inputValue(), 'wide');
 
     // Bail on Card 2 independently while keeping Card 1 intact.
     await card2.locator('.stage1-card-bail').click();
@@ -363,7 +371,7 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expectedCopyBlock);
     assert.match(await card1.locator('.stage1-card-action-status').textContent(), /Copied all 3 pages/);
 
-    // Render Card 1 -> 503 busy error stays on card; retry sends identical splitExchangeId request.
+    // Render Card 1 -> 503 busy error stays on card; retry sends identical splitExchangeId request with suggested shape=portrait.
     const imageKeys = await page.evaluate(() => fixtureImageKeys.join(','));
     await card1.locator('.stage1-card-render').click();
     await page.waitForFunction(() => document.querySelector('.stage1-card-action-status')?.dataset.mode === 'error');
@@ -377,14 +385,17 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     const form = state.jobRequests[1];
     const field = name => (new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)\\r\\n`).exec(form) || [])[1];
     assert.equal(field('n'), '1');
+    assert.equal(field('shape'), 'portrait');
     assert.equal(field('splitExchangeId'), 'fixture-exchange');
     assert.equal(field('generators'), imageKeys);
     assert.equal(field('prompt'), 'A twelve-panel comic about a dog learning to surf.');
     assert.equal(field('condensedPrompts'), undefined);
     assert.equal(field('sketchComposer'), undefined);
 
-    // Card 1 stays open so user can pick different child models and render again at $0 LLM cost!
+    // Card 1 stays open so user can pick different child models and override Series AR to auto at $0 LLM cost!
     const splitsBeforeRerender = state.splitRequests.length;
+    await card1.locator('.stage1-series-ar-select').selectOption('auto');
+    assert.match(await card1.locator('.stage1-series-ar-note').textContent(), /picks per page/);
     await card1.locator('.stage1-child-quick button', { hasText: 'none' }).click();
     assert.equal(await card1.locator('.stage1-card-render').isDisabled(), true);
     const firstKey = await page.evaluate(() => fixtureImageKeys[0]);
@@ -393,6 +404,8 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     await card1.locator('.stage1-card-render').click();
     await page.waitForFunction(() => document.querySelectorAll('#jobs > .split-group').length === 2);
     assert.equal(state.splitRequests.length, splitsBeforeRerender); // Zero extra LLM split calls!
+    const rerenderField = name => (new RegExp(`name="${name}"\\r\\n\\r\\n([^\\r]*)\\r\\n`).exec(state.jobRequests.at(-1)) || [])[1];
+    assert.equal(rerenderField('shape'), 'auto');
     // Remove the second render group so layout tests target fixturegrp1 cleanly.
     await page.evaluate(() => {
       document.querySelector('#jobs > .split-group[data-split-group="fixturegrp2"]')?.remove();
@@ -733,8 +746,9 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     await page.locator('#stage1-results-clear').click();
     state.held.length = 0;
 
-    // Auto-render Split multi-page: submits pages to /api/jobs automatically with zero intermediate click.
+    // Auto-render Split multi-page: submits pages to /api/jobs automatically with splitter's suggested shape (portrait).
     state.split = 'plan';
+    await page.locator('#opt-shape').selectOption('auto');
     const jobsBeforeAutoSplit = state.jobRequests.length;
     await page.locator('#stage1-run').click();
     await page.waitForFunction((n) => window.__stage1AutoSplitCheck ? true : document.querySelectorAll('#stage1-results-list .stage1-card[data-status="ready"]').length === 1, jobsBeforeAutoSplit);
@@ -744,8 +758,37 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     });
     assert.equal(state.jobRequests.length, jobsBeforeAutoSplit + 1);
     assert.match(state.jobRequests.at(-1), /name="splitExchangeId"/);
+    assert.match(state.jobRequests.at(-1), /name="shape"\r\n\r\nportrait\r\n/);
+    await page.locator('#stage1-results-clear').click();
+
+    // Explicit composer output AR (landscape) always wins over the splitter's suggestedShape (portrait).
+    await page.locator('#stage1-auto-render').uncheck();
+    await page.locator('#opt-shape').selectOption('landscape');
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => document.querySelectorAll('#stage1-results-list .stage1-card[data-status="ready"]').length === 1);
+    assert.equal(state.splitRequests.at(-1).get('shape'), 'landscape');
+    const explicitCard = page.locator('#stage1-results-list .stage1-card').first();
+    assert.equal(await explicitCard.locator('.stage1-series-ar-select').inputValue(), 'landscape');
+    assert.match(await explicitCard.locator('.stage1-series-ar-note').textContent(), /from composer \(model suggested portrait 2:3\)/);
+    await page.locator('#stage1-results-clear').click();
+
+    // Attached input image + composer auto keeps "auto" (match input image), ignoring suggestedShape.
+    await page.locator('#opt-shape').selectOption('auto');
+    await page.evaluate(() => {
+      const bytes = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+1f8AAAAASUVORK5CYII='), c => c.charCodeAt(0));
+      setImagesFromBlobs([new Blob([bytes], { type: 'image/png' })]);
+    });
+    await page.locator('#stage1-run').click();
+    await page.waitForFunction(() => document.querySelectorAll('#stage1-results-list .stage1-card[data-status="ready"]').length === 1);
+    assert.equal(state.splitRequests.at(-1).get('imageAttached'), 'true');
+    const attachedCard = page.locator('#stage1-results-list .stage1-card').first();
+    assert.equal(await attachedCard.locator('.stage1-series-ar-select').inputValue(), 'auto');
+    assert.match(await attachedCard.locator('.stage1-series-ar-note').textContent(), /matches attached image/);
+    await page.evaluate(() => clearImage());
+    await page.locator('#stage1-results-clear').click();
 
     // Auto-render Rewrite: submits rewritten prompt to /api/jobs automatically with zero intermediate click.
+    await page.locator('#stage1-auto-render').check();
     await page.locator('[data-stage1-mode="rewrite"]').click();
     const jobsBeforeAutoRewrite = state.jobRequests.length;
     await page.locator('#stage1-run').click();

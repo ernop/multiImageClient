@@ -20,11 +20,20 @@ public sealed class PromptSplitTests
         var plan = PromptSplit.ParseReply("```json\n" + TwoPartReply + "\n```", 1_000, "Opus 5.5");
         Assert.Equal(2, plan.ImageCount);
         Assert.Equal("Eight panels read better as two pages.", plan.Reason);
+        Assert.Equal("portrait", plan.SuggestedShape);
         Assert.Equal(new[] { new PromptSplitPart("Panels 1 to 4", FirstPart), new PromptSplitPart("Panels 5 to 8", SecondPart) }, plan.Parts);
 
         var single = PromptSplit.ParseReply("""{"imageCount":1,"reason":"One scene fits one image.","images":[]}""", 1_000, "Opus 5.5");
         Assert.Equal(1, single.ImageCount);
+        Assert.Null(single.SuggestedShape);
         Assert.Empty(single.Parts);
+
+        var singleWithShape = PromptSplit.ParseReply("""{"imageCount":1,"reason":"One scene fits one image.","shape":"auto","images":[]}""", 1_000, "Opus 5.5");
+        Assert.Equal(1, singleWithShape.ImageCount);
+        Assert.Equal("auto", singleWithShape.SuggestedShape);
+
+        var caseFoldedShape = PromptSplit.ParseReply(Reply(2, "r", "Wide", ("a", "x"), ("b", "y")), 1_000, "Opus 5.5");
+        Assert.Equal("wide", caseFoldedShape.SuggestedShape);
 
         var crlf = PromptSplit.ParseReply(Reply(2, "r", ("a", "line one\r\nline two "), ("b", "x")), 1_000, "Opus 5.5");
         Assert.Equal("line one\nline two", crlf.Parts[0].Prompt);
@@ -45,6 +54,14 @@ public sealed class PromptSplitTests
             """{"imageCount":1,"reason":"r","images":[],"note":"x"}""",
             """{"imageCount":1,"reason":"r","reason":"again","images":[]}""",
             """{"imageCount":1,"reason":"r","images":{}}""",
+            // Live multi-image replies must include a valid canonical shape.
+            """{"imageCount":2,"reason":"r","images":[{"title":"a","prompt":"x"},{"title":"b","prompt":"y"}]}""",
+            """{"imageCount":2,"reason":"r","shape":"16:9","images":[{"title":"a","prompt":"x"},{"title":"b","prompt":"y"}]}""",
+            """{"imageCount":2,"reason":"r","shape":"vertical","images":[{"title":"a","prompt":"x"},{"title":"b","prompt":"y"}]}""",
+            """{"imageCount":2,"reason":"r","shape":"","images":[{"title":"a","prompt":"x"},{"title":"b","prompt":"y"}]}""",
+            """{"imageCount":2,"reason":"r","shape":null,"images":[{"title":"a","prompt":"x"},{"title":"b","prompt":"y"}]}""",
+            """{"imageCount":2,"reason":"r","shape":3,"images":[{"title":"a","prompt":"x"},{"title":"b","prompt":"y"}]}""",
+            """{"imageCount":1,"reason":"r","shape":"bogus","images":[]}""",
             Reply(1, "r", ("a", "x")),
             Reply(2, "r"),
             Reply(3, "r", ("a", "x"), ("b", "y")),
@@ -52,8 +69,8 @@ public sealed class PromptSplitTests
             Reply(2, "r", ("a", "x"), (new string('t', 81), "y")),
             Reply(2, "r", ("a", "x"), ("b", "  ")),
             Reply(2, new string('r', 1_001), ("a", "x"), ("b", "y")),
-            """{"imageCount":2,"reason":"r","images":[{"title":"a","prompt":"x"},{"title":"b","prompt":"y","seed":1}]}""",
-            """{"imageCount":2,"reason":"r","images":[{"title":"a","prompt":"x"},"y"]}""",
+            """{"imageCount":2,"reason":"r","shape":"portrait","images":[{"title":"a","prompt":"x"},{"title":"b","prompt":"y","seed":1}]}""",
+            """{"imageCount":2,"reason":"r","shape":"portrait","images":[{"title":"a","prompt":"x"},"y"]}""",
         })
         {
             Assert.Throws<InvalidDataException>(() => PromptSplit.ParseReply(reply, 1_000, "Opus 5.5"));
@@ -132,14 +149,29 @@ public sealed class PromptSplitTests
 
         Assert.StartsWith(PromptSplit.DefaultInstruction + "\n\nStyle note for every image:\nInk and watercolor.\n\n", message);
         Assert.Contains($"Limits: at most {PromptSplit.MaxImages} images. Each image prompt may have at most {990:N0} characters", message);
+        Assert.Contains("Output frame: auto (no fixed frame chosen yet).", message);
         Assert.Contains("JSON", message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("imageCount", message);
+        Assert.Contains("shape", message);
         Assert.Contains("images", message);
         Assert.EndsWith($"<source_prompt>\n{Source}\n</source_prompt>", message);
         Assert.DoesNotContain("Style note", PromptSplit.BuildUserMessage("Split it.", "", 990, Source));
+
+        var fixedFrame = PromptSplit.BuildUserMessage("Split it.", "", 990, Source, requestedShape: "wide");
+        Assert.Contains("the user selected \"wide\" (wide (16:9))", fixedFrame);
+        Assert.Contains("return \"shape\": \"wide\"", fixedFrame);
+
+        var attachedAuto = PromptSplit.BuildUserMessage("Split it.", "", 990, Source, requestedShape: "auto", imageAttached: true);
+        Assert.Contains("match input image", attachedAuto);
+        Assert.Contains("Return \"shape\": \"auto\"", attachedAuto);
+
+        Assert.Throws<InvalidDataException>(() =>
+            PromptSplit.BuildUserMessage("Split it.", "", 990, Source, requestedShape: "bogus"));
+
         Assert.Equal("Split it.", PromptSplit.RecordedInstruction("Split it.", ""));
         Assert.Equal("Split it.\n\nStyle note: Ink.", PromptSplit.RecordedInstruction("Split it.", "Ink."));
         Assert.Contains("\"imageCount\"", PromptSplit.SystemPrompt);
+        Assert.Contains("\"shape\"", PromptSplit.SystemPrompt);
         Assert.Contains("Begin every prompt with the same shared preface", PromptSplit.SystemPrompt);
         Assert.Contains("Never make an image dim, murky, or dark unless the source asks for that.", PromptSplit.SystemPrompt);
     }
@@ -152,7 +184,15 @@ public sealed class PromptSplitTests
 
         Assert.Equal(plan.ImageCount, stored.ImageCount);
         Assert.Equal(plan.Reason, stored.Reason);
+        Assert.Equal("portrait", stored.SuggestedShape);
         Assert.Equal(plan.Parts, stored.Parts);
+
+        // Legacy stored splits saved without "shape" remain readable.
+        var legacyJson = """{"imageCount":2,"reason":"Legacy plan.","images":[{"title":"a","prompt":"first"},{"title":"b","prompt":"second"}]}""";
+        var legacy = PromptSplit.ParseStored(legacyJson);
+        Assert.Equal(2, legacy.ImageCount);
+        Assert.Null(legacy.SuggestedShape);
+        Assert.Equal(2, legacy.Parts.Count);
     }
 
     [Fact]
@@ -320,10 +360,14 @@ public sealed class PromptSplitTests
     }
 
     private static string Reply(int imageCount, string reason, params (string Title, string Prompt)[] parts)
+        => Reply(imageCount, reason, imageCount >= 2 ? "portrait" : "auto", parts);
+
+    private static string Reply(int imageCount, string reason, string shape, params (string Title, string Prompt)[] parts)
         => JsonSerializer.Serialize(new
         {
             imageCount,
             reason,
+            shape,
             images = parts.Select(part => new { title = part.Title, prompt = part.Prompt }),
         });
 

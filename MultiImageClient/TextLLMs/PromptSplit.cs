@@ -14,7 +14,13 @@ namespace MultiImageClient
     public sealed record PromptSplitPart(string Title, string Prompt);
 
     // ImageCount 1 carries no parts: the source prompt stays one image.
-    public sealed record PromptSplitPlan(int ImageCount, string Reason, IReadOnlyList<PromptSplitPart> Parts);
+    // SuggestedShape is a UiShapeMapping shape key (square/landscape/portrait/wide/tall/auto)
+    // or null for legacy stored plans and non-split replies that omitted it.
+    public sealed record PromptSplitPlan(
+        int ImageCount,
+        string Reason,
+        IReadOnlyList<PromptSplitPart> Parts,
+        string? SuggestedShape = null);
 
     public sealed class PromptSplitOutcome
     {
@@ -80,6 +86,7 @@ namespace MultiImageClient
             {
               "imageCount": <whole number>,
               "reason": "<one to three sentences that tell the user why you chose this number of images>",
+              "shape": "<one of: square, landscape, portrait, wide, tall, auto>",
               "images": [
                 { "title": "<a short name for this image's part, one line, at most 80 characters>", "prompt": "<the complete prompt for this image>" }
               ]
@@ -89,6 +96,7 @@ namespace MultiImageClient
             - If one image serves the source best, return imageCount 1 and an empty images list. The user then keeps the source prompt as it is.
             - If you will not write image prompts for this source, return imageCount 0, an empty images list, and your reason. The user sees the reason, and nothing is sent.
             - Otherwise "images" holds exactly imageCount entries, in the order a reader should view them.
+            - Choose "shape" from "square" (1:1), "landscape" (3:2), "portrait" (2:3), "wide" (16:9), "tall" (9:16), or "auto". When the user message specifies a fixed frame, compose every image for that frame and return that shape. When the frame is auto with no input image and the split is a continuous story, comic, or sequence, choose one shared shape that fits the story (for example "portrait" for comic pages, "wide" or "landscape" for film storyboards, "tall" for vertical scroll strips, or "square" for square panels) and compose every page for it; use "auto" only for unrelated subjects or a 0- or 1-image reply.
             - Split when the source holds more than one image can show clearly: for example many comic panels, separate scenes, steps, moments in time, or unrelated subjects. One image can still hold several panels, such as a comic page with a grid of panels. Group neighboring content so that each image stays clear and readable. Use the fewest images that keep every part clear.
             - An image model receives each prompt alone. It never sees the other prompts or the source. Begin every prompt with the same shared preface: the medium, art style, color palette, lighting, setting, each recurring character's exact appearance and clothing, and the user's style note. Then describe only this image's content.
             - Keep every subject, name, count, action, and line of requested on-image text from the source. Copy requested on-image text, such as dialogue and captions, word for word. Put each piece of content in exactly one image, unless the source repeats it on purpose. Do not drop content. Do not add story events, characters, or text that the source does not ask for.
@@ -243,8 +251,31 @@ namespace MultiImageClient
             return (recorded[..idx], recorded[(idx + StyleNoteSeparator.Length)..]);
         }
 
-        public static string BuildUserMessage(string instruction, string styleNote, int partBudget, string sourcePrompt)
+        private static string ShapeDescription(string shape) => shape switch
         {
+            "square" => "square (1:1)",
+            "landscape" => "landscape (3:2)",
+            "portrait" => "portrait (2:3)",
+            "wide" => "wide (16:9)",
+            "tall" => "tall (9:16)",
+            _ => "auto",
+        };
+
+        public static string BuildUserMessage(
+            string instruction,
+            string styleNote,
+            int partBudget,
+            string sourcePrompt,
+            string requestedShape = "auto",
+            bool imageAttached = false)
+        {
+            var shape = string.IsNullOrWhiteSpace(requestedShape)
+                ? "auto"
+                : requestedShape.Trim().ToLowerInvariant();
+            if (!UiShapeMapping.IsKnownShape(shape))
+            {
+                throw new InvalidDataException($"Unknown output shape '{requestedShape}'.");
+            }
             var message = new StringBuilder();
             message.Append(instruction).Append("\n\n");
             if (styleNote.Length > 0)
@@ -252,10 +283,22 @@ namespace MultiImageClient
                 message.Append("Style note for every image:\n").Append(styleNote).Append("\n\n");
             }
             message.Append($"Limits: at most {MaxImages} images. Each image prompt may have at most {partBudget:N0} characters, counting spaces and line breaks.\n\n");
+            if (shape != "auto")
+            {
+                message.Append($"Output frame: the user selected \"{shape}\" ({ShapeDescription(shape)}). Compose every image and panel layout for that frame, and return \"shape\": \"{shape}\".\n\n");
+            }
+            else if (imageAttached)
+            {
+                message.Append("Output frame: an input image is attached and output AR is set to match input image, so every page keeps the input image's aspect ratio. Return \"shape\": \"auto\".\n\n");
+            }
+            else
+            {
+                message.Append("Output frame: auto (no fixed frame chosen yet). For a continuous story, comic, or sequence of 2 or more images, choose one consistent \"shape\" for the whole series from \"square\" (1:1), \"landscape\" (3:2), \"portrait\" (2:3), \"wide\" (16:9), or \"tall\" (9:16), and compose every image for that frame. Use \"auto\" only if the split divides unrelated subjects that should vary in shape, or when imageCount is 0 or 1.\n\n");
+            }
             // OpenAI /v1/responses rejects text.format json_object unless a user-role
             // message mentions JSON; naming the keys also prevents models from omitting
             // "images": [] on 0- or 1-image replies.
-            message.Append("Return one JSON object with keys imageCount, reason, and images (use an empty array for images when imageCount is 0 or 1).\n\n");
+            message.Append("Return one JSON object with keys imageCount, reason, shape, and images (use an empty array for images when imageCount is 0 or 1).\n\n");
             message.Append("<source_prompt>\n").Append(sourcePrompt).Append("\n</source_prompt>");
             return message.ToString();
         }
@@ -329,7 +372,7 @@ namespace MultiImageClient
             {
                 throw new InvalidDataException($"{modelLabel} returned an empty reply. Nothing was sent.");
             }
-            var plan = ParsePlan(stripped, $"{modelLabel}'s reply", allowDecline: true);
+            var plan = ParsePlan(stripped, $"{modelLabel}'s reply", allowDecline: true, requireShapeForMultiImage: true);
             if (plan.ImageCount == 0)
             {
                 throw new PromptSplitDeclinedException(
@@ -347,17 +390,37 @@ namespace MultiImageClient
             return plan;
         }
 
-        public static string Serialize(PromptSplitPlan plan) => JsonSerializer.Serialize(new
+        public static string Serialize(PromptSplitPlan plan)
         {
-            imageCount = plan.ImageCount,
-            reason = plan.Reason,
-            images = plan.Parts.Select(part => new { title = part.Title, prompt = part.Prompt }),
-        });
+            if (plan.SuggestedShape != null)
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    imageCount = plan.ImageCount,
+                    reason = plan.Reason,
+                    shape = plan.SuggestedShape,
+                    images = plan.Parts.Select(part => new { title = part.Title, prompt = part.Prompt }),
+                });
+            }
+            return JsonSerializer.Serialize(new
+            {
+                imageCount = plan.ImageCount,
+                reason = plan.Reason,
+                images = plan.Parts.Select(part => new { title = part.Title, prompt = part.Prompt }),
+            });
+        }
 
-        public static PromptSplitPlan ParseStored(string json) => ParsePlan(json, "The stored split");
+        public static PromptSplitPlan ParseStored(string json)
+            => ParsePlan(json, "The stored split", allowDecline: false, requireShapeForMultiImage: false);
 
         // A stored plan is always a success, so only a model reply may decline.
-        private static PromptSplitPlan ParsePlan(string json, string source, bool allowDecline = false)
+        // Live multi-image replies must provide "shape"; stored plans keep it
+        // optional so legacy records written before 2026-11-20 stay readable.
+        private static PromptSplitPlan ParsePlan(
+            string json,
+            string source,
+            bool allowDecline = false,
+            bool requireShapeForMultiImage = false)
         {
             JsonDocument document;
             try
@@ -375,7 +438,11 @@ namespace MultiImageClient
                 {
                     throw new InvalidDataException($"{source} must be a JSON object.");
                 }
-                RequireExactFields(root, source, "imageCount", "reason", "images");
+                RequireFields(
+                    root,
+                    source,
+                    required: new[] { "imageCount", "reason", "images" },
+                    optional: new[] { "shape" });
                 var countElement = root.GetProperty("imageCount");
                 var lowest = allowDecline ? 0 : 1;
                 if (countElement.ValueKind != JsonValueKind.Number
@@ -389,6 +456,25 @@ namespace MultiImageClient
                 if (reason.Length > MaxReasonChars)
                 {
                     throw new InvalidDataException($"{source} has a reason longer than {MaxReasonChars:N0} characters.");
+                }
+                string? suggestedShape = null;
+                if (root.TryGetProperty("shape", out var shapeElement))
+                {
+                    if (shapeElement.ValueKind != JsonValueKind.String)
+                    {
+                        throw new InvalidDataException($"{source} must give 'shape' as text.");
+                    }
+                    var normalizedShape = (shapeElement.GetString() ?? "").Trim().ToLowerInvariant();
+                    if (!UiShapeMapping.IsKnownShape(normalizedShape))
+                    {
+                        throw new InvalidDataException(
+                            $"{source} has an invalid shape '{shapeElement.GetString()}'. Expected one of: {string.Join(", ", UiShapeMapping.Shapes)}.");
+                    }
+                    suggestedShape = normalizedShape;
+                }
+                else if (requireShapeForMultiImage && imageCount >= 2)
+                {
+                    throw new InvalidDataException($"{source} is missing the field 'shape'.");
                 }
                 var images = root.GetProperty("images");
                 if (images.ValueKind != JsonValueKind.Array)
@@ -429,16 +515,24 @@ namespace MultiImageClient
                     }
                     parts.Add(new PromptSplitPart(title, prompt));
                 }
-                return new PromptSplitPlan(imageCount, reason, parts);
+                return new PromptSplitPlan(imageCount, reason, parts, suggestedShape);
             }
         }
 
         private static void RequireExactFields(JsonElement element, string source, params string[] fields)
+            => RequireFields(element, source, required: fields, optional: Array.Empty<string>());
+
+        private static void RequireFields(
+            JsonElement element,
+            string source,
+            IReadOnlyList<string> required,
+            IReadOnlyList<string> optional)
         {
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var property in element.EnumerateObject())
             {
-                if (!fields.Contains(property.Name, StringComparer.Ordinal))
+                if (!required.Contains(property.Name, StringComparer.Ordinal)
+                    && !optional.Contains(property.Name, StringComparer.Ordinal))
                 {
                     throw new InvalidDataException($"{source} has an unexpected field '{property.Name}'.");
                 }
@@ -447,7 +541,7 @@ namespace MultiImageClient
                     throw new InvalidDataException($"{source} repeats the field '{property.Name}'.");
                 }
             }
-            var missing = fields.FirstOrDefault(field => !seen.Contains(field));
+            var missing = required.FirstOrDefault(field => !seen.Contains(field));
             if (missing != null)
             {
                 throw new InvalidDataException($"{source} is missing the field '{missing}'.");

@@ -1,6 +1,20 @@
 # Splitting one prompt into several images
 
-Settled 2026-11-03. Updated 2026-11-10 (results group by image generator), 2026-11-19 (inline Stage-1 text step, parallel multi-writer splits up to 4 per account, explicit intermediate review tray with independent child image model selection and bail, feed split-group round-trip controls, and configurable writer models in personal configuration version 6), and **2026-11-20 (on-demand multi-page series contact sheets, copy-all-pages, OpenAI JSON user-message fix, expanded parallel split/rewrite concurrency, duplicate in-flight guard + cancel-running, and optional Stage-1 direct auto-render persisted in personal configuration version 7)**.
+Settled 2026-11-03. Updated 2026-11-10 (results group by image generator), 2026-11-19 (inline Stage-1 text step, parallel multi-writer splits up to 4 per account, explicit intermediate review tray with independent child image model selection and bail, feed split-group round-trip controls, and configurable writer models in personal configuration version 6), and **2026-11-20 (on-demand multi-page series contact sheets, copy-all-pages, OpenAI JSON user-message fix, expanded parallel split/rewrite concurrency, duplicate in-flight guard + cancel-running, optional Stage-1 direct auto-render persisted in personal configuration version 7, and shared series aspect ratio suggestions with per-card `Series AR` control)**.
+
+## Owner decision (2026-11-20): consistent series aspect ratio (`shape` + per-card `Series AR`)
+
+Production audit of 25 split groups across AVE and Vibecoders showed 21 of 25 (84%) left `output AR` on `auto`, producing mixed aspect ratios in 40 of 93 per-generator series (43%) and mid-story orientation flips in 26 of 93 (28%), versus 0% mismatches when an explicit shape was set.
+
+1. **Splitter frame awareness and recommendation (`PromptSplit.cs`, `POST /api/prompt/split`):**
+   - `POST /api/prompt/split` accepts `shape` (`auto` or any `UiShapeMapping.Shapes` key, validated fail-closed) and passes both `shape` and `imageAttached` into `PromptSplit.BuildUserMessage`.
+   - `PromptSplit.SystemPrompt` and `PromptSplit.BuildUserMessage` add `"shape"` (`"square" | "landscape" | "portrait" | "wide" | "tall" | "auto"`) to the strict JSON reply contract.
+   - When the user selected a fixed composer `output AR`, the splitter composes every page for that frame and returns that shape. When `output AR` is `auto` with no attached image, the splitter chooses one consistent shared shape for continuous stories/comics/sequences (allowing `"auto"` only for unrelated subjects or 0/1-image replies). When an input image is attached with `output AR = auto`, the splitter keeps `"auto"` (`match input image`).
+   - `ParseReply` requires a valid canonical `"shape"` on every multi-image reply (`imageCount >= 2`) and validates it strictly if present on 0- or 1-image replies. `ParseStored` accepts `"shape"` as optional so legacy stored splits remain readable.
+2. **Per-card editable `Series AR` selector (`prompt-pipeline.js`):**
+   - Every multi-part Stage-1 split card (and **re-render plan** card) displays a `Series AR` dropdown populated from server `cfg.shapes`.
+   - Precedence: (a) an explicit composer `output AR` (`!= "auto"`) always wins; (b) an attached-image `auto` run stays on `match input image` (`auto`) so edit targets (Ideogram 4.5/4.6 Precise Edit, Recraft, `grok-web chat`) remain compatible; (c) otherwise, a text-only `auto` split initializes `Series AR` to the splitter's `suggestedShape` (labeled `(suggested)`), and auto-render submits that shape automatically.
+   - The user may change `Series AR` to any shape or back to `auto (vary per page)` before rendering (or re-render the same plan in another shape at zero LLM cost). Card-level `aspectIncompatible` checks follow the card's `Series AR`.
 
 ## Owner decisions (2026-11-20): direct auto-render, OpenAI JSON fix, and parallel split reliability
 

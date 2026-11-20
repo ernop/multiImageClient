@@ -177,6 +177,7 @@ let favoriteMutationError = null;
 let visibilityServerVersion = "";
 let hiddenPromptJobIds = new Set();
 let hiddenImageKeys = new Set();
+let shapeOptions = [];
 let visibilityMutation = null;
 let vibecodersAvailable = false;
 let fableBotAvailable = false;
@@ -640,11 +641,12 @@ async function loadConfig() {
   // monospace font, so NBSP padding between text and ratio forms a wide
   // gutter with the ratio column right-aligned. auto has no ratio and stays
   // a plain label (it also swaps to "match input image" with an input).
-  const ratioShapes = cfg.shapes.filter((s) => s.ratio);
+  shapeOptions = Array.isArray(cfg.shapes) ? cfg.shapes : [];
+  const ratioShapes = shapeOptions.filter((s) => s.ratio);
   const shapeTextWidth = Math.max(0, ...ratioShapes.map((s) => s.text.length));
   const shapeRatioWidth = Math.max(0, ...ratioShapes.map((s) => s.ratio.length));
   const shapeGutter = 5;
-  fillSelect(el("opt-shape"), cfg.shapes.map((s) => s.ratio
+  fillSelect(el("opt-shape"), shapeOptions.map((s) => s.ratio
     ? {
         ...s,
         displayLabel: s.text

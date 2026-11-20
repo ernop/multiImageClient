@@ -391,6 +391,13 @@ namespace MultiImageClient
                     return Results.BadRequest(new { error = identityError });
                 }
                 var identityKey = PromptExchangeIdentityKey(authUser, actorDisplay);
+                var imageAttached = form["imageAttached"].ToString() == "true";
+                var requestedShape = form["shape"].ToString().Trim().ToLowerInvariant();
+                if (requestedShape.Length == 0) requestedShape = "auto";
+                if (!UiShapeMapping.IsKnownShape(requestedShape))
+                {
+                    return Results.BadRequest(new { error = $"Unknown output shape '{requestedShape}'." });
+                }
                 int partBudget;
                 try
                 {
@@ -409,7 +416,7 @@ namespace MultiImageClient
                         partBudget = PromptSplit.PartBudget(
                             keys,
                             ParseGeneratorExtraTexts(form, keys),
-                            imageAttached: form["imageAttached"].ToString() == "true");
+                            imageAttached: imageAttached);
                     }
                 }
                 catch (InvalidDataException ex)
@@ -421,7 +428,13 @@ namespace MultiImageClient
                 {
                     return Results.Conflict(new { error = busy });
                 }
-                var userMessage = PromptSplit.BuildUserMessage(instruction, styleNote, partBudget, prompt);
+                var userMessage = PromptSplit.BuildUserMessage(
+                    instruction,
+                    styleNote,
+                    partBudget,
+                    prompt,
+                    requestedShape,
+                    imageAttached);
                 var exchange = community.StartClaudePromptExchange(
                     identityKey,
                     actorDisplay,
@@ -474,6 +487,7 @@ namespace MultiImageClient
                     partBudget,
                     imageCount = outcome.Plan.ImageCount,
                     reason = outcome.Plan.Reason,
+                    suggestedShape = outcome.Plan.SuggestedShape,
                     images = outcome.Plan.Parts.Select(part => new { title = part.Title, prompt = part.Prompt }),
                 });
             });
@@ -540,6 +554,7 @@ namespace MultiImageClient
                     error = exchange.Error,
                     imageCount = plan?.ImageCount ?? 0,
                     reason = plan?.Reason ?? "",
+                    suggestedShape = plan?.SuggestedShape,
                     images = plan?.Parts.Select(part => new { title = part.Title, prompt = part.Prompt }).ToArray()
                         ?? Array.Empty<object>(),
                 });

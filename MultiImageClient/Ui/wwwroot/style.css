@@ -4068,6 +4068,45 @@ body.image-viewer-open { overflow: hidden; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.stage1-series-ar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--bg);
+  color: #000;
+}
+.stage1-series-ar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #000;
+}
+.stage1-series-ar-label strong {
+  font-size: 13px;
+  font-weight: 800;
+  color: #000;
+}
+.stage1-series-ar-select {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--card);
+  color: #000;
+}
+.stage1-series-ar-note {
+  font-size: 12px;
+  font-weight: 600;
+  color: #000;
+}
 .stage1-child-picker {
   margin-top: auto;
   display: flex;

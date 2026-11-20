@@ -412,9 +412,90 @@ function removeStage1Card(cardState) {
   updateStage1TrayHeader();
 }
 
+function stage1AvailableShapes() {
+  if (Array.isArray(shapeOptions) && shapeOptions.length > 0) {
+    return shapeOptions;
+  }
+  const select = el("opt-shape");
+  if (!select) return [];
+  return [...select.options].map((opt) => ({
+    key: opt.value,
+    label: opt.dataset.defaultLabel || opt.textContent || opt.value,
+    inputLabel: opt.dataset.inputLabel || opt.textContent || opt.value,
+  }));
+}
+
+function isKnownShapeKey(key) {
+  return typeof key === "string" && stage1AvailableShapes().some((s) => s.key === key);
+}
+
+function stage1ShapeLabel(key, hasImage) {
+  const entry = stage1AvailableShapes().find((s) => s.key === key);
+  if (!entry) return key || "auto";
+  if (key === "auto") {
+    return hasImage ? (entry.inputLabel || "match input image") : "auto (vary per page)";
+  }
+  return entry.label || key;
+}
+
+function isMultiPartSplitCard(cardState) {
+  return cardState?.kind === "split" && (cardState.plan?.imageCount ?? 0) >= 2;
+}
+
+function resolveInitialSeriesShape(requestedShape, hasImage, suggestedShape) {
+  if (requestedShape && requestedShape !== "auto" && isKnownShapeKey(requestedShape)) {
+    return requestedShape;
+  }
+  if (hasImage) {
+    return "auto";
+  }
+  if (suggestedShape && isKnownShapeKey(suggestedShape)) {
+    return suggestedShape;
+  }
+  return "auto";
+}
+
+function effectiveShapeForCard(cardState) {
+  if (isMultiPartSplitCard(cardState) && isKnownShapeKey(cardState.selectedShape)) {
+    return cardState.selectedShape;
+  }
+  return el("opt-shape")?.value || "auto";
+}
+
+function seriesShapeNoteText(cardState) {
+  const selected = effectiveShapeForCard(cardState);
+  const hasImage = cardState.images.length > 0;
+  const requested = cardState.requestedShape || "auto";
+  const suggested = isKnownShapeKey(cardState.plan?.suggestedShape)
+    ? cardState.plan.suggestedShape
+    : null;
+  if (cardState.shapeCustomized) {
+    if (selected === "auto") {
+      return hasImage ? "matches attached image" : "each image model picks per page";
+    }
+    return "applies to every page";
+  }
+  if (requested !== "auto" && selected === requested) {
+    if (suggested && suggested !== "auto" && suggested !== requested) {
+      return `from composer (model suggested ${stage1ShapeLabel(suggested, false)})`;
+    }
+    return "from composer output AR";
+  }
+  if (hasImage && selected === "auto") {
+    return "matches attached image";
+  }
+  if (suggested && suggested !== "auto" && selected === suggested) {
+    return "applies to all pages";
+  }
+  if (selected === "auto") {
+    return "each image model picks per page";
+  }
+  return "applies to every page";
+}
+
 function visibleAvailableImageGeneratorsForCard(cardState) {
   const hasImage = cardState.images.length > 0;
-  const explicitAr = el("opt-shape")?.value !== "auto";
+  const explicitAr = effectiveShapeForCard(cardState) !== "auto";
   const listed = new Set(
     [...allGeneratorInputs()]
       .filter((input) => input.dataset.kind !== "describe")
@@ -574,9 +655,58 @@ function refreshAllStage1CardPickers() {
   }
 }
 
+function buildStage1SeriesArRow(cardState) {
+  const row = document.createElement("div");
+  row.className = "stage1-series-ar";
+
+  const label = document.createElement("label");
+  label.className = "stage1-series-ar-label";
+
+  const heading = document.createElement("strong");
+  heading.textContent = "Series AR";
+
+  const select = document.createElement("select");
+  select.className = "stage1-series-ar-select";
+  select.setAttribute("aria-label", `Series aspect ratio for ${cardState.modelLabel}`);
+
+  const hasImage = cardState.images.length > 0;
+  const suggested = isKnownShapeKey(cardState.plan?.suggestedShape)
+    ? cardState.plan.suggestedShape
+    : null;
+  for (const entry of stage1AvailableShapes()) {
+    const opt = document.createElement("option");
+    opt.value = entry.key;
+    const baseLabel = stage1ShapeLabel(entry.key, hasImage);
+    opt.textContent = !hasImage && suggested && suggested !== "auto" && entry.key === suggested
+      ? `${baseLabel} (suggested)`
+      : baseLabel;
+    select.appendChild(opt);
+  }
+  select.value = effectiveShapeForCard(cardState);
+
+  const note = document.createElement("span");
+  note.className = "stage1-series-ar-note";
+  note.textContent = seriesShapeNoteText(cardState);
+
+  select.addEventListener("change", () => {
+    cardState.selectedShape = select.value;
+    cardState.shapeCustomized = true;
+    note.textContent = seriesShapeNoteText(cardState);
+    refreshStage1CardPicker(cardState);
+  });
+
+  label.append(heading, select);
+  row.append(label, note);
+  return row;
+}
+
 function buildStage1ChildPicker(cardState) {
   const picker = document.createElement("div");
   picker.className = "stage1-child-picker";
+
+  if (isMultiPartSplitCard(cardState)) {
+    picker.appendChild(buildStage1SeriesArRow(cardState));
+  }
 
   const head = document.createElement("div");
   head.className = "stage1-child-head";
@@ -666,11 +796,12 @@ async function renderStage1Card(cardState, { auto = false } = {}) {
 
   try {
     if (cardState.kind === "split" && cardState.plan?.imageCount >= 2) {
+      const splitOpts = { ...optsFor(false), shape: effectiveShapeForCard(cardState) };
       const form = new FormData();
       form.append("prompt", cardState.sourcePrompt);
       form.append("user", user);
       form.append("generators", gens.join(","));
-      for (const [name, value] of Object.entries(optsFor(false))) {
+      for (const [name, value] of Object.entries(splitOpts)) {
         form.append(name, value);
       }
       form.append("n", "1");
@@ -704,13 +835,16 @@ async function renderStage1Card(cardState, { auto = false } = {}) {
             split: job.split,
           });
       }
+      const shapeTag = splitOpts.shape && splitOpts.shape !== "auto"
+        ? ` · ${stage1ShapeLabel(splitOpts.shape, cardState.images.length > 0)}`
+        : "";
       cardState.renderHistory.push(
-        `${body.jobs.length} parts × ${gens.map(genLabel).join(", ")}`);
+        `${body.jobs.length} parts${shapeTag} × ${gens.map(genLabel).join(", ")}`);
       setStage1CardActionStatus(
         cardState,
         auto
-          ? `Auto-started ${body.jobs.length} jobs (${gens.map(genLabel).join(", ")}).`
-          : `Started ${body.jobs.length} jobs (${gens.map(genLabel).join(", ")}). Pick other image models to render again, or Bail.`,
+          ? `Auto-started ${body.jobs.length} jobs${shapeTag} (${gens.map(genLabel).join(", ")}).`
+          : `Started ${body.jobs.length} jobs${shapeTag} (${gens.map(genLabel).join(", ")}). Pick other image models to render again, or Bail.`,
         "done");
     } else {
       const promptText = cardState.kind === "rewrite"
@@ -1042,6 +1176,7 @@ async function runStage1Card(cardState) {
         generators: initialGens.join(","),
         generatorExtraTexts: JSON.stringify(generatorExtraTextsFor(initialGens)),
         imageAttached: String(cardState.images.length > 0),
+        shape: cardState.requestedShape || "auto",
       });
       const response = await fetch(apiUrl("api/prompt/split"), {
         method: "POST",
@@ -1059,6 +1194,16 @@ async function runStage1Card(cardState) {
       cardState.plan = body;
       cardState.exchangeId = body.exchangeId;
       cardState.modelLabel = body.modelLabel || cardState.modelLabel;
+      if (body.imageCount >= 2) {
+        cardState.selectedShape = resolveInitialSeriesShape(
+          cardState.requestedShape || "auto",
+          cardState.images.length > 0,
+          body.suggestedShape);
+        cardState.shapeCustomized = false;
+      } else {
+        cardState.selectedShape = null;
+        cardState.shapeCustomized = false;
+      }
       cardState.status = "ready";
     } else {
       const form = new URLSearchParams({
@@ -1178,6 +1323,10 @@ function startStage1Run() {
     return;
   }
 
+  const capturedImages = [...inputImageItems];
+  const capturedOptions = currentOutputOptions(true);
+  const requestedShape = capturedOptions.shape || "auto";
+
   // Prevent accidental duplicate requests for models already running on this exact input.
   const alreadyRunning = [];
   const writersToStart = [];
@@ -1189,7 +1338,8 @@ function startStage1Run() {
       && card.modelKey === modelKey
       && card.sourcePrompt === prompt
       && card.instruction === instruction
-      && card.styleNote === styleNote);
+      && card.styleNote === styleNote
+      && (mode !== "split" || (card.requestedShape || "auto") === requestedShape));
     if (duplicate) alreadyRunning.push(writer);
     else writersToStart.push(writer);
   }
@@ -1204,8 +1354,6 @@ function startStage1Run() {
     stage1RunNote.textContent = `Skipped ${alreadyRunning.map((w) => w.label).join(", ")} (already running for this prompt).`;
   }
 
-  const capturedImages = [...inputImageItems];
-  const capturedOptions = currentOutputOptions(true);
   const revision = promptRewrites.revision;
 
   // Add cards in reverse so Writer 1 appears first at the top-left of the tray.
@@ -1226,6 +1374,9 @@ function startStage1Run() {
       selectedGens: new Set(initialGens),
       autoRender,
       capturedOptions,
+      requestedShape,
+      selectedShape: null,
+      shapeCustomized: false,
       status: "running",
       plan: null,
       rewriteText: "",
@@ -1502,6 +1653,7 @@ function enhanceSplitGroupHeader(group, split, card) {
         ["Original source prompt", record.sourcePrompt],
         ["Split instruction", record.instruction],
         ["Style note", record.styleNote],
+        ["Suggested series AR", record.suggestedShape ? stage1ShapeLabel(record.suggestedShape, false) : ""],
       ];
       for (const [label, value] of fields) {
         if (!value) continue;
@@ -1595,6 +1747,7 @@ function enhanceSplitGroupHeader(group, split, card) {
         .map((node) => node.dataset.gen)
         .filter((key) => key && generators.some((g) => g.key === key && g.available));
       const initialGens = composerGens.length ? composerGens : groupGens;
+      const composerShape = el("opt-shape")?.value || "auto";
       const cardState = {
         id: `s1-${++stage1CardSeq}`,
         kind: "split",
@@ -1607,6 +1760,9 @@ function enhanceSplitGroupHeader(group, split, card) {
         styleNote: record.styleNote || "",
         images: blobs.map((blob, idx) => ({ file: blob, name: `input${idx}.png` })),
         selectedGens: new Set(initialGens),
+        requestedShape: composerShape,
+        selectedShape: resolveInitialSeriesShape(composerShape, blobs.length > 0, record.suggestedShape),
+        shapeCustomized: false,
         status: "ready",
         plan: {
           exchangeId: record.exchangeId,
@@ -1614,6 +1770,7 @@ function enhanceSplitGroupHeader(group, split, card) {
           modelLabel: record.modelLabel || split.modelLabel,
           imageCount: record.imageCount,
           reason: record.reason || split.reason,
+          suggestedShape: record.suggestedShape || null,
           images: record.images,
         },
         rewriteText: "",
