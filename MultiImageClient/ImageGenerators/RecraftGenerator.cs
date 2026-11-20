@@ -40,9 +40,9 @@ namespace MultiImageClient
 
         public ImageGeneratorApiType ApiType => _apiType;
 
-        // Recraft's API appendix (checked 2026-10-12): V4 and V4.1 models,
-        // including Pro, Utility, and Vector, accept 10,000 prompt
-        // characters; V3 and V2 accept 1,000.
+        // Recraft's API appendix (checked 2026-10-12, updated 2026-11-19):
+        // V4 and V4.1 models, including Pro, Utility, Vector, and Flash V2,
+        // accept 10,000 prompt characters; V3 and V2 accept 1,000.
         public static int MaxPromptChars(RecraftModel model) => model switch
         {
             RecraftModel.recraftv2 or RecraftModel.recraftv3 => 1_000,
@@ -51,7 +51,8 @@ namespace MultiImageClient
                 or RecraftModel.recraftv4_1
                 or RecraftModel.recraftv4_1_pro
                 or RecraftModel.recraftv4_1_utility
-                or RecraftModel.recraftv4_1_vector => 10_000,
+                or RecraftModel.recraftv4_1_vector
+                or RecraftModel.recraftv4_1_flash_v2 => 10_000,
             _ => throw new ArgumentOutOfRangeException(nameof(model), model, "No Recraft prompt limit is configured."),
         };
 
@@ -72,6 +73,7 @@ namespace MultiImageClient
             RecraftModel.recraftv4_1_pro => ImageGeneratorApiType.RecraftV41Pro,
             RecraftModel.recraftv4_1_utility => ImageGeneratorApiType.RecraftV41Utility,
             RecraftModel.recraftv4_1_vector => ImageGeneratorApiType.RecraftV41Vector,
+            RecraftModel.recraftv4_1_flash_v2 => ImageGeneratorApiType.RecraftV41FlashV2,
             _ => ImageGeneratorApiType.Recraft,
         };
 
@@ -126,6 +128,10 @@ namespace MultiImageClient
         //   what "reference/guide" means in our UIs.
         public RecraftGenerator(string apiKey, int maxConcurrency, RecraftImageSize size, RecraftStyle style, RecraftVectorIllustrationSubstyle? substyleVector, RecraftDigitalIllustrationSubstyle? substyleDigital, RecraftRealisticImageSubstyle? substyleRealistic, MultiClientRunStats stats, string name, string artistic_level = "", RecraftModel model = RecraftModel.recraftv3, string inputImagePath = null, string sizeOverride = null, int imageCount = 1, int? randomSeed = null, float imageStrength = 0.1f)
         {
+            if (model == RecraftModel.recraftv4_1_flash_v2 && !string.IsNullOrWhiteSpace(inputImagePath))
+            {
+                throw new NotSupportedException("Recraft V4.1 Flash V2 does not support image-to-image.");
+            }
             _inputImagePath = inputImagePath;
             _sizeOverride = sizeOverride;
             _imageCount = Math.Clamp(imageCount, 1, 6);
@@ -184,6 +190,7 @@ namespace MultiImageClient
                 RecraftModel.recraftv4_1_utility => 0.035m,
                 RecraftModel.recraftv4_1_pro => 0.21m,
                 RecraftModel.recraftv4_1_vector => 0.08m,
+                RecraftModel.recraftv4_1_flash_v2 => 0.007m,
                 _ => throw new InvalidOperationException($"No Recraft price is configured for {_model}."),
             };
             return perImage * _imageCount;
@@ -256,6 +263,10 @@ namespace MultiImageClient
                 GenerationResponse generationResult;
                 if (!string.IsNullOrEmpty(_inputImagePath))
                 {
+                    if (_model == RecraftModel.recraftv4_1_flash_v2)
+                    {
+                        throw new NotSupportedException("Recraft V4.1 Flash V2 does not support image-to-image.");
+                    }
                     // Reference image → /images/imageToImage (works on V3 and
                     // V4/V4.1; API-created custom styles are V3-only, so the old
                     // create-style-then-style_id path silently broke on V4.x).

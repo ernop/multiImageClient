@@ -179,10 +179,12 @@ namespace MultiImageClient
         /// itself. They are listed for help/validation completeness only.
         public static readonly string[] ShortNames =
             {
-                "gpt2", "gpt25-sunburst", "gpt25-flare",
+                "gpt2", "gpt25-sunburst", "gpt25-flare", "gpt26-sunburst", "gpt26-flare",
                 "grok-api", "grok-api-pro", "grok-web", "meta-web",
-                "ideogram-v45", "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
-                "recraft", "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
+                "ideogram-v46", "ideogram-v45", "ideogram", "ideogram-v4", "ideogram-v3", "ideogram-v2",
+                "recraft", "recraft-v41-flash",
+                "bfl-flux3", "bfl-flux3-klein",
+                "bfl", "bfl-pro", "bfl-max", "bfl-flex", "bfl-klein4",
                 "bfl-klein9-preview", "bfl-klein9", "bfl-kontext-pro", "bfl-kontext-max",
                 "bfl-1.1-ultra", "bfl-1.1", "bfl-flux-pro", "bfl-dev",
                 "krea", "krea-turbo", "krea-large",
@@ -196,13 +198,19 @@ namespace MultiImageClient
                 case "gpt2": return GptImage2RandomMinimalSafety();
                 case "gpt25-sunburst": case "sunburst": return GptImage25Sunburst_Square();
                 case "gpt25-flare": case "flare": return GptImage25Flare_Square();
+                case "gpt26-sunburst": return GptImage26Sunburst_Square();
+                case "gpt26-flare": return GptImage26Flare_Square();
                 case "grok-api": case "grok": return GrokImagine_Square();
                 case "grok-api-pro": case "grokpro": return GrokImaginePro_Square();
+                case "ideogram-v46": return IdeogramV46_Square();
                 case "ideogram-v45": return IdeogramV45_Square();
                 case "ideogram": case "ideogram-v4": return IdeogramV4_Square();
                 case "ideogram-v3": return IdeogramV3_Square();
                 case "ideogram-v2": return IdeogramV2_Square();
                 case "recraft": return RecraftV41AnyStyle();
+                case "recraft-v41-flash": return RecraftV41FlashV2_Square();
+                case "bfl-flux3": return BFLFlux3_Square();
+                case "bfl-flux3-klein": return BFLFlux3Klein_Square();
                 case "bfl": return BFLFlux2ProPreview_Square();
                 case "bfl-pro": return BFLFlux2Pro_Square();
                 case "bfl-max": return BFLFlux2Max_Square();
@@ -359,6 +367,44 @@ namespace MultiImageClient
                 stats: _stats, name: "",
                 modelId: GptImage2Generator.FlareModelId,
                 apiType: ImageGeneratorApiType.GptImage25Flare);
+
+        private GptImage2Generator GptImage26Sunburst_Square() =>
+            new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
+                sizePool: new[] { "1024x1024" },
+                moderation: "low",
+                qualityPool: new[] { OpenAIGPTImageOneQuality.high },
+                stats: _stats, name: "",
+                modelId: GptImage2Generator.Sunburst26ModelId,
+                apiType: ImageGeneratorApiType.GptImage26Sunburst);
+
+        private GptImage2Generator GptImage26Flare_Square() =>
+            new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,
+                sizePool: new[] { "1024x1024" },
+                moderation: "low",
+                qualityPool: new[] { OpenAIGPTImageOneQuality.high },
+                stats: _stats, name: "",
+                modelId: GptImage2Generator.Flare26ModelId,
+                apiType: ImageGeneratorApiType.GptImage26Flare);
+
+        private IdeogramV45Generator IdeogramV46_Square() =>
+            new IdeogramV45Generator(_settings.IdeogramApiKey, _concurrency,
+                "2048x2048", IdeogramAPIClient.IdeogramV45Quality.medium, _stats, "v46",
+                apiType: ImageGeneratorApiType.IdeogramV46);
+
+        private BFLGenerator BFLFlux3_Square() =>
+            new BFLGenerator(ImageGeneratorApiType.BFLFlux3, _settings.BFLApiKey,
+                _concurrency, "1:1", false, 1024, 1024, _stats, "flux3",
+                flux3Resolution: "1k");
+
+        private BFLGenerator BFLFlux3Klein_Square() =>
+            new BFLGenerator(ImageGeneratorApiType.BFLFlux3Klein, _settings.BFLApiKey,
+                _concurrency, "1:1", false, 1024, 1024, _stats, "flux3-klein",
+                flux3Resolution: "1k");
+
+        private RecraftGenerator RecraftV41FlashV2_Square() =>
+            new RecraftGenerator(_settings.RecraftApiKey, _concurrency,
+                RecraftImageSize._1024x1024, RecraftStyle.any, null, null, null,
+                _stats, "recraft-v41-flash", model: RecraftModel.recraftv4_1_flash_v2);
 
         private GptImage2Generator GptImage2HighSquare() =>
             new GptImage2Generator(_settings.OpenAIApiKey, _concurrency,

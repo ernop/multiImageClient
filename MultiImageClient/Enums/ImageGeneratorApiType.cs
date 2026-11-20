@@ -128,6 +128,25 @@ namespace MultiImageClient
         // Precise Edit for attached images. Distinct from IdeogramV4.
         IdeogramV45 = 52,
 
+        // OpenAI GPT-Image-2.6 (released 2026-11-04): same Images API contract
+        // as 2.5 with quality tiers up to max and multi-input /edits.
+        GptImage26Sunburst = 53,
+        GptImage26Flare = 54,
+        GptImage26SunburstEdit = 55,
+        GptImage26FlareEdit = 56,
+
+        // Ideogram 4.6 (released 2026-11-19): v2 Generate (up to 4K) and
+        // Precise Edit.
+        IdeogramV46 = 57,
+
+        // Black Forest Labs FLUX 3 family (released 2026-10): native multimodal
+        // text-to-image and multi-reference editing with 1k/2k/4k/match_input.
+        BFLFlux3 = 58,
+        BFLFlux3Klein = 59,
+
+        // Recraft V4.1 Flash V2 (released 2026-11): fast low-cost 1K text-to-image.
+        RecraftV41FlashV2 = 60,
+
         WorkflowMock = 1000,
     }
 }

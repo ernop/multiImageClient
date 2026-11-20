@@ -253,6 +253,18 @@ namespace BFLAPIClient
             return GenerateAndWaitForResultAsync("flux-2-klein-9b-preview", request);
         }
 
+        // ---------- FLUX 3 (latest generation) ----------
+
+        public Task<GenerationResponse> GenerateFlux3Async(Flux3Request request)
+        {
+            return GenerateAndWaitForResultAsync("flux-3-image", request);
+        }
+
+        public Task<GenerationResponse> GenerateFlux3KleinAsync(Flux3Request request)
+        {
+            return GenerateAndWaitForResultAsync("flux-3-image-klein", request);
+        }
+
         // ---------- FLUX.1 Kontext (text + image editing) ----------
         // Separate shape because Kontext is edit-oriented: prompt + input_image +
         // aspect_ratio, no raw width/height.

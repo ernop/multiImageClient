@@ -148,16 +148,19 @@ const split = index => ({
       old.version = 4;
       delete old.promptTools.splitInstruction;
       delete old.promptTools.splitStyleNote;
+      delete old.promptTools.models;
       const migrated = normalizeImportedPersonalConfiguration(old).promptTools;
-      if (migrated.splitInstruction !== '' || migrated.splitStyleNote !== '') throw Error('migration');
+      if (migrated.splitInstruction !== '' || migrated.splitStyleNote !== '' || migrated.models.split !== '') throw Error('migration');
       const changes = [
         c => { c.promptTools.splitInstruction = 42; },
         c => { c.promptTools.splitInstruction = 'x'.repeat(4001); },
         c => { c.promptTools.splitStyleNote = 'x'.repeat(2001); },
         c => { delete c.promptTools.splitStyleNote; },
+        c => { delete c.promptTools.models; },
+        c => { c.promptTools.models.advice = 'not-a-real-model'; },
         c => { c.promptTools.surprise = ''; },
         c => { c.version = 4; },
-        c => { c.version = 6; },
+        c => { c.version = 7; },
       ];
       for (const change of changes) {
         const invalid = structuredClone(config);

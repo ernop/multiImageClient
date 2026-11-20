@@ -65,11 +65,12 @@ namespace MultiImageClient
         private const string LocalVisibilityActor = "local-instance-owner";
 
         // The grok-web chat door sends no aspect ratio, like the
-        // source-sized Recraft and Ideogram 4.5 image paths.
+        // source-sized Recraft and Ideogram 4.5/4.6 image paths.
         private static bool SupportsImageAspectOverride(string key)
             => UiJobRunner.IsImageCapable(key)
                 && !UiJobRunner.IsRecraftKey(key)
                 && key != UiJobRunner.KeyIdeogramV45
+                && key != UiJobRunner.KeyIdeogramV46
                 && key != UiJobRunner.KeyGrokWebChat;
 
         // Default anti-murk guidance appended to every gpt-image-2 prompt while
@@ -449,12 +450,16 @@ namespace MultiImageClient
                         generatorKeys = new[]
                         {
                             UiJobRunner.KeyGoogle,
+                            UiJobRunner.KeyGpt26Sunburst,
+                            UiJobRunner.KeyGpt26Flare,
                             UiJobRunner.KeyGpt25Sunburst,
                             UiJobRunner.KeyGpt25Flare,
                             UiJobRunner.KeyGrokWeb,
                             UiJobRunner.KeyGrokApiPro,
+                            UiJobRunner.KeyIdeogramV46,
                             UiJobRunner.KeyIdeogramV45,
                             UiJobRunner.KeyIdeogram,
+                            UiJobRunner.KeyBflFlux3,
                         },
                     },
                     new
@@ -490,7 +495,8 @@ namespace MultiImageClient
                         name = "text ok",
                         generatorKeys = new[]
                         {
-                            UiJobRunner.KeyGpt1,
+                            UiJobRunner.KeyGpt26Sunburst,
+                            UiJobRunner.KeyGpt26Flare,
                             UiJobRunner.KeyGooglePro,
                             UiJobRunner.KeyGoogle,
                             UiJobRunner.KeyGpt2,
@@ -498,6 +504,7 @@ namespace MultiImageClient
                             UiJobRunner.KeyGrokApiPro,
                             UiJobRunner.KeyGrokApi,
                             UiJobRunner.KeyGrokWebChat,
+                            UiJobRunner.KeyBflFlux3,
                             UiJobRunner.KeyBflFlux2Max,
                             UiJobRunner.KeyRecraftV41Vector,
                             UiJobRunner.KeyBflKontextMax,
@@ -506,20 +513,24 @@ namespace MultiImageClient
                             UiJobRunner.KeyRecraftV4,
                             UiJobRunner.KeyRecraftV41Pro,
                             UiJobRunner.KeyRecraftV41Utility,
+                            UiJobRunner.KeyRecraftV41Flash,
                             UiJobRunner.KeyRecraft,
                             UiJobRunner.KeyIdeogramV3,
                             UiJobRunner.KeyIdeogram,
                             UiJobRunner.KeyIdeogramV45,
+                            UiJobRunner.KeyIdeogramV46,
                         },
                     },
                 };
-                // Display order: gpt-image-2, grok-*, ideogram, recraft, then the
-                // rest; unavailable targets (missing keys, gated local models)
-                // sink to the end via the stable OrderBy below.
+                // Display order: gpt-image-2.6/2/2.5, grok-*, ideogram, recraft,
+                // BFL, then the rest; unavailable targets sink to the end via
+                // the stable OrderBy below.
                 var generators = new[]
                 {
+                    new { key = UiJobRunner.KeyGpt26Sunburst, label = "gpt-image-2.6 sunburst", detail = "OpenAI's newest flagship image model (released 2026-11-04): strongest editing precision, instruction following, and text rendering. /edits when an image is attached, /generations otherwise; same size envelope and streaming as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
+                    new { key = UiJobRunner.KeyGpt26Flare, label = "gpt-image-2.6 flare", detail = "OpenAI's fast everyday GPT Image 2.6 tier (released 2026-11-04): quicker and cheaper than sunburst with the same API surface. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
                     new { key = UiJobRunner.KeyGpt2, label = "gpt-image-2", detail = "OpenAI. /edits when an image is attached, /generations otherwise. Accepts up to 4 ordered input images (other selected generators only receive the first). The default output AR matches the primary attached source; explicit AR choices override it." },
-                    new { key = UiJobRunner.KeyGpt25Sunburst, label = "gpt-image-2.5 sunburst", detail = "OpenAI's most capable image model (released 2026-09-08): strongest editing precision, instruction following, and text rendering. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
+                    new { key = UiJobRunner.KeyGpt25Sunburst, label = "gpt-image-2.5 sunburst", detail = "OpenAI's previous flagship image model (released 2026-09-08): strong editing precision, instruction following, and text rendering. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
                     new { key = UiJobRunner.KeyGpt25Flare, label = "gpt-image-2.5 flare", detail = "OpenAI's fast everyday GPT Image 2.5 tier (released 2026-09-08): quicker and cheaper than sunburst with the same API surface. /edits when an image is attached, /generations otherwise; same size envelope as gpt-image-2 plus quality tiers xhigh and max. Accepts up to 4 ordered input images." },
                     new { key = UiJobRunner.KeyGrokWeb, label = "grok-web pro", detail = "grok.com cookie session. Text-to-image uses the imagine WebSocket; attached images use imagine-image-edit over app-chat. Auto edits inherit the source shape. Text-to-image auto requests square 1:1 because the WebSocket has no prompt-aware auto and Grok's own default is 2:3. Side-by-side mode requests up to 4 images." },
                     new { key = UiJobRunner.KeyGrokWebChat, label = "grok-web chat", detail = "grok.com cookie session, chat-message door. Your prompt goes to a chat model (grok-3) as a normal message, and the model calls grok.com's image tool. Without an image it generates from the text and chooses the shape itself; this door sends no aspect ratio, so an explicit AR has no effect. With an image the upload rides the message and the model edits it via imagine-image-edit; an explicit AR cannot be combined with an attached image. Slower than grok-web pro because the chat model reasons first." },
@@ -528,17 +539,21 @@ namespace MultiImageClient
                     new { key = UiJobRunner.KeyKrea, label = "Krea 2 Medium", detail = "Krea's own foundation image model, not an aggregated third-party model. Best for expressive illustration and stable general use. An attached image is sent as a 0.6-strength style reference; auto matches its nearest native aspect ratio. The API currently accepts 1K only, so detail has no effect. n runs separate generations." },
                     new { key = UiJobRunner.KeyKreaTurbo, label = "Krea 2 Medium Turbo", detail = "Krea's fastest and least expensive Krea 2 variant. An attached image is sent as a 0.6-strength style reference. The API currently accepts 1K only; n runs separate generations." },
                     new { key = UiJobRunner.KeyKreaLarge, label = "Krea 2 Large", detail = "Krea's highest-fidelity Krea 2 variant, strongest for photorealism, raw texture, grain, and expressive styles. An attached image is sent as a 0.6-strength style reference. The API currently accepts 1K only; n runs separate generations." },
+                    new { key = UiJobRunner.KeyIdeogramV46, label = "Ideogram 4.6", detail = "Ideogram 4.6, released 2026-11-19. Without an attachment it uses Generate: standard and high produce 2K ($0.03/$0.06/$0.10), and max produces native 4K ($0.06/$0.12/$0.20). With attachments it uses Precise Edit (first image edited at its own size, up to four more references; explicit AR is unavailable). Prompt limit is 10,000 characters; n runs separate generations." },
                     new { key = UiJobRunner.KeyIdeogramV45, label = "Ideogram 4.5", detail = "Ideogram 4.5, released 2026-09-30. Without an attachment it uses Generate. Auto lets Ideogram choose a 2K size from the prompt. Explicit shapes use published 2K sizes. With attachments it uses Precise Edit. The first image is edited at its own size, and unchanged pixels stay exact. Up to four more images are sent as references. Explicit AR is unavailable for image jobs. Quality sends low, medium, or high; xhigh and max send high. Detail has no effect. n runs separate generations." },
                     new { key = UiJobRunner.KeyIdeogram, label = "Ideogram 4.0", detail = "Ideogram 4.0. Without an attachment it uses Generate; with one it uses Remix and lets Ideogram choose source influence from the instruction. Auto matches the source to the nearest published 2K resolution; explicit shape overrides it. Detail has no effect. n runs separate generations." },
                     new { key = UiJobRunner.KeyIdeogramV3, label = "Ideogram V3", detail = "Ideogram 3.0. A pasted image is used as a style reference and the default AR matches the source; explicit AR choices and n up to 8 are honored. Without an image it runs text-to-image (auto = square)." },
                     new { key = UiJobRunner.KeyIdeogramV2, label = "Ideogram V2", detail = "Ideogram 2.0 through the legacy text-to-image endpoint. Shape and Magic Prompt are honored; detail and n have no effect. An attached image is not sent." },
                     new { key = UiJobRunner.KeyRecraft, label = "Recraft V4.1", detail = "Recraft V4.1. A pasted image runs image-to-image and inherently keeps the source dimensions. That endpoint exposes no size override, so Recraft is unavailable for image jobs with an explicit output AR. n up to 6." },
+                    new { key = UiJobRunner.KeyRecraftV41Flash, label = "Recraft V4.1 Flash V2", detail = "Recraft's fast, low-cost 1K raster model ($0.007/image). Text-to-image only (Recraft does not support image-to-image on Flash V2). Prompt limit is 10,000 characters; n up to 6." },
                     new { key = UiJobRunner.KeyRecraftV41Utility, label = "Recraft V4.1 Utility", detail = "Simpler, more predictable V4.1 raster model with flatter lighting and front-facing compositions. Standard 1MP class; n up to 6. Image-to-image follows source dimensions." },
                     new { key = UiJobRunner.KeyRecraftV41Pro, label = "Recraft V4.1 Pro", detail = "Higher-resolution 4MP-class V4.1 raster model for print-ready output. n up to 6. Image-to-image follows source dimensions." },
                     new { key = UiJobRunner.KeyRecraftV41Vector, label = "Recraft V4.1 Vector", detail = "Native vector generation for logos, typography, icons, and illustration. Raw results are preserved as SVG; cards and contact sheets use raster previews. n up to 6." },
                     new { key = UiJobRunner.KeyRecraftV3, label = "Recraft V3", detail = "Previous-generation raster model (Red Panda), retained for comparison and V3-era behavior. n up to 6. Image-to-image follows source dimensions." },
                     new { key = UiJobRunner.KeyRecraftV4, label = "Recraft V4", detail = "Previous-generation standard raster model, 1MP class. n up to 6. Image-to-image follows source dimensions." },
                     new { key = UiJobRunner.KeyRecraftV4Pro, label = "Recraft V4 Pro", detail = "Previous-generation Pro raster model, 4MP class. n up to 6. Image-to-image follows source dimensions." },
+                    new { key = UiJobRunner.KeyBflFlux3, label = "FLUX 3 Image", detail = "BFL's flagship FLUX 3 model (/v1/flux-3-image). Generation and up to 10-image reference editing. Detail maps to 1K ($0.048), 2K ($0.100), or 4K ($0.607) for text jobs; reference edits cap at 2K or match_input." },
+                    new { key = UiJobRunner.KeyBflFlux3Klein, label = "FLUX 3 Image Klein", detail = "BFL's fast, low-cost FLUX 3 Klein model (/v1/flux-3-image-klein). Generation and up to 10-image reference editing. Detail maps to 1K ($0.009), 2K ($0.014), or 4K ($0.036) for text jobs; reference edits cap at 2K or match_input." },
                     new { key = UiJobRunner.KeyBfl, label = "FLUX.2 Pro Preview", detail = "BFL's latest Pro improvements. Generation and up to 8-reference editing; this UI sends its primary input. Shape + detail map to ~1 MP or ~4 MP. No n support." },
                     new { key = UiJobRunner.KeyBflFlux2Pro, label = "FLUX.2 Pro (pinned)", detail = "Fixed FLUX.2 Pro snapshot for reproducible workflows. Same request contract as Pro Preview; generation and image editing." },
                     new { key = UiJobRunner.KeyBflFlux2Max, label = "FLUX.2 Max", detail = "BFL's highest-quality FLUX.2 model with strongest prompt following, editing consistency, and grounding search." },
@@ -565,9 +580,13 @@ namespace MultiImageClient
                     // blank describe-only jobs get the standard instruction.
                     new { key = UiJobRunner.KeyDescribeIdeogram, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeIdeogram), detail = "Ideogram POST /describe with describe_model_version V_3. Fixed built-in instruction — your prompt text is NOT sent to it. Returns Ideogram's own caption(s) for each attached image. $0.01 per image." },
                     new { key = UiJobRunner.KeyDescribeOpenAi, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeOpenAi), detail = $"OpenAI {OpenAIVisionDescriber.DefaultModel} vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeOpenAiAstra, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeOpenAiAstra), detail = $"OpenAI {OpenAIVisionDescriber.AstraModel} flagship vision model at low reasoning. Higher cost than Sol. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeClaude, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeClaude), detail = $"Anthropic {ClaudeVisionDescriber.DefaultModel} vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeGemini, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGemini), detail = $"Google {GeminiVisionDescriber.DefaultModel} vision. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
-                    new { key = UiJobRunner.KeyDescribeGeminiArgon, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiArgon), detail = $"Google {GeminiVisionDescriber.ArgonModel} vision, Google's flagship reasoning model, at low thinking. Slower and dearer than Flash. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeGeminiNeon, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiNeon), detail = $"Google {GeminiVisionDescriber.NeonModel} flagship vision model at low thinking. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeGeminiCarbon, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiCarbon), detail = $"Google {GeminiVisionDescriber.CarbonModel} balanced vision model at low thinking. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeGeminiHydrogen, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiHydrogen), detail = $"Google {GeminiVisionDescriber.HydrogenModel} fast vision model at low thinking. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
+                    new { key = UiJobRunner.KeyDescribeGeminiArgon, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiArgon), detail = $"Google {GeminiVisionDescriber.ArgonModel} vision at low thinking. Slower and dearer than Flash. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     new { key = UiJobRunner.KeyDescribeGrok, label = GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGrok), detail = $"xAI {GrokVisionDescriber.DefaultModel} vision via api.x.ai. Your prompt is the instruction when present; otherwise the standard describe instruction is used." },
                     // Layout map: analysis target like describe (requires an
                     // attached image, ignores the output-options row) but its
@@ -618,11 +637,13 @@ namespace MultiImageClient
                     maxImagePromptChars = UiJobRunner.MaxPromptCharsFor(g.key, imageSent: true),
                     maxPromptUtf8Bytes = g.key == UiJobRunner.KeyGrokWeb ? (int?)GrokWebClient.MaxPromptUtf8Bytes : null,
                     // The anti-murk daylight suffix applies to the whole OpenAI
-                    // gpt-image family: 2.5 shares gpt-image-2's drift toward
-                    // dark cinematic output without it.
+                    // gpt-image family: 2.5 and 2.6 share gpt-image-2's drift
+                    // toward dark cinematic output without it.
                     defaultExtraText = g.key is UiJobRunner.KeyGpt2
                         or UiJobRunner.KeyGpt25Sunburst
                         or UiJobRunner.KeyGpt25Flare
+                        or UiJobRunner.KeyGpt26Sunburst
+                        or UiJobRunner.KeyGpt26Flare
                         ? DefaultGpt2GuidanceText
                         : "",
                     defaultNotes = "",
@@ -682,18 +703,25 @@ namespace MultiImageClient
                     {
                         available = claudeAdviceProblem == null,
                         availabilityProblem = claudeAdviceProblem,
+                        key = DirectedPromptRewrite.DefaultAdviceKey,
                         model = DirectedPromptRewrite.AdviceModel,
                         label = claudeAdviceLabel,
                     },
-                    promptRewrites = DirectedPromptRewrite.Models.Select(model => new
+                    promptRewrites = DirectedPromptRewrite.Models.Select(model =>
                     {
-                        model,
-                        label = ManagerCatalog.All.Single(m => m.Model == model).Label,
-                        available = DirectedPromptRewrite.AvailabilityProblem(model, settings) == null,
-                        availabilityProblem = DirectedPromptRewrite.AvailabilityProblem(model, settings),
+                        var def = ManagerCatalog.All.Single(m => m.Model == model);
+                        return new
+                        {
+                            key = def.Key,
+                            model,
+                            label = def.Label,
+                            available = DirectedPromptRewrite.AvailabilityProblem(model, settings) == null,
+                            availabilityProblem = DirectedPromptRewrite.AvailabilityProblem(model, settings),
+                        };
                     }),
                     promptCondense = new
                     {
+                        key = DirectedPromptRewrite.DefaultCondenseKey,
                         model = DirectedPromptRewrite.CondenseModel,
                         label = ManagerCatalog.All.Single(m => m.Model == DirectedPromptRewrite.CondenseModel).Label,
                         available = DirectedPromptRewrite.AvailabilityProblem(DirectedPromptRewrite.CondenseModel, settings) == null,
@@ -701,6 +729,27 @@ namespace MultiImageClient
                         minCondensedPromptChars = UiJobRunner.MinCondensedPromptChars,
                     },
                     promptSplit = PromptSplit.Config(settings),
+                    promptAssistantModels = ManagerCatalog.All.Select(m => new
+                    {
+                        key = m.Key,
+                        model = m.Model,
+                        label = m.Label,
+                        provider = m.Provider,
+                        detail = m.Detail,
+                        available = ManagerCatalog.DescribeAvailabilityProblem(m, settings) == null,
+                        availabilityProblem = ManagerCatalog.DescribeAvailabilityProblem(m, settings),
+                        inputUsdPerMTok = m.PricesAt(managerPricesAt).InputUsdPerMTok,
+                        outputUsdPerMTok = m.PricesAt(managerPricesAt).OutputUsdPerMTok,
+                    }),
+                    promptAssistantDefaults = new
+                    {
+                        advice = DirectedPromptRewrite.DefaultAdviceKey,
+                        fleshOutPrimary = DirectedPromptRewrite.DefaultFleshOutPrimaryKey,
+                        fleshOutSecondary = DirectedPromptRewrite.DefaultFleshOutSecondaryKey,
+                        condense = DirectedPromptRewrite.DefaultCondenseKey,
+                        split = PromptSplit.ModelKey,
+                        characterWriter = PromptSubjectSynthesis.DefaultModelKey,
+                    },
                     // Goal loop manager catalog + limits, consumed by goal.html.
                     // Generators come from the `generators` list above (image
                     // kind, available, no goalLoopProblem).
@@ -2189,16 +2238,30 @@ namespace MultiImageClient
             app.MapPost("/api/prompt/advice", async (HttpRequest request) =>
             {
                 var form = await request.ReadFormAsync();
-                var model = form["model"].ToString();
-                var restore = model == "restore";
-                var directed = model.Length > 0 && !restore;
-                var problem = directed ? DirectedPromptRewrite.AvailabilityProblem(model, settings)
-                    : restore ? null : claudeAdviceProblem;
-                if (problem != null) return Results.BadRequest(new { error = problem });
-                if (!directed && !restore) model = DirectedPromptRewrite.AdviceModel;
+                var requestedModel = form["model"].ToString().Trim();
+                var restore = requestedModel == "restore";
+                var rawInstruction = form["instruction"].ToString().Trim();
+                var directed = !restore && rawInstruction.Length == 0;
+                ManagerDefinition? definition = null;
+                if (!restore)
+                {
+                    if (directed && requestedModel.Length == 0)
+                    {
+                        return Results.BadRequest(new { error = "Prompt edit instruction must be between 1 and 4,000 characters" });
+                    }
+                    var modelInput = requestedModel.Length > 0 ? requestedModel : DirectedPromptRewrite.AdviceModel;
+                    definition = DirectedPromptRewrite.ResolveModel(modelInput);
+                    if (definition == null)
+                    {
+                        return Results.BadRequest(new { error = $"Unknown prompt rewrite model '{modelInput}'." });
+                    }
+                    var problem = ManagerCatalog.DescribeAvailabilityProblem(definition, settings);
+                    if (problem != null) return Results.BadRequest(new { error = problem });
+                }
+                var model = restore ? "restore" : definition!.Model;
                 var prompt = form["prompt"].ToString();
                 var instruction = directed ? DirectedPromptRewrite.Instruction
-                    : restore ? "Restore a saved prompt version." : form["instruction"].ToString().Trim();
+                    : restore ? "Restore a saved prompt version." : rawInstruction;
                 if (!restore && string.IsNullOrWhiteSpace(prompt))
                 {
                     return Results.BadRequest(new { error = "prompt is empty" });
@@ -2209,7 +2272,7 @@ namespace MultiImageClient
                 }
                 if (instruction.Length == 0 || instruction.Length > 4000)
                 {
-                    return Results.BadRequest(new { error = "Claude instruction must be between 1 and 4,000 characters" });
+                    return Results.BadRequest(new { error = "Prompt edit instruction must be between 1 and 4,000 characters" });
                 }
                 var authUser = request.HttpContext.Items["micUser"] as string ?? "";
                 if (!TryResolveCreatorName(
@@ -2260,7 +2323,7 @@ namespace MultiImageClient
                     failure = result.Error;
                     if (!directed && !restore && failure.Length == 0 && ClaudeService.DidClaudeRefuse(replacement))
                     {
-                        failure = $"Claude refused to edit this prompt: {replacement}";
+                        failure = $"{definition!.Label} refused to edit this prompt: {replacement}";
                         replacement = "";
                     }
                 }
@@ -2278,7 +2341,9 @@ namespace MultiImageClient
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 if (failure.Length > 0)
                 {
-                    var actionHint = ProviderActionHints.For(UiJobRunner.KeyDescribeClaude, failure);
+                    var actionHint = definition == null
+                        ? null
+                        : ProviderActionHints.ForProvider(definition.Provider, failure);
                     Logger.Log($"UI prompt edit {exchange.Id} failed for '{actorDisplay}': {failure}"
                         + (actionHint != null
                             ? $"\nUI prompt edit next step: {actionHint.Text} -> {actionHint.Url}"
@@ -2293,11 +2358,12 @@ namespace MultiImageClient
                         },
                         statusCode: 502);
                 }
-                Logger.Log($"UI prompt edit {exchange.Id} completed for '{actorDisplay}'.");
+                Logger.Log($"UI prompt edit {exchange.Id} completed for '{actorDisplay}' ({model}).");
                 return Results.Json(new
                 {
                     replacement,
                     model,
+                    modelLabel = definition?.Label ?? "",
                     originalPrompt = prompt,
                     exchangeId = exchange.Id,
                 });
@@ -2312,10 +2378,17 @@ namespace MultiImageClient
             app.MapPost("/api/prompt/condense", async (HttpRequest request) =>
             {
                 var form = await request.ReadFormAsync();
-                var model = DirectedPromptRewrite.CondenseModel;
-                var modelLabel = ManagerCatalog.All.Single(m => m.Model == model).Label;
-                var problem = DirectedPromptRewrite.AvailabilityProblem(model, settings);
+                var requestedModel = form["model"].ToString().Trim();
+                var modelInput = requestedModel.Length > 0 ? requestedModel : DirectedPromptRewrite.CondenseModel;
+                var definition = DirectedPromptRewrite.ResolveModel(modelInput);
+                if (definition == null)
+                {
+                    return Results.BadRequest(new { error = $"Unknown prompt condense model '{modelInput}'." });
+                }
+                var problem = ManagerCatalog.DescribeAvailabilityProblem(definition, settings);
                 if (problem != null) return Results.BadRequest(new { error = problem });
+                var model = definition.Model;
+                var modelLabel = definition.Label;
                 var prompt = UiJobRunner.PromptFromFormField(form["prompt"].ToString());
                 if (prompt.Length == 0)
                 {
@@ -2379,7 +2452,7 @@ namespace MultiImageClient
                         return Results.Json(Reply(stored, reused: true));
                     }
                 }
-                var flightKey = $"{identityKey}\n{instruction}\n{prompt}";
+                var flightKey = $"{identityKey}\n{model}\n{instruction}\n{prompt}";
                 if (!condenseInFlight.TryAdd(flightKey, 0))
                 {
                     return Results.Conflict(new
@@ -2443,7 +2516,7 @@ namespace MultiImageClient
                         DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     if (failure.Length > 0)
                     {
-                        var actionHint = ProviderActionHints.For(UiJobRunner.KeyDescribeClaude, failure);
+                        var actionHint = ProviderActionHints.ForProvider(definition.Provider, failure);
                         Logger.Log($"UI prompt condense {exchange.Id} failed for '{actorDisplay}': {failure}"
                             + (actionHint != null
                                 ? $"\nUI prompt condense next step: {actionHint.Text} -> {actionHint.Url}"
@@ -2470,14 +2543,19 @@ namespace MultiImageClient
                 }
             });
 
-            // Asks Opus 5.5 whether the prompt serves better as several images
-            // and stores its plan. The browser then submits the plan to
-            // /api/jobs, which makes one job per part. Every press asks again.
-            // See docs/prompt-split-prd.md.
+            // Asks the configured writer model (default Opus 5.5) whether the
+            // prompt serves better as several images and stores its plan. The
+            // browser then submits the plan to /api/jobs, which makes one job
+            // per part. Every press asks again. See docs/prompt-split-prd.md.
             app.MapPost("/api/prompt/split", async (HttpRequest request) =>
             {
                 var form = await request.ReadFormAsync();
-                var definition = PromptSplit.Definition;
+                var requestedModel = form["model"].ToString().Trim();
+                var definition = PromptSplit.ResolveModel(requestedModel.Length > 0 ? requestedModel : PromptSplit.ModelKey);
+                if (definition == null)
+                {
+                    return Results.BadRequest(new { error = $"Unknown prompt split model '{requestedModel}'." });
+                }
                 var problem = ManagerCatalog.DescribeAvailabilityProblem(definition, settings);
                 if (problem != null) return Results.BadRequest(new { error = problem });
                 var prompt = UiJobRunner.PromptFromFormField(form["prompt"].ToString());
@@ -2566,7 +2644,7 @@ namespace MultiImageClient
                     + $"{outcome.OutputTokens?.ToString("N0") ?? "unknown"} output tokens";
                 if (outcome.Plan == null)
                 {
-                    var actionHint = PromptSplit.ActionHint(outcome);
+                    var actionHint = PromptSplit.ActionHint(outcome, definition.Provider);
                     Logger.Log($"UI prompt split {exchange.Id} failed for '{actorDisplay}' ({tokens}): {outcome.Error}"
                         + (actionHint != null
                             ? $"\nUI prompt split next step: {actionHint.Text} -> {actionHint.Url}"

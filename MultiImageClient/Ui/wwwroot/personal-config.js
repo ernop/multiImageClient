@@ -9,7 +9,7 @@
   }
 })(typeof globalThis === "object" ? globalThis : this, function createPersonalConfigurationSchema() {
   const Format = "MultiImageClient personalized configuration";
-  const Version = 5;
+  const Version = 6;
   // Owner decision 2026-10-10: version 4 adds Ideogram 4.5 once to each saved
   // default list. The version records that the addition happened, so a later
   // removal stays removed. See docs/ideogram-45-support.md.
@@ -17,6 +17,19 @@
   // Version 5 (2026-11-03) adds the split dialog's instruction and style
   // note. An empty instruction means the server's default instruction.
   // See docs/prompt-split-prd.md.
+  // Version 6 (2026-11-19) adds per-tool model overrides under
+  // promptTools.models. Empty string means the server default for that tool.
+  const PromptAssistantModelSlots = Object.freeze([
+    "advice",
+    "fleshOutPrimary",
+    "fleshOutSecondary",
+    "condense",
+    "split",
+    "characterWriter",
+  ]);
+  function defaultPromptAssistantModels() {
+    return Object.fromEntries(PromptAssistantModelSlots.map((slot) => [slot, ""]));
+  }
   const StorageKey = "mic_personal_configuration_v2";
   const Scopes = new Set(["browser", "account", "hybrid"]);
 
@@ -107,6 +120,7 @@
     if (parsed.version === 2) parsed = migrateVersion2(parsed);
     if (parsed.version === 3) parsed = migrateVersion3(parsed);
     if (parsed.version === 4) parsed = migrateVersion4(parsed);
+    if (parsed.version === 5) parsed = migrateVersion5(parsed);
     if (parsed.version !== Version) {
       throw new Error(
         `stored personal configuration version ${String(parsed.version)} is unsupported; expected ${Version}`);
@@ -154,6 +168,22 @@
     return { ...raw, version: 5, promptTools: { ...raw.promptTools, splitInstruction: "", splitStyleNote: "" } };
   }
 
+  function migrateVersion5(raw) {
+    if (raw?.format !== Format || raw?.version !== 5 ||
+        !raw.promptTools || typeof raw.promptTools !== "object" || Array.isArray(raw.promptTools) ||
+        Object.hasOwn(raw.promptTools, "models")) {
+      throw new Error("invalid version 5 prompt tools");
+    }
+    return {
+      ...raw,
+      version: 6,
+      promptTools: {
+        ...raw.promptTools,
+        models: defaultPromptAssistantModels(),
+      },
+    };
+  }
+
   // A first visit can start on the goal page before the composer writes its
   // complete document. Preserve legacy browser fields during that migration.
   function saveGeneratorPreferences(storage, preferences) {
@@ -195,6 +225,7 @@
           "Fix spelling and obvious typos. Improve organization only where needed, while preserving the meaning and useful detail.",
         splitInstruction: "",
         splitStyleNote: "",
+        models: defaultPromptAssistantModels(),
       },
       spelling: {
         enabled: storage.getItem("mic_mcphee_enabled") !== "false",
@@ -227,6 +258,8 @@
     Format,
     Version,
     StorageKey,
+    PromptAssistantModelSlots,
+    defaultPromptAssistantModels,
     assertRegistry,
     build,
     normalize,
@@ -234,6 +267,7 @@
     migrateVersion2,
     migrateVersion3,
     migrateVersion4,
+    migrateVersion5,
     addVersion4DefaultKey,
     browserFields,
     saveGeneratorPreferences,

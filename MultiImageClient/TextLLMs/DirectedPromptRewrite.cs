@@ -15,7 +15,12 @@ namespace MultiImageClient
     {
         public const string OpusModel = "claude-opus-5-5";
         public const string SonnetModel = "claude-sonnet-5-5";
-        // Anthropic Messages only; this area must not offer OpenAI models.
+        public const string DefaultAdviceKey = ManagerCatalog.KeyClaudeOpus55;
+        public const string DefaultFleshOutPrimaryKey = ManagerCatalog.KeyClaudeOpus55;
+        public const string DefaultFleshOutSecondaryKey = ManagerCatalog.KeyClaudeSonnet55;
+        public const string DefaultCondenseKey = ManagerCatalog.KeyClaudeSonnet55;
+        // Default two quick-button models for flesh-out; any model in
+        // ManagerCatalog.All may be chosen locally in Settings (2026-11-19).
         public static readonly IReadOnlyList<string> Models = new[] { OpusModel, SonnetModel };
         public const string AdviceModel = OpusModel;
         public const string Instruction =
@@ -56,67 +61,67 @@ namespace MultiImageClient
                 + "Return only the condensed prompt.";
         }
 
-        private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromMinutes(5) };
         private static readonly SemaphoreSlim Slots = new(2, 2);
 
-        public static string? AvailabilityProblem(string model, Settings settings) => Models.Contains(model)
-            ? ProviderKeyValidator.DescribeTextKeyProblem(nameof(settings.AnthropicApiKey), settings.AnthropicApiKey)
-            : "Unknown rewrite model.";
+        // Resolves either a ManagerCatalog key (e.g. "manager-gemini-4-neon")
+        // or an exact provider model ID (e.g. "gemini-4-neon"). Returns null
+        // for any unknown identifier.
+        public static ManagerDefinition? ResolveModel(string? modelOrKey)
+            => ManagerCatalog.FindByKeyOrModel(modelOrKey);
 
-        // Claude 5.5 models reject `temperature` with HTTP 400; adaptive thinking keeps its default.
-        public static string BuildRequestJson(string model, string wirePrompt) => JsonSerializer.Serialize(new
+        public static string? AvailabilityProblem(string modelOrKey, Settings settings)
         {
-            model, max_tokens = 16000, system = ClaudeService.PromptAdviceSystemPrompt,
-            messages = new[] { new { role = "user", content = wirePrompt } },
-        });
+            var definition = ResolveModel(modelOrKey);
+            return definition == null
+                ? "Unknown rewrite model."
+                : ManagerCatalog.DescribeAvailabilityProblem(definition, settings);
+        }
 
-        public static async Task<ClaudePromptAdviceResult> RewriteAsync(string model, string instruction, string prompt, Settings settings, CancellationToken ct)
+        public static async Task<ClaudePromptAdviceResult> RewriteAsync(string modelOrKey, string instruction, string prompt, Settings settings, CancellationToken ct)
         {
-            var problem = AvailabilityProblem(model, settings);
+            var definition = ResolveModel(modelOrKey)
+                ?? throw new InvalidOperationException("Unknown rewrite model.");
+            var problem = ManagerCatalog.DescribeAvailabilityProblem(definition, settings);
             if (problem != null) throw new InvalidOperationException(problem);
             if (!await Slots.WaitAsync(0, ct)) throw new InvalidOperationException("Two prompt rewrites are already running. Try again after one finishes.");
             var wire = ClaudeService.BuildPromptAdviceWirePrompt(instruction, prompt);
             var raw = "";
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-                request.Headers.Add("x-api-key", settings.AnthropicApiKey);
-                request.Headers.Add("anthropic-version", "2023-06-01");
-                request.Content = new StringContent(BuildRequestJson(model, wire), Encoding.UTF8, "application/json");
-                using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-                // Bound provider output before buffering JSON in the resident server.
-                await response.Content.LoadIntoBufferAsync(2 * 1024 * 1024, ct);
-                raw = await response.Content.ReadAsStringAsync(ct);
-                if (!response.IsSuccessStatusCode)
-                    throw new InvalidOperationException($"{model} rejected the rewrite (HTTP {(int)response.StatusCode}).");
-                var replacement = ParseReplacement(model, raw);
-                return new ClaudePromptAdviceResult { Model = model, WirePrompt = wire, RawResponse = raw, ResultPrompt = replacement };
+                var client = ManagerCatalog.Build(definition, settings, expectJson: false);
+                var reply = await client.CompleteAsync(
+                    ClaudeService.PromptAdviceSystemPrompt,
+                    new[] { new ManagerChatMessage { Role = "user", Text = wire } },
+                    ct);
+                raw = reply.RawResponse;
+                var replacement = ValidateReply(reply);
+                return new ClaudePromptAdviceResult
+                {
+                    Model = definition.Model,
+                    WirePrompt = wire,
+                    RawResponse = raw,
+                    ResultPrompt = replacement,
+                };
             }
             catch (Exception ex)
             {
-                return new ClaudePromptAdviceResult { Model = model, WirePrompt = wire, RawResponse = raw, Error = ex.Message };
+                return new ClaudePromptAdviceResult
+                {
+                    Model = definition.Model,
+                    WirePrompt = wire,
+                    RawResponse = raw,
+                    Error = ex.Message,
+                };
             }
             finally { Slots.Release(); }
         }
 
-        public static string ParseReplacement(string model, string raw)
+        public static string ValidateReply(ManagerChatReply reply)
         {
-            if (!Models.Contains(model)) throw new InvalidDataException("Unknown rewrite model.");
-            using var document = JsonDocument.Parse(raw);
-            var root = document.RootElement;
-            if (root.GetProperty("model").GetString() != model)
-                throw new InvalidDataException("The provider returned a different rewrite model.");
-            if (root.GetProperty("stop_reason").GetString() != "end_turn")
-                throw new InvalidDataException(AnthropicMessagesManagerClient.DescribeStop(root) ?? "The rewrite did not finish.");
-            var parts = new List<string>();
-            foreach (var part in root.GetProperty("content").EnumerateArray())
-            {
-                var type = part.GetProperty("type").GetString();
-                if (type == "text") parts.Add(part.GetProperty("text").GetString()!);
-                else if (type != "thinking" && type != "redacted_thinking")
-                    throw new InvalidDataException("The rewrite contains unexpected provider content.");
-            }
-            var text = string.Join("\n", parts);
+            if (reply == null) throw new InvalidDataException("The rewrite returned no reply.");
+            if (!string.IsNullOrWhiteSpace(reply.ProviderStop))
+                throw new InvalidDataException($"The rewrite did not finish ({reply.ProviderStop}).");
+            var text = reply.Text;
             if (string.IsNullOrWhiteSpace(text) || text.Length > 100_000)
                 throw new InvalidDataException("The replacement must contain between 1 and 100,000 characters.");
             return text;

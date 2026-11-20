@@ -53,9 +53,11 @@ namespace MultiImageClient
                     or ImageGeneratorApiType.GptImage1Mini or ImageGeneratorApiType.GptImage2
                     or ImageGeneratorApiType.GptImage25Sunburst or ImageGeneratorApiType.GptImage25Flare
                     or ImageGeneratorApiType.GptImage25SunburstEdit or ImageGeneratorApiType.GptImage25FlareEdit
+                    or ImageGeneratorApiType.GptImage26Sunburst or ImageGeneratorApiType.GptImage26Flare
+                    or ImageGeneratorApiType.GptImage26SunburstEdit or ImageGeneratorApiType.GptImage26FlareEdit
                     => ("OpenAIApiKey", settings.OpenAIApiKey),
                 ImageGeneratorApiType.Ideogram or ImageGeneratorApiType.IdeogramV3 or ImageGeneratorApiType.IdeogramV4
-                    or ImageGeneratorApiType.IdeogramV45
+                    or ImageGeneratorApiType.IdeogramV45 or ImageGeneratorApiType.IdeogramV46
                     => ("IdeogramApiKey", settings.IdeogramApiKey),
                 ImageGeneratorApiType.BFLv11 or ImageGeneratorApiType.BFLv11Ultra
                     or ImageGeneratorApiType.BFLFluxPro or ImageGeneratorApiType.BFLFluxDev
@@ -64,6 +66,7 @@ namespace MultiImageClient
                     or ImageGeneratorApiType.BFLFlux2Klein9b or ImageGeneratorApiType.BFLFlux2Klein9bPreview
                     or ImageGeneratorApiType.BFLFluxKontextPro
                     or ImageGeneratorApiType.BFLFluxKontextMax or ImageGeneratorApiType.BFLFlux2ProPreview
+                    or ImageGeneratorApiType.BFLFlux3 or ImageGeneratorApiType.BFLFlux3Klein
                     => ("BFLApiKey", settings.BFLApiKey),
                 ImageGeneratorApiType.Krea2MediumTurbo or ImageGeneratorApiType.Krea2Medium
                     or ImageGeneratorApiType.Krea2Large
@@ -73,6 +76,7 @@ namespace MultiImageClient
                     or ImageGeneratorApiType.RecraftV41Pro
                     or ImageGeneratorApiType.RecraftV41Utility
                     or ImageGeneratorApiType.RecraftV41Vector
+                    or ImageGeneratorApiType.RecraftV41FlashV2
                     => ("RecraftApiKey", settings.RecraftApiKey),
                 ImageGeneratorApiType.GrokImagine or ImageGeneratorApiType.GrokImaginePro
                     or ImageGeneratorApiType.GrokImagineVideo

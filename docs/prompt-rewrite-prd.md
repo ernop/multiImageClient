@@ -1,14 +1,14 @@
 # Directed prompt rewrites
 
-Settled 2026-09-05. Flesh-out models, the advice model, and in-place editing updated 2026-10-06.
+Settled 2026-09-05. Updated 2026-10-06 (defaults Opus 5.5 / Sonnet 5.5, in-place editing) and **2026-11-19 (configurable per-tool models across all providers; see [docs/model-catalog-2026-11.md](model-catalog-2026-11.md))**.
 
 ## Requirements and behavior
 
 | Requirement | Behavior |
 |---|---|
-| Immediate expansion | Two buttons beside **get Claude's advice** start a rewrite without opening a dialog. |
-| Exact model choice | **flesh out · Opus 5.5** sends `claude-opus-5-5`; **flesh out · Sonnet 5.5** sends `claude-sonnet-5-5`. |
-| Anthropic only | The area offers no OpenAI model. The server rejects every other model identifier. |
+| Immediate expansion | Two buttons beside **prompt advice** start a rewrite without opening a dialog. |
+| Configurable model choice (2026-11-19) | Defaults remain **Opus 5.5** (`claude-opus-5-5`) for advice and primary flesh-out and **Sonnet 5.5** (`claude-sonnet-5-5`) for secondary flesh-out and condensing. Settings → **Prompt assistant models** overrides any tool locally with any configured model in `ManagerCatalog.All` (OpenAI, Anthropic, Google, xAI); stored in personal configuration version 6. |
+| Fail-closed validation | The server resolves models strictly against `ManagerCatalog.All` and rejects unknown or unconfigured provider models with HTTP 400. Supersedes the 2026-10-06 Anthropic-only restriction. |
 | Preserve intent | Expand one coherent image prompt while preserving explicit subjects, constraints, counts, names, style, and requested text. |
 | Explore specifics | Develop relevant composition, action, setting, spatial relationships, materials, color, lighting, and expressive details. |
 | Lighting defaults | Use bright daytime lighting unless the source explicitly requests another condition. |

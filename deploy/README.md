@@ -66,7 +66,7 @@ Restart after workstation .NET upgrades, then verify `/api/config` and `/api/sta
 ## Routine production release
 
 This repository currently has no hosted `.github/workflows` pipeline. The
-release gate is the local equivalent:
+release gate is the local equivalent (or run `bash tools/release-gate.sh` to execute all checks plus the clean-worktree Release build in one command):
 
 ```bash
 node --check MultiImageClient/Ui/wwwroot/app.js

@@ -69,7 +69,7 @@ namespace MultiImageClient
             if (!GptImage2Generator.ModelSupportsQuality(modelId, quality))
             {
                 throw new ArgumentException(
-                    $"quality '{quality}' is not supported by {modelId} (xhigh/max are gpt-image-2.5 only)",
+                    $"quality '{quality}' is not supported by {modelId} (xhigh/max are gpt-image-2.5/2.6 only)",
                     nameof(quality));
             }
             _modelId = modelId;

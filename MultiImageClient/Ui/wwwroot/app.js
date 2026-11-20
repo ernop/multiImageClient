@@ -99,6 +99,10 @@ let setActiveJobController = null;
 let claudeAdvice = { available: false, availabilityProblem: "configuration not loaded" };
 let promptCondenseConfig = { available: false, availabilityProblem: "configuration not loaded" };
 let promptSplitConfig = { available: false, availabilityProblem: "configuration not loaded" };
+let serverPromptCondense = { available: false, availabilityProblem: "configuration not loaded" };
+let serverPromptSplit = { available: false, availabilityProblem: "configuration not loaded" };
+let promptAssistantModels = [];
+let promptAssistantDefaults = {};
 let promptRewriteModels = [];
 let generatorPreferences = null;
 const GeneratorPreferencesLocalKey = "mic_generator_preferences_v1";
@@ -115,10 +119,17 @@ let generatorEndpointConfiguration = {
 let describeConfig = { defaultInstruction: "" };
 let notificationConfig = { isDeveloper: false, maxRequestChars: 4000, returnAfterHours: 6 };
 const Gpt2GuidanceEnabledKey = "gpt2GuidanceEnabled";
-// The OpenAI gpt-image family (gpt-image-2 and 2.5): /edits accepts every attached input
-// image; every other generator receives only the first. Mirrors the server's
-// multi-input dispatch in UiJobs.cs.
-const GptImageFamilyKeys = ["gpt2", "gpt25-sunburst", "gpt25-flare"];
+// Targets whose edit/reference endpoints accept multiple ordered input images.
+// Mirrors the server's multi-input dispatch in UiJobs.cs.
+const GptImageFamilyKeys = ["gpt2", "gpt25-sunburst", "gpt25-flare", "gpt26-sunburst", "gpt26-flare"];
+const MultiInputImageKeys = [
+  ...GptImageFamilyKeys,
+  "grok-api-pro",
+  "ideogram-v45",
+  "ideogram-v46",
+  "bfl-flux3",
+  "bfl-flux3-klein",
+];
 // Legacy per-browser keys are migrated into the gpt-image-2 endpoint
 // configuration so an existing explicit off-switch or custom suffix survives.
 const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
@@ -553,13 +564,14 @@ async function loadConfig() {
   fableBotAvailable = !!cfg.fableBot?.available;
   shareLinksAvailable = !!cfg.shareLinks?.available;
   claudeAdvice = cfg.claudeAdvice || claudeAdvice;
-  applyClaudeAdviceAvailability();
-  promptCondenseConfig = cfg.promptCondense;
-  promptSplitConfig = cfg.promptSplit;
-  applyPromptSplitAvailability();
-  promptRewriteModels = cfg.promptRewrites || [];
-  promptRewrites.configure(promptRewriteModels);
-  configureCharacters(cfg.promptSubjects);
+  serverPromptCondense = cfg.promptCondense || serverPromptCondense;
+  serverPromptSplit = cfg.promptSplit || serverPromptSplit;
+  promptAssistantModels = cfg.promptAssistantModels || [];
+  promptAssistantDefaults = cfg.promptAssistantDefaults || {};
+  promptRewriteModels = promptAssistantModels.length ? promptAssistantModels : (cfg.promptRewrites || []);
+  charactersCatalog = cfg.promptSubjects || charactersCatalog;
+  renderPromptAssistantModelSelectors();
+  applyPromptAssistantModels();
   describeConfig = cfg.describe || describeConfig;
   if (Number.isInteger(cfg.maxInputImages) && cfg.maxInputImages >= 1) {
     maxInputImages = cfg.maxInputImages;
@@ -763,11 +775,11 @@ function updateGeneratorCompatibility() {
         cb.value,
         `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`);
     }
-    else if (hasImage && inputImageItems.length > 1 && !GptImageFamilyKeys.includes(cb.value) && imageCapable && !isDescribe)
+    else if (hasImage && inputImageItems.length > 1 && !MultiInputImageKeys.includes(cb.value) && imageCapable && !isDescribe)
     {
       label.title = generatorChooserTitle(
         cb.value,
-        `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (the gpt-image family receives all)`);
+        `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (multi-image edit models receive all)`);
     }
     else if (hasImage && inputImageItems.length > 1 && isDescribe)
     {
@@ -823,6 +835,151 @@ const promptSplitSettings = {
   instruction: storedPersonalField("promptTools")?.splitInstruction ?? "",
   styleNote: storedPersonalField("promptTools")?.splitStyleNote ?? "",
 };
+const promptToolModels = {
+  ...PersonalConfigurationSchema.defaultPromptAssistantModels(),
+  ...(storedPersonalField("promptTools")?.models || {}),
+};
+
+function findPromptAssistantModel(keyOrModel) {
+  if (!keyOrModel) return null;
+  return promptAssistantModels.find((item) => item.key === keyOrModel || item.model === keyOrModel) || null;
+}
+
+function resolvePromptAssistantModel(slot) {
+  const configured = promptToolModels[slot] || "";
+  const effectiveKey = configured || promptAssistantDefaults[slot] || "";
+  const found = findPromptAssistantModel(effectiveKey);
+  if (found) return found;
+  return {
+    key: effectiveKey,
+    model: effectiveKey,
+    label: effectiveKey || "Unconfigured",
+    provider: "",
+    available: false,
+    availabilityProblem: effectiveKey
+      ? `Saved model '${effectiveKey}' is not in the server's catalog.`
+      : "Model catalog not loaded.",
+  };
+}
+
+function formatPromptAssistantModelOption(entry) {
+  const parts = [entry.label];
+  if (entry.provider) parts.push(entry.provider);
+  if (entry.inputUsdPerMTok != null && entry.outputUsdPerMTok != null) {
+    parts.push(`$${entry.inputUsdPerMTok}/$${entry.outputUsdPerMTok}`);
+  }
+  const suffix = entry.available ? "" : " (not set up)";
+  return `${parts.join(" · ")}${suffix}`;
+}
+
+function renderPromptAssistantModelSelectors() {
+  const selects = document.querySelectorAll("#prompt-assistant-models select[data-prompt-model-slot]");
+  for (const select of selects) {
+    const slot = select.dataset.promptModelSlot;
+    const defaultEntry = findPromptAssistantModel(promptAssistantDefaults[slot]);
+    select.replaceChildren();
+    const defOpt = document.createElement("option");
+    defOpt.value = "";
+    defOpt.textContent = defaultEntry
+      ? `Default (${defaultEntry.label})`
+      : "Default";
+    select.appendChild(defOpt);
+    for (const entry of promptAssistantModels) {
+      const opt = document.createElement("option");
+      opt.value = entry.key;
+      opt.textContent = formatPromptAssistantModelOption(entry);
+      opt.disabled = !entry.available && promptToolModels[slot] !== entry.key;
+      if (entry.availabilityProblem) opt.title = entry.availabilityProblem;
+      select.appendChild(opt);
+    }
+    const saved = promptToolModels[slot] || "";
+    if (saved && !findPromptAssistantModel(saved)) {
+      const stale = document.createElement("option");
+      stale.value = saved;
+      stale.textContent = `${saved} (unavailable)`;
+      select.appendChild(stale);
+    }
+    select.value = saved;
+  }
+}
+
+function applyPromptAssistantModels() {
+  if (!promptAssistantModels.length) {
+    applyClaudeAdviceAvailability();
+    promptCondenseConfig = serverPromptCondense;
+    promptSplitConfig = serverPromptSplit;
+    applyPromptSplitAvailability();
+    promptRewrites.configure(promptRewriteModels);
+    if (charactersCatalog) configureCharacters(charactersCatalog);
+    return;
+  }
+  const adviceModel = resolvePromptAssistantModel("advice");
+  claudeAdvice = {
+    key: adviceModel.key,
+    model: adviceModel.model,
+    label: adviceModel.label,
+    provider: adviceModel.provider,
+    available: !!adviceModel.available,
+    availabilityProblem: adviceModel.availabilityProblem || null,
+  };
+  applyClaudeAdviceAvailability();
+
+  const fleshPrimary = resolvePromptAssistantModel("fleshOutPrimary");
+  const fleshSecondary = resolvePromptAssistantModel("fleshOutSecondary");
+  promptRewriteModels = promptAssistantModels;
+  promptRewrites.configure(promptAssistantModels, [fleshPrimary, fleshSecondary]);
+
+  const condenseModel = resolvePromptAssistantModel("condense");
+  promptCondenseConfig = {
+    ...serverPromptCondense,
+    key: condenseModel.key,
+    model: condenseModel.model,
+    label: condenseModel.label,
+    available: !!condenseModel.available,
+    availabilityProblem: condenseModel.availabilityProblem || null,
+  };
+
+  const splitModel = resolvePromptAssistantModel("split");
+  promptSplitConfig = {
+    ...serverPromptSplit,
+    key: splitModel.key,
+    model: splitModel.model,
+    label: splitModel.label,
+    available: !!splitModel.available,
+    availabilityProblem: splitModel.availabilityProblem || null,
+  };
+  applyPromptSplitAvailability();
+  if (charactersCatalog) configureCharacters(charactersCatalog);
+  updatePromptLimitNotice();
+}
+
+for (const select of document.querySelectorAll("#prompt-assistant-models select[data-prompt-model-slot]")) {
+  select.addEventListener("change", () => {
+    const slot = select.dataset.promptModelSlot;
+    promptToolModels[slot] = select.value;
+    applyPromptAssistantModels();
+    try {
+      persistPersonalConfigurationSnapshot();
+      el("prompt-models-status").textContent = "Saved locally in this browser.";
+    } catch (error) {
+      el("prompt-models-status").textContent = `Could not save: ${error.message || error}`;
+    }
+  });
+}
+
+el("prompt-models-reset")?.addEventListener("click", () => {
+  for (const slot of PersonalConfigurationSchema.PromptAssistantModelSlots) {
+    promptToolModels[slot] = "";
+  }
+  renderPromptAssistantModelSelectors();
+  applyPromptAssistantModels();
+  try {
+    persistPersonalConfigurationSnapshot();
+    el("prompt-models-status").textContent = "Reset to server defaults.";
+  } catch (error) {
+    el("prompt-models-status").textContent = `Could not save: ${error.message || error}`;
+  }
+});
 globalAppendText.addEventListener("input", () => {
   updatePromptLimitNotice();
   try {
@@ -1017,6 +1174,7 @@ async function condensePromptFor(keys, fresh) {
   const form = new URLSearchParams({
     user,
     prompt,
+    model: promptCondenseConfig.key || promptCondenseConfig.model || "",
     generators: keys.join(","),
     generatorExtraTexts: JSON.stringify(extraTexts),
     imageAttached: String(hasInputImages()),
@@ -1294,6 +1452,7 @@ function personalConfigurationFields() {
           DefaultClaudeAdviceInstruction,
         splitInstruction: promptSplitSettings.instruction,
         splitStyleNote: promptSplitSettings.styleNote,
+        models: { ...promptToolModels },
       }),
       normalize: normalizeImportedPromptTools,
     },
@@ -1411,11 +1570,28 @@ function normalizeImportedUiSettings(raw) {
   return normalized;
 }
 
+function normalizeImportedPromptAssistantModels(raw) {
+  const slots = PersonalConfigurationSchema.PromptAssistantModelSlots;
+  const models = requireConfigObject(raw, "promptTools.models", [...slots]);
+  const normalized = {};
+  const knownKeys = promptAssistantModels.length
+    ? new Set(promptAssistantModels.map((entry) => entry.key))
+    : null;
+  for (const slot of slots) {
+    const value = requireConfigString(models[slot], `promptTools.models.${slot}`, 100, true);
+    if (value && knownKeys && !knownKeys.has(value)) {
+      throw new Error(`promptTools.models.${slot} references unknown model "${value}"`);
+    }
+    normalized[slot] = value;
+  }
+  return normalized;
+}
+
 function normalizeImportedPromptTools(raw) {
   const promptTools = requireConfigObject(
     raw,
     "promptTools",
-    ["claudeAdviceInstruction", "globalAppendText", "splitInstruction", "splitStyleNote"]);
+    ["claudeAdviceInstruction", "globalAppendText", "splitInstruction", "splitStyleNote", "models"]);
   return {
     globalAppendText: requireConfigString(promptTools.globalAppendText, "promptTools.globalAppendText", 16000, true),
     claudeAdviceInstruction: requireConfigString(
@@ -1425,6 +1601,7 @@ function normalizeImportedPromptTools(raw) {
       false),
     splitInstruction: requireConfigString(promptTools.splitInstruction, "promptTools.splitInstruction", 4000, true),
     splitStyleNote: requireConfigString(promptTools.splitStyleNote, "promptTools.splitStyleNote", 2000, true),
+    models: normalizeImportedPromptAssistantModels(promptTools.models),
   };
 }
 
@@ -1604,15 +1781,18 @@ function normalizeImportedVideoAudio(raw) {
 }
 
 function migratePersonalConfiguration(raw, targetVersion) {
-  const { migrateVersion2, migrateVersion3, migrateVersion4 } = PersonalConfigurationSchema;
+  const { migrateVersion2, migrateVersion3, migrateVersion4, migrateVersion5 } = PersonalConfigurationSchema;
+  if (raw?.version === 5 && targetVersion === ConfigTransferVersion) {
+    return migrateVersion5(raw);
+  }
   if (raw?.version === 4 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion4(raw);
+    return migrateVersion5(migrateVersion4(raw));
   }
   if (raw?.version === 3 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion4(migrateVersion3(raw));
+    return migrateVersion5(migrateVersion4(migrateVersion3(raw)));
   }
   if (raw?.version === 2 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion4(migrateVersion3(migrateVersion2(raw)));
+    return migrateVersion5(migrateVersion4(migrateVersion3(migrateVersion2(raw))));
   }
   if (raw?.version !== 1 || targetVersion !== ConfigTransferVersion) {
     throw new Error(
@@ -1649,12 +1829,12 @@ function migratePersonalConfiguration(raw, targetVersion) {
   const portable = { ...raw };
   delete portable.gptImage2Guidance;
   delete portable.version;
-  return migrateVersion4(migrateVersion3({
+  return migrateVersion5(migrateVersion4(migrateVersion3({
     ...portable,
     version: 3,
     generatorPreferences: preferences,
     promptTools: { ...raw.promptTools, globalAppendText: "" },
-  }));
+  })));
 }
 
 function normalizeImportedPersonalConfiguration(raw) {
@@ -8318,14 +8498,25 @@ function applyClaudeEdit(text, exchangeId) {
 }
 
 function applyClaudeAdviceAvailability() {
+  const label = claudeAdvice.label || "Opus 5.5";
+  promptAdviceBtn.textContent = `prompt advice · ${label}`;
   promptAdviceBtn.disabled = !claudeAdvice.available;
+  const titleEl = el("claude-advice-title");
+  if (titleEl) titleEl.textContent = `Prompt advice · ${label}`;
+  const labelEl = el("claude-advice-instruction-label");
+  if (labelEl) labelEl.textContent = `Tell ${label} what to do with your prompt`;
+  const noteEl = el("claude-advice-note");
+  if (noteEl) {
+    noteEl.textContent =
+      `Your exact current prompt is force-appended after this instruction. ${label} must return only the replacement prompt.`;
+  }
+  claudeAdviceSubmit.textContent = `send to ${label}`;
   if (!claudeAdvice.available) {
     promptAdviceBtn.title =
-      `Claude advice is unavailable: ${claudeAdvice.availabilityProblem || "not configured"}`;
+      `Prompt advice is unavailable: ${claudeAdvice.availabilityProblem || "not configured"}`;
     return;
   }
-  promptAdviceBtn.title = `Give ${claudeAdvice.label} your own editing instruction, with this exact prompt appended as source text`;
-  claudeAdviceSubmit.textContent = `send to ${claudeAdvice.label}`;
+  promptAdviceBtn.title = `Give ${label} your own editing instruction, with this exact prompt appended as source text`;
 }
 
 function buildClaudeAdviceWirePreview() {
@@ -8434,6 +8625,7 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
   claudeAdviceStatus.textContent = `${claudeAdvice.label} is editing…`;
   try {
     const form = new URLSearchParams();
+    form.append("model", claudeAdvice.key || claudeAdvice.model || "");
     form.append("instruction", instruction);
     form.append("prompt", original);
     form.append("user", actor);
@@ -8506,7 +8698,18 @@ let promptSplitRetryJobs = null;
 
 function applyPromptSplitAvailability() {
   const available = !!promptSplitConfig?.available;
+  const label = promptSplitConfig?.label || "Opus 5.5";
   promptSplitBtn.disabled = !available || !!promptSplitRun;
+  const labelEl = el("prompt-split-instruction-label");
+  if (labelEl) labelEl.textContent = `Tell ${label} how to decide`;
+  const noteEl = el("prompt-split-note");
+  if (noteEl) {
+    noteEl.textContent =
+      `Your exact current prompt is appended as source text. ${label} chooses 1 to 8 images. ` +
+      "Each image prompt starts with the same style preface. " +
+      "For 2 or more images, one job per image starts at once, in order.";
+  }
+  promptSplitSubmit.textContent = `ask ${label}`;
   if (!available) {
     promptSplitBtn.title =
       `Splitting is unavailable: ${promptSplitConfig?.availabilityProblem || "not configured"}`;
@@ -8514,8 +8717,7 @@ function applyPromptSplitAvailability() {
   }
   promptSplitBtn.title = promptSplitRun
     ? "A split is running. Its progress shows under the prompt."
-    : `Ask ${promptSplitConfig.label} whether this prompt needs several images, then start one job per image`;
-  promptSplitSubmit.textContent = `ask ${promptSplitConfig.label}`;
+    : `Ask ${label} whether this prompt needs several images, then start one job per image`;
 }
 
 // A split is planned for this exact prompt, these targets, options, and
@@ -8653,6 +8855,7 @@ async function runPromptSplit(request, instruction, styleNote) {
     let plan;
     try {
       const form = new URLSearchParams({
+        model: promptSplitConfig.key || promptSplitConfig.model || "",
         prompt: request.prompt,
         instruction,
         styleNote,
@@ -8829,7 +9032,10 @@ function configureCharacters(catalog) {
     characterModelSelect.appendChild(opt);
   }
   const usable = catalog.models.filter((m) => !m.availabilityProblem);
-  const preferred = usable.find((m) => m.key === catalog.defaultModel) || usable[0];
+  const configuredKey = promptToolModels.characterWriter || catalog.defaultModel;
+  const preferred = usable.find((m) => m.key === configuredKey)
+    || usable.find((m) => m.key === catalog.defaultModel)
+    || usable[0];
   if (preferred) characterModelSelect.value = preferred.key;
   characterWriteBtn.disabled = !preferred;
   characterWriteBtn.title = preferred

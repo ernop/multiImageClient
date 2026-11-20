@@ -15,7 +15,7 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(5),
         };
 
-        public const string DefaultModel = "grok-4.6";
+        public const string DefaultModel = "grok-4.7";
 
         private readonly string _apiKey;
         private readonly string _model;
@@ -50,10 +50,12 @@ namespace MultiImageClient
                 },
                 ["max_output_tokens"] = maxTokens,
                 ["temperature"] = temperature,
+                ["store"] = false,
             };
-            // grok-4.6 reasoning defaults to high and shares the output cap.
-            // Low effort keeps the JSON caption inside DescribeMaxTokens.
-            if (_model.StartsWith("grok-4.6", StringComparison.Ordinal))
+            // grok-4.6 and grok-4.7 reasoning defaults to high and shares the
+            // output cap. Low effort keeps JSON captions inside DescribeMaxTokens.
+            if (_model.StartsWith("grok-4.6", StringComparison.Ordinal)
+                || _model.StartsWith("grok-4.7", StringComparison.Ordinal))
             {
                 payload["reasoning"] = new { effort = "low" };
             }

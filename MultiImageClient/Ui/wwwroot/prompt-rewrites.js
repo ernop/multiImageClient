@@ -9,7 +9,7 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
   const newer = document.getElementById("prompt-history-newer");
   const older = document.getElementById("prompt-history-older");
   const buttons = [...document.querySelectorAll("[data-rewrite-model]")];
-  let catalog = [], busy = false, revision = 0, historyRequest = 0;
+  let catalog = [], activeButtons = null, busy = false, revision = 0, historyRequest = 0;
   let cursors = [null], page = 0, nextCursor = null;
   let lastSubmittedPrompt = null;
   const originalTitle = promptBox.title;
@@ -40,15 +40,21 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
     cursors = [null]; page = 0; nextCursor = null;
   });
 
-  function configure(models) {
-    catalog = models;
-    for (const button of buttons) {
-      const model = catalog.find(item => item.model === button.dataset.rewriteModel);
-      button.disabled = busy || !model?.available;
-      button.title = model?.available
-        ? "Expand the current prompt while preserving its intent and explicit details."
-        : model?.availabilityProblem || "Rewrite configuration is unavailable.";
-    }
+  function configure(models, buttonModels) {
+    catalog = models || [];
+    if (Array.isArray(buttonModels)) activeButtons = buttonModels;
+    buttons.forEach((button, index) => {
+      const assigned = activeButtons?.[index]
+        || catalog.find(item => item.model === button.dataset.rewriteModel || item.key === button.dataset.rewriteModel);
+      if (assigned) {
+        button.dataset.rewriteModel = assigned.model;
+        button.textContent = `flesh out · ${assigned.label}`;
+      }
+      button.disabled = busy || !assigned?.available;
+      button.title = assigned?.available
+        ? `Ask ${assigned.label} to expand the current prompt while preserving its intent and explicit details.`
+        : assigned?.availabilityProblem || "Rewrite configuration is unavailable.";
+    });
     for (const button of list.querySelectorAll("button")) button.disabled = busy;
   }
 
@@ -137,10 +143,10 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
         const heading = document.createElement("h3");
         const condensed = exchange.purpose === "condense";
         const split = exchange.purpose === "split";
-        const modelLabel = catalog.find(item => item.model === exchange.model)?.label || exchange.model;
+        const modelLabel = catalog.find(item => item.model === exchange.model || item.key === exchange.model)?.label || exchange.model;
         const kind = exchange.model === "restore" ? "Restored version"
-          : condensed ? `Condensed for prompt limits · ${exchange.model}`
-          : split ? `Split into images · ${modelLabel}` : exchange.model;
+          : condensed ? `Condensed for prompt limits · ${modelLabel}`
+          : split ? `Split into images · ${modelLabel}` : modelLabel;
         heading.textContent = `${kind} · ${new Date(exchange.requestedAtUnixMs).toLocaleString()}`;
         article.append(heading, version(exchange.originalPrompt,
           split ? "Split source · exact prompt" : "Before this change · exact source", exchange.id, "original"));
@@ -189,9 +195,10 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
     const actor = username(), sourceRevision = revision;
     busy = true;
     configure(catalog);
+    const entry = catalog.find(item => item.model === model || item.key === model);
     status.textContent = model === "restore"
       ? "Restoring saved text…"
-      : `${catalog.find(item => item.model === model).label} is expanding the prompt…`;
+      : `${entry?.label || model} is expanding the prompt…`;
     try {
       const form = new URLSearchParams();
       Object.entries({ model, prompt: original, user: actor, ...extra }).forEach(([key, value]) => form.append(key, value));

@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261103-prompt-split">
+<link rel="stylesheet" href="style.css?v=20261119-models">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261102-mcphee-3-12-2">
 </head>
 <body class="composer-page">
@@ -94,6 +94,42 @@
       image and focus it. Off = the page stays exactly where it was.
       Press <kbd>s</kbd> inside the viewer to toggle instantly.</span>
   </label>
+  <section id="prompt-assistant-models" aria-labelledby="prompt-assistant-models-heading">
+    <div class="settings-subhead">
+      <strong id="prompt-assistant-models-heading">Prompt assistant models</strong>
+      <span>Choose which model runs each prompt tool locally in this browser.</span>
+    </div>
+    <div class="prompt-model-grid">
+      <label class="prompt-model-row" for="prompt-model-advice">
+        <span>Prompt advice</span>
+        <select id="prompt-model-advice" data-prompt-model-slot="advice"></select>
+      </label>
+      <label class="prompt-model-row" for="prompt-model-flesh-primary">
+        <span>Flesh out (1st button)</span>
+        <select id="prompt-model-flesh-primary" data-prompt-model-slot="fleshOutPrimary"></select>
+      </label>
+      <label class="prompt-model-row" for="prompt-model-flesh-secondary">
+        <span>Flesh out (2nd button)</span>
+        <select id="prompt-model-flesh-secondary" data-prompt-model-slot="fleshOutSecondary"></select>
+      </label>
+      <label class="prompt-model-row" for="prompt-model-condense">
+        <span>Condense over-limit</span>
+        <select id="prompt-model-condense" data-prompt-model-slot="condense"></select>
+      </label>
+      <label class="prompt-model-row" for="prompt-model-split">
+        <span>Consider splitting</span>
+        <select id="prompt-model-split" data-prompt-model-slot="split"></select>
+      </label>
+      <label class="prompt-model-row" for="prompt-model-character">
+        <span>Character writer</span>
+        <select id="prompt-model-character" data-prompt-model-slot="characterWriter"></select>
+      </label>
+    </div>
+    <div class="config-transfer-actions">
+      <span id="prompt-models-status" role="status"></span>
+      <button id="prompt-models-reset" type="button">reset to defaults</button>
+    </div>
+  </section>
   <section id="config-transfer" aria-labelledby="config-transfer-heading">
     <div class="settings-subhead">
       <strong id="config-transfer-heading">personal configuration import / export</strong>
@@ -119,7 +155,7 @@
     </div>
     <p class="settings-note" id="config-transfer-note">
       Includes the creating-as name, generator chooser, display and activity settings,
-      prompt tools, personal spelling data and checker settings, inspiration library, viewer behavior, and media preferences.
+      prompt tools and assistant models, personal spelling data and checker settings, inspiration library, viewer behavior, and media preferences.
       It never includes login credentials, cookies, jobs, favorites, characters, or viewed-image history.
     </p>
   </section>
@@ -256,14 +292,14 @@
             <button id="characters-toggle" type="button" aria-expanded="false" aria-controls="characters-panel"
               title="Saved people, pets, places, and things you can drop into any prompt">characters<span id="characters-count"></span></button>
             <button id="prompt-advice" type="button"
-              title="Give Claude your own editing instruction, with this exact prompt appended as source text">get Claude's advice</button>
+              title="Give the configured model your own editing instruction, with this exact prompt appended as source text">prompt advice · Opus 5.5</button>
             <button type="button" data-rewrite-model="claude-opus-5-5" disabled>flesh out · Opus 5.5</button>
             <button type="button" data-rewrite-model="claude-sonnet-5-5" disabled>flesh out · Sonnet 5.5</button>
             <button id="prompt-split" type="button" disabled>consider splitting into multiple images</button>
             <button id="prompt-history-toggle" type="button" aria-expanded="false"
               aria-controls="prompt-rewrite-history">prompt history</button>
             <button id="prompt-advice-undo" type="button" hidden
-              title="Restore the exact prompt from before Claude edited it">undo Claude edit</button>
+              title="Restore the exact prompt from before the model edited it">undo edit</button>
           </div>
         </div>
       </div>
@@ -527,28 +563,28 @@
 <dialog id="claude-advice-dialog">
   <form id="claude-advice-form">
     <div class="compact-dialog-head">
-      <h2>Get Claude's advice</h2>
+      <h2 id="claude-advice-title">Prompt advice · Opus 5.5</h2>
       <button id="claude-advice-close" type="button" aria-label="Close">&times;</button>
     </div>
     <label class="claude-advice-instruction">
-      Tell Claude what to do with your prompt
+      <span id="claude-advice-instruction-label">Tell Opus 5.5 what to do with your prompt</span>
       <textarea id="claude-advice-instruction" rows="6" maxlength="4000"></textarea>
     </label>
-    <p class="compact-dialog-note">
-      Your exact current prompt is force-appended after this instruction. Claude must return only the replacement prompt.
+    <p id="claude-advice-note" class="compact-dialog-note">
+      Your exact current prompt is force-appended after this instruction. Opus 5.5 must return only the replacement prompt.
     </p>
     <details>
       <summary>exact original prompt and message frame</summary>
       <pre id="claude-advice-wire-preview"></pre>
     </details>
     <details id="claude-advice-history">
-      <summary>past Claude exchanges</summary>
+      <summary>past prompt exchanges</summary>
       <div id="claude-advice-history-list"></div>
     </details>
     <div class="compact-dialog-actions">
       <span id="claude-advice-status"></span>
       <button id="claude-advice-cancel" type="button">cancel</button>
-      <button id="claude-advice-submit" type="submit">send to Claude</button>
+      <button id="claude-advice-submit" type="submit">send to Opus 5.5</button>
     </div>
   </form>
 </dialog>
@@ -560,7 +596,7 @@
       <button id="prompt-split-close" type="button" aria-label="Close">&times;</button>
     </div>
     <label class="claude-advice-instruction">
-      Tell Opus 5.5 how to decide
+      <span id="prompt-split-instruction-label">Tell Opus 5.5 how to decide</span>
       <textarea id="prompt-split-instruction" rows="4" maxlength="4000"></textarea>
     </label>
     <div class="prompt-split-field-tools">
@@ -570,7 +606,7 @@
       Style note for every image (optional)
       <textarea id="prompt-split-style" rows="3" maxlength="2000"></textarea>
     </label>
-    <p class="compact-dialog-note">
+    <p id="prompt-split-note" class="compact-dialog-note">
       Your exact current prompt is appended as source text. Opus 5.5 chooses 1 to 8 images.
       Each image prompt starts with the same style preface.
       For 2 or more images, one job per image starts at once, in order.
@@ -922,8 +958,8 @@
 <script src="text-entry.js?v=20261103-replace-fit"></script>
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20261102-mcphee-3-12-2"></script>
-<script src="personal-config.js?v=20261103-prompt-split"></script>
-<script src="prompt-rewrites.js?v=20261103-prompt-split"></script>
+<script src="personal-config.js?v=20261119-models"></script>
+<script src="prompt-rewrites.js?v=20261119-models"></script>
 <script src="generator-toggle.js?v=20260910"></script>
 <script src="generator-chooser.js?v=20261010-ideogram-45-defaults"></script>
     <div id="global-append-control" hidden>
@@ -956,6 +992,6 @@
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261026-prompt-condense"></script>
 <script src="prompt-characters.js?v=20261015-characters"></script>
-<script src="app.js?v=20261107-server-restart"></script>
+<script src="app.js?v=20261119-models"></script>
 </body>
 </html>

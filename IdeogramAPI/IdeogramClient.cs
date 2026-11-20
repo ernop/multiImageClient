@@ -42,10 +42,17 @@ namespace IdeogramAPIClient
 
         private const string IdeogramV45GeneratePath = "/v2/image/generate/ideogram-4-5";
         private const string IdeogramV45PreciseEditPath = "/v2/image/precise-edit/ideogram-4-5";
+        private const string IdeogramV46GeneratePath = "/v2/image/generate/ideogram-4-6";
+        private const string IdeogramV46PreciseEditPath = "/v2/image/precise-edit/ideogram-4-6";
         public const int IdeogramV45MaxPromptChars = 10_000;
+        public const int IdeogramV46MaxPromptChars = 10_000;
         public const int IdeogramV45MaxNumImages = 8;
         public const int IdeogramV45MaxReferenceImages = 4;
         public const long IdeogramV45MaxImageBytes = 50_000_000;
+        private const long IdeogramV46MaxPixels = 4096L * 4096L;
+        private const long IdeogramV462KMaxPixels = 2048L * 2048L;
+        private const int IdeogramV46MinSide = 256;
+        private const int IdeogramV46MaxSide = 8192;
 
         // Text-only Generate accepts only these exact presets; 4.0's 512x1536
         // pair is rejected by 4.5. Source-image sizes follow other rules.
@@ -73,6 +80,52 @@ namespace IdeogramAPIClient
         };
 
         public static bool IsIdeogramV45TextSize(string size) => IdeogramV45TextSizes.Contains(size);
+
+        // Ideogram 4.6 accepts "auto", "auto_2k", "auto_4k", or exact
+        // WIDTHxHEIGHT multiples of 32 with sides in [256, 8192], total pixels
+        // <= 4096*4096, and aspect ratio <= 6:1.
+        public static bool IsIdeogramV46TextSize(string size)
+        {
+            if (size is "auto" or "auto_2k" or "auto_4k")
+            {
+                return true;
+            }
+            return TryParseExactSize(size, out var width, out var height)
+                && width >= IdeogramV46MinSide && width <= IdeogramV46MaxSide
+                && height >= IdeogramV46MinSide && height <= IdeogramV46MaxSide
+                && width % 32 == 0 && height % 32 == 0
+                && (long)width * height <= IdeogramV46MaxPixels
+                && Math.Max(width, height) <= 6L * Math.Min(width, height);
+        }
+
+        public static bool IsIdeogramV464KSize(string? size)
+        {
+            if (string.IsNullOrEmpty(size) || size is "auto" or "auto_2k")
+            {
+                return false;
+            }
+            if (size == "auto_4k")
+            {
+                return true;
+            }
+            return TryParseExactSize(size, out var width, out var height)
+                && (long)width * height > IdeogramV462KMaxPixels;
+        }
+
+        private static bool TryParseExactSize(string? size, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+            if (string.IsNullOrWhiteSpace(size))
+            {
+                return false;
+            }
+            var parts = size.Split('x');
+            return parts.Length == 2
+                && int.TryParse(parts[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out width)
+                && int.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out height)
+                && width > 0 && height > 0;
+        }
 
         public IdeogramClient(string apiKey)
             : this(apiKey, new HttpClient())
@@ -473,6 +526,115 @@ namespace IdeogramAPIClient
                 "precise-edit-image",
                 request.NumImages ?? 1,
                 requireGenerationId: false);
+        }
+
+        public Task<IdeogramV45Response> GenerateImageV46Async(IdeogramV45GenerateRequest request)
+        {
+            if (request == null)
+                throw new ArgumentNullException(nameof(request));
+
+            ValidateV45Common(request.Prompt, request.NumImages, request.Seed);
+            if (request.Size != null && !IsIdeogramV46TextSize(request.Size))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    request.Size,
+                    "Ideogram 4.6 text-to-image size must be auto, auto_2k, auto_4k, or WIDTHxHEIGHT (multiples of 32, up to 4096x4096 pixels).");
+            }
+            if (request.Quality == IdeogramV45Quality.very_low && IsIdeogramV464KSize(request.Size))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    request.Quality,
+                    "Ideogram 4.6 quality=very_low does not support 4K sizes.");
+            }
+
+            var formData = new MultipartFormDataContent();
+            formData.Add(new StringContent(request.Prompt), "prompt");
+            AddStringPart(formData, "size", request.Size);
+            AddEnumPart(formData, "quality", request.Quality);
+            AddIntPart(formData, "num_images", request.NumImages);
+            AddIntPart(formData, "seed", request.Seed);
+
+            var traceRequest = new Dictionary<string, object>
+            {
+                ["prompt"] = request.Prompt,
+            };
+            AddTraceV45Options(traceRequest, request.Size, request.Quality, request.NumImages, request.Seed);
+
+            return PostV45WithDisposeAsync(
+                IdeogramV46GeneratePath,
+                formData,
+                traceRequest,
+                "generate-image",
+                request.NumImages ?? 1,
+                requireGenerationId: true);
+        }
+
+        public Task<IdeogramV45Response> PreciseEditImageV46Async(IdeogramV45PreciseEditRequest request)
+        {
+            if (request == null)
+                throw new ArgumentNullException(nameof(request));
+            if (request.Image == null)
+                throw new ArgumentException("Image is required for Ideogram 4.6 Precise Edit.", nameof(request));
+
+            var referenceImages = request.ReferenceImages ?? Array.Empty<IdeogramFile>();
+            ValidateV45Common(request.Prompt, request.NumImages, request.Seed);
+            if (referenceImages.Count > IdeogramV45MaxReferenceImages)
+            {
+                throw new ArgumentException(
+                    $"Ideogram 4.6 Precise Edit accepts at most {IdeogramV45MaxReferenceImages} reference images; received {referenceImages.Count}.",
+                    nameof(request));
+            }
+            ValidateV45Image(request.Image, "edit image");
+            for (var i = 0; i < referenceImages.Count; i++)
+            {
+                ValidateV45Image(referenceImages[i], $"reference image {i + 1}");
+            }
+
+            var formData = new MultipartFormDataContent();
+            formData.Add(new StringContent(request.Prompt), "prompt");
+            AddFilePart(formData, "image", request.Image);
+            foreach (var reference in referenceImages)
+            {
+                AddFilePart(formData, "reference_images", reference);
+            }
+            AddEnumPart(formData, "quality", request.Quality);
+            AddIntPart(formData, "num_images", request.NumImages);
+            AddIntPart(formData, "seed", request.Seed);
+
+            var traceRequest = new Dictionary<string, object>
+            {
+                ["prompt"] = request.Prompt,
+                ["image"] = DescribeFiles(new[] { request.Image }).Single(),
+            };
+            if (referenceImages.Count > 0)
+            {
+                traceRequest["reference_images"] = DescribeFiles(referenceImages);
+            }
+            AddTraceV45Options(traceRequest, size: null, request.Quality, request.NumImages, request.Seed);
+
+            return PostV45WithDisposeAsync(
+                IdeogramV46PreciseEditPath,
+                formData,
+                traceRequest,
+                "precise-edit-image",
+                request.NumImages ?? 1,
+                requireGenerationId: false);
+        }
+
+        private async Task<IdeogramV45Response> PostV45WithDisposeAsync(
+            string endpoint,
+            HttpContent content,
+            object traceRequest,
+            string operation,
+            int expectedImageCount,
+            bool requireGenerationId)
+        {
+            using (content)
+            {
+                return await PostV45Async(endpoint, content, traceRequest, operation, expectedImageCount, requireGenerationId);
+            }
         }
 
         private async Task<IdeogramV45Response> PostV45Async(

@@ -359,11 +359,16 @@ def update(args):
     require(shutil.disk_usage(target).free >= 4 * 1024**3, "Updating requires at least 4 GiB free disk.")
     write_gc_heap_limit(service, live_memory_high_bytes(service))
     run("systemctl", "daemon-reload")
-    shutil.copytree(publish, staged, ignore=shutil.ignore_patterns("settings.json"))
-    os.chmod(staged, 0o755)
-    for file in staged.rglob("*"):
-        os.chmod(file, 0o755 if file.is_dir() or os.access(file, os.X_OK) else 0o644)
-    replace_install(service, target, staged)
+    try:
+        shutil.copytree(publish, staged, ignore=shutil.ignore_patterns("settings.json"))
+        os.chmod(staged, 0o755)
+        for file in staged.rglob("*"):
+            os.chmod(file, 0o755 if file.is_dir() or os.access(file, os.X_OK) else 0o644)
+        replace_install(service, target, staged)
+    except Exception:
+        if staged.exists():
+            shutil.rmtree(staged)
+        raise
     run("systemctl", "is-active", service)
     ready = False
     for _ in range(30):

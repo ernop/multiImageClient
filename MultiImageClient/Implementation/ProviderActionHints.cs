@@ -102,19 +102,31 @@ namespace MultiImageClient
                     account.KeysUrl);
         }
 
+        public static Hint? ForProvider(string provider, string errorMessage) => provider switch
+        {
+            "openai" => For(UiJobRunner.KeyDescribeOpenAi, errorMessage),
+            "anthropic" => For(UiJobRunner.KeyDescribeClaude, errorMessage),
+            "google" => For(UiJobRunner.KeyDescribeGemini, errorMessage),
+            "xai" => For(UiJobRunner.KeyDescribeGrok, errorMessage),
+            _ => null,
+        };
+
         private static ProviderAccount? AccountFor(string generatorKey) => generatorKey switch
         {
             UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt25Sunburst
                 or UiJobRunner.KeyGpt25Flare
+                or UiJobRunner.KeyGpt26Sunburst
+                or UiJobRunner.KeyGpt26Flare
                 or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini
-                or UiJobRunner.KeyDescribeOpenAi =>
+                or UiJobRunner.KeyDescribeOpenAi
+                or UiJobRunner.KeyDescribeOpenAiAstra =>
                 new(
                     "OpenAI",
                     nameof(Settings.OpenAIApiKey),
                     "https://platform.openai.com/settings/organization/billing/overview",
                     "https://platform.openai.com/api-keys",
                     "add API credits or enable auto-recharge"),
-            UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
+            UiJobRunner.KeyIdeogramV46 or UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
                 or UiJobRunner.KeyIdeogramV3 or UiJobRunner.KeyIdeogramV2
                 or UiJobRunner.KeyDescribeIdeogram =>
                 new(
@@ -125,6 +137,7 @@ namespace MultiImageClient
                     "add prepaid API credits or enable auto-recharge"),
             UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Utility
                 or UiJobRunner.KeyRecraftV41Pro or UiJobRunner.KeyRecraftV41Vector
+                or UiJobRunner.KeyRecraftV41Flash
                 or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4
                 or UiJobRunner.KeyRecraftV4Pro =>
                 new(
@@ -133,7 +146,8 @@ namespace MultiImageClient
                     "https://app.recraft.ai/profile/api",
                     "https://app.recraft.ai/profile/api",
                     "buy more API units"),
-            UiJobRunner.KeyBfl or UiJobRunner.KeyBflFlux2Pro
+            UiJobRunner.KeyBflFlux3 or UiJobRunner.KeyBflFlux3Klein
+                or UiJobRunner.KeyBfl or UiJobRunner.KeyBflFlux2Pro
                 or UiJobRunner.KeyBflFlux2Max or UiJobRunner.KeyBflFlux2Flex
                 or UiJobRunner.KeyBflFlux2Klein4b or UiJobRunner.KeyBflFlux2Klein9bPreview
                 or UiJobRunner.KeyBflFlux2Klein9b or UiJobRunner.KeyBflKontextPro
@@ -154,7 +168,11 @@ namespace MultiImageClient
                     "https://www.krea.ai/app/api/tokens",
                     "add workspace API balance"),
             UiJobRunner.KeyGoogle or UiJobRunner.KeyGooglePro
-                or UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyDescribeGeminiArgon
+                or UiJobRunner.KeyDescribeGemini
+                or UiJobRunner.KeyDescribeGeminiNeon
+                or UiJobRunner.KeyDescribeGeminiCarbon
+                or UiJobRunner.KeyDescribeGeminiHydrogen
+                or UiJobRunner.KeyDescribeGeminiArgon
                 or UiJobRunner.KeyLayoutMap =>
                 new(
                     "Google AI Studio",

@@ -137,7 +137,8 @@ namespace MultiImageClient
             return generatorKey switch
             {
                 UiJobRunner.KeyGpt2 or UiJobRunner.KeyGpt25Sunburst
-                    or UiJobRunner.KeyGpt25Flare
+                    or UiJobRunner.KeyGpt25Flare or UiJobRunner.KeyGpt26Sunburst
+                    or UiJobRunner.KeyGpt26Flare
                     or UiJobRunner.KeyGpt1 or UiJobRunner.KeyGpt1Mini => LaneOpenAi,
                 UiJobRunner.KeyGrokApi or UiJobRunner.KeyGrokApiPro => LaneXaiApi,
                 UiJobRunner.KeyGrokWebVideo => LaneGrokWebBrowser,
@@ -145,7 +146,8 @@ namespace MultiImageClient
                 UiJobRunner.KeyGrokWebChat => LaneGrokWebWs,
                 UiJobRunner.KeyMetaWeb => LaneMetaWeb,
                 UiJobRunner.KeyGoogle or UiJobRunner.KeyGooglePro => LaneGoogle,
-                UiJobRunner.KeyBfl or UiJobRunner.KeyBflFlux2Pro
+                UiJobRunner.KeyBflFlux3 or UiJobRunner.KeyBflFlux3Klein
+                    or UiJobRunner.KeyBfl or UiJobRunner.KeyBflFlux2Pro
                     or UiJobRunner.KeyBflFlux2Max or UiJobRunner.KeyBflFlux2Flex
                     or UiJobRunner.KeyBflFlux2Klein4b or UiJobRunner.KeyBflFlux2Klein9bPreview
                     or UiJobRunner.KeyBflFlux2Klein9b or UiJobRunner.KeyBflKontextPro
@@ -154,16 +156,18 @@ namespace MultiImageClient
                     or UiJobRunner.KeyBflFluxDev => LaneBfl,
                 UiJobRunner.KeyKrea or UiJobRunner.KeyKreaTurbo
                     or UiJobRunner.KeyKreaLarge => LaneKrea,
-                UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
+                UiJobRunner.KeyIdeogramV46 or UiJobRunner.KeyIdeogramV45 or UiJobRunner.KeyIdeogram
                     or UiJobRunner.KeyIdeogramV3 or UiJobRunner.KeyIdeogramV2 => LaneIdeogram,
-                UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Utility
+                UiJobRunner.KeyRecraft or UiJobRunner.KeyRecraftV41Flash or UiJobRunner.KeyRecraftV41Utility
                     or UiJobRunner.KeyRecraftV41Pro or UiJobRunner.KeyRecraftV41Vector
                     or UiJobRunner.KeyRecraftV3 or UiJobRunner.KeyRecraftV4
                     or UiJobRunner.KeyRecraftV4Pro => LaneRecraft,
                 UiJobRunner.KeyLocalKlein or UiJobRunner.KeyLocalZImage => LaneComfyUi,
-                UiJobRunner.KeyDescribeOpenAi => LaneOpenAi,
+                UiJobRunner.KeyDescribeOpenAi or UiJobRunner.KeyDescribeOpenAiAstra => LaneOpenAi,
                 UiJobRunner.KeyDescribeGrok => LaneXaiApi,
-                UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyDescribeGeminiArgon => LaneGoogle,
+                UiJobRunner.KeyDescribeGemini or UiJobRunner.KeyDescribeGeminiNeon
+                    or UiJobRunner.KeyDescribeGeminiCarbon or UiJobRunner.KeyDescribeGeminiHydrogen
+                    or UiJobRunner.KeyDescribeGeminiArgon => LaneGoogle,
                 // Layout map is a Gemini vision call, so it shares the
                 // google provider-account lane with its describe sibling.
                 UiJobRunner.KeyLayoutMap => LaneGoogle,

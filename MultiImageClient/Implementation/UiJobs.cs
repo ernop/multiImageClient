@@ -2689,6 +2689,57 @@ namespace MultiImageClient
                 _ => "",
             };
 
+        /// Ideogram 4.6 text-to-image size. Auto lets Ideogram pick a 2K or 4K
+        /// size depending on detail ("max" selects 4K). Explicit shapes use
+        /// verified 2K or 4K multiple-of-32 dimensions.
+        public static string IdeogramV46Size(string shape, string detail)
+        {
+            var is4k = Norm(detail, Details) == "max";
+            var normalizedShape = Norm(shape, Shapes);
+            if (is4k)
+            {
+                return normalizedShape switch
+                {
+                    "square" => "4096x4096",
+                    "landscape" => "4800x3200",
+                    "portrait" => "3200x4800",
+                    "wide" => "5120x2880",
+                    "tall" => "2880x5120",
+                    _ => "auto_4k",
+                };
+            }
+            return normalizedShape switch
+            {
+                "square" => "2048x2048",
+                "landscape" => "2496x1664",
+                "portrait" => "1664x2496",
+                "wide" => "2560x1440",
+                "tall" => "1440x2560",
+                _ => "",
+            };
+        }
+
+        /// BFL FLUX 3 resolution tier from detail + attachment state. Reference
+        /// edits cap output at 4 MP (~2K), so max detail sends 2k with inputs.
+        public static string BflFlux3Resolution(string detail, string shape, bool hasInputImage)
+        {
+            var d = Norm(detail, Details);
+            if (hasInputImage)
+            {
+                if (Norm(shape, Shapes) == "auto" && d == "high")
+                {
+                    return "match_input";
+                }
+                return d == "standard" ? "1k" : "2k";
+            }
+            return d switch
+            {
+                "standard" => "1k",
+                "max" => "4k",
+                _ => "2k",
+            };
+        }
+
         /// Ideogram v3 aspect enum (image-reference jobs route to v3).
         public static IdeogramAPIClient.IdeogramAspectRatio IdeogramV3Aspect(
             string shape,
@@ -2918,30 +2969,37 @@ namespace MultiImageClient
         };
 
         public const string KeyGpt2 = "gpt2";
-        // GPT Image 2.5 (released 2026-09-08): two models on the same OpenAI
-        // Images API. Sunburst is the most capable (editing precision, text);
-        // Flare is the fast everyday tier. Both share gpt-image-2's size
-        // envelope and streaming and add quality tiers xhigh and max.
+        // GPT Image 2.5 (released 2026-09-08) and GPT Image 2.6 (released
+        // 2026-11-04): two tiers on the same OpenAI Images API. Sunburst is the
+        // most capable; Flare is the fast everyday tier. Both share
+        // gpt-image-2's size envelope and streaming and add quality tiers xhigh
+        // and max.
+        public const string KeyGpt26Sunburst = "gpt26-sunburst";
+        public const string KeyGpt26Flare = "gpt26-flare";
         public const string KeyGpt25Sunburst = "gpt25-sunburst";
         public const string KeyGpt25Flare = "gpt25-flare";
         public const string KeyGpt1 = "gpt1";
         public const string KeyGpt1Mini = "gpt1-mini";
-        // Ideogram 4.5 (released 2026-09-30) is a separate target. The
-        // historical "ideogram" key stays Ideogram 4.0 so persisted jobs keep
-        // their exact producer identity.
+        // Ideogram 4.6 (released 2026-11-19) and Ideogram 4.5 (released
+        // 2026-09-30) are separate targets. The historical "ideogram" key stays
+        // Ideogram 4.0 so persisted jobs keep their exact producer identity.
+        public const string KeyIdeogramV46 = "ideogram-v46";
         public const string KeyIdeogramV45 = "ideogram-v45";
         public const string KeyIdeogram = "ideogram";
         public const string KeyIdeogramV3 = "ideogram-v3";
         public const string KeyIdeogramV2 = "ideogram-v2";
         public const string KeyRecraft = "recraft";
+        public const string KeyRecraftV41Flash = "recraft-v41-flash";
         public const string KeyRecraftV41Utility = "recraft-v41-utility";
         public const string KeyRecraftV41Pro = "recraft-v41-pro";
         public const string KeyRecraftV41Vector = "recraft-v41-vector";
         public const string KeyRecraftV3 = "recraft-v3";
         public const string KeyRecraftV4 = "recraft-v4";
         public const string KeyRecraftV4Pro = "recraft-v4-pro";
-        // Historical "bfl" key remains FLUX.2 Pro Preview so persisted jobs and
-        // browser selections keep working.
+        // FLUX 3 (released 2026-10) joins beside the historical FLUX.2 keys so
+        // persisted jobs and browser selections keep working.
+        public const string KeyBflFlux3 = "bfl-flux3";
+        public const string KeyBflFlux3Klein = "bfl-flux3-klein";
         public const string KeyBfl = "bfl";
         public const string KeyBflFlux2Pro = "bfl-flux2-pro";
         public const string KeyBflFlux2Max = "bfl-flux2-max";
@@ -2980,8 +3038,12 @@ namespace MultiImageClient
         // classes remain for the batch workflows.
         public const string KeyDescribeIdeogram = "describe-ideogram";
         public const string KeyDescribeOpenAi = "describe-openai";
+        public const string KeyDescribeOpenAiAstra = "describe-openai-astra";
         public const string KeyDescribeClaude = "describe-claude";
         public const string KeyDescribeGemini = "describe-gemini";
+        public const string KeyDescribeGeminiNeon = "describe-gemini-neon";
+        public const string KeyDescribeGeminiCarbon = "describe-gemini-carbon";
+        public const string KeyDescribeGeminiHydrogen = "describe-gemini-hydrogen";
         public const string KeyDescribeGeminiArgon = "describe-gemini-argon";
         public const string KeyDescribeGrok = "describe-grok";
 
@@ -2995,22 +3057,28 @@ namespace MultiImageClient
 
         public static readonly string[] ImageGeneratorKeys =
         {
+            KeyGpt26Sunburst,
+            KeyGpt26Flare,
             KeyGpt2,
             KeyGpt25Sunburst,
             KeyGpt25Flare,
             KeyGpt1,
             KeyGpt1Mini,
+            KeyIdeogramV46,
             KeyIdeogramV45,
             KeyIdeogram,
             KeyIdeogramV3,
             KeyIdeogramV2,
             KeyRecraft,
+            KeyRecraftV41Flash,
             KeyRecraftV41Utility,
             KeyRecraftV41Pro,
             KeyRecraftV41Vector,
             KeyRecraftV3,
             KeyRecraftV4,
             KeyRecraftV4Pro,
+            KeyBflFlux3,
+            KeyBflFlux3Klein,
             KeyBfl,
             KeyBflFlux2Pro,
             KeyBflFlux2Max,
@@ -3042,8 +3110,12 @@ namespace MultiImageClient
         {
             KeyDescribeIdeogram,
             KeyDescribeOpenAi,
+            KeyDescribeOpenAiAstra,
             KeyDescribeClaude,
             KeyDescribeGemini,
+            KeyDescribeGeminiNeon,
+            KeyDescribeGeminiCarbon,
+            KeyDescribeGeminiHydrogen,
             KeyDescribeGeminiArgon,
             KeyDescribeGrok,
         };
@@ -3273,6 +3345,8 @@ namespace MultiImageClient
         // the attachment.
         public static readonly string[] ImageCapableKeys =
         {
+            KeyGpt26Sunburst,
+            KeyGpt26Flare,
             KeyGpt2,
             KeyGpt25Sunburst,
             KeyGpt25Flare,
@@ -3282,6 +3356,8 @@ namespace MultiImageClient
             KeyGrokWebChat,
             KeyGoogle,
             KeyGooglePro,
+            KeyBflFlux3,
+            KeyBflFlux3Klein,
             KeyBfl,
             KeyBflFlux2Pro,
             KeyBflFlux2Max,
@@ -3297,6 +3373,7 @@ namespace MultiImageClient
             KeyKrea,
             KeyKreaTurbo,
             KeyKreaLarge,
+            KeyIdeogramV46,
             KeyIdeogramV45,
             KeyIdeogram,
             KeyIdeogramV3,
@@ -3328,16 +3405,18 @@ namespace MultiImageClient
         // never hardcode this set in app.js.
         public static readonly string[] SketchCapableKeys =
         {
+            KeyGpt26Sunburst,
+            KeyGpt26Flare,
             KeyGpt2,
-            // GPT Image 2.5 inherits gpt-image-2's edit-source behavior;
-            // sketch-following is assumed from the same lineage pending an
-            // owner live validation pass (2026-09-08).
+            // GPT Image 2.5 and 2.6 inherit gpt-image-2's edit-source behavior;
+            // sketch-following is assumed from the same lineage.
             KeyGpt25Sunburst,
             KeyGpt25Flare,
             KeyGrokWeb,
             KeyGrokWebChat,
             KeyGrokApi,
             KeyGrokApiPro,
+            KeyBflFlux3,
             KeyBfl,
             KeyBflFlux2Pro,
             KeyBflFlux2Max,
@@ -3569,6 +3648,7 @@ namespace MultiImageClient
 
         public static bool IsRecraftKey(string key)
             => key is KeyRecraft
+                or KeyRecraftV41Flash
                 or KeyRecraftV41Utility
                 or KeyRecraftV41Pro
                 or KeyRecraftV41Vector
@@ -3584,9 +3664,9 @@ namespace MultiImageClient
         // instead (owner requirement 2026-09-09). See docs/prompt-length-limits.md.
         public static int? MaxPromptCharsFor(string key, bool imageSent) => key switch
         {
-            KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare or KeyGpt1 or KeyGpt1Mini
+            KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare or KeyGpt26Sunburst or KeyGpt26Flare or KeyGpt1 or KeyGpt1Mini
                 => GptImage2Generator.MaxPromptChars,
-            KeyIdeogramV45 => IdeogramClient.IdeogramV45MaxPromptChars,
+            KeyIdeogramV45 or KeyIdeogramV46 => IdeogramClient.IdeogramV45MaxPromptChars,
             KeyGrokApi when !imageSent => GrokImagineGenerator.LegacyModelMaxPromptChars,
             _ when IsRecraftKey(key) => RecraftGenerator.MaxPromptChars(RecraftModelForKey(key)),
             _ => null,
@@ -3727,7 +3807,7 @@ namespace MultiImageClient
                         exchanges[exchangeId] = exchange;
                     }
                     if (exchange.Purpose != DirectedPromptRewrite.CondensePurpose
-                        || !DirectedPromptRewrite.Models.Contains(exchange.Model))
+                        || ManagerCatalog.FindByModel(exchange.Model) == null)
                     {
                         throw new InvalidDataException($"Saved prompt version {exchangeId} is not a condensed prompt.");
                     }
@@ -3775,19 +3855,21 @@ namespace MultiImageClient
         private string DescribeInputImageFunction(string key) => key switch
         {
             KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare
+                or KeyGpt26Sunburst or KeyGpt26Flare
                 or KeyGrokApi or KeyGrokApiPro => "edit source",
             KeyGrokWeb => "edit source",
             KeyGrokWebChat => "edit source (chat door)",
             KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
                 or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
                 or KeyRecraftV4Pro => "image-to-image source",
-            KeyBfl or KeyBflFlux2Pro
+            KeyBflFlux3 or KeyBflFlux3Klein
+                or KeyBfl or KeyBflFlux2Pro
                 or KeyBflFlux2Max or KeyBflFlux2Flex or KeyBflFlux2Klein4b
                 or KeyBflFlux2Klein9bPreview or KeyBflFlux2Klein9b
                 or KeyBflKontextPro or KeyBflKontextMax => "edit/reference source",
             KeyBflFlux11Ultra or KeyBflFlux11 or KeyBflFluxDev => "image remix/reference source",
             KeyIdeogram => "image remix source",
-            KeyIdeogramV45 => "precise edit source (first image edited, later images references)",
+            KeyIdeogramV45 or KeyIdeogramV46 => "precise edit source (first image edited, later images references)",
             KeyGoogle or KeyGooglePro or KeyIdeogramV3
                 or KeyKrea or KeyKreaTurbo or KeyKreaLarge => "style/reference image",
             KeyGrokWebVideo => "video source",
@@ -3926,6 +4008,7 @@ namespace MultiImageClient
         private static RecraftModel RecraftModelForKey(string key) => key switch
         {
             KeyRecraft => RecraftModel.recraftv4_1,
+            KeyRecraftV41Flash => RecraftModel.recraftv4_1_flash_v2,
             KeyRecraftV41Utility => RecraftModel.recraftv4_1_utility,
             KeyRecraftV41Pro => RecraftModel.recraftv4_1_pro,
             KeyRecraftV41Vector => RecraftModel.recraftv4_1_vector,
@@ -3938,6 +4021,7 @@ namespace MultiImageClient
         private static ImageGeneratorApiType RecraftApiTypeForKey(string key) => key switch
         {
             KeyRecraft => ImageGeneratorApiType.RecraftV41,
+            KeyRecraftV41Flash => ImageGeneratorApiType.RecraftV41FlashV2,
             KeyRecraftV41Utility => ImageGeneratorApiType.RecraftV41Utility,
             KeyRecraftV41Pro => ImageGeneratorApiType.RecraftV41Pro,
             KeyRecraftV41Vector => ImageGeneratorApiType.RecraftV41Vector,
@@ -3949,9 +4033,11 @@ namespace MultiImageClient
 
         public string? DescribeAvailabilityProblem(string key) => key switch
         {
-            KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare or KeyGpt1 or KeyGpt1Mini
+            KeyGpt1
+                => "retired by OpenAI on 2026-10-23 — use gpt-image-2.6, gpt-image-2.5, gpt-image-2, or gpt-image-1-mini",
+            KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare or KeyGpt26Sunburst or KeyGpt26Flare or KeyGpt1Mini
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.GptImage2, _settings),
-            KeyIdeogramV45
+            KeyIdeogramV45 or KeyIdeogramV46
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV45, _settings),
             KeyIdeogram
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV4, _settings),
@@ -3959,7 +4045,7 @@ namespace MultiImageClient
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.IdeogramV3, _settings),
             KeyIdeogramV2
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.Ideogram, _settings),
-            KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
+            KeyRecraft or KeyRecraftV41Flash or KeyRecraftV41Utility or KeyRecraftV41Pro
                 or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
                 or KeyRecraftV4Pro
                 => ProviderKeyValidator.DescribeKeyProblem(RecraftApiTypeForKey(key), _settings),
@@ -3967,7 +4053,8 @@ namespace MultiImageClient
                 => "disabled after the hosted compatibility endpoint returned HTTP 403",
             KeyBflFlux2Klein4b or KeyBflFlux2Klein9bPreview or KeyBflFlux2Klein9b
                 => "disabled by operator; these hosted Klein targets are not currently usable",
-            KeyBfl or KeyBflFlux2Pro or KeyBflFlux2Max or KeyBflFlux2Flex
+            KeyBflFlux3 or KeyBflFlux3Klein
+                or KeyBfl or KeyBflFlux2Pro or KeyBflFlux2Max or KeyBflFlux2Flex
                 or KeyBflKontextPro or KeyBflKontextMax or KeyBflFlux11Ultra
                 or KeyBflFlux11 or KeyBflFluxDev
                 => ProviderKeyValidator.DescribeKeyProblem(ImageGeneratorApiType.BFLFlux2ProPreview, _settings),
@@ -3991,11 +4078,12 @@ namespace MultiImageClient
             // ComfyUI, so no ComfyUI probe applies).
             KeyDescribeIdeogram
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.IdeogramApiKey), _settings.IdeogramApiKey),
-            KeyDescribeOpenAi
+            KeyDescribeOpenAi or KeyDescribeOpenAiAstra
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.OpenAIApiKey), _settings.OpenAIApiKey),
             KeyDescribeClaude
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.AnthropicApiKey), _settings.AnthropicApiKey),
-            KeyDescribeGemini or KeyDescribeGeminiArgon
+            KeyDescribeGemini or KeyDescribeGeminiNeon or KeyDescribeGeminiCarbon
+                or KeyDescribeGeminiHydrogen or KeyDescribeGeminiArgon
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.GoogleGeminiApiKey), _settings.GoogleGeminiApiKey),
             KeyDescribeGrok
                 => ProviderKeyValidator.DescribeTextKeyProblem(nameof(Settings.XAIGrokApiKey), _settings.XAIGrokApiKey),
@@ -4069,7 +4157,11 @@ namespace MultiImageClient
                 {
                     // The gpt-image family's /edits endpoint takes every attached
                     // input; every other generator receives only the first.
-                    var multiInputKeys = new[] { KeyGpt2, KeyGpt25Sunburst, KeyGpt25Flare };
+                    var multiInputKeys = new[]
+                    {
+                        KeyGpt2, KeyGpt25Sunburst, KeyGpt25Flare, KeyGpt26Sunburst, KeyGpt26Flare,
+                        KeyGrokApiPro, KeyIdeogramV45, KeyIdeogramV46, KeyBflFlux3, KeyBflFlux3Klein,
+                    };
                     var receivers = spec.GeneratorKeys
                         .Where(k => multiInputKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
                         .ToList();
@@ -4925,10 +5017,10 @@ namespace MultiImageClient
             var maxImages = key switch
             {
                 KeyGrokWebVideo => 1,
-                KeyRecraft or KeyRecraftV41Utility or KeyRecraftV41Pro
+                KeyRecraft or KeyRecraftV41Flash or KeyRecraftV41Utility or KeyRecraftV41Pro
                     or KeyRecraftV41Vector or KeyRecraftV3 or KeyRecraftV4
                     or KeyRecraftV4Pro => 6,
-                KeyIdeogramV45 or KeyIdeogram or KeyIdeogramV3 => 8,
+                KeyIdeogramV46 or KeyIdeogramV45 or KeyIdeogram or KeyIdeogramV3 => 8,
                 _ => 10,
             };
             var want = Math.Clamp(spec.ImageCount, 1, maxImages);
@@ -5371,11 +5463,15 @@ namespace MultiImageClient
         private static decimal DescribeCostEstimate(string key) => key switch
         {
             KeyDescribeIdeogram => IdeogramModelPricing.IdeogramDescribe,
-            KeyDescribeOpenAi => 0.04m,
-            KeyDescribeClaude => 0.03m,
+            KeyDescribeOpenAi => CatalogDescribeCostEstimate(ManagerCatalog.KeyGpt62Sol, DateTimeOffset.UtcNow),
+            KeyDescribeOpenAiAstra => CatalogDescribeCostEstimate(ManagerCatalog.KeyGpt62Astra, DateTimeOffset.UtcNow),
+            KeyDescribeClaude => CatalogDescribeCostEstimate(ManagerCatalog.KeyClaudeSonnet55, DateTimeOffset.UtcNow),
             KeyDescribeGemini => FlashDescribeCostEstimate(DateTimeOffset.UtcNow),
+            KeyDescribeGeminiNeon => CatalogDescribeCostEstimate(ManagerCatalog.KeyGemini4Neon, DateTimeOffset.UtcNow),
+            KeyDescribeGeminiCarbon => CatalogDescribeCostEstimate(ManagerCatalog.KeyGemini4Carbon, DateTimeOffset.UtcNow),
+            KeyDescribeGeminiHydrogen => CatalogDescribeCostEstimate(ManagerCatalog.KeyGemini4Hydrogen, DateTimeOffset.UtcNow),
             KeyDescribeGeminiArgon => ArgonDescribeCostEstimate(DateTimeOffset.UtcNow),
-            KeyDescribeGrok => 0.03m,
+            KeyDescribeGrok => CatalogDescribeCostEstimate(ManagerCatalog.KeyGrok47, DateTimeOffset.UtcNow),
             // Layout map is one Gemini vision call per input image (same
             // transport and token budget class as describe-gemini); the
             // server-side map rendering itself costs nothing.
@@ -5383,23 +5479,21 @@ namespace MultiImageClient
             _ => throw new ArgumentException($"Unknown describe key '{key}'.", nameof(key)),
         };
 
-        // Argon's price doubles on 2026-12-01 and 3.8 Flash's on 2027-01-01;
-        // ManagerCatalog holds both schedules. The ceiling assumes 2,000
-        // input tokens and the describe output budget. One 1024x768 PNG
-        // measured 1,294 input and 178 output tokens on Argon at
-        // thinkingLevel low on 2026-10-29.
+        // Argon and Carbon double on 2026-12-01 and 3.8 Flash doubles on
+        // 2027-01-01; ManagerCatalog holds those schedules. The ceiling
+        // assumes 2,000 input tokens and the describe output budget.
         public static decimal ArgonDescribeCostEstimate(DateTimeOffset at)
-            => GeminiDescribeCostEstimate(ManagerCatalog.KeyGemini4Argon, at);
+            => CatalogDescribeCostEstimate(ManagerCatalog.KeyGemini4Argon, at);
 
         public static decimal FlashDescribeCostEstimate(DateTimeOffset at)
-            => GeminiDescribeCostEstimate(ManagerCatalog.KeyGeminiFlash, at);
+            => CatalogDescribeCostEstimate(ManagerCatalog.KeyGeminiFlash, at);
 
-        private static decimal GeminiDescribeCostEstimate(string managerKey, DateTimeOffset at)
+        public static decimal CatalogDescribeCostEstimate(string managerKey, DateTimeOffset at)
         {
             var (inputUsdPerMTok, outputUsdPerMTok) = ManagerCatalog.All
                 .Single(m => m.Key == managerKey)
                 .PricesAt(at);
-            return (2_000m * inputUsdPerMTok.Value + DescribeMaxTokens * outputUsdPerMTok.Value) / 1_000_000m;
+            return (2_000m * inputUsdPerMTok!.Value + DescribeMaxTokens * outputUsdPerMTok!.Value) / 1_000_000m;
         }
 
         private ILocalVisionModel BuildDescriber(string key)
@@ -5421,12 +5515,24 @@ namespace MultiImageClient
                 case KeyDescribeOpenAi:
                     RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", key);
                     return new OpenAIVisionDescriber(_settings.OpenAIApiKey) { RequestJsonOutput = true };
+                case KeyDescribeOpenAiAstra:
+                    RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", key);
+                    return new OpenAIVisionDescriber(_settings.OpenAIApiKey, OpenAIVisionDescriber.AstraModel) { RequestJsonOutput = true };
                 case KeyDescribeClaude:
                     RequireKey(_settings.AnthropicApiKey, "AnthropicApiKey", key);
                     return new ClaudeVisionDescriber(_settings.AnthropicApiKey);
                 case KeyDescribeGemini:
                     RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
                     return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey) { RequestJsonOutput = true };
+                case KeyDescribeGeminiNeon:
+                    RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
+                    return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey, GeminiVisionDescriber.NeonModel) { RequestJsonOutput = true };
+                case KeyDescribeGeminiCarbon:
+                    RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
+                    return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey, GeminiVisionDescriber.CarbonModel) { RequestJsonOutput = true };
+                case KeyDescribeGeminiHydrogen:
+                    RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
+                    return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey, GeminiVisionDescriber.HydrogenModel) { RequestJsonOutput = true };
                 case KeyDescribeGeminiArgon:
                     RequireKey(_settings.GoogleGeminiApiKey, "GoogleGeminiApiKey", key);
                     return new GeminiVisionDescriber(_settings.GoogleGeminiApiKey, GeminiVisionDescriber.ArgonModel) { RequestJsonOutput = true };
@@ -5450,12 +5556,12 @@ namespace MultiImageClient
                 var suffixed = WithEndpointExtraText(copy.Prompt, extraText);
                 copy.ReplacePrompt(suffixed, suffixed, TransformationType.ManualSuffixation);
             }
-            else if (key is KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare)
+            else if (key is KeyGpt2 or KeyGpt25Sunburst or KeyGpt25Flare or KeyGpt26Sunburst or KeyGpt26Flare)
             {
                 // Loud on purpose: OpenAI image models without the default
                 // anti-murk suffix reliably come back darker, and this once went
                 // unnoticed for two days (2026-07-31 → 08-02). GPT Image 2.5
-                // shares the lineage and the same default suffix.
+                // and 2.6 share the lineage and the same default suffix.
                 Logger.Log($"[ui #{jobId}]   {key} extra text is blank for this call — anti-murk guidance was not sent");
             }
         }
@@ -5867,6 +5973,8 @@ namespace MultiImageClient
 
         private static ImageGeneratorApiType BflApiTypeForKey(string key) => key switch
         {
+            KeyBflFlux3 => ImageGeneratorApiType.BFLFlux3,
+            KeyBflFlux3Klein => ImageGeneratorApiType.BFLFlux3Klein,
             KeyBfl => ImageGeneratorApiType.BFLFlux2ProPreview,
             KeyBflFlux2Pro => ImageGeneratorApiType.BFLFlux2Pro,
             KeyBflFlux2Max => ImageGeneratorApiType.BFLFlux2Max,
@@ -5899,10 +6007,14 @@ namespace MultiImageClient
                 case KeyGpt2:
                 case KeyGpt25Sunburst:
                 case KeyGpt25Flare:
+                case KeyGpt26Sunburst:
+                case KeyGpt26Flare:
                     {
                         RequireKey(_settings.OpenAIApiKey, "OpenAIApiKey", key);
                         var modelId = key switch
                         {
+                            KeyGpt26Sunburst => GptImage2Generator.Sunburst26ModelId,
+                            KeyGpt26Flare => GptImage2Generator.Flare26ModelId,
                             KeyGpt25Sunburst => GptImage2Generator.SunburstModelId,
                             KeyGpt25Flare => GptImage2Generator.FlareModelId,
                             _ => GptImage2Generator.DefaultModelId,
@@ -5913,19 +6025,23 @@ namespace MultiImageClient
                         }
                         // Option-mapping policy (2026-07-20): unsupported option
                         // values are mapped before the call, not failed. The
-                        // 2.5-only tiers xhigh/max become high on gpt-image-2.
+                        // 2.5/2.6 tiers xhigh/max become high on gpt-image-2.
                         if (!GptImage2Generator.ModelSupportsQuality(modelId, quality))
                         {
                             quality = OpenAIGPTImageOneQuality.high;
                         }
                         var generationApiType = key switch
                         {
+                            KeyGpt26Sunburst => ImageGeneratorApiType.GptImage26Sunburst,
+                            KeyGpt26Flare => ImageGeneratorApiType.GptImage26Flare,
                             KeyGpt25Sunburst => ImageGeneratorApiType.GptImage25Sunburst,
                             KeyGpt25Flare => ImageGeneratorApiType.GptImage25Flare,
                             _ => ImageGeneratorApiType.GptImage2,
                         };
                         var editApiType = key switch
                         {
+                            KeyGpt26Sunburst => ImageGeneratorApiType.GptImage26SunburstEdit,
+                            KeyGpt26Flare => ImageGeneratorApiType.GptImage26FlareEdit,
                             KeyGpt25Sunburst => ImageGeneratorApiType.GptImage25SunburstEdit,
                             KeyGpt25Flare => ImageGeneratorApiType.GptImage25FlareEdit,
                             _ => ImageGeneratorApiType.GptImage2Edit,
@@ -6062,6 +6178,27 @@ namespace MultiImageClient
                             inputImagePath: job.HasInputImage ? job.InputImagePath : null);
                     }
 
+                case KeyBflFlux3:
+                case KeyBflFlux3Klein:
+                    {
+                        RequireKey(_settings.BFLApiKey, "BFLApiKey", key);
+                        var apiType = BflApiTypeForKey(key);
+                        var aspect = UiShapeMapping.GrokAspect(spec.Shape);
+                        if (string.IsNullOrEmpty(aspect))
+                        {
+                            aspect = "auto";
+                        }
+                        var resolution = UiShapeMapping.BflFlux3Resolution(
+                            spec.Detail,
+                            spec.Shape,
+                            job.HasInputImage);
+                        return new BFLGenerator(
+                            apiType, _settings.BFLApiKey,
+                            maxConcurrency: 2, aspect, false, 1024, 1024, _stats, $"{key} ui",
+                            inputImagePaths: job.HasInputImage ? job.InputImagePaths.Take(10).ToArray() : null,
+                            flux3Resolution: resolution);
+                    }
+
                 case KeyBfl:
                 case KeyBflFlux2Pro:
                 case KeyBflFlux2Max:
@@ -6130,23 +6267,32 @@ namespace MultiImageClient
                     }
 
                 case KeyIdeogramV45:
+                case KeyIdeogramV46:
                     {
-                        // Ideogram 4.5 uses Generate without an input. With inputs
-                        // it uses Precise Edit: the first image is edited at its
-                        // own size and later images are references. Precise Edit
-                        // has no size field, so an explicit shape cannot apply.
+                        // Ideogram 4.5/4.6 use Generate without an input. With
+                        // inputs they use Precise Edit: the first image is
+                        // edited at its own size and later images are
+                        // references. Precise Edit has no size field, so an
+                        // explicit shape cannot apply.
                         RequireKey(_settings.IdeogramApiKey, "IdeogramApiKey", key);
+                        var isV46 = key == KeyIdeogramV46;
                         if (job.HasInputImage && !spec.Shape.Equals("auto", StringComparison.OrdinalIgnoreCase))
                         {
                             throw new NotSupportedException(
-                                "Ideogram 4.5 Precise Edit always keeps the source dimensions and cannot override output aspect ratio.");
+                                $"{(isV46 ? "Ideogram 4.6" : "Ideogram 4.5")} Precise Edit always keeps the source dimensions and cannot override output aspect ratio.");
                         }
+                        var size = job.HasInputImage
+                            ? ""
+                            : (isV46
+                                ? UiShapeMapping.IdeogramV46Size(spec.Shape, spec.Detail)
+                                : UiShapeMapping.IdeogramV45Size(spec.Shape));
                         return new IdeogramV45Generator(
                             _settings.IdeogramApiKey, maxConcurrency: 1,
-                            job.HasInputImage ? "" : UiShapeMapping.IdeogramV45Size(spec.Shape),
+                            size,
                             IdeogramV45Generator.QualityFromOption(spec.Quality),
                             _stats, $"{key} ui",
-                            inputImagePaths: job.HasInputImage ? job.InputImagePaths : null);
+                            inputImagePaths: job.HasInputImage ? job.InputImagePaths : null,
+                            apiType: isV46 ? ImageGeneratorApiType.IdeogramV46 : ImageGeneratorApiType.IdeogramV45);
                     }
 
                 case KeyIdeogram:
@@ -6204,6 +6350,7 @@ namespace MultiImageClient
                     }
 
                 case KeyRecraft:
+                case KeyRecraftV41Flash:
                 case KeyRecraftV41Utility:
                 case KeyRecraftV41Pro:
                 case KeyRecraftV41Vector:
@@ -6212,7 +6359,8 @@ namespace MultiImageClient
                 case KeyRecraftV4Pro:
                     {
                         RequireKey(_settings.RecraftApiKey, "RecraftApiKey", key);
-                        if (job.HasInputImage && !spec.Shape.Equals("auto", StringComparison.OrdinalIgnoreCase))
+                        var sendRecraftImage = job.HasInputImage && IsImageCapable(key);
+                        if (sendRecraftImage && !spec.Shape.Equals("auto", StringComparison.OrdinalIgnoreCase))
                         {
                             throw new NotSupportedException(
                                 "Recraft image-to-image always follows the source dimensions and cannot override output aspect ratio.");
@@ -6221,14 +6369,14 @@ namespace MultiImageClient
                         // as Grok. Its image-to-image endpoint takes no size field and
                         // inherently follows the source dimensions.
                         var recraftAspect = UiShapeMapping.GrokAspect(spec.Shape);
-                        // With an input image, every exposed Recraft V3/V4 model
+                        // With an input image, every image-capable Recraft model
                         // runs through image-to-image; output size follows the source.
                         return new RecraftGenerator(
                             _settings.RecraftApiKey, maxConcurrency: 1,
                             RecraftImageSize._1024x1024, RecraftStyle.any,
                             null, null, null, _stats, $"{key} ui",
                             model: RecraftModelForKey(key),
-                            inputImagePath: job.HasInputImage ? job.InputImagePath : null,
+                            inputImagePath: sendRecraftImage ? job.InputImagePath : null,
                             sizeOverride: recraftAspect,
                             imageCount: 1);
                     }

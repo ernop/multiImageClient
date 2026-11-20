@@ -162,17 +162,26 @@ namespace MultiImageClient
 
     public static class ManagerCatalog
     {
+        public const string KeyGpt62Astra = "manager-gpt-6.2-astra";
+        public const string KeyGpt62Sol = "manager-gpt-6.2-sol";
+        public const string KeyGpt61Terra = "manager-gpt-6.1-terra";
         public const string KeyGpt6Astra = "manager-gpt-6-astra";
         public const string KeyGpt56Sol = "manager-gpt-5.6-sol";
+        public const string KeyClaudeFable52 = "manager-claude-fable-5-2";
         public const string KeyClaudeFable51 = "manager-claude-fable-5-1";
         public const string KeyClaudeOpus55 = "manager-claude-opus-5-5";
         public const string KeyClaudeSonnet55 = "manager-claude-sonnet-5-5";
+        public const string KeyClaudeHaiku55 = "manager-claude-haiku-5-5";
         public const string KeyClaudeOpus5 = "manager-claude-opus-5";
         public const string KeyClaudeSonnet5 = "manager-claude-sonnet-5";
         // Saved goal loops store this key; it kept its 3.5 name when the
         // entry moved to gemini-3.8-flash on 2026-10-30.
         public const string KeyGeminiFlash = "manager-gemini-3.5-flash";
+        public const string KeyGemini4Neon = "manager-gemini-4-neon";
+        public const string KeyGemini4Carbon = "manager-gemini-4-carbon";
+        public const string KeyGemini4Hydrogen = "manager-gemini-4-hydrogen";
         public const string KeyGemini4Argon = "manager-gemini-4-argon";
+        public const string KeyGrok47 = "manager-grok-4.7";
         public const string KeyGrok46 = "manager-grok-4.6";
 
         // Preselected in the goal form's manager selector when available.
@@ -236,26 +245,37 @@ namespace MultiImageClient
             Source = "xAI models page: 20 MiB/image, jpg/png only; store=false required for large images; 48 MiB request cap probed 2026-09-12 (HTTP 413 at 50 MiB)",
         };
 
-        // Model IDs verified 2026-09-04: Anthropic models overview lists
-        // claude-fable-5-1 / claude-opus-5 / claude-sonnet-5 with $10/$50,
-        // $5/$25, $2/$10 per MTok. gpt-5.6-sol, gemini-3.5-flash, and grok-4.6
-        // are the describe-endpoint models already live in this app. No public
-        // gemini-3.5-pro exists (partner testing only), so it is not offered.
-        // claude-opus-5-5 ($4/$20) and claude-sonnet-5-5 ($2/$10) added
-        // 2026-10-06; both IDs were live-verified 2026-10-02.
-        // gemini-4-argon added and live-verified 2026-10-29. Google prices it
-        // at $2/$10 through 2026-11-30 and $4/$20 from 2026-12-01.
-        // Google deprecated gemini-3.5-flash and routes it to
-        // gemini-3.6-flash, so the Flash entry moved to gemini-3.8-flash on
-        // 2026-10-30. Google prices 3.8 Flash at $0.75/$3.75 through 2026
-        // and $1.50/$7.50 from 2027-01-01.
+        // Model IDs updated 2026-11-19: added GPT-6.2 Astra ($8/$40), GPT-6.2
+        // Sol ($2/$10), GPT-6.1 Terra ($1/$5), Claude Fable 5.2 ($8/$40),
+        // Claude Haiku 5.5 ($0.10/$0.50), Gemini 4 Neon ($3/$15, 65K cap),
+        // Gemini 4 Carbon ($2/$10 through 2026-11-30, $4/$20 from 2026-12-01,
+        // 32K cap), Gemini 4 Hydrogen ($1.50/$7.50, 65K cap), and Grok 4.7
+        // ($2/$6). Existing keys stay intact so saved loops and prompt history
+        // keep their exact recorded model identity.
         public static readonly IReadOnlyList<ManagerDefinition> All = new[]
         {
             new ManagerDefinition
             {
-                Key = KeyGpt56Sol, Label = "GPT-5.6 Sol", Provider = "openai", Model = "gpt-5.6-sol",
+                Key = KeyGpt62Astra, Label = "GPT-6.2 Astra", Provider = "openai", Model = "gpt-6.2-astra",
                 SettingsKeyName = nameof(Settings.OpenAIApiKey),
-                Detail = "OpenAI Responses API with reasoning summaries; JSON object output mode; images at detail original (full resolution).",
+                InputUsdPerMTok = 8m, OutputUsdPerMTok = 40m,
+                Detail = "OpenAI Responses API flagship (2026-11-18) with reasoning summaries, JSON output, and full-resolution image input. Above 272K input tokens bills 2x input and 1.5x output.",
+                ImageLimits = OpenAiLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyGpt62Sol, Label = "GPT-6.2 Sol", Provider = "openai", Model = "gpt-6.2-sol",
+                SettingsKeyName = nameof(Settings.OpenAIApiKey),
+                InputUsdPerMTok = 2m, OutputUsdPerMTok = 10m,
+                Detail = "OpenAI Responses API everyday frontier model (2026-11-18) with reasoning summaries, JSON output, and full-resolution image input. Above 272K input tokens bills 2x input and 1.5x output.",
+                ImageLimits = OpenAiLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyGpt61Terra, Label = "GPT-6.1 Terra", Provider = "openai", Model = "gpt-6.1-terra",
+                SettingsKeyName = nameof(Settings.OpenAIApiKey),
+                InputUsdPerMTok = 1m, OutputUsdPerMTok = 5m,
+                Detail = "OpenAI Responses API fast lower-cost GPT-6 model with reasoning summaries and full-resolution image input.",
                 ImageLimits = OpenAiLimits,
             },
             new ManagerDefinition
@@ -268,10 +288,17 @@ namespace MultiImageClient
             },
             new ManagerDefinition
             {
-                Key = KeyClaudeFable51, Label = "Fable 5.1", Provider = "anthropic", Model = "claude-fable-5-1",
+                Key = KeyGpt56Sol, Label = "GPT-5.6 Sol", Provider = "openai", Model = "gpt-5.6-sol",
+                SettingsKeyName = nameof(Settings.OpenAIApiKey),
+                Detail = "OpenAI Responses API with reasoning summaries; JSON object output mode; images at detail original (full resolution).",
+                ImageLimits = OpenAiLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyClaudeFable52, Label = "Fable 5.2", Provider = "anthropic", Model = "claude-fable-5-2",
                 SettingsKeyName = nameof(Settings.AnthropicApiKey),
-                InputUsdPerMTok = 10m, OutputUsdPerMTok = 50m,
-                Detail = "Anthropic Messages API. Adaptive thinking is always on; thinking blocks are shown as provider reasoning.",
+                InputUsdPerMTok = 8m, OutputUsdPerMTok = 40m,
+                Detail = "Anthropic Messages API flagship (2026-11-09). Adaptive thinking is always on; thinking blocks are shown as provider reasoning.",
                 ImageLimits = AnthropicLimits,
             },
             new ManagerDefinition
@@ -292,6 +319,22 @@ namespace MultiImageClient
             },
             new ManagerDefinition
             {
+                Key = KeyClaudeHaiku55, Label = "Haiku 5.5", Provider = "anthropic", Model = "claude-haiku-5-5",
+                SettingsKeyName = nameof(Settings.AnthropicApiKey),
+                InputUsdPerMTok = 0.10m, OutputUsdPerMTok = 0.50m,
+                Detail = "Anthropic Messages API fast low-cost tier with adaptive thinking.",
+                ImageLimits = AnthropicLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyClaudeFable51, Label = "Fable 5.1", Provider = "anthropic", Model = "claude-fable-5-1",
+                SettingsKeyName = nameof(Settings.AnthropicApiKey),
+                InputUsdPerMTok = 10m, OutputUsdPerMTok = 50m,
+                Detail = "Anthropic Messages API. Adaptive thinking is always on; thinking blocks are shown as provider reasoning.",
+                ImageLimits = AnthropicLimits,
+            },
+            new ManagerDefinition
+            {
                 Key = KeyClaudeOpus5, Label = "Opus 5", Provider = "anthropic", Model = "claude-opus-5",
                 SettingsKeyName = nameof(Settings.AnthropicApiKey),
                 InputUsdPerMTok = 5m, OutputUsdPerMTok = 25m,
@@ -308,11 +351,28 @@ namespace MultiImageClient
             },
             new ManagerDefinition
             {
-                Key = KeyGeminiFlash, Label = "Gemini 3.8 Flash", Provider = "google", Model = "gemini-3.8-flash",
+                Key = KeyGemini4Neon, Label = "Gemini 4 Neon", Provider = "google", Model = "gemini-4-neon",
                 SettingsKeyName = nameof(Settings.GoogleGeminiApiKey),
-                InputUsdPerMTok = 0.75m, OutputUsdPerMTok = 3.75m,
-                PriceChange = new ManagerPriceChange(new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.FromHours(-8)), 1.50m, 7.50m),
-                Detail = "Google generateContent with high thinking level and thought parts returned; JSON MIME output mode; images at MEDIA_RESOLUTION_ULTRA_HIGH. Introductory price $0.75 in / $3.75 out per million tokens through 2026; $1.50 / $7.50 from 2027-01-01.",
+                InputUsdPerMTok = 3m, OutputUsdPerMTok = 15m,
+                Detail = "Google generateContent flagship Gemini 4 model with high thinking level, thought parts returned, and MEDIA_RESOLUTION_ULTRA_HIGH image input. $3 in / $15 out per million tokens.",
+                ImageLimits = GeminiLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyGemini4Carbon, Label = "Gemini 4 Carbon", Provider = "google", Model = "gemini-4-carbon",
+                SettingsKeyName = nameof(Settings.GoogleGeminiApiKey),
+                InputUsdPerMTok = 2m, OutputUsdPerMTok = 10m,
+                PriceChange = new ManagerPriceChange(new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.FromHours(-8)), 4m, 20m),
+                MaxOutputTokens = ManagerChatHttp.Gemini4MaxOutputTokens,
+                Detail = "Google generateContent Gemini 4 Carbon model with high thinking level and MEDIA_RESOLUTION_ULTRA_HIGH image input. One reply holds at most 32,768 tokens, thinking included. Introductory price $2 in / $10 out per million tokens through 2026-11-30, then $4 / $20.",
+                ImageLimits = GeminiLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyGemini4Hydrogen, Label = "Gemini 4 Hydrogen", Provider = "google", Model = "gemini-4-hydrogen",
+                SettingsKeyName = nameof(Settings.GoogleGeminiApiKey),
+                InputUsdPerMTok = 1.50m, OutputUsdPerMTok = 7.50m,
+                Detail = "Google generateContent fast lower-cost Gemini 4 model with high thinking level and MEDIA_RESOLUTION_ULTRA_HIGH image input. $1.50 in / $7.50 out per million tokens.",
                 ImageLimits = GeminiLimits,
             },
             new ManagerDefinition
@@ -329,6 +389,23 @@ namespace MultiImageClient
             },
             new ManagerDefinition
             {
+                Key = KeyGeminiFlash, Label = "Gemini 3.8 Flash", Provider = "google", Model = "gemini-3.8-flash",
+                SettingsKeyName = nameof(Settings.GoogleGeminiApiKey),
+                InputUsdPerMTok = 0.75m, OutputUsdPerMTok = 3.75m,
+                PriceChange = new ManagerPriceChange(new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.FromHours(-8)), 1.50m, 7.50m),
+                Detail = "Google generateContent with high thinking level and thought parts returned; JSON MIME output mode; images at MEDIA_RESOLUTION_ULTRA_HIGH. Introductory price $0.75 in / $3.75 out per million tokens through 2026; $1.50 / $7.50 from 2027-01-01.",
+                ImageLimits = GeminiLimits,
+            },
+            new ManagerDefinition
+            {
+                Key = KeyGrok47, Label = "Grok 4.7", Provider = "xai", Model = "grok-4.7",
+                SettingsKeyName = nameof(Settings.XAIGrokApiKey),
+                InputUsdPerMTok = 2m, OutputUsdPerMTok = 6m,
+                Detail = "xAI Responses API flagship (api.x.ai), store=false so large images are accepted. $2 in / $6 out per million tokens.",
+                ImageLimits = XaiLimits,
+            },
+            new ManagerDefinition
+            {
                 Key = KeyGrok46, Label = "Grok 4.6", Provider = "xai", Model = "grok-4.6",
                 SettingsKeyName = nameof(Settings.XAIGrokApiKey),
                 Detail = "xAI Responses API (api.x.ai), store=false so large images are accepted.",
@@ -338,6 +415,16 @@ namespace MultiImageClient
 
         public static ManagerDefinition? Find(string key)
             => All.FirstOrDefault(m => string.Equals(m.Key, key, StringComparison.Ordinal));
+
+        public static ManagerDefinition? FindByModel(string model)
+            => All.FirstOrDefault(m => string.Equals(m.Model, model, StringComparison.Ordinal));
+
+        public static ManagerDefinition? FindByKeyOrModel(string? keyOrModel)
+        {
+            var trimmed = (keyOrModel ?? "").Trim();
+            if (trimmed.Length == 0) return null;
+            return Find(trimmed) ?? FindByModel(trimmed);
+        }
 
         public static string? DescribeAvailabilityProblem(ManagerDefinition definition, Settings settings)
         {
@@ -352,7 +439,7 @@ namespace MultiImageClient
             return ProviderKeyValidator.DescribeTextKeyProblem(definition.SettingsKeyName, value);
         }
 
-        public static IManagerChatClient Build(ManagerDefinition definition, Settings settings)
+        public static IManagerChatClient Build(ManagerDefinition definition, Settings settings, bool expectJson = true)
         {
             var problem = DescribeAvailabilityProblem(definition, settings);
             if (problem != null)
@@ -362,11 +449,11 @@ namespace MultiImageClient
             return definition.Provider switch
             {
                 "openai" => new ResponsesApiManagerClient(
-                    "https://api.openai.com/v1/responses", settings.OpenAIApiKey, definition, includeReasoningSummary: true),
+                    "https://api.openai.com/v1/responses", settings.OpenAIApiKey, definition, includeReasoningSummary: true, expectJson: expectJson),
                 "xai" => new ResponsesApiManagerClient(
-                    "https://api.x.ai/v1/responses", settings.XAIGrokApiKey, definition, includeReasoningSummary: false),
+                    "https://api.x.ai/v1/responses", settings.XAIGrokApiKey, definition, includeReasoningSummary: false, expectJson: expectJson),
                 "anthropic" => new AnthropicMessagesManagerClient(settings.AnthropicApiKey, definition),
-                "google" => new GeminiManagerClient(settings.GoogleGeminiApiKey, definition),
+                "google" => new GeminiManagerClient(settings.GoogleGeminiApiKey, definition, expectJson: expectJson),
                 _ => throw new InvalidOperationException($"Manager {definition.Key} has unknown provider {definition.Provider}."),
             };
         }
@@ -379,10 +466,12 @@ namespace MultiImageClient
             {
                 return null;
             }
-            // Astra's published long-context rates apply to the complete request.
-            bool astraLongContext = definition.Key == KeyGpt6Astra && inputTokens.Value > 272_000;
-            return (inputTokens.Value * inputUsdPerMTok.Value * (astraLongContext ? 2m : 1m)
-                + outputTokens.Value * outputUsdPerMTok.Value * (astraLongContext ? 1.5m : 1m)) / 1_000_000m;
+            // GPT-6 Astra and GPT-6.2 Astra/Sol apply 2x input / 1.5x output
+            // rates to the complete request above 272K input tokens.
+            bool longContext = (definition.Key is KeyGpt6Astra or KeyGpt62Astra or KeyGpt62Sol)
+                && inputTokens.Value > 272_000;
+            return (inputTokens.Value * inputUsdPerMTok.Value * (longContext ? 2m : 1m)
+                + outputTokens.Value * outputUsdPerMTok.Value * (longContext ? 1.5m : 1m)) / 1_000_000m;
         }
     }
 
@@ -390,7 +479,7 @@ namespace MultiImageClient
     {
         public static readonly HttpClient Client = new()
         {
-            Timeout = TimeSpan.FromMinutes(15),
+            Timeout = TimeSpan.FromMinutes(20),
         };
 
         // Output cap sent on every manager/critic call. Production loops on
@@ -594,15 +683,17 @@ namespace MultiImageClient
         private readonly string _apiKey;
         private readonly ManagerDefinition _definition;
         private readonly bool _includeReasoningSummary;
+        private readonly bool _expectJson;
 
         public string Model => _definition.Model;
 
-        public ResponsesApiManagerClient(string endpoint, string apiKey, ManagerDefinition definition, bool includeReasoningSummary)
+        public ResponsesApiManagerClient(string endpoint, string apiKey, ManagerDefinition definition, bool includeReasoningSummary, bool expectJson = true)
         {
             _endpoint = endpoint;
             _apiKey = apiKey;
             _definition = definition;
             _includeReasoningSummary = includeReasoningSummary;
+            _expectJson = expectJson;
         }
 
         private bool IsXai => _definition.Provider == "xai";
@@ -673,14 +764,17 @@ namespace MultiImageClient
             }
             w.WriteEndArray();
             w.WriteNumber("max_output_tokens", _definition.MaxOutputTokens);
-            w.WritePropertyName("text");
-            w.WriteStartObject();
-            w.WritePropertyName("format");
-            w.WriteStartObject();
-            w.WriteString("type", "json_object");
-            w.WriteEndObject();
-            w.WriteEndObject();
-            if (Model.StartsWith("gpt-5", StringComparison.Ordinal) || Model == "gpt-6-astra")
+            if (_expectJson)
+            {
+                w.WritePropertyName("text");
+                w.WriteStartObject();
+                w.WritePropertyName("format");
+                w.WriteStartObject();
+                w.WriteString("type", "json_object");
+                w.WriteEndObject();
+                w.WriteEndObject();
+            }
+            if (Model.StartsWith("gpt-5", StringComparison.Ordinal) || Model.StartsWith("gpt-6", StringComparison.Ordinal))
             {
                 w.WritePropertyName("reasoning");
                 w.WriteStartObject();
@@ -945,13 +1039,15 @@ namespace MultiImageClient
     {
         private readonly string _apiKey;
         private readonly ManagerDefinition _definition;
+        private readonly bool _expectJson;
 
         public string Model => _definition.Model;
 
-        public GeminiManagerClient(string apiKey, ManagerDefinition definition)
+        public GeminiManagerClient(string apiKey, ManagerDefinition definition, bool expectJson = true)
         {
             _apiKey = apiKey;
             _definition = definition;
+            _expectJson = expectJson;
         }
 
         public async Task<ManagerChatReply> CompleteAsync(
@@ -1025,7 +1121,10 @@ namespace MultiImageClient
             w.WritePropertyName("generationConfig");
             w.WriteStartObject();
             w.WriteNumber("maxOutputTokens", _definition.MaxOutputTokens);
-            w.WriteString("responseMimeType", "application/json");
+            if (_expectJson)
+            {
+                w.WriteString("responseMimeType", "application/json");
+            }
             w.WritePropertyName("thinkingConfig");
             w.WriteStartObject();
             w.WriteString("thinkingLevel", "high");

@@ -56,7 +56,8 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(5),
         };
 
-        public const string DefaultModel = "gpt-5.6-sol";
+        public const string DefaultModel = "gpt-6.2-sol";
+        public const string AstraModel = "gpt-6.2-astra";
 
         private readonly string _apiKey;
         private readonly string _model;
@@ -100,10 +101,11 @@ namespace MultiImageClient
             {
                 payload["text"] = new { format = new { type = "json_object" } };
             }
-            // GPT-5.x defaults to heavy reasoning. That can consume the 1200
-            // output cap before the JSON object lands. Low effort keeps the
-            // caption path on the current flagship without a thinking dump.
-            if (_model.StartsWith("gpt-5", StringComparison.Ordinal))
+            // GPT-5.x and GPT-6.x default to heavy reasoning, which can consume
+            // the 1200 output cap before the JSON object lands. Low effort
+            // keeps captions fast without a thinking dump.
+            if (_model.StartsWith("gpt-5", StringComparison.Ordinal)
+                || _model.StartsWith("gpt-6", StringComparison.Ordinal))
             {
                 payload["reasoning"] = new { effort = "low" };
             }
@@ -164,7 +166,7 @@ namespace MultiImageClient
             Timeout = TimeSpan.FromMinutes(5),
         };
 
-        public const string DefaultModel = "claude-sonnet-5";
+        public const string DefaultModel = "claude-sonnet-5-5";
 
         private readonly string _apiKey;
         private readonly string _model;
@@ -177,13 +179,16 @@ namespace MultiImageClient
 
         public string GetModelName() => _model;
 
-        public async Task<string> DescribeImageAsync(byte[] imageBytes, string prompt, int maxTokens = 512, float temperature = 0.8f)
+        public static Dictionary<string, object> BuildPayload(string model, byte[] imageBytes, string prompt, int maxTokens, float temperature)
         {
             var mime = DescriberImageFormat.DetectMime(imageBytes);
+            var usesAlwaysOnThinking = model.StartsWith("claude-fable-5", StringComparison.Ordinal)
+                || string.Equals(model, "claude-opus-5-5", StringComparison.Ordinal);
+            var effectiveMaxTokens = usesAlwaysOnThinking ? Math.Max(maxTokens, 16_000) : maxTokens;
             var payload = new Dictionary<string, object>
             {
-                ["model"] = _model,
-                ["max_tokens"] = maxTokens,
+                ["model"] = model,
+                ["max_tokens"] = effectiveMaxTokens,
                 ["messages"] = new[]
                 {
                     new
@@ -201,11 +206,20 @@ namespace MultiImageClient
                     },
                 },
             };
-            // Claude 5 rejects non-default temperature/top_p/top_k (HTTP 400).
-            // Adaptive thinking is on by default and counts against max_tokens,
-            // so a 1200-token JSON caption can come back empty. Disable thinking
-            // for this path. Older models still take temperature.
-            if (UsesClaude5RequestShape(_model))
+            // Claude 5.x rejects non-default temperature/top_p/top_k (HTTP 400).
+            // claude-sonnet-5-5 also rejects thinking.type="disabled" (HTTP 400)
+            // and uses thinking.type="between_tools" for text-only captions
+            // without up-front thinking (live-verified 2026-11-19). Fable 5.x
+            // and Opus 5.5 keep default adaptive thinking with an expanded cap.
+            if (string.Equals(model, "claude-sonnet-5-5", StringComparison.Ordinal))
+            {
+                payload["thinking"] = new { type = "between_tools" };
+            }
+            else if (usesAlwaysOnThinking)
+            {
+                // Omit thinking field so adaptive thinking uses its default.
+            }
+            else if (UsesClaude5RequestShape(model))
             {
                 payload["thinking"] = new { type = "disabled" };
             }
@@ -213,6 +227,12 @@ namespace MultiImageClient
             {
                 payload["temperature"] = temperature;
             }
+            return payload;
+        }
+
+        public async Task<string> DescribeImageAsync(byte[] imageBytes, string prompt, int maxTokens = 512, float temperature = 0.8f)
+        {
+            var payload = BuildPayload(_model, imageBytes, prompt, maxTokens, temperature);
 
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages")
             {
@@ -247,6 +267,7 @@ namespace MultiImageClient
         private static bool UsesClaude5RequestShape(string model) =>
             model.StartsWith("claude-sonnet-5", StringComparison.Ordinal)
             || model.StartsWith("claude-opus-5", StringComparison.Ordinal)
+            || model.StartsWith("claude-haiku-5", StringComparison.Ordinal)
             || model.StartsWith("claude-fable-5", StringComparison.Ordinal);
     }
 
@@ -267,6 +288,9 @@ namespace MultiImageClient
         };
 
         public const string DefaultModel = "gemini-3.8-flash";
+        public const string NeonModel = "gemini-4-neon";
+        public const string CarbonModel = "gemini-4-carbon";
+        public const string HydrogenModel = "gemini-4-hydrogen";
         public const string ArgonModel = "gemini-4-argon";
 
         private readonly string _apiKey;
@@ -298,10 +322,13 @@ namespace MultiImageClient
 
         public static Dictionary<string, object> GenerationConfig(string model, int maxTokens, float temperature, bool requestJsonOutput)
         {
+            var gemini4Cap = model is ArgonModel or CarbonModel
+                ? ManagerChatHttp.Gemini4MaxOutputTokens
+                : ManagerChatHttp.MaxOutputTokens;
             var config = IsGemini4(model)
                 ? new Dictionary<string, object>
                 {
-                    ["maxOutputTokens"] = ManagerChatHttp.Gemini4MaxOutputTokens,
+                    ["maxOutputTokens"] = gemini4Cap,
                     ["thinkingConfig"] = new { thinkingLevel = "low" },
                 }
                 : model.StartsWith("gemini-3", StringComparison.Ordinal)

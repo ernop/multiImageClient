@@ -117,24 +117,40 @@ namespace MultiImageClient.Tests
         [Fact]
         public void DescribeDisplayNamesUseCurrentProviderModels()
         {
-            Assert.Equal("gpt-5.6-sol", OpenAIVisionDescriber.DefaultModel);
-            Assert.Equal("claude-sonnet-5", ClaudeVisionDescriber.DefaultModel);
+            Assert.Equal("gpt-6.2-sol", OpenAIVisionDescriber.DefaultModel);
+            Assert.Equal("gpt-6.2-astra", OpenAIVisionDescriber.AstraModel);
+            Assert.Equal("claude-sonnet-5-5", ClaudeVisionDescriber.DefaultModel);
             Assert.Equal("gemini-3.8-flash", GeminiVisionDescriber.DefaultModel);
-            Assert.Equal("grok-4.6", GrokVisionDescriber.DefaultModel);
+            Assert.Equal("gemini-4-neon", GeminiVisionDescriber.NeonModel);
+            Assert.Equal("gemini-4-carbon", GeminiVisionDescriber.CarbonModel);
+            Assert.Equal("gemini-4-hydrogen", GeminiVisionDescriber.HydrogenModel);
+            Assert.Equal("grok-4.7", GrokVisionDescriber.DefaultModel);
             Assert.Equal(
-                "OpenAI describe (gpt-5.6-sol)",
+                "OpenAI describe (gpt-6.2-sol)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeOpenAi));
             Assert.Equal(
-                "Claude describe (claude-sonnet-5)",
+                "OpenAI describe (gpt-6.2-astra)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeOpenAiAstra));
+            Assert.Equal(
+                "Claude describe (claude-sonnet-5-5)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeClaude));
             Assert.Equal(
                 "Gemini describe (gemini-3.8-flash)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGemini));
             Assert.Equal(
+                "Gemini describe (gemini-4-neon)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiNeon));
+            Assert.Equal(
+                "Gemini describe (gemini-4-carbon)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiCarbon));
+            Assert.Equal(
+                "Gemini describe (gemini-4-hydrogen)",
+                GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiHydrogen));
+            Assert.Equal(
                 "Gemini describe (gemini-4-argon)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGeminiArgon));
             Assert.Equal(
-                "Grok describe (grok-4.6)",
+                "Grok describe (grok-4.7)",
                 GeneratorPresentation.UiDisplayName(UiJobRunner.KeyDescribeGrok));
             Assert.Equal(
                 "Layout map (gemini-3.8-flash)",

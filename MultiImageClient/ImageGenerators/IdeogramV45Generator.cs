@@ -39,14 +39,19 @@ namespace IdeogramAPIClient
         private readonly string _name;
         private readonly IReadOnlyList<string> _inputImagePaths;
         private readonly int _imageCount;
+        private readonly ImageGeneratorApiType _apiType;
 
-        public ImageGeneratorApiType ApiType => ImageGeneratorApiType.IdeogramV45;
+        public ImageGeneratorApiType ApiType => _apiType;
 
-        /// size — a published 1K/2K preset such as "2048x2048", or null/empty
-        ///   for Ideogram's prompt-aware auto size. Must be empty with input
-        ///   images, because Precise Edit keeps the source dimensions.
+        private bool IsV46 => _apiType == ImageGeneratorApiType.IdeogramV46;
+        private string DisplayVersion => IsV46 ? "Ideogram 4.6" : "Ideogram 4.5";
+
+        /// size — a published preset (4.5: 1K/2K; 4.6: auto/auto_2k/auto_4k or
+        ///   WIDTHxHEIGHT up to 4096x4096), or null/empty for Ideogram's
+        ///   prompt-aware auto size. Must be empty with input images, because
+        ///   Precise Edit keeps the source dimensions.
         /// quality — null omits the field and bills the provider default:
-        ///   high for Generate, medium for Precise Edit.
+        ///   high for 4.5 Generate, medium for 4.6 Generate and Precise Edit.
         /// inputImagePaths — empty for Generate; otherwise 1 to 5 ordered
         ///   PNG/JPEG/WEBP files, the first edited and the rest references.
         /// httpHandler — replaces the API and download transports in tests.
@@ -59,46 +64,70 @@ namespace IdeogramAPIClient
             string name,
             IReadOnlyList<string> inputImagePaths = null,
             int imageCount = 1,
-            HttpMessageHandler httpHandler = null)
+            HttpMessageHandler httpHandler = null,
+            ImageGeneratorApiType apiType = ImageGeneratorApiType.IdeogramV45)
         {
+            if (apiType is not (ImageGeneratorApiType.IdeogramV45 or ImageGeneratorApiType.IdeogramV46))
+            {
+                throw new ArgumentOutOfRangeException(nameof(apiType), apiType, "Expected IdeogramV45 or IdeogramV46.");
+            }
+            _apiType = apiType;
             _inputImagePaths = inputImagePaths ?? Array.Empty<string>();
             _size = size ?? string.Empty;
             if (_inputImagePaths.Count > MaxInputImages)
             {
                 throw new ArgumentException(
-                    $"Ideogram 4.5 Precise Edit accepts at most {MaxInputImages} input images (one edited, {IdeogramClient.IdeogramV45MaxReferenceImages} references); received {_inputImagePaths.Count}.",
+                    $"{DisplayVersion} Precise Edit accepts at most {MaxInputImages} input images (one edited, {IdeogramClient.IdeogramV45MaxReferenceImages} references); received {_inputImagePaths.Count}.",
                     nameof(inputImagePaths));
             }
             if (_inputImagePaths.Any(string.IsNullOrWhiteSpace))
             {
-                throw new ArgumentException("Ideogram 4.5 input image paths must not be blank.", nameof(inputImagePaths));
+                throw new ArgumentException($"{DisplayVersion} input image paths must not be blank.", nameof(inputImagePaths));
             }
             if (_inputImagePaths.Count > 0 && _size.Length > 0)
             {
                 throw new ArgumentException(
-                    "Ideogram 4.5 Precise Edit keeps the source dimensions and has no size field.",
+                    $"{DisplayVersion} Precise Edit keeps the source dimensions and has no size field.",
                     nameof(size));
             }
-            if (_inputImagePaths.Count == 0 && _size.Length > 0 && !IdeogramClient.IsIdeogramV45TextSize(_size))
+            if (_inputImagePaths.Count == 0 && _size.Length > 0)
             {
-                throw new ArgumentOutOfRangeException(
-                    nameof(size),
-                    size,
-                    "Ideogram 4.5 text-to-image size must be one of the published 1K/2K presets, or empty for auto.");
+                var validSize = IsV46
+                    ? IdeogramClient.IsIdeogramV46TextSize(_size)
+                    : IdeogramClient.IsIdeogramV45TextSize(_size);
+                if (!validSize)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(size),
+                        size,
+                        IsV46
+                            ? "Ideogram 4.6 text-to-image size must be auto, auto_2k, auto_4k, or WIDTHxHEIGHT (multiples of 32, up to 4096x4096 pixels)."
+                            : "Ideogram 4.5 text-to-image size must be one of the published 1K/2K presets, or empty for auto.");
+                }
             }
             if (_inputImagePaths.Count == 0 && quality == IdeogramV45Quality.very_low)
             {
-                throw new ArgumentOutOfRangeException(
-                    nameof(quality),
-                    quality,
-                    "Ideogram 4.5 accepts quality=very_low only with source images.");
+                if (!IsV46)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(quality),
+                        quality,
+                        "Ideogram 4.5 accepts quality=very_low only with source images.");
+                }
+                if (IdeogramClient.IsIdeogramV464KSize(_size))
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(quality),
+                        quality,
+                        "Ideogram 4.6 quality=very_low does not support 4K sizes.");
+                }
             }
             if (imageCount < 1 || imageCount > IdeogramClient.IdeogramV45MaxNumImages)
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(imageCount),
                     imageCount,
-                    $"Ideogram 4.5 returns 1 to {IdeogramClient.IdeogramV45MaxNumImages} images per request.");
+                    $"{DisplayVersion} returns 1 to {IdeogramClient.IdeogramV45MaxNumImages} images per request.");
             }
 
             _client = httpHandler == null
@@ -138,7 +167,7 @@ namespace IdeogramAPIClient
         {
             var parts = new List<string>
             {
-                "IdeogramV45",
+                IsV46 ? "IdeogramV46" : "IdeogramV45",
                 _name,
                 IsEdit ? "precise-edit" : (_size.Length > 0 ? _size : "auto"),
                 _quality?.ToString() ?? "default",
@@ -148,7 +177,7 @@ namespace IdeogramAPIClient
 
         public List<string> GetRightParts()
         {
-            var contents = new List<string> { "Ideogram 4.5" };
+            var contents = new List<string> { DisplayVersion };
             if (!string.IsNullOrEmpty(_name))
             {
                 contents.Add(_name);
@@ -162,7 +191,7 @@ namespace IdeogramAPIClient
         {
             var parts = new List<string>
             {
-                IsEdit ? "Ideogram 4.5 precise edit" : "Ideogram 4.5 generate",
+                IsEdit ? $"{DisplayVersion} precise edit" : $"{DisplayVersion} generate",
                 $"quality {QualityLabel}",
             };
             // Contact sheets append the returned pixel size, so only auto is named here.
@@ -179,23 +208,39 @@ namespace IdeogramAPIClient
 
         public decimal GetCost()
         {
-            // Per-image prices from free dry_run quotes on 2026-10-07. Generate
-            // costs the same at 1K and 2K; Precise Edit costs the same for a
-            // 768x512 or a 2048x2048 source.
-            var perImage = IsEdit
-                ? (_quality ?? IdeogramV45Quality.medium) switch
+            // Per-image prices from live dry_run quotes (4.5 on 2026-10-07,
+            // 4.6 on 2026-11-19). 4.6 adds 4K Generate tiers at 2x 2K prices.
+            decimal perImage;
+            if (IsEdit)
+            {
+                perImage = (_quality ?? IdeogramV45Quality.medium) switch
                 {
                     IdeogramV45Quality.very_low => 0.008m,
                     IdeogramV45Quality.low => 0.03m,
                     IdeogramV45Quality.medium => 0.06m,
                     _ => 0.22m,
-                }
-                : (_quality ?? IdeogramV45Quality.high) switch
+                };
+            }
+            else if (IsV46 && IdeogramClient.IsIdeogramV464KSize(_size))
+            {
+                perImage = (_quality ?? IdeogramV45Quality.medium) switch
                 {
+                    IdeogramV45Quality.low => 0.06m,
+                    IdeogramV45Quality.medium => 0.12m,
+                    _ => 0.20m,
+                };
+            }
+            else
+            {
+                var defaultGenQuality = IsV46 ? IdeogramV45Quality.medium : IdeogramV45Quality.high;
+                perImage = (_quality ?? defaultGenQuality) switch
+                {
+                    IdeogramV45Quality.very_low => 0.008m,
                     IdeogramV45Quality.low => 0.03m,
                     IdeogramV45Quality.medium => 0.06m,
                     _ => 0.10m,
                 };
+            }
             return perImage * _imageCount;
         }
 
@@ -205,7 +250,8 @@ namespace IdeogramAPIClient
             var sw = Stopwatch.StartNew();
             try
             {
-                _stats.IdeogramV45RequestCount++;
+                if (IsV46) _stats.IdeogramV46RequestCount++;
+                else _stats.IdeogramV45RequestCount++;
                 var numImages = _imageCount == 1 ? (int?)null : _imageCount;
                 IdeogramV45Response response;
                 if (IsEdit)
@@ -215,32 +261,37 @@ namespace IdeogramAPIClient
                     {
                         files.Add(await ReadInputFileAsync(_inputImagePaths[i], i));
                     }
-                    response = await _client.PreciseEditImageV45Async(
-                        new IdeogramV45PreciseEditRequest(promptDetails.Prompt, files[0])
-                        {
-                            ReferenceImages = files.Skip(1).ToList(),
-                            Quality = _quality,
-                            NumImages = numImages,
-                        });
+                    var editReq = new IdeogramV45PreciseEditRequest(promptDetails.Prompt, files[0])
+                    {
+                        ReferenceImages = files.Skip(1).ToList(),
+                        Quality = _quality,
+                        NumImages = numImages,
+                    };
+                    response = IsV46
+                        ? await _client.PreciseEditImageV46Async(editReq)
+                        : await _client.PreciseEditImageV45Async(editReq);
                 }
                 else
                 {
-                    response = await _client.GenerateImageV45Async(
-                        new IdeogramV45GenerateRequest(promptDetails.Prompt)
-                        {
-                            Size = _size.Length > 0 ? _size : null,
-                            Quality = _quality,
-                            NumImages = numImages,
-                        });
+                    var genReq = new IdeogramV45GenerateRequest(promptDetails.Prompt)
+                    {
+                        Size = _size.Length > 0 ? _size : null,
+                        Quality = _quality,
+                        NumImages = numImages,
+                    };
+                    response = IsV46
+                        ? await _client.GenerateImageV46Async(genReq)
+                        : await _client.GenerateImageV45Async(genReq);
                 }
 
                 // The client guarantees exactly one data entry per requested image.
                 var data = response.Data!;
                 if (data.Any(item => !item.IsImageSafe))
                 {
-                    _stats.IdeogramV45RefusedCount++;
+                    if (IsV46) _stats.IdeogramV46RefusedCount++;
+                    else _stats.IdeogramV45RefusedCount++;
                     return Fail(
-                        "Ideogram 4.5 rejected the generated image as unsafe.",
+                        $"{DisplayVersion} rejected the generated image as unsafe.",
                         GenericImageGenerationErrorType.ContentModerated,
                         promptDetails,
                         generator,
@@ -271,7 +322,7 @@ namespace IdeogramAPIClient
                 }
 
                 Logger.Log(
-                    $"\t<- Ideogram 4.5 {(IsEdit ? "precise edit" : "generate")} OK in {sw.ElapsedMilliseconds} ms: "
+                    $"\t<- {DisplayVersion} {(IsEdit ? "precise edit" : "generate")} OK in {sw.ElapsedMilliseconds} ms: "
                     + $"{string.Join(", ", data.Select(item => item.Resolution))} ({response.GenerationKind} {response.GenerationId})");
                 return new TaskProcessResult
                 {
@@ -288,7 +339,8 @@ namespace IdeogramAPIClient
             {
                 if (ex.StatusCode == HttpStatusCode.UnprocessableEntity)
                 {
-                    _stats.IdeogramV45RefusedCount++;
+                    if (IsV46) _stats.IdeogramV46RefusedCount++;
+                    else _stats.IdeogramV45RefusedCount++;
                 }
                 var errorType = ex.StatusCode switch
                 {

@@ -44,24 +44,28 @@ namespace MultiImageClient
         public const string DefaultModelId = "gpt-image-2";
         public const string SunburstModelId = "gpt-image-2.5-sunburst";
         public const string FlareModelId = "gpt-image-2.5-flare";
+        public const string Sunburst26ModelId = "gpt-image-2.6-sunburst";
+        public const string Flare26ModelId = "gpt-image-2.6-flare";
         // OpenAI's image API reference: 32,000 characters for every GPT image
         // model, on generations and edits (checked 2026-10-12).
         public const int MaxPromptChars = 32_000;
         private const string GenerationsUrl = "https://api.openai.com/v1/images/generations";
 
+        private readonly string _apiKey;
         private readonly string _modelId;
         private readonly ImageGeneratorApiType _apiType;
         // Short model tag for filenames: "gpt-2", "gpt-25-sunburst", ...
         private readonly string _fileTag;
 
-        // gpt-image-2 rejects the 2.5-only quality tiers with an HTTP 400,
+        // gpt-image-2 rejects the 2.5/2.6 quality tiers with an HTTP 400,
         // so quality pools are validated against the configured model at
         // construction (configuration error, not a provider-call failure).
         public static bool ModelSupportsQuality(string modelId, OpenAIGPTImageOneQuality quality)
         {
             if (quality is OpenAIGPTImageOneQuality.xhigh or OpenAIGPTImageOneQuality.max)
             {
-                return modelId.StartsWith("gpt-image-2.5", StringComparison.OrdinalIgnoreCase);
+                return modelId.StartsWith("gpt-image-2.5", StringComparison.OrdinalIgnoreCase)
+                    || modelId.StartsWith("gpt-image-2.6", StringComparison.OrdinalIgnoreCase);
             }
             return true;
         }
@@ -133,17 +137,17 @@ namespace MultiImageClient
                 if (!ModelSupportsQuality(modelId, quality))
                 {
                     throw new ArgumentException(
-                        $"quality '{quality}' is not supported by {modelId} (xhigh/max are gpt-image-2.5 only)",
+                        $"quality '{quality}' is not supported by {modelId} (xhigh/max are gpt-image-2.5/2.6 only)",
                         nameof(qualityPool));
                 }
             }
+            _apiKey = apiKey;
             _modelId = modelId;
             _apiType = apiType;
             _fileTag = modelId == DefaultModelId
                 ? "gpt-2"
                 : modelId.Replace("gpt-image-", "gpt-").Replace(".", "");
             _semaphore = new SemaphoreSlim(maxConcurrency);
-            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
             _sizePool = sizePool;
             _moderation = moderation;
             _qualityPool = qualityPool;
@@ -306,6 +310,7 @@ namespace MultiImageClient
                 Logger.Log($"    [{genTag}] POST /v1/images/generations body: {bodyJson}");
 
                 using var req = new HttpRequestMessage(HttpMethod.Post, GenerationsUrl);
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
                 req.Content = new StringContent(bodyJson, Encoding.UTF8, "application/json");
                 req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(
                     useStreaming ? "text/event-stream" : "application/json"));

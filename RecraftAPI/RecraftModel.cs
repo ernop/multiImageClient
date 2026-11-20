@@ -13,5 +13,6 @@ namespace RecraftAPIClient
         recraftv4_1_pro,
         recraftv4_1_vector,
         recraftv4_1_utility,
+        recraftv4_1_flash_v2,
     }
 }

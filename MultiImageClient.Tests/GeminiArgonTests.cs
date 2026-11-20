@@ -27,7 +27,8 @@ namespace MultiImageClient.Tests
         public void OtherManagersKeepTheSharedOutputCap()
         {
             Assert.All(
-                ManagerCatalog.All.Where(m => m.Key != ManagerCatalog.KeyGemini4Argon),
+                ManagerCatalog.All.Where(m => m.Key != ManagerCatalog.KeyGemini4Argon
+                    && m.Key != ManagerCatalog.KeyGemini4Carbon),
                 m => Assert.Equal(64_000, m.MaxOutputTokens));
         }
 

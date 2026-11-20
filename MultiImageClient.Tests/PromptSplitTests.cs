@@ -218,7 +218,11 @@ public sealed class PromptSplitTests
             var advice = Save(store, Alice, Source, "A bright comic.", purpose: "");
             Assert.Equal($"Saved prompt version {advice} is not a split.", Rejection(Alice, advice, Source));
             var otherModel = Save(store, Alice, Source, TwoPartReply, model: "claude-sonnet-5-5");
-            Assert.Equal($"Saved prompt version {otherModel} is not a split.", Rejection(Alice, otherModel, Source));
+            var (otherExchange, otherPlan) = Resolve(store, Alice, otherModel, Source, keys, NoExtraText);
+            Assert.Equal(otherModel, otherExchange.Id);
+            Assert.Equal(2, otherPlan.ImageCount);
+            var unknownModel = Save(store, Alice, Source, TwoPartReply, model: "not-in-catalog");
+            Assert.Equal($"Saved prompt version {unknownModel} is not a split.", Rejection(Alice, unknownModel, Source));
             var failed = Save(store, Alice, Source, "", error: "provider unavailable");
             Assert.Equal($"Split {failed} did not complete.", Rejection(Alice, failed, Source));
             var single = Save(store, Alice, Source, """{"imageCount":1,"reason":"One scene.","images":[]}""");

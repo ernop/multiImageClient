@@ -100,6 +100,15 @@ namespace MultiImageClient
         public static ManagerDefinition Definition => ManagerCatalog.Find(ModelKey)
             ?? throw new InvalidOperationException($"The manager catalog has no {ModelKey} entry.");
 
+        public static ManagerDefinition? ResolveModel(string? modelOrKey)
+        {
+            if (string.IsNullOrWhiteSpace(modelOrKey))
+            {
+                return Definition;
+            }
+            return ManagerCatalog.FindByKeyOrModel(modelOrKey);
+        }
+
         public static object Config(Settings settings)
         {
             var problem = ManagerCatalog.DescribeAvailabilityProblem(Definition, settings);
@@ -107,6 +116,7 @@ namespace MultiImageClient
             {
                 available = problem == null,
                 availabilityProblem = problem,
+                key = Definition.Key,
                 model = Definition.Model,
                 label = Definition.Label,
                 defaultInstruction = DefaultInstruction,
@@ -279,8 +289,8 @@ namespace MultiImageClient
 
         // A decline quotes the model's own words, which can contain the
         // billing or key phrases that select a provider hint.
-        public static ProviderActionHints.Hint? ActionHint(PromptSplitOutcome outcome)
-            => outcome.Declined ? null : ProviderActionHints.For(UiJobRunner.KeyDescribeClaude, outcome.Error);
+        public static ProviderActionHints.Hint? ActionHint(PromptSplitOutcome outcome, string provider = "anthropic")
+            => outcome.Declined ? null : ProviderActionHints.ForProvider(provider, outcome.Error);
 
         public static PromptSplitPlan ParseReply(string? text, int partBudget, string modelLabel)
         {
@@ -443,7 +453,7 @@ namespace MultiImageClient
         {
             var exchange = readExchange(exchangeId)
                 ?? throw new InvalidDataException($"Split {exchangeId} is not one of your saved prompt versions.");
-            if (exchange.Purpose != Purpose || exchange.Model != Definition.Model)
+            if (exchange.Purpose != Purpose || ManagerCatalog.FindByModel(exchange.Model) == null)
             {
                 throw new InvalidDataException($"Saved prompt version {exchangeId} is not a split.");
             }

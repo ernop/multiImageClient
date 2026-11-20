@@ -1,6 +1,6 @@
 # Splitting one prompt into several images
 
-Settled 2026-11-03. Updated 2026-11-10: results group by image generator.
+Settled 2026-11-03. Updated 2026-11-10 (results group by image generator) and **2026-11-19 (writer model configurable in Settings → Prompt assistant models, defaulting to Opus 5.5; stored in personal configuration version 6; see [docs/model-catalog-2026-11.md](model-catalog-2026-11.md))**.
 
 ## Owner request (2026-11-03)
 

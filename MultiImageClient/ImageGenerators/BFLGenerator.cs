@@ -18,6 +18,8 @@ namespace MultiImageClient
         private int _width { get; set; }
         private int _height { get; set; }
         private string _inputImagePath;
+        private IReadOnlyList<string> _inputImagePaths;
+        private string _flux3Resolution;
         private ImageGeneratorApiType _apiType { get; }
 
         public ImageGeneratorApiType ApiType => _apiType;
@@ -60,6 +62,10 @@ namespace MultiImageClient
                 case ImageGeneratorApiType.BFLFluxKontextMax:
                     res = $"{res}_{_aspectRatio}{upsamplingPart}";
                     break;
+                case ImageGeneratorApiType.BFLFlux3:
+                case ImageGeneratorApiType.BFLFlux3Klein:
+                    res = $"{res}_{_aspectRatio}_{_flux3Resolution ?? "1k"}";
+                    break;
                 default:
                     throw new Exception($"BFLGenerator: unhandled api type {_apiType}");
             }
@@ -67,10 +73,10 @@ namespace MultiImageClient
             return res;
         }
 
-        /// inputImagePath: when set (FLUX.2 endpoints only), the image is sent as
-        ///   input_image conditioning — a reference/guide the model draws on, not
-        ///   a mask-based edit. All FLUX.2 variants support this.
-        public BFLGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency, string aspectRatio, bool promptUpscaling, int width, int height, MultiClientRunStats stats, string name, string inputImagePath = null)
+        /// inputImagePath: when set (FLUX.2 / FLUX 3 endpoints), the image is
+        ///   sent as conditioning / reference input. FLUX 3 also accepts multiple
+        ///   images through inputImagePaths (up to 10).
+        public BFLGenerator(ImageGeneratorApiType apiType, string apiKey, int maxConcurrency, string aspectRatio, bool promptUpscaling, int width, int height, MultiClientRunStats stats, string name, string inputImagePath = null, IReadOnlyList<string> inputImagePaths = null, string flux3Resolution = null)
         {
             _apiType = apiType;
             _bflClient = new BFLClient(apiKey);
@@ -84,6 +90,8 @@ namespace MultiImageClient
             _stats = stats;
             _name = string.IsNullOrEmpty(name) ? "" : name;
             _inputImagePath = inputImagePath;
+            _inputImagePaths = inputImagePaths;
+            _flux3Resolution = flux3Resolution;
         }
         public List<string> GetRightParts()
         {
@@ -122,6 +130,26 @@ namespace MultiImageClient
                 case ImageGeneratorApiType.BFLFlux2Klein9b:
                 case ImageGeneratorApiType.BFLFlux2Klein9bPreview:
                     return 0.015m + Math.Max(0m, outputMegapixels - 1m) * 0.002m;
+                case ImageGeneratorApiType.BFLFlux3:
+                    return (_flux3Resolution ?? "1k") switch
+                    {
+                        "768sq" => 0.041m,
+                        "1k" => 0.048m,
+                        "1.5k" => 0.072m,
+                        "2k" or "match_input" => 0.100m,
+                        "4k" => 0.607m,
+                        _ => 0.048m,
+                    };
+                case ImageGeneratorApiType.BFLFlux3Klein:
+                    return (_flux3Resolution ?? "1k") switch
+                    {
+                        "768sq" => 0.008m,
+                        "1k" => 0.009m,
+                        "1.5k" => 0.011m,
+                        "2k" or "match_input" => 0.014m,
+                        "4k" => 0.036m,
+                        _ => 0.009m,
+                    };
                 default:
                     throw new Exception($"BFLGenerator: no cost entry for {_apiType}");
             }
@@ -307,6 +335,21 @@ namespace MultiImageClient
                             };
                             break;
                         }
+                    case ImageGeneratorApiType.BFLFlux3:
+                    case ImageGeneratorApiType.BFLFlux3Klein:
+                        {
+                            var endpoint = _apiType == ImageGeneratorApiType.BFLFlux3
+                                ? "flux-3-image"
+                                : "flux-3-image-klein";
+                            promptDetails.RuntimeMeta["endpoint"] = endpoint;
+                            promptDetails.RuntimeMeta["aspect_ratio"] = _aspectRatio ?? "auto";
+                            promptDetails.RuntimeMeta["resolution"] = _flux3Resolution ?? "1k";
+                            var request = BuildFlux3Request(promptDetails);
+                            generationResponse = _apiType == ImageGeneratorApiType.BFLFlux3
+                                ? await _bflClient.GenerateFlux3Async(request)
+                                : await _bflClient.GenerateFlux3KleinAsync(request);
+                            break;
+                        }
                     default:
                         throw new Exception($"BFLGenerator: unsupported api type {_apiType}");
                 }
@@ -393,6 +436,44 @@ namespace MultiImageClient
                 promptDetails.RuntimeMeta["input_image"] = Path.GetFileName(_inputImagePath);
             }
             return request;
+        }
+
+        private Flux3Request BuildFlux3Request(PromptDetails promptDetails)
+        {
+            var paths = new List<string>();
+            if (_inputImagePaths != null && _inputImagePaths.Count > 0)
+            {
+                foreach (var p in _inputImagePaths)
+                {
+                    if (!string.IsNullOrWhiteSpace(p)) paths.Add(p);
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(_inputImagePath))
+            {
+                paths.Add(_inputImagePath);
+            }
+
+            List<string> images = null;
+            if (paths.Count > 0)
+            {
+                images = new List<string>(paths.Count);
+                foreach (var p in paths)
+                {
+                    images.Add(Convert.ToBase64String(File.ReadAllBytes(p)));
+                }
+                promptDetails.RuntimeMeta["input_image"] = Path.GetFileName(paths[0]);
+            }
+
+            // FLUX 3 enforces additionalProperties: false and caps approved
+            // safety_tolerance per route/org; omit safety_tolerance so BFL
+            // applies the route default instead of returning 422.
+            return new Flux3Request
+            {
+                Prompt = promptDetails.Prompt,
+                Images = images,
+                AspectRatio = string.IsNullOrWhiteSpace(_aspectRatio) ? "auto" : _aspectRatio,
+                Resolution = string.IsNullOrWhiteSpace(_flux3Resolution) ? "1k" : _flux3Resolution,
+            };
         }
 
         private string ReadInputImageBase64()

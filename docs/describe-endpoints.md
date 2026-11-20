@@ -1,6 +1,6 @@
 # UI describe endpoints
 
-Reviewed 2026-09-03. These are the `--ui` image→text targets plus layout-map.
+Reviewed 2026-09-03; updated 2026-11-19 (see [docs/model-catalog-2026-11.md](model-catalog-2026-11.md)). These are the `--ui` image→text targets plus layout-map.
 
 The composer heading no longer carries an extra “image → text…” note. The
 chips and their catalog `detail` strings remain the instruction.
@@ -10,11 +10,15 @@ chips and their catalog `detail` strings remain the instruction.
 | UI key | Model / endpoint | Why this ID |
 |---|---|---|
 | `describe-ideogram` | Ideogram `POST /describe`, `describe_model_version=V_3` | Official caption API. Default was already V_3; we now send it. `POST /v1/ideogram-v4/describe` returns structured *generation* prompts, not this caption path. |
-| `describe-openai` | `gpt-5.6-sol` | OpenAI flagship. Official models page: start here. Vision on Responses API. `gpt-4.1` is older. |
-| `describe-claude` | `claude-sonnet-5` | Current Sonnet. `claude-sonnet-4-5` is legacy. Keep Sonnet, not Opus 5 / Fable 5. |
+| `describe-openai` | `gpt-6.2-sol` | Upgraded 2026-11-19 from `gpt-5.6-sol`. Everyday frontier vision model on Responses API (`reasoning.effort=low`, no `temperature`). |
+| `describe-openai-astra` | `gpt-6.2-astra` | Added 2026-11-19. OpenAI flagship reasoning vision model (`reasoning.effort=low`). |
+| `describe-claude` | `claude-sonnet-5-5` | Upgraded 2026-11-19 from `claude-sonnet-5`. Sends `thinking: { type: "between_tools" }` (Sonnet 5.5 rejects `disabled` with HTTP 400). |
 | `describe-gemini` | `gemini-3.8-flash` | Since 2026-10-30 (owner choice). Google deprecated `gemini-3.5-flash` and sends its requests to `gemini-3.6-flash`. 3.8 Flash is the newest Flash at the same price. See `docs/nano-banana-2-1-and-gemini-3-8-flash.md`. |
-| `describe-gemini-argon` | `gemini-4-argon` | Added 2026-10-29 (owner request). Google's flagship reasoning model, released 2026-10-13. Slower and dearer than Flash. See `docs/gemini-4-argon-support.md`. |
-| `describe-grok` | `grok-4.6` | xAI flagship. Modalities: text and image → text. `grok-4.3` remains available but is not current. |
+| `describe-gemini-neon` | `gemini-4-neon` | Added 2026-11-19. Flagship Gemini 4 vision model (`thinkingLevel=low`, `maxOutputTokens=64000`, no `temperature`). |
+| `describe-gemini-carbon` | `gemini-4-carbon` | Added 2026-11-19. Balanced Gemini 4 vision model (`thinkingLevel=low`, `maxOutputTokens=32768`, no `temperature`). |
+| `describe-gemini-hydrogen` | `gemini-4-hydrogen` | Added 2026-11-19. Fast lower-cost Gemini 4 vision model (`thinkingLevel=low`, `maxOutputTokens=64000`, no `temperature`). |
+| `describe-gemini-argon` | `gemini-4-argon` | Added 2026-10-29 (owner request). Gemini 4 Argon reasoning model (`maxOutputTokens=32768`). See `docs/gemini-4-argon-support.md`. |
+| `describe-grok` | `grok-4.7` | Upgraded 2026-11-19 from `grok-4.6`. xAI flagship (`reasoning.effort=low`, `store=false`). |
 | `layout-map` | `gemini-3.8-flash` | Same Gemini call as describe. Layout-map asks for JSON boxes in the prompt. That is not Google’s old image-segmentation API. |
 
 Request-shape notes that are part of the upgrade, not optional polish:

@@ -25,6 +25,8 @@ public class PromptLimitTests
         UiJobRunner.KeyIdeogramV3,
         UiJobRunner.KeyIdeogramV2,
         // BFL states token limits, not character limits.
+        UiJobRunner.KeyBflFlux3,
+        UiJobRunner.KeyBflFlux3Klein,
         UiJobRunner.KeyBfl,
         UiJobRunner.KeyBflFlux2Pro,
         UiJobRunner.KeyBflFlux2Max,
@@ -52,8 +54,12 @@ public class PromptLimitTests
         // Ideogram describe sends no prompt.
         UiJobRunner.KeyDescribeIdeogram,
         UiJobRunner.KeyDescribeOpenAi,
+        UiJobRunner.KeyDescribeOpenAiAstra,
         UiJobRunner.KeyDescribeClaude,
         UiJobRunner.KeyDescribeGemini,
+        UiJobRunner.KeyDescribeGeminiNeon,
+        UiJobRunner.KeyDescribeGeminiCarbon,
+        UiJobRunner.KeyDescribeGeminiHydrogen,
         UiJobRunner.KeyDescribeGeminiArgon,
         UiJobRunner.KeyDescribeGrok,
         UiJobRunner.KeyLayoutMap,
@@ -133,11 +139,16 @@ public class PromptLimitTests
     [InlineData(UiJobRunner.KeyGpt2, true, 32_000)]
     [InlineData(UiJobRunner.KeyGpt25Sunburst, false, 32_000)]
     [InlineData(UiJobRunner.KeyGpt25Flare, true, 32_000)]
+    [InlineData(UiJobRunner.KeyGpt26Sunburst, false, 32_000)]
+    [InlineData(UiJobRunner.KeyGpt26Flare, true, 32_000)]
     [InlineData(UiJobRunner.KeyGpt1, false, 32_000)]
     [InlineData(UiJobRunner.KeyGpt1Mini, false, 32_000)]
     [InlineData(UiJobRunner.KeyIdeogramV45, false, 10_000)]
     [InlineData(UiJobRunner.KeyIdeogramV45, true, 10_000)]
+    [InlineData(UiJobRunner.KeyIdeogramV46, false, 10_000)]
+    [InlineData(UiJobRunner.KeyIdeogramV46, true, 10_000)]
     [InlineData(UiJobRunner.KeyRecraft, false, 10_000)]
+    [InlineData(UiJobRunner.KeyRecraftV41Flash, false, 10_000)]
     [InlineData(UiJobRunner.KeyRecraftV41Utility, true, 10_000)]
     [InlineData(UiJobRunner.KeyRecraftV41Pro, false, 10_000)]
     [InlineData(UiJobRunner.KeyRecraftV41Vector, false, 10_000)]
