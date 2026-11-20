@@ -38,7 +38,7 @@ namespace MultiImageClient
 
         public static string DatabasePath => _databasePath;
 
-        internal static void EnsureSqliteAvailable()
+        public static void EnsureSqliteAvailable()
         {
             lock (Sync)
             {

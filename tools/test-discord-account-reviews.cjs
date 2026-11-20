@@ -30,10 +30,11 @@ const root = path.resolve(__dirname, '../MultiImageClient/Ui/wwwroot');
           return route.fulfill({ json: { state, message: action === 'test' ? 'Test copy sent to Brouhahaha.' : 'Account link sent to @alice.discord.' } });
         }
         if (url.pathname === '/api/control/state') return route.fulfill({ json: { environments: [], accounts: [] } });
+        if (url.pathname === '/api/admin/prompt-archive/stats') return route.fulfill({ json: { exists: false, totalPrompts: 0, totalOccurrences: 0, sources: [], years: [], kinds: [] } });
         if (url.pathname === '/api/config') return route.fulfill({ json: { generators: [] } });
         if (url.pathname === '/environment.js') return route.fulfill({ contentType: 'text/javascript', body: '' });
         const file = url.pathname.slice(1);
-        assert.ok(['admin.html', 'admin.js', 'admin-discord-requests.js', 'generator-toggle.js', 'style.css'].includes(file));
+        assert.ok(['admin.html', 'admin.js', 'admin-discord-requests.js', 'admin-prompt-archive.js', 'generator-toggle.js', 'style.css'].includes(file));
         return route.fulfill({ contentType: file.endsWith('.html') ? 'text/html' : file.endsWith('.css') ? 'text/css' : 'text/javascript',
           body: fs.readFileSync(path.join(root, file), 'utf8') });
       });

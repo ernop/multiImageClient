@@ -47,7 +47,7 @@ header.environment-local {
 }
 header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
 #environment-name { color: var(--ink); }
-#goal-loops-link {
+#goal-loops-link, #prompt-archive-link {
   padding: 5px 12px;
   font-size: 12px;
   font-weight: 700;
@@ -57,7 +57,7 @@ header h1 { margin: 0; font-size: 20px; letter-spacing: 0.5px; }
   border-radius: 3px;
   text-decoration: none;
 }
-#goal-loops-link:hover { color: #fff; background: var(--accent); }
+#goal-loops-link:hover, #prompt-archive-link:hover { color: #fff; background: var(--accent); }
 .job-goal-loop {
   padding: 2px 8px;
   font-size: 11px;
@@ -4400,7 +4400,7 @@ body.image-viewer-open { overflow: hidden; }
   }
   body.composer-page > header > * { flex: 0 0 auto; white-space: nowrap; }
   body.composer-page > header h1 { font-size: 15px; letter-spacing: 0; }
-  #goal-loops-link, #settings-toggle, #logs-toggle, #activity-toggle, #people-link {
+  #goal-loops-link, #prompt-archive-link, #settings-toggle, #logs-toggle, #activity-toggle, #people-link {
     order: 1;
     padding: 5px 9px;
   }

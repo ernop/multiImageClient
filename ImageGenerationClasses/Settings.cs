@@ -119,6 +119,10 @@ namespace MultiImageClient
         /// ImageDownloadBaseFolder/ui-community.sqlite3.
         public string UiCommunityDbPath { get; set; } = "";
 
+        // Private admin-only lifetime prompt archive SQLite database. Blank
+        // defaults to ImageDownloadBaseFolder/prompt-archive.sqlite3.
+        public string UiPromptArchiveDbPath { get; set; } = "";
+
         // Incoming Discord webhook for the #vibecoders send button. Blank
         // (the default) hides the button. Confirmed posts attach originals with public-subset links in daily threads.
         public string DiscordVibecodersWebhookUrl { get; set; } = "";
@@ -352,6 +356,8 @@ namespace MultiImageClient
             UiAuthFilePath = ExpandPath(UiAuthFilePath);
             UiLoginLinksFilePath = ExpandPath(UiLoginLinksFilePath);
             UiEnvironmentRegistryPath = ExpandPath(UiEnvironmentRegistryPath);
+            UiCommunityDbPath = ExpandPath(UiCommunityDbPath);
+            UiPromptArchiveDbPath = ExpandPath(UiPromptArchiveDbPath);
             FlatImageMirrorPath = ExpandPath(FlatImageMirrorPath);
             TypedPromptsAppendFile = ExpandPath(TypedPromptsAppendFile);
             LoadPromptsFrom = ExpandPath(LoadPromptsFrom);

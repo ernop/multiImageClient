@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<script src="environment.js"></script>
+<title>Prompt Archive — MultiImageClient</title>
+<link rel="stylesheet" href="style.css?v=20261120-prompt-archive">
+<style>
+  body.prompt-archive-page {
+    margin: 0;
+    background: #ffffff;
+    color: #000000;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+  }
+  body.prompt-archive-page header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 20px;
+    background: #eef3ff;
+    border-bottom: 2px solid #1d3b8b;
+  }
+  body.prompt-archive-page header h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 800;
+    color: #000000;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  body.prompt-archive-page header h1 a {
+    color: #000000;
+    text-decoration: none;
+  }
+  body.prompt-archive-page header .pa-page-badge {
+    font-size: 14px;
+    font-weight: 800;
+    color: #ffffff;
+    background: #1d3b8b;
+    padding: 2px 9px;
+    border-radius: 4px;
+  }
+  body.prompt-archive-page header .pa-nav-links {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  body.prompt-archive-page header .pa-nav-link {
+    padding: 6px 12px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #1d3b8b;
+    background: #ffffff;
+    border: 2px solid #1d3b8b;
+    border-radius: 4px;
+    text-decoration: none;
+  }
+  body.prompt-archive-page header .pa-nav-link:hover {
+    color: #ffffff;
+    background: #1d3b8b;
+  }
+  .pa-main {
+    width: 100%;
+    padding: 16px 20px 48px;
+    box-sizing: border-box;
+  }
+  .pa-stats-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .pa-stat {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 10px 14px;
+    background: #f5f7fc;
+    border: 1.5px solid #1d3b8b;
+    border-radius: 6px;
+  }
+  .pa-stat-val {
+    font-size: 22px;
+    font-weight: 800;
+    color: #000000;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .pa-stat-label {
+    font-size: 13px;
+    font-weight: 700;
+    color: #000000;
+  }
+  .pa-stats-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .pa-controls {
+    background: #f5f7fc;
+    border: 2px solid #1d3b8b;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+  }
+  .pa-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .pa-row:last-child {
+    margin-bottom: 0;
+  }
+  .pa-btn {
+    padding: 8px 14px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    color: #000000;
+    background: #ffffff;
+    border: 2px solid #000000;
+    border-radius: 5px;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .pa-btn:hover {
+    background: #e6ecff;
+  }
+  .pa-btn:disabled {
+    cursor: not-allowed;
+    border-style: dashed;
+  }
+  .pa-btn-primary {
+    color: #ffffff;
+    background: #1d3b8b;
+    border-color: #1d3b8b;
+  }
+  .pa-btn-primary:hover {
+    background: #122866;
+    border-color: #122866;
+  }
+  .pa-btn-green {
+    color: #ffffff;
+    background: #0d5c2b;
+    border-color: #0d5c2b;
+  }
+  .pa-btn-green:hover {
+    background: #08411e;
+    border-color: #08411e;
+  }
+  .pa-btn-sm {
+    padding: 5px 10px;
+    font-size: 13px;
+  }
+  .pa-search-group {
+    display: flex;
+    flex: 1 1 320px;
+    gap: 6px;
+    align-items: center;
+  }
+  .pa-input, .pa-select {
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    color: #000000;
+    background: #ffffff;
+    border: 2px solid #000000;
+    border-radius: 5px;
+    box-sizing: border-box;
+  }
+  .pa-input::placeholder {
+    color: #1d3b8b;
+    opacity: 1;
+    font-weight: 500;
+  }
+  .pa-search-group .pa-input {
+    flex: 1 1 auto;
+    min-width: 180px;
+  }
+  .pa-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 800;
+    color: #000000;
+  }
+  .pa-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .pa-chip-label {
+    font-size: 13px;
+    font-weight: 800;
+    color: #000000;
+  }
+  .pa-chip {
+    padding: 5px 11px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    color: #000000;
+    background: #ffffff;
+    border: 1.5px solid #000000;
+    border-radius: 16px;
+    cursor: pointer;
+  }
+  .pa-chip:hover {
+    background: #e6ecff;
+  }
+  .pa-chip.active {
+    color: #ffffff;
+    background: #1d3b8b;
+    border-color: #1d3b8b;
+  }
+  .pa-status-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: #ffffff;
+    border: 1.5px solid #000000;
+    border-radius: 6px;
+  }
+  .pa-status-text {
+    font-size: 15px;
+    font-weight: 800;
+    color: #000000;
+    font-variant-numeric: tabular-nums;
+  }
+  .pa-status-error {
+    color: #a11616;
+  }
+  .pa-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .pa-card {
+    background: #ffffff;
+    border: 2px solid #000000;
+    border-radius: 8px;
+    padding: 12px 16px;
+  }
+  .pa-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1.5px solid #000000;
+  }
+  .pa-card-num {
+    font-size: 16px;
+    font-weight: 800;
+    color: #1d3b8b;
+    font-variant-numeric: tabular-nums;
+  }
+  .pa-card-date {
+    font-size: 16px;
+    font-weight: 800;
+    color: #000000;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .pa-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #000000;
+    background: #e6ecff;
+    border: 1px solid #1d3b8b;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .pa-badge-model {
+    background: #e5f6eb;
+    border-color: #0d5c2b;
+    color: #000000;
+  }
+  .pa-badge-count {
+    background: #000000;
+    border-color: #000000;
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+  }
+  .pa-badge-meta {
+    background: #ffffff;
+    border-color: #000000;
+    color: #000000;
+    font-variant-numeric: tabular-nums;
+  }
+  .pa-card-actions {
+    margin-left: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+  }
+  .pa-prompt-text {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: #000000;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .pa-expand-btn {
+    margin-top: 8px;
+  }
+  .pa-details-box {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1.5px solid #1d3b8b;
+  }
+  .pa-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+  }
+  .pa-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    color: #000000;
+  }
+  .pa-table th {
+    text-align: left;
+    font-size: 14px;
+    font-weight: 800;
+    color: #000000;
+    background: #eef3ff;
+    padding: 8px 10px;
+    border-bottom: 2px solid #000000;
+    white-space: nowrap;
+  }
+  .pa-table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #000000;
+    color: #000000;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .pa-table td.pa-num, .pa-table th.pa-num {
+    text-align: right;
+    font-weight: 800;
+  }
+  .pa-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 14px;
+    padding: 10px 14px;
+    border: 1.5px solid #000000;
+    border-radius: 6px;
+    background: #f5f7fc;
+  }
+  .pa-sources-section {
+    margin-top: 20px;
+    border: 2px solid #000000;
+    border-radius: 8px;
+    padding: 12px 16px;
+    background: #ffffff;
+  }
+  .pa-sources-section summary {
+    font-size: 17px;
+    font-weight: 800;
+    color: #000000;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  .pa-empty-box {
+    padding: 20px;
+    border: 2px solid #a11616;
+    border-radius: 8px;
+    background: #fff4f4;
+    color: #000000;
+    font-size: 15px;
+    font-weight: 700;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body class="prompt-archive-page">
+<header>
+  <h1>
+    <a class="header-home" href="./" title="Back to composer">MultiImageClient</a>
+    <span id="environment-name"></span>
+    <span class="pa-page-badge">Private Prompt Archive</span>
+  </h1>
+  <nav class="pa-nav-links" aria-label="Archive navigation">
+    <a class="pa-nav-link" href="./">Composer</a>
+    <a class="pa-nav-link" id="pa-admin-link" href="admin.html" hidden>Administration</a>
+  </nav>
+</header>
+
+<main class="pa-main">
+  <section class="pa-stats-strip" aria-label="Archive totals">
+    <div class="pa-stat"><span class="pa-stat-val" id="stat-unique">—</span><span class="pa-stat-label">unique prompts</span></div>
+    <div class="pa-stat"><span class="pa-stat-val" id="stat-runs">—</span><span class="pa-stat-label">total runs</span></div>
+    <div class="pa-stat"><span class="pa-stat-val" id="stat-sources">—</span><span class="pa-stat-label">sources</span></div>
+    <div class="pa-stat"><span class="pa-stat-val" id="stat-span">—</span><span class="pa-stat-label">years</span></div>
+    <div class="pa-stats-actions">
+      <button type="button" class="pa-btn" id="pa-sync-btn" title="Import any new owner jobs and goal loops recorded on this instance">Sync this instance</button>
+      <span class="pa-status-text" id="pa-sync-status" role="status"></span>
+    </div>
+  </section>
+
+  <section class="pa-controls" aria-label="Random recall and search controls">
+    <div class="pa-row">
+      <button type="button" class="pa-btn pa-btn-primary" id="pa-random-btn">View 10 random prompts</button>
+      <label class="pa-field">Count
+        <select class="pa-select" id="pa-count">
+          <option value="5">5</option>
+          <option value="10" selected>10</option>
+          <option value="25">25</option>
+        </select>
+      </label>
+      <button type="button" class="pa-btn pa-btn-sm" id="pa-reset-seen" hidden>Reset seen (0)</button>
+
+      <form class="pa-search-group" id="pa-search-form" autocomplete="off">
+        <input type="search" class="pa-input" id="pa-query" placeholder="Search full lifetime archive (e.g. cathedral, watercolor, comic, chess)…" aria-label="Search prompts">
+        <button type="submit" class="pa-btn pa-btn-primary" id="pa-search-btn">Search</button>
+        <button type="button" class="pa-btn" id="pa-clear-query" hidden>Clear</button>
+      </form>
+    </div>
+
+    <div class="pa-row">
+      <label class="pa-field">Source
+        <select class="pa-select" id="pa-source">
+          <option value="">All sources</option>
+        </select>
+      </label>
+      <label class="pa-field">Year
+        <select class="pa-select" id="pa-year">
+          <option value="">All years</option>
+        </select>
+      </label>
+      <label class="pa-field">Kind
+        <select class="pa-select" id="pa-kind">
+          <option value="image" selected>Image prompts</option>
+          <option value="all">All kinds</option>
+          <option value="video">Video prompts</option>
+          <option value="goal">Goal loops</option>
+          <option value="describe">Describe instructions</option>
+        </select>
+      </label>
+      <label class="pa-field">Min length
+        <select class="pa-select" id="pa-min-chars">
+          <option value="">Any length</option>
+          <option value="40">40+ chars</option>
+          <option value="120">120+ chars</option>
+          <option value="300">300+ chars</option>
+        </select>
+      </label>
+      <label class="pa-field" id="pa-sort-wrap">Sort
+        <select class="pa-select" id="pa-sort">
+          <option value="relevance">Relevance</option>
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="most_used">Most repeated</option>
+          <option value="longest">Longest first</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="pa-row pa-chips" id="pa-presets" aria-label="Quick era and source filters">
+      <span class="pa-chip-label">Quick era / source:</span>
+      <button type="button" class="pa-chip active" data-preset="">All sources</button>
+      <button type="button" class="pa-chip" data-preset="gdocs-midjourney-all,gdocs-midjourney-physiognomy">Midjourney (2022–2023)</button>
+      <button type="button" class="pa-chip" data-preset="gdocs-early-2022">Early 2022 Doc</button>
+      <button type="button" class="pa-chip" data-preset="gdocs-hard-prompts">Hard Prompts (2023)</button>
+      <button type="button" class="pa-chip" data-preset="ideogram-archive">Ideogram (2024–2026)</button>
+      <button type="button" class="pa-chip" data-preset="chatgpt-images">ChatGPT Images</button>
+      <button type="button" class="pa-chip" data-preset="mic-local,mic-ave,mic-vibecoders">MultiImageClient</button>
+    </div>
+  </section>
+
+  <div class="pa-status-bar">
+    <span class="pa-status-text" id="pa-status" role="status">Loading archive…</span>
+    <div id="pa-top-actions">
+      <button type="button" class="pa-btn pa-btn-primary pa-btn-sm" id="pa-reroll-top" hidden>Reroll 10</button>
+    </div>
+  </div>
+
+  <div id="pa-empty" class="pa-empty-box" hidden></div>
+  <section id="pa-results" class="pa-cards" aria-label="Prompt results"></section>
+
+  <nav class="pa-pager" id="pa-pager" hidden aria-label="Search pagination">
+    <button type="button" class="pa-btn" id="pa-prev-page">Previous page</button>
+    <span class="pa-status-text" id="pa-page-info"></span>
+    <button type="button" class="pa-btn" id="pa-next-page">Next page</button>
+  </nav>
+
+  <details class="pa-sources-section" id="pa-sources-details">
+    <summary>Archive sources breakdown</summary>
+    <div class="pa-table-wrap" style="margin-top:10px;">
+      <table class="pa-table" id="pa-sources-table">
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Category</th>
+            <th class="pa-num">Unique prompts</th>
+            <th class="pa-num">Total runs</th>
+            <th>Earliest</th>
+            <th>Latest</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="pa-sources-tbody"></tbody>
+      </table>
+    </div>
+  </details>
+</main>
+
+<script src="prompt-archive.js?v=20261120-prompt-archive"></script>
+</body>
+</html>

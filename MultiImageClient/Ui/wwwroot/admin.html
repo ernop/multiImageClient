@@ -8,8 +8,32 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;bord
 .features{display:flex;gap:20px;flex-wrap:wrap}.secret,.issued-value{width:100%!important;color:#000;font-size:1.2rem;font-weight:700}button{margin:4px}[hidden]{display:none!important}
 #issued-username,#issued-password{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 #issued{scroll-margin-top:90px}
-</style></head><body><header><h1>Administration<span id="environment-name"></span></h1><a href="./">main page</a></header>
-<main><h2>Environments</h2><p id="status" role="status">Loading…</p><button id="refresh">Refresh activity</button>
+.admin-pa-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0}
+.admin-pa-summary{font-size:16px;font-weight:800;color:#000;font-variant-numeric:tabular-nums;margin:6px 0}
+.admin-pa-list{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.admin-pa-card{border:1.5px solid #000;border-radius:6px;padding:10px 12px;background:#fff;color:#000}
+.admin-pa-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #000}
+.admin-pa-num,.admin-pa-date{font-weight:800;color:#000;font-variant-numeric:tabular-nums}
+.admin-pa-badge{padding:2px 7px;font-size:12px;font-weight:700;color:#000;background:#e6ecff;border:1px solid #1d3b8b;border-radius:4px}
+.admin-pa-count{padding:2px 7px;font-size:12px;font-weight:800;color:#fff;background:#000;border-radius:4px;font-variant-numeric:tabular-nums}
+.admin-pa-actions{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.admin-pa-link,.admin-pa-btn{padding:4px 9px;font-size:13px;font-weight:700;color:#000;background:#fff;border:1.5px solid #000;border-radius:4px;text-decoration:none;cursor:pointer;margin:0}
+.admin-pa-try{color:#fff;background:#0d5c2b;border-color:#0d5c2b}
+#admin-archive-random-btn{padding:7px 14px;font-size:14px;font-weight:700;color:#fff;background:#1d3b8b;border:2px solid #1d3b8b;border-radius:5px;cursor:pointer}
+.admin-pa-text{margin:0;color:#000;white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.45}
+</style></head><body><header><h1>Administration<span id="environment-name"></span></h1><a href="./">main page</a><a href="prompt-archive.html">prompt archive</a></header>
+<main>
+<section id="admin-prompt-archive" aria-labelledby="admin-archive-heading">
+<h2 id="admin-archive-heading">Private Prompt Archive</h2>
+<p id="admin-archive-summary" class="admin-pa-summary">Loading archive totals…</p>
+<div class="admin-pa-controls">
+<button id="admin-archive-random-btn" type="button">View 10 random prompts</button>
+<a href="prompt-archive.html" class="admin-pa-link">Open full prompt archive &amp; search</a>
+<span id="admin-archive-status" role="status"></span>
+</div>
+<div id="admin-archive-list" class="admin-pa-list"></div>
+</section>
+<h2>Environments</h2><p id="status" role="status">Loading…</p><button id="refresh">Refresh activity</button>
 <section id="issued" hidden aria-labelledby="issued-title">
 <h3 id="issued-title">Login details</h3><p id="issued-context"></p>
 <p>Copy these login details. Anyone who has them can act as this account.</p>
@@ -36,4 +60,4 @@ table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;bord
 <form id="person" autocomplete="off"><label>New username <input id="new-account-name" name="new-account-name" autocomplete="off" autocapitalize="none" spellcheck="false" required maxlength="32"></label>
 <label>Environment <select name="environment" id="person-environment" required><option value="" disabled selected>Select an environment</option></select></label>
 <button>Create account and login link</button></form></section>
-</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20261015-characters"></script><script src="admin-discord-requests.js?v=20260921-reusable"></script></body></html>
+</main><script src="generator-toggle.js?v=20260910"></script><script src="admin.js?v=20261015-characters"></script><script src="admin-discord-requests.js?v=20260921-reusable"></script><script src="admin-prompt-archive.js?v=20261120-prompt-archive"></script></body></html>

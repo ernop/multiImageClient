@@ -159,6 +159,12 @@ namespace MultiImageClient
                 Console.Error.WriteLine($"UI aborted: goal loop history could not be loaded: {ex.Message}");
                 return;
             }
+            var promptArchive = new UiPromptArchive(
+                UiPromptArchive.ResolveDbPath(settings),
+                UiPromptArchive.ResolveInstanceId(settings));
+            var allowEmptyArchiveCreator = auth == null || !auth.IsEnforced
+                || settings.UiEnvironmentController
+                || string.Equals(settings.UiEnvironmentId, "original", StringComparison.Ordinal);
             var goalLoopRunner = new UiGoalLoopRunner(
                 settings,
                 jobs,
@@ -302,7 +308,7 @@ namespace MultiImageClient
                                 || path.StartsWith("/api/people", StringComparison.OrdinalIgnoreCase)
                                 || path.StartsWith("/api/environment/", StringComparison.OrdinalIgnoreCase)
                                 || path.StartsWith("/api/logs/", StringComparison.OrdinalIgnoreCase)
-                                || path is "/people.html" or "/admin.html"))
+                                || path is "/people.html" or "/admin.html" or "/prompt-archive.html"))
                             || (policy != null && ((!policy.GoalLoops && (path.StartsWith("/api/goal-loops", StringComparison.OrdinalIgnoreCase) || path is "/goal.html" or "/recap.html"))
                                 || (!policy.Video && path.StartsWith("/api/video-jobs", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/advice", StringComparison.OrdinalIgnoreCase))
@@ -671,6 +677,13 @@ namespace MultiImageClient
                     },
                     shareLinks = new { available = ShareLinksProblem(settings, auth) == null },
                     promptSubjects = PromptSubjectSynthesis.BuildCatalogPayload(settings),
+                    promptArchive = IsPromptArchiveAdmin(ctx, auth)
+                        ? new
+                        {
+                            available = promptArchive.Exists,
+                            pageUrl = "prompt-archive.html",
+                        }
+                        : null,
                 });
             });
 
@@ -1230,6 +1243,7 @@ namespace MultiImageClient
                             CondensedPrompts = condensedPrompts,
                         };
                         jobs.Add(job);
+                        promptArchive.TryRecordLiveJob(job, allowEmptyArchiveCreator);
                         try
                         {
                             community.RecordGenerationStart(
@@ -1513,6 +1527,7 @@ namespace MultiImageClient
                     };
 
                     jobs.Add(job);
+                    promptArchive.TryRecordLiveJob(job, allowEmptyArchiveCreator);
                     try
                     {
                         community.RecordGenerationStart(
@@ -2178,6 +2193,7 @@ namespace MultiImageClient
             MapFableBot(app, settings, auth, jobs, visibility, runner);
 
             MapCommunityRoutes(app, settings, auth, jobs, runner, visibility, favorites, community, vibecoders, environments, accountActivity);
+            MapPromptArchiveRoutes(app, settings, auth, promptArchive);
 
             Logger.Log($"UI server starting on {url}  (build {UiBuildInfo.Describe}, wwwroot: {wwwroot})");
             Console.WriteLine();

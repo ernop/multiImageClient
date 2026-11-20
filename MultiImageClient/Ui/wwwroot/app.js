@@ -138,6 +138,7 @@ const Gpt2GuidanceTextKey = "gpt2GuidanceTextV2";
 // CreatorLogin under that current name while job.json retains its original
 // CreatedBy attribution.
 let authInfo = { enabled: false, user: "", profile: null };
+let promptArchiveConfig = null;
 let clientInstanceId = "";
 let clientBuildCommit = "";
 let profileServerVersion = -1;
@@ -585,6 +586,7 @@ async function loadConfig() {
     maxInputImages = cfg.maxInputImages;
   }
   authInfo = cfg.auth || authInfo;
+  promptArchiveConfig = cfg.promptArchive || null;
   generatorPreferences = loadGeneratorPreferences(cfg);
   migrateLegacyGpt2GuidancePreference(generatorPreferences);
   if (storedPersonalConfigurationError) {
@@ -2813,6 +2815,8 @@ usernameInput.addEventListener("change", () => {
 
 function applyAuthState() {
   el("people-link").hidden = !authInfo.canManagePeople;
+  const archiveLink = el("prompt-archive-link");
+  if (archiveLink) archiveLink.hidden = !promptArchiveConfig;
   if (window.MicEnvironment) el("environment-name").textContent = window.MicEnvironment.name;
   if (authInfo.enabled && authInfo.user) {
     const serverName = authInfo.profile?.displayName || "";
@@ -6931,6 +6935,29 @@ async function ensureArchiveDayLoaded(day) {
 
 async function openSharedJobFromUrl() {
   const params = new URLSearchParams(location.search);
+  const archivePromptRaw = params.get("archivePrompt");
+  if (archivePromptRaw !== null) {
+    const archiveId = Number(archivePromptRaw);
+    if (!Number.isInteger(archiveId) || archiveId <= 0) {
+      throw new Error("Invalid archive prompt ID.");
+    }
+    const response = await fetch(apiUrl(`api/admin/prompt-archive/items/${archiveId}`), { cache: "no-store" });
+    if (response.status === 401) { location.reload(); return; }
+    if (!response.ok) {
+      let msg = `Archive prompt could not load (${response.status}).`;
+      try { const err = await response.json(); if (err?.error) msg = err.error; } catch {}
+      throw new Error(msg);
+    }
+    const data = await response.json();
+    const promptText = data?.item?.promptText;
+    if (typeof promptText !== "string" || !promptText.trim()) {
+      throw new Error("Archive prompt response was missing promptText.");
+    }
+    applyViewedPromptToComposer(promptText);
+    history.replaceState(null, "", location.pathname);
+    promptBox.focus();
+    return;
+  }
   const shareToken = params.get("shared");
   if (shareToken) {
     const response = await fetch(apiUrl(`api/public-shares/${encodeURIComponent(shareToken)}/reuse`));

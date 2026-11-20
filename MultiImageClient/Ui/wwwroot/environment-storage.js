@@ -5,7 +5,7 @@
   if (!env || !env.id || !env.user || !env.identity) throw new Error("Missing environment identity.");
   const prefix = `mic-env:${env.id}:${env.user}:`;
   const hidden = [];
-  if (env.role !== "admin") hidden.push("#logs-toggle", "#logs-panel", "#ram-status", "#build-info");
+  if (env.role !== "admin") hidden.push("#logs-toggle", "#logs-panel", "#ram-status", "#build-info", "#prompt-archive-link");
   if (env.nightFilter === false) hidden.push("#night-toggle", "#night-filter-preferences");
   if (!env.goalLoops) hidden.push("#goal-loops-link");
   if (!env.video) hidden.push("#image-viewer-video", "#video-dialog");

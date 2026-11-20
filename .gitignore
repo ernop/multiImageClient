@@ -49,3 +49,7 @@ MultiImageClient/Ui/wwwroot/recap-snapshots/
 
 # Isolated local server releases and process state.
 /.local-ui/
+
+# Private owner lifetime prompt archive database (never commit personal prompt history).
+**/prompt-archive.sqlite3*
+
