@@ -42,5 +42,21 @@ public sealed class UiProcessMemoryTests : IDisposable
         Assert.True(json.RootElement.GetProperty("workingSetBytes").GetInt64() > 0);
     }
 
+    [Fact]
+    public void GuardReclaimRunsAndTheBreakdownNamesTheManagedHeap()
+    {
+        var reclaim = typeof(UiProcessMemory).Assembly.GetType("MultiImageClient.UiLivenessGuard")!.GetMethod("ReclaimMemory", BindingFlags.NonPublic | BindingFlags.Static)!;
+        reclaim.Invoke(null, null);
+
+        var describe = typeof(UiProcessMemory).GetMethod("DescribeCgroupMemory", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var text = (string)describe.Invoke(null, null)!;
+        Assert.Contains("gc heap ", text);
+        Assert.EndsWith(" MiB", text);
+        if (File.Exists("/proc/self/cgroup") && Directory.Exists("/sys/fs/cgroup"))
+        {
+            Assert.Contains("anon ", text);
+        }
+    }
+
     public void Dispose() => Directory.Delete(root, true);
 }

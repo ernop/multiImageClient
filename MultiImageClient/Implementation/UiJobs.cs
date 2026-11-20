@@ -650,8 +650,11 @@ namespace MultiImageClient
 
             try
             {
-                using var image = LoadCardPreview(originalPath, originalContentType);
-                var (encoded, type) = EncodeCardPreview(image);
+                var (encoded, type) = PixelWorkGate.Run(() =>
+                {
+                    using var image = LoadCardPreview(originalPath, originalContentType);
+                    return EncodeCardPreview(image);
+                });
                 if (!_storage.TrySaveCardPreview(imageKey, encoded, type, out thumbPath))
                 {
                     return false;

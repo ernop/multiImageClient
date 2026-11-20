@@ -2328,7 +2328,12 @@ namespace MultiImageClient
             {
                 return new ManagerChatImagePayload { Bytes = raw, Mime = info.Mime, Label = $"{identity}: {description}" };
             }
+            return PixelWorkGate.Run(() => ConvertForManager(plan, limits, info, raw, identity, description));
+        }
 
+        private static ManagerChatImagePayload ConvertForManager(
+            Plan plan, ManagerImageLimits limits, UiGoalLoopImageInfo info, byte[] raw, string identity, string description)
+        {
             using var decoded = Raster.Decode(raw);
             if (plan.Mode == "png")
             {
@@ -3926,7 +3931,7 @@ namespace MultiImageClient
             await _sheetBuilds.WaitAsync(ct);
             try
             {
-                await ImageCombiner.CreateGoalLoopSheetAsync(cells, header.ToString(), path, ct);
+                await PixelWorkGate.RunAsync(() => ImageCombiner.CreateGoalLoopSheetAsync(cells, header.ToString(), path, ct));
             }
             finally
             {

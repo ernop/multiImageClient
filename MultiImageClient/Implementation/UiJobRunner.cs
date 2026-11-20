@@ -1119,10 +1119,10 @@ namespace MultiImageClient
                                     KeyGrokWebVideo,
                                     StringComparison.OrdinalIgnoreCase))
                             .ToList();
-                        var combined = await ImageCombiner.CreateBatchLayoutImageSquareAsync(
+                        var combined = await PixelWorkGate.RunAsync(() => ImageCombiner.CreateBatchLayoutImageSquareAsync(
                             sheetResults, job.Prompt, _settings, openWhenDone: false,
                             inputImagePath: job.HasInputImage ? job.InputImagePath : null,
-                            inputImageRole: job.HasInputImage ? BuildInputImageRoleText(sheetKeys) : null);
+                            inputImageRole: job.HasInputImage ? BuildInputImageRoleText(sheetKeys) : null));
                         if (!string.IsNullOrEmpty(combined) && File.Exists(combined))
                         {
                             job.StoreImagePath("grid", 0, combined, "image/png");

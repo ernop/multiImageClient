@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 
@@ -54,6 +55,42 @@ namespace MultiImageClient
                 ReadCgroupBytes(cgroupDir, "memory.high"),
                 ReadCgroupBytes(cgroupDir, "memory.max"));
         }
+
+        // One log line saying what the cgroup's memory is made of: anonymous
+        // (live process memory, including native pixel buffers and freed
+        // malloc memory not yet returned), file cache, shared memory, and the
+        // managed heap, in MiB.
+        internal static string DescribeCgroupMemory()
+        {
+            var parts = new List<string>();
+            var cgroupDir = ResolveProcessCgroupDir();
+            if (!string.IsNullOrEmpty(cgroupDir))
+            {
+                try
+                {
+                    foreach (var line in File.ReadLines(Path.Combine(cgroupDir, "memory.stat")))
+                    {
+                        var fields = line.Split(' ');
+                        if (fields.Length == 2
+                            && fields[0] is "anon" or "file" or "shmem"
+                            && long.TryParse(fields[1], out var bytes))
+                        {
+                            parts.Add($"{fields[0]} {bytes / MiB}");
+                        }
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // memory.stat unreadable: report the managed heap only.
+                }
+            }
+            var gc = GC.GetGCMemoryInfo();
+            parts.Add($"gc heap {gc.HeapSizeBytes / MiB}");
+            parts.Add($"gc committed {gc.TotalCommittedBytes / MiB}");
+            return string.Join(", ", parts) + " MiB";
+        }
+
+        private const long MiB = 1024 * 1024;
 
         // Prefer this process's cgroup (from /proc/self/cgroup). Never read the
         // cgroupv2 root memory.current first — on many hosts that file is the

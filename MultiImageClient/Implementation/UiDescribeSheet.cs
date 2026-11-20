@@ -105,7 +105,8 @@ namespace MultiImageClient
         public static Task RenderAsync(
             UiDescribeSheetData data, IReadOnlyList<string> inputPaths,
             IReadOnlyDictionary<int, string> layoutPaths, string outputPath, CancellationToken cancellationToken = default)
-            => Task.Run(() => Render(data, inputPaths, layoutPaths, outputPath, cancellationToken), cancellationToken);
+            => PixelWorkGate.RunAsync(() => Task.Run(
+                () => Render(data, inputPaths, layoutPaths, outputPath, cancellationToken), cancellationToken));
 
         private static void Render(
             UiDescribeSheetData data, IReadOnlyList<string> inputPaths,

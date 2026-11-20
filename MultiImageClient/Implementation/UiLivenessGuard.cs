@@ -2,6 +2,8 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
@@ -82,16 +84,29 @@ namespace MultiImageClient
                 }
 
                 var cgroup = UiProcessMemory.ReadCgroupMemory();
-                if (cgroup.CurrentBytes.HasValue
-                    && cgroup.HighBytes.HasValue
-                    && cgroup.HighBytes.Value > 0
-                    && cgroup.CurrentBytes.Value >= cgroup.HighBytes.Value)
+                if (IsAboveHigh(cgroup) && consecutiveMemoryPressureSamples == 0)
+                {
+                    // Freed pixel buffers often stay in malloc's arenas and
+                    // undisposed bitmaps wait for a collection; both count in
+                    // memory.current. Reclaim once and judge the result. Only
+                    // the first sample reclaims: under sustained throttling a
+                    // second attempt could stall this thread instead of
+                    // ending the process.
+                    var before = cgroup.CurrentBytes!.Value;
+                    ReclaimMemory();
+                    cgroup = UiProcessMemory.ReadCgroupMemory();
+                    Logger.Log(
+                        $"UI liveness guard: memory.current {before} >= memory.high {cgroup.HighBytes}; "
+                        + $"after reclaim {cgroup.CurrentBytes} ({UiProcessMemory.DescribeCgroupMemory()}).");
+                }
+                if (IsAboveHigh(cgroup))
                 {
                     consecutiveMemoryPressureSamples++;
                     Logger.Log(
                         $"UI liveness guard: cgroup memory remains above memory.high "
-                        + $"({cgroup.CurrentBytes.Value} >= {cgroup.HighBytes.Value}, "
-                        + $"{consecutiveMemoryPressureSamples}/{MemoryPressureSamplesBeforeExit}).");
+                        + $"({cgroup.CurrentBytes!.Value} >= {cgroup.HighBytes!.Value}, "
+                        + $"{consecutiveMemoryPressureSamples}/{MemoryPressureSamplesBeforeExit}; "
+                        + $"{UiProcessMemory.DescribeCgroupMemory()}).");
                     if (consecutiveMemoryPressureSamples >= MemoryPressureSamplesBeforeExit)
                     {
                         Environment.FailFast(
@@ -111,6 +126,33 @@ namespace MultiImageClient
                 }
             }
         }
+
+        private static bool IsAboveHigh(UiCgroupMemorySnapshot cgroup)
+            => cgroup.CurrentBytes.HasValue
+                && cgroup.HighBytes.HasValue
+                && cgroup.HighBytes.Value > 0
+                && cgroup.CurrentBytes.Value >= cgroup.HighBytes.Value;
+
+        private static void ReclaimMemory()
+        {
+            GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            if (!OperatingSystem.IsLinux())
+            {
+                return;
+            }
+            try
+            {
+                MallocTrim(0);
+            }
+            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+            {
+                // Not glibc: freed native memory stays with the allocator.
+            }
+        }
+
+        [DllImport("libc.so.6", EntryPoint = "malloc_trim")]
+        private static extern int MallocTrim(nuint pad);
 
         private bool Probe()
         {

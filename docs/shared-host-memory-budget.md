@@ -38,6 +38,49 @@ to
 (the design rule) and [deploy/README.md](../deploy/README.md) (the install
 procedure).
 
+## Pixel work one at a time, guard reclaims first — 2026-11-19
+
+The memory guard ended Vibecoders once a day on November 18, 19 and 20
+(20:18:54, 15:57:08 and 00:51:48 UTC). The original had no guard termination
+and no interrupted attempt since September 9. Each kill followed the same step:
+a job's results finished and its contact sheet decoded the full-size results
+("Resizing image ... for combining", 2880×2880 to 4096×4096 sources), and
+within about 20 seconds `memory.current` stood at 1,076–1,107 MiB against
+1,024 MiB on two samples 30 seconds apart. A kill ends every job in the
+instance: on November 20 the sheet belonged to job `132ce2266747`, and job
+`68fc5ac91fee` lost its two unfinished requests.
+
+The October 12 changes bound the managed heap; decoded bitmaps live in native
+memory outside it. Nothing limited how many ran at once: sheets were limited
+only by `UiMaxConcurrentJobs`, and card previews (one per result, built when
+the browser first asks) had no limit, while a PNG cannot be decoded at reduced
+size.
+
+Owner decisions, 2026-11-19 (both recommended options):
+
+1. **The guard reclaims before it judges.** On the first sample above
+   `memory.high` it runs a blocking compacting aggressive GC (large object
+   heap included) and glibc `malloc_trim(0)`, reads `memory.current` again and
+   logs `anon`, `file`, `shmem`, GC heap and GC committed MiB. The sample
+   counts only if memory is still above. A second consecutive sample above
+   ends the process without another reclaim, so the kill time is unchanged
+   (two samples) and a throttled process cannot stall the guard in a second
+   collection. Every pressure log line carries the breakdown, so the next kill
+   shows whether live native memory or allocator retention held it.
+2. **Full-size pixel work runs one task at a time per process**
+   (`Utils/PixelWorkGate.cs`): job contact sheets, goal-loop sheets, describe
+   sheets, card previews and the goal-loop manager-image conversion. Work
+   already inside the gate on the same flow passes through, so nested calls
+   cannot deadlock. Sheets decode JPEG and WebP results at reduced size
+   (`Raster.DecodeForBox`) when the cell will be shrunk to 1,024 pixels high;
+   the cell label keeps the original resolution.
+
+Cost: a card preview can wait while a sheet builds (about a second per sheet
+in the November logs). Generation, downloads and uploads are not gated.
+
+Not chosen: raising Vibecoders' memory limits (declined 2026-10-12; the two
+services' hard limits already exceed physical memory together).
+
 ## Vibecoders freeze and owner decisions — 2026-10-10
 
 The Vibecoders process stopped serving at about 19:04 UTC on October 9.

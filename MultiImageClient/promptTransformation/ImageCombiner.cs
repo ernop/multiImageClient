@@ -60,6 +60,8 @@ namespace MultiImageClient
         private const float LabelLineHeightMultiplier = 1.5f;
         private const int PlaceholderWidth = 300;
         private const int LabelFontSize = 12;
+        private const int ResultCellResizeAboveHeight = 1300;
+        private const int ResultCellHeight = 1024;
 
         /// Fraction of the generator-label font size added as extra
         /// descender reservation so letters with descenders (g, p, y)
@@ -127,9 +129,8 @@ namespace MultiImageClient
                                     $"Saved raw image required for grid is missing: {path}",
                                     path);
                             }
-                            loadedImages.Add(PrepareLoadedResultImage(
-                                LoadResultImage(path),
-                                result));
+                            var (image, sourceSize) = LoadResultImage(path);
+                            loadedImages.Add(PrepareLoadedResultImage(image, result, sourceSize));
                         }
                     }
                     else
@@ -164,13 +165,21 @@ namespace MultiImageClient
             return loadedImages;
         }
 
-        private static SKBitmap LoadResultImage(string path)
+        // JPEG and WebP decode at reduced size when the cell will be shrunk;
+        // the returned size is the original's, for the cell's resolution label.
+        private static (SKBitmap Image, (int Width, int Height)? SourceSize) LoadResultImage(string path)
         {
             if (Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase))
             {
-                return SvgRaster.Rasterize(path);
+                return (SvgRaster.Rasterize(path), null);
             }
-            return Raster.Decode(path);
+            var info = Raster.Identify(path);
+            if (info.Height <= ResultCellResizeAboveHeight)
+            {
+                return (Raster.Decode(path), null);
+            }
+            var width = Math.Max(1, (int)(ResultCellHeight * ((float)info.Width / info.Height)));
+            return (Raster.DecodeForBox(path, width, ResultCellHeight), (info.Width, info.Height));
         }
 
         private static SKBitmap LoadRoundtripOriginal(byte[] bytes)
@@ -202,16 +211,17 @@ namespace MultiImageClient
 
         private static LoadedImage PrepareLoadedResultImage(
             SKBitmap image,
-            TaskProcessResult result)
+            TaskProcessResult result,
+            (int Width, int Height)? sourceSize = null)
         {
             try
             {
-                var sourceWidth = image.Width;
-                var sourceHeight = image.Height;
-                if (image.Height > 1300)
+                var sourceWidth = sourceSize?.Width ?? image.Width;
+                var sourceHeight = sourceSize?.Height ?? image.Height;
+                if (image.Height > ResultCellResizeAboveHeight)
                 {
                     var aspectRatio = (float)image.Width / image.Height;
-                    var newHeight = 1024;
+                    var newHeight = ResultCellHeight;
                     var newWidth = (int)(newHeight * aspectRatio);
                     Logger.Log(
                         $"Resizing image from {image.Width}x{image.Height} "
