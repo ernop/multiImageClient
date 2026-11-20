@@ -43,6 +43,17 @@ let stage1CardSeq = 0;
 const stage1Cards = [];
 const splitGroupExchangeCache = new Map();
 
+function formatSplitPagesCopyBlock(pages) {
+  return pages
+    .map((page, idx) => {
+      const num = Number.isFinite(page.index) && page.index > 0 ? page.index : idx + 1;
+      const title = (page.title || "").trim();
+      const header = title ? `Page ${num} (${title}):` : `Page ${num}:`;
+      return `${header}\n${page.prompt || ""}`;
+    })
+    .join("\n\n");
+}
+
 function promptSplitErrorNodes(error) {
   const nodes = [error instanceof Error ? error.message : String(error)];
   if (error?.providerHint) {
@@ -885,6 +896,33 @@ function paintStage1Card(cardState) {
   renderBtn.addEventListener("click", () => renderStage1Card(cardState));
   actions.appendChild(renderBtn);
 
+  if (cardState.kind === "split" && cardState.plan?.imageCount >= 2) {
+    const copyAllBtn = document.createElement("button");
+    copyAllBtn.type = "button";
+    copyAllBtn.className = "stage1-card-copy-all";
+    copyAllBtn.textContent = "copy all pages";
+    copyAllBtn.title = "Copy all split page prompts as one combined text block";
+    copyAllBtn.addEventListener("click", async () => {
+      const text = formatSplitPagesCopyBlock(
+        cardState.plan.images.map((part, idx) => ({
+          index: idx + 1,
+          title: part.title,
+          prompt: part.prompt,
+        })));
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+        await navigator.clipboard.writeText(text);
+        setStage1CardActionStatus(
+          cardState,
+          `Copied all ${cardState.plan.images.length} pages to the clipboard.`,
+          "done");
+      } catch {
+        setStage1CardActionStatus(cardState, "Could not copy pages to the clipboard.", "error");
+      }
+    });
+    actions.appendChild(copyAllBtn);
+  }
+
   if (cardState.kind === "rewrite") {
     const useBtn = document.createElement("button");
     useBtn.type = "button";
@@ -1146,9 +1184,65 @@ function setComposerFromSplitSource(sourcePrompt, blobs) {
   if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
 }
 
+function refreshSplitGroupSheets(group) {
+  if (!group) return;
+  const groupId = group.dataset.splitGroup || "";
+  const partsHost = group.querySelector(":scope > .split-group-parts");
+  const expectedCount = Number(group.dataset.splitCount || partsHost?.dataset.splitCount || 0);
+  const cards = partsHost ? [...partsHost.querySelectorAll(":scope > .job")] : [];
+  const makers = partsHost ? [...partsHost.querySelectorAll(":scope > .split-maker")] : [];
+
+  const allPresent = expectedCount >= 2 && cards.length === expectedCount;
+  const allDone = allPresent && cards.every((c) => c.dataset.state === "done");
+  const hasHidden = cards.some((c) =>
+    isPromptHidden(c.dataset.jobId)
+    || [...hiddenImageKeys].some((key) => key.startsWith(`${c.dataset.jobId}|`)));
+  const ready = !!groupId && allDone && !hasHidden && makers.length > 0;
+
+  for (const link of group.querySelectorAll(":scope > .split-group-head .split-group-sheet-link")) {
+    link.hidden = !ready;
+  }
+
+  const showPerMaker = ready && makers.length >= 2;
+  for (const maker of makers) {
+    const existing = maker.querySelector(":scope > .split-maker-sheets");
+    if (!showPerMaker) {
+      existing?.remove();
+      continue;
+    }
+    if (existing) continue;
+    const gen = maker.dataset.gen || "";
+    if (!gen) continue;
+    const wrap = document.createElement("span");
+    wrap.className = "split-maker-sheets";
+
+    const fullLink = document.createElement("a");
+    fullLink.className = "split-maker-sheet-full";
+    fullLink.href = apiUrl(`api/split-groups/${encodeURIComponent(groupId)}/contact-sheet?text=full&gen=${encodeURIComponent(gen)}`);
+    fullLink.target = "_blank";
+    fullLink.rel = "noopener";
+    fullLink.textContent = "sheet (full text)";
+    fullLink.title = `Open one PNG with all pages from ${genLabel(gen)} plus full prompts`;
+
+    const noTextLink = document.createElement("a");
+    noTextLink.className = "split-maker-sheet-notext";
+    noTextLink.href = apiUrl(`api/split-groups/${encodeURIComponent(groupId)}/contact-sheet?text=none&gen=${encodeURIComponent(gen)}`);
+    noTextLink.target = "_blank";
+    noTextLink.rel = "noopener";
+    noTextLink.textContent = "sheet (no text)";
+    noTextLink.title = `Open one PNG with all pages from ${genLabel(gen)} without full prompts`;
+
+    wrap.append(fullLink, noTextLink);
+    maker.appendChild(wrap);
+  }
+}
+
 function enhanceSplitGroupHeader(group, split, card) {
   if (split.exchangeId && !group.dataset.splitExchangeId) {
     group.dataset.splitExchangeId = split.exchangeId;
+  }
+  if (split.count && !group.dataset.splitCount) {
+    group.dataset.splitCount = String(split.count);
   }
   if (!group.dataset.splitPrimaryJobId || split.index === 1) {
     group.dataset.splitPrimaryJobId = card.dataset.jobId;
@@ -1166,6 +1260,37 @@ function enhanceSplitGroupHeader(group, split, card) {
 
   const actions = document.createElement("div");
   actions.className = "split-group-actions";
+
+  const groupId = group.dataset.splitGroup || split.groupId || "";
+
+  const sheetFullLink = document.createElement("a");
+  sheetFullLink.className = "split-group-sheet-link split-group-sheet-full";
+  sheetFullLink.href = apiUrl(`api/split-groups/${encodeURIComponent(groupId)}/contact-sheet?text=full`);
+  sheetFullLink.target = "_blank";
+  sheetFullLink.rel = "noopener";
+  sheetFullLink.textContent = "contact sheet (full text)";
+  sheetFullLink.title = "Open one combined PNG with every page from every model plus all full prompts";
+  sheetFullLink.hidden = true;
+
+  const sheetNoTextLink = document.createElement("a");
+  sheetNoTextLink.className = "split-group-sheet-link split-group-sheet-notext";
+  sheetNoTextLink.href = apiUrl(`api/split-groups/${encodeURIComponent(groupId)}/contact-sheet?text=none`);
+  sheetNoTextLink.target = "_blank";
+  sheetNoTextLink.rel = "noopener";
+  sheetNoTextLink.textContent = "contact sheet (no text)";
+  sheetNoTextLink.title = "Open one combined PNG with every page from every model without the full prompt text";
+  sheetNoTextLink.hidden = true;
+
+  const copyAllBtn = document.createElement("button");
+  copyAllBtn.type = "button";
+  copyAllBtn.className = "split-group-copy-all";
+  copyAllBtn.textContent = "copy all pages";
+  copyAllBtn.title = "Copy the text of all pages in this series as one combined block";
+
+  const copyNote = document.createElement("span");
+  copyNote.className = "split-group-copy-note";
+  copyNote.setAttribute("role", "status");
+  copyNote.hidden = true;
 
   const sourceBtn = document.createElement("button");
   sourceBtn.type = "button";
@@ -1191,7 +1316,15 @@ function enhanceSplitGroupHeader(group, split, card) {
   setSourceBtn.textContent = "set source active";
   setSourceBtn.title = "Load the original unsplit prompt and input images into the composer";
 
-  actions.append(sourceBtn, resplitBtn, rerenderBtn, setSourceBtn);
+  actions.append(
+    sheetFullLink,
+    sheetNoTextLink,
+    copyAllBtn,
+    copyNote,
+    sourceBtn,
+    resplitBtn,
+    rerenderBtn,
+    setSourceBtn);
   headRow.appendChild(actions);
 
   const actionError = document.createElement("p");
@@ -1211,6 +1344,36 @@ function enhanceSplitGroupHeader(group, split, card) {
     actionError.textContent = text;
     actionError.hidden = !text;
   };
+
+  let copyNoteTimer = 0;
+  copyAllBtn.addEventListener("click", async () => {
+    showGroupError("");
+    const partCards = [...group.querySelectorAll(".split-group-parts > .job")]
+      .sort((a, b) => Number(a.dataset.splitIndex || 0) - Number(b.dataset.splitIndex || 0));
+    const pages = partCards.map((partCard, idx) => ({
+      index: Number(partCard.dataset.splitIndex || idx + 1),
+      title: partCard.dataset.splitTitle || "",
+      prompt: partCard.querySelector(".job-prompt")?.textContent || "",
+    })).filter((p) => p.prompt.length > 0);
+    if (!pages.length) {
+      showGroupError("No page prompts are loaded for this series.");
+      return;
+    }
+    const block = formatSplitPagesCopyBlock(pages);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(block);
+      copyNote.textContent = `copied ${pages.length} pages`;
+      copyNote.hidden = false;
+      if (copyNoteTimer) clearTimeout(copyNoteTimer);
+      copyNoteTimer = setTimeout(() => {
+        copyNote.hidden = true;
+        copyNoteTimer = 0;
+      }, 2000);
+    } catch {
+      showGroupError("Could not copy all pages to the clipboard.");
+    }
+  });
 
   sourceBtn.addEventListener("click", async () => {
     if (!sourcePanel.hidden) {

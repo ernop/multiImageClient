@@ -1660,6 +1660,103 @@ namespace MultiImageClient
                 }
             });
 
+            app.MapGet("/api/split-groups/{groupId}/contact-sheet", async (
+                string groupId,
+                string? text,
+                string? gen,
+                HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                var textMode = string.IsNullOrWhiteSpace(text) ? "full" : text.Trim().ToLowerInvariant();
+                if (textMode != "full" && textMode != "none")
+                {
+                    return Results.BadRequest(new { error = "text must be 'full' or 'none'." });
+                }
+                var includeText = textMode == "full";
+                var filterGen = string.IsNullOrWhiteSpace(gen) ? null : gen.Trim();
+
+                var parts = jobs.ListBySplitGroup(groupId);
+                if (parts.Count == 0)
+                    return Results.NotFound();
+                if (parts.Any(p => visibility.IsPromptHidden(p.Id) || visibility.HasHiddenImages(p.Id)))
+                    return Results.NotFound();
+                if (parts.Any(p => !p.IsDone))
+                {
+                    return Results.Json(
+                        new { error = "Wait for all parts of this series to finish before making its contact sheet." },
+                        statusCode: 409);
+                }
+
+                var sourcePrompt = "";
+                var styleNote = "";
+                var exchangeId = parts[0].Split?.ExchangeId ?? "";
+                if (!string.IsNullOrWhiteSpace(exchangeId))
+                {
+                    var exchange = community.GetClaudePromptExchangeById(exchangeId);
+                    if (exchange != null)
+                    {
+                        if (exchange.Purpose != PromptSplit.Purpose)
+                        {
+                            return Results.Json(
+                                new { error = "The recorded split exchange does not match this series." },
+                                statusCode: 422);
+                        }
+                        sourcePrompt = exchange.OriginalPrompt;
+                        (_, styleNote) = PromptSplit.ParseRecordedInstruction(exchange.Instruction);
+                    }
+                }
+
+                try
+                {
+                    var stream = await runner.CreateSplitContactSheetAsync(
+                        parts,
+                        sourcePrompt,
+                        styleNote,
+                        includeText,
+                        filterGen,
+                        ctx.RequestAborted);
+                    if (stream == null)
+                    {
+                        return Results.Json(
+                            new { error = "Image finalization is busy. Try the series contact sheet again shortly." },
+                            statusCode: 503);
+                    }
+                    // Recheck visibility after rendering and hosted downloads.
+                    if (parts.Any(p => visibility.IsPromptHidden(p.Id) || visibility.HasHiddenImages(p.Id)))
+                    {
+                        await stream.DisposeAsync();
+                        return Results.NotFound();
+                    }
+                    var safeGenSlug = string.IsNullOrEmpty(filterGen)
+                        ? ""
+                        : "-" + new string(filterGen.Select(ch => char.IsLetterOrDigit(ch) || ch == '-' ? ch : '_').ToArray());
+                    var safeGroupSlug = new string(groupId.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray());
+                    var modeSlug = includeText ? "full-text" : "no-text";
+                    ctx.Response.Headers.ContentDisposition =
+                        $"inline; filename=\"series-contact-sheet-{safeGroupSlug}{safeGenSlug}-{modeSlug}.png\"";
+                    return Results.File(stream, "image/png");
+                }
+                catch (ArgumentException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 409);
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.Json(new { error = ex.Message }, statusCode: 422);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Logger.Log($"[ui split #{groupId}] series contact sheet failed: {ex.Message}");
+                    return Results.Json(
+                        new { error = "Could not build the complete series contact sheet from its recorded images and results." },
+                        statusCode: 500);
+                }
+            });
+
             app.MapGet("/api/jobs/{id}/images/{gen}/{n:int}", async (string id, string gen, int n, HttpContext ctx) =>
             {
                 // A miss is transient (job unknown here, or bytes not landed

@@ -187,6 +187,7 @@ namespace MultiImageClient
                 CreatedBy = metadata.CreatedBy ?? "",
                 CreatorLogin = metadata.CreatorLogin ?? "",
                 SourceJobId = metadata.SourceJobId ?? "",
+                SplitGroupId = metadata.Split?.GroupId ?? "",
                 InputImageCount = inputPaths.Count,
                 Done = metadata.Done,
             };
@@ -1090,6 +1091,7 @@ namespace MultiImageClient
         public string CreatedBy { get; init; } = "";
         public string CreatorLogin { get; init; } = "";
         public string SourceJobId { get; init; } = "";
+        public string SplitGroupId { get; init; } = "";
         public int InputImageCount { get; init; }
         public bool Done { get; init; }
         public bool HasInputImage => InputImageCount > 0;
@@ -1223,6 +1225,7 @@ namespace MultiImageClient
                     CreatedBy = job.CreatedBy ?? "",
                     CreatorLogin = job.CreatorLogin ?? "",
                     SourceJobId = job.SourceJobId ?? "",
+                    SplitGroupId = job.Split?.GroupId ?? "",
                     InputImageCount = job.InputImageCount,
                     Done = job.IsDone,
                 });
@@ -1271,6 +1274,7 @@ namespace MultiImageClient
                         CreatedBy = e.CreatedBy,
                         CreatorLogin = e.CreatorLogin,
                         SourceJobId = e.SourceJobId,
+                        SplitGroupId = e.SplitGroupId,
                         InputImageCount = e.InputImageCount,
                         Done = done,
                     };
@@ -1590,6 +1594,37 @@ namespace MultiImageClient
                 .ToList();
         }
 
+        public List<UiJob> ListBySplitGroup(string groupId)
+        {
+            if (string.IsNullOrWhiteSpace(groupId))
+            {
+                return new List<UiJob>();
+            }
+            List<UiHistoryIndexEntry> entries;
+            lock (_indexLock)
+            {
+                entries = _index
+                    .Where(e => string.Equals(e.SplitGroupId, groupId, StringComparison.Ordinal))
+                    .OrderBy(e => e.CreatedAt)
+                    .ToList();
+            }
+            var parts = new List<UiJob>(entries.Count);
+            foreach (var entry in entries)
+            {
+                var job = Get(entry.Id);
+                if (job?.Split != null
+                    && string.Equals(job.Split.GroupId, groupId, StringComparison.Ordinal))
+                {
+                    parts.Add(job);
+                }
+            }
+            return parts
+                .OrderBy(j => j.Split!.Index)
+                .ThenBy(j => j.CreatedAt)
+                .ThenBy(j => j.Id, StringComparer.Ordinal)
+                .ToList();
+        }
+
         public UiJob AssignLegacyCreatorLogin(
             string jobId,
             string expectedCreatedBy,
@@ -1616,6 +1651,7 @@ namespace MultiImageClient
                     CreatedBy = entry.CreatedBy,
                     CreatorLogin = creatorLogin,
                     SourceJobId = entry.SourceJobId,
+                    SplitGroupId = entry.SplitGroupId,
                     InputImageCount = entry.InputImageCount,
                     Done = entry.Done,
                 };
@@ -1675,6 +1711,7 @@ namespace MultiImageClient
                         CreatedBy = current.CreatedBy,
                         CreatorLogin = to,
                         SourceJobId = current.SourceJobId,
+                        SplitGroupId = current.SplitGroupId,
                         InputImageCount = current.InputImageCount,
                         Done = current.Done,
                     };

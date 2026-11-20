@@ -1745,6 +1745,99 @@ namespace MultiImageClient
             }
         }
 
+        public async Task<FileStream?> CreateSplitContactSheetAsync(
+            IReadOnlyList<UiJob> parts,
+            string sourcePrompt,
+            string styleNote,
+            bool includeText,
+            string? filterGeneratorKey,
+            CancellationToken cancellationToken)
+        {
+            if (!await _finalizationLimit.WaitAsync(0, cancellationToken)) return null;
+            var temporaryPaths = new List<string>();
+            string? output = null;
+            var groupId = parts.FirstOrDefault()?.Split?.GroupId ?? "";
+            try
+            {
+                var data = UiSplitContactSheet.Read(
+                    parts,
+                    job => job.ReadFrom(0),
+                    BuildInputImageRoleText,
+                    sourcePrompt,
+                    styleNote,
+                    filterGeneratorKey);
+
+                var partsByIndex = parts.ToDictionary(p => p.Split!.Index);
+                var inputPaths = partsByIndex[1].InputImagePaths;
+                var cellPaths = new Dictionary<(int PartIndex, string GeneratorKey), IReadOnlyList<string>>();
+
+                foreach (var part in data.Parts)
+                {
+                    var job = partsByIndex[part.Index];
+                    foreach (var cell in part.Cells)
+                    {
+                        if (!cell.Ok) continue;
+                        var resolved = new List<string>(cell.ImageCount);
+                        for (var i = 0; i < cell.ImageCount; i++)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (job.TryGetImagePath(cell.GeneratorKey, i, out var localPath, out _)
+                                && File.Exists(localPath))
+                            {
+                                resolved.Add(localPath);
+                                continue;
+                            }
+                            var hosted = await TryGetImageBytesIncludingHostedAsync(
+                                job, cell.GeneratorKey, i, maxBytes: 32 * 1024 * 1024, cancellationToken);
+                            if (hosted == null)
+                            {
+                                throw new InvalidDataException(
+                                    $"Part {part.Index} ({cell.GeneratorKey}) image {i + 1} is unavailable.");
+                            }
+                            var ext = string.Equals(hosted.Value.ContentType, "image/svg+xml", StringComparison.OrdinalIgnoreCase)
+                                ? ".svg"
+                                : ".img";
+                            var tempPath = Path.Combine(Path.GetTempPath(), $"mic-split-sheet-{Guid.NewGuid():N}{ext}");
+                            temporaryPaths.Add(tempPath);
+                            await File.WriteAllBytesAsync(tempPath, hosted.Value.Bytes, cancellationToken);
+                            resolved.Add(tempPath);
+                        }
+                        cellPaths[(part.Index, cell.GeneratorKey)] = resolved;
+                    }
+                }
+
+                output = Path.Combine(Path.GetTempPath(), $"mic-split-sheet-out-{Guid.NewGuid():N}.png");
+                await UiSplitContactSheet.RenderAsync(
+                    data,
+                    inputPaths,
+                    cellPaths,
+                    includeText,
+                    output,
+                    cancellationToken);
+
+                var stream = new FileStream(
+                    output,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    64 * 1024,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan | FileOptions.DeleteOnClose);
+                output = null;
+                return stream;
+            }
+            finally
+            {
+                if (output != null) temporaryPaths.Add(output);
+                foreach (var path in temporaryPaths)
+                {
+                    try { File.Delete(path); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    { Logger.Log($"[ui split #{groupId}] series contact sheet temporary-file cleanup failed: {ex.Message}"); }
+                }
+                _finalizationLimit.Release();
+            }
+        }
+
         public string? HostedOriginalUrl(UiJob job, string gen, int index)
         {
             if (_b2 == null) return null;

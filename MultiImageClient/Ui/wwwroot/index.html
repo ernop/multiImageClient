@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261119-pipeline">
+<link rel="stylesheet" href="style.css?v=20261120-series-sheets">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261102-mcphee-3-12-2">
 </head>
 <body class="composer-page">
@@ -249,6 +249,19 @@
       <div id="compose-right">
         <textarea id="prompt" rows="8" data-text-draft="composer-prompt"
           placeholder="Prompt… (Ctrl+Enter to send)"></textarea>
+        <div id="prompt-field-actions" aria-label="Prompt text actions">
+          <button id="prompt-copy" type="button" disabled
+            title="Copy all text in the prompt box to the clipboard">copy</button>
+          <button id="prompt-paste" type="button"
+            title="Paste text from the clipboard into the prompt box (replaces selection, or inserts at cursor)">paste</button>
+          <button id="prompt-select-all" type="button" disabled
+            title="Select all text in the prompt box">select all</button>
+          <button id="prompt-clear" type="button" disabled
+            title="Clear the prompt box (use undo clear to restore)">clear</button>
+          <button id="prompt-field-undo" type="button" hidden
+            title="Restore the prompt text from before clear or paste">undo clear</button>
+          <span id="prompt-field-status" role="status" aria-live="polite" hidden></span>
+        </div>
         <div id="character-strip" hidden aria-live="polite"></div>
         <div id="prompt-limit-notice" hidden></div>
         <div id="spelling-panel" hidden>
@@ -966,10 +979,10 @@
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261026-prompt-condense"></script>
 <script src="prompt-characters.js?v=20261015-characters"></script>
-<script src="app.js?v=20261119-pipeline"></script>
+<script src="app.js?v=20261120-series-sheets"></script>
 <script src="activity-center.js?v=20261119-pipeline"></script>
 <script src="sketch-composer.js?v=20261119-pipeline"></script>
 <script src="image-viewer.js?v=20261119-pipeline"></script>
-<script src="prompt-pipeline.js?v=20261119-pipeline"></script>
+<script src="prompt-pipeline.js?v=20261120-series-sheets"></script>
 </body>
 </html>

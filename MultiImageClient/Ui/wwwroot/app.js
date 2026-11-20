@@ -286,6 +286,15 @@ const pasteHint = el("paste-hint");
 const clearBtn = el("clear-image");
 const fileInput = el("file-input");
 const promptBox = el("prompt");
+const PromptFieldUndoMax = 20;
+const promptCopyBtn = el("prompt-copy");
+const promptPasteBtn = el("prompt-paste");
+const promptSelectAllBtn = el("prompt-select-all");
+const promptClearBtn = el("prompt-clear");
+const promptFieldUndoBtn = el("prompt-field-undo");
+const promptFieldStatus = el("prompt-field-status");
+const promptFieldUndoStack = [];
+let promptFieldStatusTimer = 0;
 
 const gensRow = el("gens-row");
 const describeSection = el("describe-section");
@@ -1048,6 +1057,7 @@ function updatePromptLimitNotice() {
     .map((group) => (group.condensation ? condensedPromptLine(group) : promptLimitLine(group)));
   promptLimitNotice.replaceChildren(...lines);
   promptLimitNotice.hidden = lines.length === 0;
+  syncPromptFieldActions();
 }
 
 const promptLimitNames = new Intl.ListFormat("en", { type: "conjunction" });
@@ -3107,6 +3117,11 @@ function applyVisibilitySnapshot(raw) {
   for (const row of document.querySelectorAll("#logs-lines .log-row[data-job-id]")) {
     if (isPromptHidden(row.dataset.jobId)) row.remove();
   }
+  if (typeof refreshSplitGroupSheets === "function") {
+    for (const group of document.querySelectorAll(".split-group")) {
+      refreshSplitGroupSheets(group);
+    }
+  }
 
   if (imageViewerState &&
       (isPromptHidden(imageViewerState.jobId) ||
@@ -4157,6 +4172,145 @@ promptBox.addEventListener("keydown", (e) => {
     submit();
   }
 });
+
+// ---------- direct prompt field actions (copy / paste / select all / clear + undo) ----------
+
+function flashPromptFieldStatus(text, isError = false) {
+  if (!promptFieldStatus) return;
+  if (promptFieldStatusTimer) {
+    clearTimeout(promptFieldStatusTimer);
+    promptFieldStatusTimer = 0;
+  }
+  promptFieldStatus.textContent = text;
+  promptFieldStatus.classList.toggle("err", !!isError);
+  promptFieldStatus.hidden = !text;
+  if (text) {
+    promptFieldStatusTimer = setTimeout(() => {
+      promptFieldStatus.hidden = true;
+      promptFieldStatusTimer = 0;
+    }, isError ? 4500 : 2200);
+  }
+}
+
+function syncPromptFieldActions() {
+  const hasText = promptBox.value.length > 0;
+  if (promptCopyBtn) promptCopyBtn.disabled = !hasText;
+  if (promptSelectAllBtn) promptSelectAllBtn.disabled = !hasText;
+  if (promptClearBtn) promptClearBtn.disabled = !hasText;
+  if (promptFieldUndoBtn) {
+    const latest = promptFieldUndoStack[promptFieldUndoStack.length - 1] || null;
+    promptFieldUndoBtn.hidden = !latest;
+    if (latest) {
+      promptFieldUndoBtn.textContent = latest.action === "paste" ? "undo paste" : "undo clear";
+      promptFieldUndoBtn.title = latest.action === "paste"
+        ? "Restore the prompt text from before paste"
+        : "Restore the cleared prompt text";
+    }
+  }
+}
+
+function pushPromptFieldUndo(action) {
+  promptFieldUndoStack.push({
+    text: promptBox.value,
+    start: promptBox.selectionStart ?? promptBox.value.length,
+    end: promptBox.selectionEnd ?? promptBox.value.length,
+    action,
+  });
+  if (promptFieldUndoStack.length > PromptFieldUndoMax) {
+    promptFieldUndoStack.shift();
+  }
+}
+
+function refreshPromptAfterFieldEdit() {
+  if (mcpheeCtl) mcpheeCtl.refresh();
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+  updatePromptLimitNotice();
+  syncPromptFieldActions();
+}
+
+promptBox.addEventListener("input", syncPromptFieldActions);
+
+if (promptCopyBtn) {
+  promptCopyBtn.addEventListener("click", async () => {
+    if (!promptBox.value.length) return;
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API unavailable");
+      }
+      await navigator.clipboard.writeText(promptBox.value);
+      flashPromptFieldStatus("copied");
+    } catch {
+      flashPromptFieldStatus("copy failed — tap select all then system copy", true);
+    }
+  });
+}
+
+if (promptSelectAllBtn) {
+  promptSelectAllBtn.addEventListener("click", () => {
+    if (!promptBox.value.length) return;
+    promptBox.focus({ preventScroll: true });
+    promptBox.setSelectionRange(0, promptBox.value.length);
+    flashPromptFieldStatus(`selected ${promptBox.value.length.toLocaleString()} chars`);
+  });
+}
+
+if (promptClearBtn) {
+  promptClearBtn.addEventListener("click", () => {
+    if (!promptBox.value.length) return;
+    pushPromptFieldUndo("clear");
+    MultiImageTextEntry.replace(promptBox, "");
+    refreshPromptAfterFieldEdit();
+    promptBox.focus({ preventScroll: true });
+    flashPromptFieldStatus("cleared");
+  });
+}
+
+if (promptPasteBtn) {
+  promptPasteBtn.addEventListener("click", async () => {
+    if (!navigator.clipboard?.readText) {
+      flashPromptFieldStatus("Clipboard paste is unavailable here — tap the box and use system Paste.", true);
+      return;
+    }
+    let clipText;
+    try {
+      clipText = await navigator.clipboard.readText();
+    } catch {
+      flashPromptFieldStatus("Clipboard paste was blocked by the browser — tap the box and use system Paste.", true);
+      return;
+    }
+    if (!clipText) {
+      flashPromptFieldStatus("clipboard is empty");
+      return;
+    }
+    const before = promptBox.value;
+    const start = promptBox.selectionStart ?? before.length;
+    const end = promptBox.selectionEnd ?? start;
+    pushPromptFieldUndo("paste");
+    const next = `${before.slice(0, start)}${clipText}${before.slice(end)}`;
+    const caret = start + clipText.length;
+    MultiImageTextEntry.replace(promptBox, next);
+    refreshPromptAfterFieldEdit();
+    promptBox.focus({ preventScroll: true });
+    promptBox.setSelectionRange(caret, caret);
+    flashPromptFieldStatus("pasted");
+  });
+}
+
+if (promptFieldUndoBtn) {
+  promptFieldUndoBtn.addEventListener("click", () => {
+    const entry = promptFieldUndoStack.pop();
+    if (!entry) return;
+    MultiImageTextEntry.replace(promptBox, entry.text);
+    refreshPromptAfterFieldEdit();
+    promptBox.focus({ preventScroll: true });
+    const start = Math.min(entry.start, entry.text.length);
+    const end = Math.min(entry.end, entry.text.length);
+    promptBox.setSelectionRange(start, end);
+    flashPromptFieldStatus(entry.action === "paste" ? "undid paste" : "restored cleared prompt");
+  });
+}
+
+syncPromptFieldActions();
 
 // ---------- user-directed Claude prompt advice + durable exchange history ----------
 
@@ -5715,6 +5869,9 @@ function insertSplitPart(container, card, split) {
   const later = [...parts.querySelectorAll(":scope > .job")]
     .find((node) => Number(node.dataset.splitIndex) > split.index);
   parts.insertBefore(card, later || null);
+  if (typeof refreshSplitGroupSheets === "function") {
+    refreshSplitGroupSheets(group);
+  }
 }
 
 // opts: { user, container, split }. user is the creator display name
@@ -5771,6 +5928,7 @@ function addJobCard(id, prompt, gens, hasImage, createdAtUnixMs, inputCount, opt
   let partLabel = null;
   if (split) {
     card.dataset.splitIndex = String(split.index);
+    card.dataset.splitTitle = split.title || "";
     card.dataset.splitLabel = `part ${split.index} of ${split.count} · ${split.title}`;
     partLabel = document.createElement("div");
     partLabel.className = "job-split-part";
@@ -6568,6 +6726,10 @@ function applyJobEvent(id, card, evt) {
         : "no result";
     }
     updateJobProgress(card);
+    const splitGroup = card.closest(".split-group");
+    if (splitGroup && typeof refreshSplitGroupSheets === "function") {
+      refreshSplitGroupSheets(splitGroup);
+    }
   }
 }
 

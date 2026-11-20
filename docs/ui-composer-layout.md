@@ -278,3 +278,23 @@ Tool groups reflow to two columns under 1100 px and to one column under 720 px o
 The size lasts until the page reloads.
 It is not part of portable personal configuration.
 A reload opens the default size again.
+
+## Direct prompt field buttons — 2026-11-20
+
+Owner request: add direct buttons on the main `#prompt` input area to clear the text with button-based undo, select all, copy, and paste, because native text selection and copy/paste handles are painful on mobile screens.
+
+### Placement and behavior
+
+- `#prompt-field-actions` sits directly beneath `<textarea id="prompt">` inside `#compose-right` (above `#prompt-tools`, following the UI control placement rule).
+- Controls:
+  - **copy** (`#prompt-copy`): writes `#prompt.value` to the clipboard via `navigator.clipboard.writeText` and shows a brief status (`copied`). Disabled when `#prompt` is empty.
+  - **paste** (`#prompt-paste`): reads clipboard text via `navigator.clipboard.readText`, snapshots the current prompt and selection onto the undo stack, inserts at the current selection via `MultiImageTextEntry.replace`, and reveals **undo paste**. Shows a clear error message if the browser denies or lacks clipboard read access.
+  - **select all** (`#prompt-select-all`): focuses `#prompt` without scrolling (`preventScroll: true`), selects `[0, value.length]`, and reports the character count. Disabled when `#prompt` is empty.
+  - **clear** (`#prompt-clear`): snapshots the current prompt and selection onto the undo stack, clears `#prompt` via `MultiImageTextEntry.replace`, and reveals **undo clear**. Disabled when `#prompt` is empty.
+  - **undo clear** / **undo paste** (`#prompt-field-undo`): hidden until `clear` or `paste` pushes a snapshot onto the bounded in-memory stack (max 20 entries). Restores exact previous text and selection via `MultiImageTextEntry.replace` so drafts, textarea height, McPhee, and prompt-length checks stay in sync.
+- Styling: high-contrast `#000` ink on light cards and pure `#fff` on the accent undo button; disabled buttons use `#000` text on `#eee` with a dashed border (no gray text or opacity dimming). On portrait phones (`<= 700px`), the four primary buttons share one full-width row; touch screens apply `min-height: 36px`.
+- Session-only undo stack; not part of portable personal configuration.
+
+Implementation: `index.html`, `app.js`, `style.css`.
+Browser coverage: `tools/test-prompt-split-browser.cjs` (copy, select all, clear, undo clear, paste, undo paste, and 390 px phone fit).
+

@@ -905,6 +905,55 @@ main { max-width: var(--content-max-width); margin: 0 auto; padding: 18px 22px 6
 }
 #prompt:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
+/* Direct field-level prompt controls: stay immediately under #prompt so mobile
+   and desktop users can copy, paste, select all, clear, and undo clear in one tap. */
+#prompt-field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+#prompt-field-actions button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #000;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#prompt-field-actions button:hover:not(:disabled) {
+  color: #fff;
+  background: var(--accent);
+}
+#prompt-field-actions button:disabled {
+  color: #000;
+  background: #eee;
+  border-color: var(--line);
+  border-style: dashed;
+  cursor: default;
+}
+#prompt-field-undo {
+  color: #fff !important;
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
+#prompt-field-undo:hover {
+  background: var(--accent-dark) !important;
+  border-color: var(--accent-dark) !important;
+}
+#prompt-field-undo[hidden],
+#prompt-field-status[hidden] { display: none; }
+#prompt-field-status {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+#prompt-field-status.err { color: var(--err); }
+
 /* Spelling checks stay folded into the prompt area until requested.
    The textarea overlay remains live while this panel is closed. */
 #spelling-panel {
@@ -3663,6 +3712,7 @@ body.image-viewer-open { overflow: hidden; }
 .stage1-child-quick button,
 .stage1-card-head-actions button,
 .stage1-card-use-prompt,
+.stage1-card-copy-all,
 .split-group-actions button {
   padding: 4px 9px;
   border: 1px solid var(--accent);
@@ -3683,6 +3733,7 @@ body.image-viewer-open { overflow: hidden; }
 .stage1-child-quick button:hover:not(:disabled),
 .stage1-card-head-actions button:hover:not(:disabled),
 .stage1-card-use-prompt:hover:not(:disabled),
+.stage1-card-copy-all:hover:not(:disabled),
 .split-group-actions button:hover:not(:disabled) {
   background: var(--accent);
   color: #fff;
@@ -4028,6 +4079,31 @@ body.image-viewer-open { overflow: hidden; }
   align-items: center;
   gap: 5px;
 }
+.split-group-sheet-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.split-group-sheet-link:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+  color: #fff;
+}
+.split-group-sheet-link[hidden] { display: none; }
+.split-group-copy-note {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-dark);
+}
+.split-group-copy-note[hidden] { display: none; }
 .split-group-action-error {
   margin: 0;
   font-size: 13px;
@@ -4086,11 +4162,38 @@ body.image-viewer-open { overflow: hidden; }
 .job-split-part { margin: 0 0 6px; font-size: 14px; font-weight: 700; color: var(--accent-dark); overflow-wrap: anywhere; }
 .split-maker {
   grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
   margin: 8px 0 0;
   font-size: 14px;
   font-weight: 800;
   color: #000;
   overflow-wrap: anywhere;
+}
+.split-maker-sheets {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.split-maker-sheets a {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--card);
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.split-maker-sheets a:hover {
+  background: var(--accent);
+  color: #fff;
 }
 /* The row heading names the generator; each cell names its part. */
 .split-group-parts .cell-name { display: none; }
@@ -4439,6 +4542,8 @@ body.image-viewer-open { overflow: hidden; }
   #paste-zone { min-height: 64px; }
   #paste-hint { padding: 8px; line-height: 1.45; }
   #input-thumbs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #prompt-field-actions { width: 100%; }
+  #prompt-field-actions > button { flex: 1 1 auto; }
   #prompt-tools { justify-content: flex-start; width: 100%; margin-left: 0; }
   #prompt-tools > button { flex: 1 1 auto; }
   #gens-row, #describe-row { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
@@ -4481,12 +4586,14 @@ body.image-viewer-open { overflow: hidden; }
   .video-options input, .sketch-color-row input, .sketch-config-row select,
   #share-link-url { font-size: 16px; }
   /* Finger-sized tap targets. */
-  header button, header a, #gen-controls button, #prompt-tools button,
+  header button, header a, #gen-controls button, #prompt-field-actions button,
+  #prompt-tools button,
   #input-library-toggle, #sketch-open, #inspiration-toggle, #describe-head button,
   .user-chip, .favorite-user-chip, .job-set-active, .job-share-link, .job-prompt-toggle,
   .prompt-favorite, .hide-prompt, #cost-toggle, .archive-day-toggle,
   .prompt-limit-deselect, .prompt-limit-condense, .prompt-limit-show,
-  .prompt-limit-discard { min-height: 36px; }
+  .prompt-limit-discard, .split-group-actions button, .split-group-sheet-link,
+  .stage1-card-copy-all { min-height: 36px; }
   /* Unlike a button, a link keeps its text at the top of a taller box. */
   header a { display: inline-flex; align-items: center; }
   .gen-toggle { min-height: 40px; }

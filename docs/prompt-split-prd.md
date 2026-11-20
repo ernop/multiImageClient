@@ -1,6 +1,20 @@
 # Splitting one prompt into several images
 
-Settled 2026-11-03. Updated 2026-11-10 (results group by image generator) and **2026-11-19 (inline Stage-1 text step, parallel multi-writer splits up to 4 per account, explicit intermediate review tray with independent child image model selection and bail, feed split-group round-trip controls, and configurable writer models in personal configuration version 6)**.
+Settled 2026-11-03. Updated 2026-11-10 (results group by image generator), 2026-11-19 (inline Stage-1 text step, parallel multi-writer splits up to 4 per account, explicit intermediate review tray with independent child image model selection and bail, feed split-group round-trip controls, and configurable writer models in personal configuration version 6), and **2026-11-20 (on-demand multi-page series contact sheets with full-text and no-text modes, plus one-click copy of all split pages' text in review cards and feed groups)**.
+
+## Owner decisions (2026-11-20): series contact sheets and copy-all-pages
+
+1. **Multi-page series contact sheets (`GET /api/split-groups/{groupId}/contact-sheet?text=full|none&gen=<optional>`):**
+   - Renders one combined PNG for an entire completed split series on demand (same architecture as `UiDescribeSheet`; zero automatic disk/RAM/B2 cost unless opened).
+   - Multi-generator series (`M >= 2`) render a **Generator rows × Page `1..P` aligned columns** matrix with page header bands, generator bands, optional gold-framed `INPUT` strip, multi-image sub-grids inside cells (e.g. `grok-web` side-by-side), and clipped red error boxes for failed cells. Single-generator series (or per-model `?gen=<key>`) render a balanced grid (`1..4` pages in one row; `5..8` pages in two balanced rows).
+   - `text=full` appends a **Full text** section beneath the images showing every page's verbatim prompt (`Page i of P · {title}`) plus a metadata panel with the original source prompt, split reason, style note, and endpoint extra text. `text=none` omits the full text section and keeps only compact structural labels, sizes, and timings.
+   - Feed `.split-group` headers expose **contact sheet (full text)** and **contact sheet (no text)** once all `count` parts finish and none are hidden; multi-generator groups also show inline **sheet (full text)** and **sheet (no text)** links on each `.split-maker` heading.
+   - Memory and fail-closed safety: runs through `_finalizationLimit` (HTTP 503 if busy) and `PixelWorkGate` (one full-size pixel task per process); single-canvas two-pass renderer steps `cellMaxEdge` down (`1024..256`) to stay within 32,000,000 pixels (~128 MiB RGBA); decodes one cell at a time via `Raster.DecodeForBox` (or `SvgRaster.Rasterize` for SVGs); fetches B2-evicted originals with SHA-256 verification via `UiJobRunner.TryGetImageBytesIncludingHostedAsync`; checks prompt/image visibility before and after rendering (HTTP 404 if any part or image is hidden); rejects unfinished groups with HTTP 409, invalid `text`/`gen` with HTTP 400, and corrupt/oversized data with HTTP 422.
+   - Works for archived and evicted split series via `SplitGroupId` indexed in `UiHistoryIndexEntry` and `UiHistoryIndexCache` schema version 2 (existing v1 caches automatically reset and rebuild from disk `job.json`).
+   - Per-part `grid` contact sheets stay intact for backwards compatibility and public sharing.
+2. **Copy all pages as one text block:**
+   - Both Stage-1 split review cards (`.stage1-card-copy-all`, when `imageCount >= 2`) and feed `.split-group` headers (`.split-group-copy-all`) expose a single **copy all pages** button.
+   - Formats pages in page order (`1..P`) as `Page {n} ({title}):\n{prompt}` (or `Page {n}:\n{prompt}` when untitled), separated by blank lines (`\n\n`), and writes to the clipboard with inline status confirmation or a clear failure alert.
 
 ## Owner decisions (2026-11-19): Stage-1 text step, intermediate review tray, and split-group round-trip
 
@@ -330,7 +344,12 @@ The generator-row request and the first decline left these points open. The agen
 - `Ui/wwwroot/environment-storage.js`: hides the button and progress line when prompt rewriting is off.
 - `MultiImageClient.Tests/PromptSplitTests.cs`: reply contract, part budget, user message, stored plan, provider failures, concurrency, intake verification, and restarts.
 - `Ui/tests/personal-config.test.js`: version 5 migration and rejection.
-- `tools/test-prompt-split-browser.cjs`: browser test with mocked Opus and job replies.
+- `Implementation/UiSplitContactSheet.cs`: fail-closed split-series reader and single-canvas two-pass PNG renderer (`text=full` and `text=none`, all models or one `?gen=...`, bounded at 32 MP inside `PixelWorkGate`).
+- `Implementation/UiJobStorage.cs` and `Implementation/UiHistoryIndexCache.cs`: index `SplitGroupId` in SQLite cache schema v2 and expose `UiJobRegistry.ListBySplitGroup(groupId)` for live and archived series.
+- `Implementation/UiJobRunner.cs` and `Workflows/UiWorkflow.cs`: `CreateSplitContactSheetAsync` and `GET /api/split-groups/{groupId}/contact-sheet`.
+- `Ui/wwwroot/prompt-pipeline.js`: Stage-1 bar/cards, `formatSplitPagesCopyBlock`, **copy all pages** buttons, series contact-sheet links (`refreshSplitGroupSheets`), and split-group round-trip controls.
+- `MultiImageClient.Tests/SplitContactSheetTests.cs`: unit tests for fail-closed reading, full-text vs no-text rendering, multi-model vs single-model layouts, 32 MP cap, archived lookup, and SQLite v1→v2 upgrade.
+- `tools/test-prompt-split-browser.cjs`: browser test with mocked Opus and job replies, including copy-all-pages, series contact-sheet gating, and direct prompt field actions.
 
 The same change gives the advice dialog's textarea normal weight (400).
 It had inherited bold (700) from its label, so the label was not heavier than the text.

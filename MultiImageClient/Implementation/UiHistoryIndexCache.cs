@@ -15,7 +15,7 @@ namespace MultiImageClient
     public static class UiHistoryIndexCache
     {
         public const string FileName = "index-cache.sqlite3";
-        private const string SchemaVersion = "1";
+        private const string SchemaVersion = "2";
         private static readonly object WriteGate = new();
 
         public static string CachePath(string historyRoot) => Path.Combine(historyRoot, FileName);
@@ -84,7 +84,10 @@ namespace MultiImageClient
                 try
                 {
                     using var connection = OpenConnection(historyRoot);
-                    EnsureSchema(connection);
+                    if (!EnsureSchema(connection))
+                    {
+                        ResetSchema(connection);
+                    }
                     UpsertRow(connection, transaction: null, entry);
                 }
                 catch (SqliteException ex)
@@ -235,14 +238,7 @@ namespace MultiImageClient
             return connection;
         }
 
-        private static bool EnsureSchema(SqliteConnection connection)
-        {
-            using var create = connection.CreateCommand();
-            create.CommandText = @"
-CREATE TABLE IF NOT EXISTS meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
+        private const string CreateHistoryIndexTableSql = @"
 CREATE TABLE IF NOT EXISTS history_index (
     folder_name TEXT PRIMARY KEY,
     id TEXT NOT NULL,
@@ -250,9 +246,19 @@ CREATE TABLE IF NOT EXISTS history_index (
     created_by TEXT NOT NULL,
     creator_login TEXT NOT NULL,
     source_job_id TEXT NOT NULL,
+    split_group_id TEXT NOT NULL DEFAULT '',
     input_image_count INTEGER NOT NULL,
     done INTEGER NOT NULL
 );";
+
+        private static bool EnsureSchema(SqliteConnection connection)
+        {
+            using var create = connection.CreateCommand();
+            create.CommandText = @"
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);" + CreateHistoryIndexTableSql;
             create.ExecuteNonQuery();
 
             using var check = connection.CreateCommand();
@@ -273,7 +279,8 @@ CREATE TABLE IF NOT EXISTS history_index (
         {
             using var cmd = connection.CreateCommand();
             cmd.CommandText = @"
-DELETE FROM history_index;
+DROP TABLE IF EXISTS history_index;"
+                + CreateHistoryIndexTableSql + @"
 INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', $v);";
             cmd.Parameters.AddWithValue("$v", SchemaVersion);
             cmd.ExecuteNonQuery();
@@ -284,7 +291,7 @@ INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', $v);";
             var map = new Dictionary<string, UiHistoryIndexEntry>(StringComparer.Ordinal);
             using var cmd = connection.CreateCommand();
             cmd.CommandText = @"
-SELECT folder_name, id, created_at_utc_ticks, created_by, creator_login, source_job_id, input_image_count, done
+SELECT folder_name, id, created_at_utc_ticks, created_by, creator_login, source_job_id, split_group_id, input_image_count, done
 FROM history_index;";
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
@@ -307,8 +314,9 @@ FROM history_index;";
                     CreatedBy = reader.GetString(3),
                     CreatorLogin = reader.GetString(4),
                     SourceJobId = reader.GetString(5),
-                    InputImageCount = reader.GetInt32(6),
-                    Done = reader.GetInt32(7) != 0,
+                    SplitGroupId = reader.GetString(6),
+                    InputImageCount = reader.GetInt32(7),
+                    Done = reader.GetInt32(8) != 0,
                 };
             }
             return map;
@@ -320,9 +328,9 @@ FROM history_index;";
             cmd.Transaction = transaction;
             cmd.CommandText = @"
 INSERT INTO history_index (
-    folder_name, id, created_at_utc_ticks, created_by, creator_login, source_job_id, input_image_count, done
+    folder_name, id, created_at_utc_ticks, created_by, creator_login, source_job_id, split_group_id, input_image_count, done
 ) VALUES (
-    $folder, $id, $ticks, $createdBy, $creatorLogin, $sourceJobId, $inputCount, $done
+    $folder, $id, $ticks, $createdBy, $creatorLogin, $sourceJobId, $splitGroupId, $inputCount, $done
 )
 ON CONFLICT(folder_name) DO UPDATE SET
     id = excluded.id,
@@ -330,6 +338,7 @@ ON CONFLICT(folder_name) DO UPDATE SET
     created_by = excluded.created_by,
     creator_login = excluded.creator_login,
     source_job_id = excluded.source_job_id,
+    split_group_id = excluded.split_group_id,
     input_image_count = excluded.input_image_count,
     done = excluded.done;";
             cmd.Parameters.AddWithValue("$folder", entry.FolderName);
@@ -338,6 +347,7 @@ ON CONFLICT(folder_name) DO UPDATE SET
             cmd.Parameters.AddWithValue("$createdBy", entry.CreatedBy ?? "");
             cmd.Parameters.AddWithValue("$creatorLogin", entry.CreatorLogin ?? "");
             cmd.Parameters.AddWithValue("$sourceJobId", entry.SourceJobId ?? "");
+            cmd.Parameters.AddWithValue("$splitGroupId", entry.SplitGroupId ?? "");
             cmd.Parameters.AddWithValue("$inputCount", entry.InputImageCount);
             cmd.Parameters.AddWithValue("$done", entry.Done ? 1 : 0);
             cmd.ExecuteNonQuery();

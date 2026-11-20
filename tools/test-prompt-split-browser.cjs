@@ -40,7 +40,10 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     jobSeq: 0,
   };
   try {
-    const context = await browser.newContext({ viewport: { width: 1400, height: 1000 } });
+    const context = await browser.newContext({
+      viewport: { width: 1400, height: 1000 },
+      permissions: ['clipboard-read', 'clipboard-write'],
+    });
     await context.route('**/*', async route => {
       const request = route.request(), url = new URL(request.url());
       if (url.origin !== new URL(base).origin) return route.abort();
@@ -340,6 +343,14 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     await card2.locator('.stage1-card-bail').click();
     assert.equal(await page.locator('#stage1-results-list .stage1-card').count(), 1);
 
+    // Stage-1 split review card: copy all pages grabs every page in one formatted block.
+    const expectedCopyBlock = parts
+      .map((p, idx) => `Page ${idx + 1} (${p.title}):\n${p.prompt}`)
+      .join('\n\n');
+    await card1.locator('.stage1-card-copy-all').click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expectedCopyBlock);
+    assert.match(await card1.locator('.stage1-card-action-status').textContent(), /Copied all 3 pages/);
+
     // Render Card 1 -> 503 busy error stays on card; retry sends identical splitExchangeId request.
     const imageKeys = await page.evaluate(() => fixtureImageKeys.join(','));
     await card1.locator('.stage1-card-render').click();
@@ -565,6 +576,101 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
       for (const id of ['splitfx1', 'splitfx3']) el(`job-${id}`).classList.remove('night-hidden');
     });
 
+    // Feed split-group copy all pages button copies every page in page order.
+    await page.evaluate(() => navigator.clipboard.writeText('cleared'));
+    await group.locator('.split-group-copy-all').click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expectedCopyBlock);
+    assert.equal(await group.locator('.split-group-copy-note').textContent(), 'copied 3 pages');
+
+    // Series contact-sheet links stay hidden until all parts finish, then appear on the group
+    // header and inline on each generator heading; hiding an image hides the links again.
+    assert.equal(await group.locator('.split-group-sheet-full').isHidden(), true);
+    assert.equal(await group.locator('.split-group-sheet-notext').isHidden(), true);
+    assert.equal(await group.locator('.split-maker-sheets').count(), 0);
+    await page.evaluate(() => {
+      for (const id of ['splitfx1', 'splitfx2', 'splitfx3']) {
+        applyJobEvent(id, el(`job-${id}`), { type: 'job-done' });
+      }
+    });
+    assert.equal(await group.locator('.split-group-sheet-full').isHidden(), false);
+    assert.equal(await group.locator('.split-group-sheet-notext').isHidden(), false);
+    assert.match(await group.locator('.split-group-sheet-full').getAttribute('href'),
+      /api\/split-groups\/fixturegrp1\/contact-sheet\?text=full$/);
+    assert.match(await group.locator('.split-group-sheet-notext').getAttribute('href'),
+      /api\/split-groups\/fixturegrp1\/contact-sheet\?text=none$/);
+    assert.equal(await group.locator('.split-maker-sheets').count(), 2);
+    assert.match(await group.locator(`.split-maker[data-gen="${keyA}"] .split-maker-sheet-full`).getAttribute('href'),
+      new RegExp(`api/split-groups/fixturegrp1/contact-sheet\\?text=full&gen=${encodeURIComponent(keyA)}$`));
+    assert.match(await group.locator(`.split-maker[data-gen="${keyB}"] .split-maker-sheet-notext`).getAttribute('href'),
+      new RegExp(`api/split-groups/fixturegrp1/contact-sheet\\?text=none&gen=${encodeURIComponent(keyB)}$`));
+    await page.evaluate((gen) => {
+      hiddenImageKeys.add(`splitfx1|${gen}|0`);
+      refreshSplitGroupSheets(document.querySelector('.split-group[data-split-group="fixturegrp1"]'));
+    }, keyA);
+    assert.equal(await group.locator('.split-group-sheet-full').isHidden(), true);
+    assert.equal(await group.locator('.split-maker-sheets').count(), 0);
+    await page.evaluate((gen) => {
+      hiddenImageKeys.delete(`splitfx1|${gen}|0`);
+      refreshSplitGroupSheets(document.querySelector('.split-group[data-split-group="fixturegrp1"]'));
+    }, keyA);
+    assert.equal(await group.locator('.split-group-sheet-full').isHidden(), false);
+    assert.equal(await group.locator('.split-maker-sheets').count(), 2);
+
+    // Direct #prompt-field-actions: copy, select all, clear, undo clear, paste, undo paste.
+    await page.locator('#prompt').fill('First prompt draft for mobile copy-paste check.');
+    assert.equal(await page.locator('#prompt-copy').isDisabled(), false);
+    assert.equal(await page.locator('#prompt-select-all').isDisabled(), false);
+    assert.equal(await page.locator('#prompt-clear').isDisabled(), false);
+    assert.equal(await page.locator('#prompt-field-undo').isHidden(), true);
+
+    await page.locator('#prompt-copy').click();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()),
+      'First prompt draft for mobile copy-paste check.');
+
+    await page.locator('#prompt-select-all').click();
+    const sel = await page.evaluate(() => [el('prompt').selectionStart, el('prompt').selectionEnd]);
+    assert.deepEqual(sel, [0, 'First prompt draft for mobile copy-paste check.'.length]);
+
+    await page.locator('#prompt-clear').click();
+    assert.equal(await page.locator('#prompt').inputValue(), '');
+    assert.equal(await page.locator('#prompt-clear').isDisabled(), true);
+    assert.equal(await page.locator('#prompt-copy').isDisabled(), true);
+    assert.equal(await page.locator('#prompt-field-undo').isHidden(), false);
+    assert.equal(await page.locator('#prompt-field-undo').textContent(), 'undo clear');
+
+    await page.locator('#prompt-field-undo').click();
+    assert.equal(await page.locator('#prompt').inputValue(),
+      'First prompt draft for mobile copy-paste check.');
+    assert.equal(await page.locator('#prompt-field-undo').isHidden(), true);
+
+    await page.evaluate(() => navigator.clipboard.writeText(' Second sentence.'));
+    await page.evaluate(() => {
+      const box = el('prompt');
+      box.setSelectionRange(box.value.length, box.value.length);
+    });
+    await page.locator('#prompt-paste').click();
+    await page.waitForFunction(() => el('prompt-field-status').textContent === 'pasted'
+      || el('prompt-field-status').classList.contains('err'));
+    assert.equal(await page.locator('#prompt-field-status').textContent(), 'pasted');
+    assert.equal(await page.locator('#prompt').inputValue(),
+      'First prompt draft for mobile copy-paste check. Second sentence.');
+    assert.equal(await page.locator('#prompt-field-undo').textContent(), 'undo paste');
+    await page.locator('#prompt-field-undo').click();
+    assert.equal(await page.locator('#prompt').inputValue(),
+      'First prompt draft for mobile copy-paste check.');
+    assert.equal(await page.locator('#prompt-field-undo').isHidden(), true);
+
+    // Phone width check: #prompt-field-actions fits inside viewport without horizontal overflow.
+    await page.setViewportSize({ width: 390, height: 900 });
+    const phoneOverflow = await page.evaluate(() => {
+      const bar = el('prompt-field-actions').getBoundingClientRect();
+      return { overflowX: document.documentElement.scrollWidth - window.innerWidth, barRight: Math.round(bar.right) };
+    });
+    assert.ok(phoneOverflow.overflowX <= 1, JSON.stringify(phoneOverflow));
+    assert.ok(phoneOverflow.barRight <= 390, JSON.stringify(phoneOverflow));
+    await page.setViewportSize({ width: 1400, height: 1000 });
+    await waitForColumns(3);
+
     const groupBox = await page.evaluate(() => {
       const header = document.querySelector('body > header').getBoundingClientRect().bottom;
       const node = document.querySelector('.split-group[data-split-group="fixturegrp1"]');
@@ -576,7 +682,7 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
 
     assert.deepEqual(errors, []);
     console.log('PASS: Stage-1 pipeline (Direct/Rewrite/Split), multi-writer parallel split, intermediate review cards, ' +
-      'per-card child model pickers, bail, re-render, feed split-group round-trip controls, layout at 3 widths, and viewer order.');
+      'copy-all-pages, series contact-sheet links, prompt field actions with undo, layout at 3 widths, and viewer order.');
   } finally {
     for (const route of state.held) await route.abort().catch(() => {});
     await browser.close();
