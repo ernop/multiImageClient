@@ -1,6 +1,8 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -10,9 +12,117 @@ using System.Threading.Tasks;
 
 namespace MultiImageClient
 {
+    public sealed record DiscordVibecodersAttachment(
+        Stream Media,
+        string ContentType,
+        string FileName,
+        string? Description = null);
+
+    public sealed record DiscordVibecodersBatchPlan(int StartIndex, int Count, long TotalBytes);
+
     public static class DiscordVibecoders
     {
-        public const long MaxAttachmentBytes = 10L * 1024 * 1024;
+        // Discord raised the default per-file limit from 10 MiB to 20 MiB on 2026-09-03,
+        // while keeping the 25 MiB total HTTP request body cap and 10 files per message.
+        public const long MaxAttachmentBytes = 20L * 1024 * 1024;
+        public const int MaxAttachmentsPerMessage = 10;
+        // Keep 1 MiB headroom below Discord's 25 MiB HTTP request limit for multipart framing and JSON.
+        public const long MaxRequestPayloadBytes = 24L * 1024 * 1024;
+
+        public static IReadOnlyList<DiscordVibecodersBatchPlan> PlanAttachmentBatches(
+            IReadOnlyList<long> byteLengths,
+            int maxPerMessage = MaxAttachmentsPerMessage,
+            long maxBatchBytes = MaxRequestPayloadBytes)
+        {
+            if (byteLengths == null || byteLengths.Count == 0)
+                throw new InvalidOperationException("At least one original attachment is required.");
+            if (maxPerMessage < 1 || maxPerMessage > MaxAttachmentsPerMessage)
+                throw new ArgumentOutOfRangeException(nameof(maxPerMessage));
+            if (maxBatchBytes < 1 || maxBatchBytes > MaxRequestPayloadBytes)
+                throw new ArgumentOutOfRangeException(nameof(maxBatchBytes));
+
+            var n = byteLengths.Count;
+            var prefix = new long[n + 1];
+            for (var i = 0; i < n; i++)
+            {
+                var len = byteLengths[i];
+                if (len <= 0 || len > MaxAttachmentBytes || len > maxBatchBytes)
+                    throw new InvalidOperationException(
+                        $"Page {i + 1} is unavailable or exceeds Discord's {MaxAttachmentBytes / (1024 * 1024)} MiB per-file attachment limit.");
+                prefix[i + 1] = prefix[i] + len;
+            }
+
+            // Greedy pass gives the exact minimum number of contiguous messages needed.
+            var minBatches = 0;
+            var pos = 0;
+            while (pos < n)
+            {
+                long sum = 0;
+                var taken = 0;
+                while (pos < n && taken < maxPerMessage && sum + byteLengths[pos] <= maxBatchBytes)
+                {
+                    sum += byteLengths[pos];
+                    pos++;
+                    taken++;
+                }
+                minBatches++;
+            }
+
+            if (minBatches == 1)
+                return new[] { new DiscordVibecodersBatchPlan(0, n, prefix[n]) };
+
+            // Partition into exactly minBatches contiguous batches minimizing max batch size
+            // (and balancing page counts on ties) so multi-message uploads stay visually even.
+            const long Inf = long.MaxValue / 4;
+            var dpMaxBytes = new long[minBatches + 1, n + 1];
+            var dpMaxCount = new int[minBatches + 1, n + 1];
+            var prevSplit = new int[minBatches + 1, n + 1];
+            for (var b = 0; b <= minBatches; b++)
+            {
+                for (var i = 0; i <= n; i++)
+                {
+                    dpMaxBytes[b, i] = Inf;
+                    dpMaxCount[b, i] = int.MaxValue;
+                    prevSplit[b, i] = -1;
+                }
+            }
+            dpMaxBytes[0, 0] = 0;
+            dpMaxCount[0, 0] = 0;
+
+            for (var b = 1; b <= minBatches; b++)
+            {
+                for (var end = b; end <= n; end++)
+                {
+                    for (var start = Math.Max(b - 1, end - maxPerMessage); start < end; start++)
+                    {
+                        if (dpMaxBytes[b - 1, start] >= Inf) continue;
+                        var batchBytes = prefix[end] - prefix[start];
+                        if (batchBytes > maxBatchBytes) continue;
+                        var candMaxBytes = Math.Max(dpMaxBytes[b - 1, start], batchBytes);
+                        var candMaxCount = Math.Max(dpMaxCount[b - 1, start], end - start);
+                        if (candMaxCount < dpMaxCount[b, end]
+                            || (candMaxCount == dpMaxCount[b, end] && candMaxBytes <= dpMaxBytes[b, end]))
+                        {
+                            dpMaxCount[b, end] = candMaxCount;
+                            dpMaxBytes[b, end] = candMaxBytes;
+                            prevSplit[b, end] = start;
+                        }
+                    }
+                }
+            }
+
+            var plan = new DiscordVibecodersBatchPlan[minBatches];
+            var cursor = n;
+            for (var b = minBatches; b >= 1; b--)
+            {
+                var start = prevSplit[b, cursor];
+                if (start < 0)
+                    throw new InvalidOperationException("Could not plan Discord attachment batches.");
+                plan[b - 1] = new DiscordVibecodersBatchPlan(start, cursor - start, prefix[cursor] - prefix[start]);
+                cursor = start;
+            }
+            return plan;
+        }
 
         public static bool IsConfigured(Settings settings)
         {
@@ -190,7 +300,8 @@ namespace MultiImageClient
             if (media == Stream.Null || !media.CanRead || !media.CanSeek
                 || media.Length - media.Position <= 0 || media.Length - media.Position > DiscordVibecoders.MaxAttachmentBytes)
             {
-                throw new InvalidOperationException("Discord requires an original attachment of at most 10 MiB.");
+                throw new InvalidOperationException(
+                    $"Discord requires an original attachment of at most {DiscordVibecoders.MaxAttachmentBytes / (1024 * 1024)} MiB.");
             }
 
             var username = string.IsNullOrWhiteSpace(senderName) ? "miic" : senderName.Trim();
@@ -251,6 +362,103 @@ namespace MultiImageClient
                     || json.RootElement.GetProperty("content").GetString() != UiPublicShares.Caption(publicUrl, publicOutputSlot)
                     || json.RootElement.GetProperty("attachments").GetArrayLength() != 1)
                     throw new InvalidOperationException("Discord returned a different message identity or content.");
+            }
+        }
+
+        public async Task SendBatchAsync(
+            string senderName,
+            IReadOnlyList<DiscordVibecodersAttachment> attachments,
+            string content,
+            string expectedChannelId,
+            string threadId,
+            CancellationToken cancellationToken)
+        {
+            if (attachments == null || attachments.Count == 0 || attachments.Count > DiscordVibecoders.MaxAttachmentsPerMessage)
+                throw new InvalidOperationException($"Discord accepts between 1 and {DiscordVibecoders.MaxAttachmentsPerMessage} attachments per message.");
+            if (string.IsNullOrWhiteSpace(content) || content.Length > 2000)
+                throw new InvalidOperationException("Discord caption text is missing or exceeds 2,000 characters.");
+            if (!ulong.TryParse(threadId, out var parsedThread) || parsedThread == 0 || threadId != expectedChannelId)
+                throw new InvalidOperationException("Confirmed public shares must target the exact daily thread.");
+
+            long totalBytes = 0;
+            for (var i = 0; i < attachments.Count; i++)
+            {
+                var item = attachments[i];
+                if (item.Media == Stream.Null || !item.Media.CanRead || !item.Media.CanSeek)
+                    throw new InvalidOperationException("Each Discord attachment must be a readable stream.");
+                var len = item.Media.Length - item.Media.Position;
+                if (len <= 0 || len > DiscordVibecoders.MaxAttachmentBytes)
+                    throw new InvalidOperationException(
+                        $"Attachment '{item.FileName}' exceeds Discord's {DiscordVibecoders.MaxAttachmentBytes / (1024 * 1024)} MiB per-file limit.");
+                totalBytes += len;
+            }
+            if (totalBytes > DiscordVibecoders.MaxRequestPayloadBytes)
+                throw new InvalidOperationException("Discord attachment batch exceeds the 24 MiB request payload budget.");
+
+            var username = string.IsNullOrWhiteSpace(senderName) ? "miic" : senderName.Trim();
+            if (username.Length > 80) username = username[..80];
+
+            var attachmentMeta = attachments.Select((item, idx) => new
+            {
+                id = idx,
+                filename = item.FileName,
+                description = string.IsNullOrWhiteSpace(item.Description)
+                    ? null
+                    : (item.Description.Length > 1024 ? item.Description[..1024] : item.Description),
+            }).ToArray();
+
+            using var form = new MultipartFormDataContent();
+            var payload = new
+            {
+                username = _botTesting ? null : username,
+                content,
+                flags = 4,
+                allowed_mentions = new { parse = Array.Empty<string>() },
+                attachments = attachmentMeta,
+            };
+            form.Add(
+                new StringContent(
+                    JsonSerializer.Serialize(
+                        payload,
+                        new JsonSerializerOptions
+                        {
+                            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+                        }),
+                    Encoding.UTF8),
+                "payload_json");
+
+            for (var i = 0; i < attachments.Count; i++)
+            {
+                var item = attachments[i];
+                var file = new StreamContent(item.Media);
+                file.Headers.ContentType = new MediaTypeHeaderValue(
+                    string.IsNullOrWhiteSpace(item.ContentType) ? "application/octet-stream" : item.ContentType);
+                form.Add(file, $"files[{i}]", item.FileName);
+            }
+
+            var destination = _botTesting
+                ? "https://discord.com/api/v10/channels/" + threadId + "/messages"
+                : _webhookUrl + "?wait=true&thread_id=" + threadId;
+            using var upload = new HttpRequestMessage(HttpMethod.Post, destination) { Content = form };
+            if (_botTesting)
+            {
+                if (!FableBot.FableBotDiscord.TryNormalizeBotToken(_settings.DiscordVibecodersBotToken, out var botToken))
+                    throw new InvalidOperationException("Configure the Discord bot token before sharing.");
+                upload.Headers.Authorization = new AuthenticationHeaderValue("Bot", botToken);
+            }
+            using var response = await _http.SendAsync(upload, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Discord rejected the upload ({(int)response.StatusCode}).");
+
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            if (json.RootElement.GetProperty("channel_id").GetString() != expectedChannelId
+                || json.RootElement.GetProperty("content").GetString() != content
+                || json.RootElement.GetProperty("attachments").GetArrayLength() != attachments.Count)
+                throw new InvalidOperationException("Discord returned a different message identity, caption, or attachment count.");
+            foreach (var returned in json.RootElement.GetProperty("attachments").EnumerateArray())
+            {
+                if (string.IsNullOrWhiteSpace(returned.GetProperty("id").GetString()))
+                    throw new InvalidOperationException("Discord returned an attachment without an identity.");
             }
         }
     }

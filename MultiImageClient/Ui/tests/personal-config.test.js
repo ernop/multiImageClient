@@ -88,6 +88,8 @@ test("version 2 migration preserves endpoint settings and declares empty global 
     splitStyleNote: "",
     models: schema.defaultPromptAssistantModels(),
     stage1AutoRender: false,
+    splitPresets: [],
+    rewritePresets: [],
   });
   assert.deepEqual(migrated.generatorPreferences,
     { ...old.generatorPreferences, defaultSelectedKeys: ["gpt2", "ideogram-v45"] });
@@ -112,13 +114,15 @@ test("version 3 migration adds Ideogram 4.5 once to the saved default list", () 
     generatorPreferences: { ...old.generatorPreferences, defaultSelectedKeys: ["gpt2", "ideogram", "ideogram-v45"] } });
   assert.deepEqual(schema.parseStored(JSON.stringify(old)), {
     ...migrated,
-    version: 7,
+    version: 8,
     promptTools: {
       ...old.promptTools,
       splitInstruction: "",
       splitStyleNote: "",
       models: schema.defaultPromptAssistantModels(),
       stage1AutoRender: false,
+      splitPresets: [],
+      rewritePresets: [],
     },
   });
   assert.deepEqual(old.generatorPreferences.defaultSelectedKeys, ["gpt2", "ideogram"]);
@@ -149,7 +153,7 @@ function version4Document(promptTools = { claudeAdviceInstruction: "Keep my inst
     generatorPreferences: { hiddenGeneratorKeys: [], defaultSelectedKeys: ["gpt2"] } };
 }
 
-test("version 4 -> 5 -> 6 -> 7 migrations add split text, assistant models, and stage1AutoRender", () => {
+test("version 4 -> 5 -> 6 -> 7 -> 8 migrations add split text, assistant models, stage1AutoRender, and instruction presets", () => {
   const old = version4Document();
   const v5 = schema.migrateVersion4(old);
   assert.deepEqual(v5, { ...old, version: 5,
@@ -160,15 +164,21 @@ test("version 4 -> 5 -> 6 -> 7 migrations add split text, assistant models, and 
     version: 6,
     promptTools: { ...v5.promptTools, models: schema.defaultPromptAssistantModels() },
   });
-  const migrated = schema.parseStored(JSON.stringify(old));
-  assert.deepEqual(migrated, {
+  const v7 = schema.migrateVersion6(v6);
+  assert.deepEqual(v7, {
     ...v6,
     version: 7,
     promptTools: { ...v6.promptTools, stage1AutoRender: false },
   });
+  const migrated = schema.parseStored(JSON.stringify(old));
+  assert.deepEqual(migrated, {
+    ...v7,
+    version: 8,
+    promptTools: { ...v7.promptTools, splitPresets: [], rewritePresets: [] },
+  });
   assert.equal(old.version, 4);
   assert.deepEqual(old.promptTools, { claudeAdviceInstruction: "Keep my instruction", globalAppendText: "Daylight." });
-  assert.deepEqual(schema.migrateVersion6(v6), migrated);
+  assert.deepEqual(schema.migrateVersion7(v7), migrated);
   for (const promptTools of [undefined, [], { ...old.promptTools, splitInstruction: "Mine" },
     { ...old.promptTools, splitStyleNote: "" }]) {
     assert.throws(() => schema.migrateVersion4({ ...old, promptTools }), /invalid version 4/);
@@ -185,6 +195,16 @@ test("version 4 -> 5 -> 6 -> 7 migrations add split text, assistant models, and 
   }
   assert.throws(() => schema.migrateVersion6({ ...v6, version: 5 }), /invalid version 6/);
   assert.throws(() => schema.migrateVersion6({ ...v6, format: "other" }), /invalid version 6/);
+  for (const promptTools of [
+    undefined,
+    [],
+    { ...v7.promptTools, splitPresets: [] },
+    { ...v7.promptTools, rewritePresets: [] },
+  ]) {
+    assert.throws(() => schema.migrateVersion7({ ...v7, promptTools }), /invalid version 7/);
+  }
+  assert.throws(() => schema.migrateVersion7({ ...v7, version: 6 }), /invalid version 7/);
+  assert.throws(() => schema.migrateVersion7({ ...v7, format: "other" }), /invalid version 7/);
 });
 
 test("version 3 migration rejects documents without default or hidden lists", () => {
@@ -251,11 +271,22 @@ test("first chooser save preserves legacy browser preferences in the complete do
   assert.deepEqual(saved.spelling.customDictionary, ["specialword"]);
   assert.deepEqual(saved.videoAudio, { volume: 0.3, muted: true });
   assert.deepEqual(Object.keys(saved.promptTools).sort(),
-    ["claudeAdviceInstruction", "globalAppendText", "models", "splitInstruction", "splitStyleNote", "stage1AutoRender"]);
+    [
+      "claudeAdviceInstruction",
+      "globalAppendText",
+      "models",
+      "rewritePresets",
+      "splitInstruction",
+      "splitPresets",
+      "splitStyleNote",
+      "stage1AutoRender",
+    ]);
   assert.equal(saved.promptTools.splitInstruction, "");
   assert.equal(saved.promptTools.splitStyleNote, "");
   assert.deepEqual(saved.promptTools.models, schema.defaultPromptAssistantModels());
   assert.equal(saved.promptTools.stage1AutoRender, false);
+  assert.deepEqual(saved.promptTools.splitPresets, []);
+  assert.deepEqual(saved.promptTools.rewritePresets, []);
   assert.deepEqual(Object.keys(saved).sort(), [
     "format", "version", "creatingAs", "peopleFilters", "generatorPreferences", "uiSettings",
     "promptTools", "spelling", "inspirationLibrary", "viewer", "videoAudio", "costSummaryCollapsed",

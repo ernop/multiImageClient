@@ -4,6 +4,7 @@
 // Loaded as a classic script after app.js; shares composer globals and helpers.
 
 const Stage1MaxWriters = 4;
+const Stage1MaxPersonalPresets = 20;
 
 const promptSplitBtn = el("prompt-split");
 const stage1Bar = el("stage1-bar");
@@ -15,10 +16,24 @@ const stage1MakeDefaultBtn = el("stage1-make-default");
 const stage1RewriteFields = el("stage1-rewrite-fields");
 const stage1RewriteInstruction = el("stage1-rewrite-instruction");
 const stage1RewriteClearBtn = el("stage1-rewrite-clear");
+const stage1RewritePresetSelect = el("stage1-rewrite-preset");
+const stage1RewritePresetSaveBtn = el("stage1-rewrite-preset-save");
+const stage1RewritePresetDeleteBtn = el("stage1-rewrite-preset-delete");
+const stage1RewritePresetBar = el("stage1-rewrite-preset-bar");
+const stage1RewritePresetName = el("stage1-rewrite-preset-name");
+const stage1RewritePresetConfirmBtn = el("stage1-rewrite-preset-confirm");
+const stage1RewritePresetCancelBtn = el("stage1-rewrite-preset-cancel");
 const stage1SplitFields = el("stage1-split-fields");
 const stage1SplitInstructionLabel = el("stage1-split-instruction-label");
 const stage1SplitInstruction = el("stage1-split-instruction");
 const stage1SplitDefaultBtn = el("stage1-split-default");
+const stage1SplitPresetSelect = el("stage1-split-preset");
+const stage1SplitPresetSaveBtn = el("stage1-split-preset-save");
+const stage1SplitPresetDeleteBtn = el("stage1-split-preset-delete");
+const stage1SplitPresetBar = el("stage1-split-preset-bar");
+const stage1SplitPresetName = el("stage1-split-preset-name");
+const stage1SplitPresetConfirmBtn = el("stage1-split-preset-confirm");
+const stage1SplitPresetCancelBtn = el("stage1-split-preset-cancel");
 const stage1SplitStyle = el("stage1-split-style");
 const stage1RunBtn = el("stage1-run");
 const stage1AutoRenderInput = el("stage1-auto-render");
@@ -144,6 +159,220 @@ function ensureStage1WritersForMode(mode) {
   return list;
 }
 
+function stage1BuiltinPresetsFor(mode) {
+  if (mode === "split") {
+    if (Array.isArray(promptSplitConfig?.presets) && promptSplitConfig.presets.length) {
+      return promptSplitConfig.presets;
+    }
+    const def = promptSplitConfig?.defaultInstruction || "";
+    return def ? [{ id: "default", name: "Faithful split (default)", text: def }] : [];
+  }
+  if (Array.isArray(claudeAdvice?.rewritePresets) && claudeAdvice.rewritePresets.length) {
+    return claudeAdvice.rewritePresets;
+  }
+  return [{ id: "default", name: "Standard flesh-out (default)", text: "" }];
+}
+
+function stage1PersonalPresetsFor(mode) {
+  const key = mode === "split" ? "splitPresets" : "rewritePresets";
+  if (!Array.isArray(promptSplitSettings[key])) promptSplitSettings[key] = [];
+  return promptSplitSettings[key];
+}
+
+function stage1PresetDom(mode) {
+  if (mode === "split") {
+    return {
+      textarea: stage1SplitInstruction,
+      select: stage1SplitPresetSelect,
+      saveBtn: stage1SplitPresetSaveBtn,
+      deleteBtn: stage1SplitPresetDeleteBtn,
+      bar: stage1SplitPresetBar,
+      nameInput: stage1SplitPresetName,
+      confirmBtn: stage1SplitPresetConfirmBtn,
+      cancelBtn: stage1SplitPresetCancelBtn,
+    };
+  }
+  return {
+    textarea: stage1RewriteInstruction,
+    select: stage1RewritePresetSelect,
+    saveBtn: stage1RewritePresetSaveBtn,
+    deleteBtn: stage1RewritePresetDeleteBtn,
+    bar: stage1RewritePresetBar,
+    nameInput: stage1RewritePresetName,
+    confirmBtn: stage1RewritePresetConfirmBtn,
+    cancelBtn: stage1RewritePresetCancelBtn,
+  };
+}
+
+function renderStage1PresetSelector(mode) {
+  const dom = stage1PresetDom(mode);
+  if (!dom.select || !dom.textarea) return;
+  const builtins = stage1BuiltinPresetsFor(mode);
+  const personal = stage1PersonalPresetsFor(mode);
+  const currentText = dom.textarea.value;
+
+  dom.select.replaceChildren();
+
+  let matchedValue = "__custom__";
+  const builtGroup = document.createElement("optgroup");
+  builtGroup.label = "Built-in presets";
+  for (const preset of builtins) {
+    const opt = document.createElement("option");
+    opt.value = `builtin:${preset.id}`;
+    opt.textContent = preset.name;
+    builtGroup.appendChild(opt);
+    if (matchedValue === "__custom__" && currentText.trim() === String(preset.text || "").trim()) {
+      matchedValue = opt.value;
+    }
+  }
+  dom.select.appendChild(builtGroup);
+
+  if (personal.length) {
+    const personalGroup = document.createElement("optgroup");
+    personalGroup.label = "My saved presets";
+    personal.forEach((preset, idx) => {
+      const opt = document.createElement("option");
+      opt.value = `personal:${idx}`;
+      opt.textContent = preset.name;
+      personalGroup.appendChild(opt);
+      if (matchedValue === "__custom__" && currentText === preset.text) {
+        matchedValue = opt.value;
+      }
+    });
+    dom.select.appendChild(personalGroup);
+  }
+
+  const customOpt = document.createElement("option");
+  customOpt.value = "__custom__";
+  customOpt.textContent = "Custom instruction";
+  dom.select.appendChild(customOpt);
+
+  dom.select.value = matchedValue;
+  if (dom.deleteBtn) {
+    dom.deleteBtn.hidden = !matchedValue.startsWith("personal:");
+  }
+}
+
+function refreshStage1PresetSelectors() {
+  renderStage1PresetSelector("split");
+  renderStage1PresetSelector("rewrite");
+}
+
+function applyStage1PresetSelection(mode) {
+  const dom = stage1PresetDom(mode);
+  if (!dom.select || !dom.textarea) return;
+  const val = dom.select.value;
+  if (val === "__custom__") return;
+  let nextText = null;
+  if (val.startsWith("builtin:")) {
+    const id = val.slice("builtin:".length);
+    const found = stage1BuiltinPresetsFor(mode).find((p) => p.id === id);
+    if (found) nextText = found.text || "";
+  } else if (val.startsWith("personal:")) {
+    const idx = Number(val.slice("personal:".length));
+    const found = stage1PersonalPresetsFor(mode)[idx];
+    if (found) nextText = found.text;
+  }
+  if (nextText === null) return;
+  MultiImageTextEntry.replace(dom.textarea, nextText);
+  if (mode === "split") {
+    saveStage1SplitSettings();
+  } else {
+    stage1RewriteClearBtn.hidden = dom.textarea.value.length === 0;
+  }
+  renderStage1PresetSelector(mode);
+  dom.textarea.focus();
+}
+
+function openStage1PresetSaveBar(mode) {
+  const dom = stage1PresetDom(mode);
+  if (!dom.bar || !dom.nameInput || !dom.textarea) return;
+  if (!dom.textarea.value.trim()) {
+    stage1Error.textContent = "Write an instruction first before saving a preset.";
+    dom.textarea.focus();
+    return;
+  }
+  stage1Error.textContent = "";
+  const val = dom.select?.value || "";
+  if (val.startsWith("personal:")) {
+    const idx = Number(val.slice("personal:".length));
+    dom.nameInput.value = stage1PersonalPresetsFor(mode)[idx]?.name || "";
+  } else {
+    dom.nameInput.value = "";
+  }
+  dom.bar.hidden = false;
+  dom.nameInput.focus();
+  dom.nameInput.select();
+}
+
+function saveStage1PersonalPreset(mode) {
+  const dom = stage1PresetDom(mode);
+  if (!dom.bar || !dom.nameInput || !dom.textarea) return;
+  const name = dom.nameInput.value.trim().replace(/\s+/g, " ");
+  const text = dom.textarea.value;
+  if (!name) {
+    stage1Error.textContent = "Enter a preset name.";
+    dom.nameInput.focus();
+    return;
+  }
+  if (name.length > 60) {
+    stage1Error.textContent = "Preset name must be at most 60 characters.";
+    dom.nameInput.focus();
+    return;
+  }
+  if (!text.trim()) {
+    stage1Error.textContent = "Instruction text must not be blank.";
+    dom.textarea.focus();
+    return;
+  }
+  const list = stage1PersonalPresetsFor(mode);
+  const lower = name.toLowerCase();
+  const existingIdx = list.findIndex((p) => p.name.toLowerCase() === lower);
+  const backup = list.map((p) => ({ name: p.name, text: p.text }));
+  if (existingIdx >= 0) {
+    list[existingIdx] = { name, text };
+  } else {
+    if (list.length >= Stage1MaxPersonalPresets) {
+      stage1Error.textContent = `You can save at most ${Stage1MaxPersonalPresets} presets here. Delete one first.`;
+      return;
+    }
+    list.push({ name, text });
+  }
+  try {
+    persistPersonalConfigurationSnapshot();
+    dom.bar.hidden = true;
+    dom.nameInput.value = "";
+    stage1Error.textContent = "";
+    stage1RunNote.textContent = `Saved preset "${name}".`;
+    renderStage1PresetSelector(mode);
+  } catch (error) {
+    promptSplitSettings[mode === "split" ? "splitPresets" : "rewritePresets"] = backup;
+    stage1Error.textContent = `Could not save preset: ${error.message || error}`;
+  }
+}
+
+function deleteSelectedStage1PersonalPreset(mode) {
+  const dom = stage1PresetDom(mode);
+  if (!dom.select) return;
+  const val = dom.select.value;
+  if (!val.startsWith("personal:")) return;
+  const idx = Number(val.slice("personal:".length));
+  const list = stage1PersonalPresetsFor(mode);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= list.length) return;
+  const removed = list[idx];
+  const backup = list.map((p) => ({ name: p.name, text: p.text }));
+  list.splice(idx, 1);
+  try {
+    persistPersonalConfigurationSnapshot();
+    stage1Error.textContent = "";
+    stage1RunNote.textContent = `Deleted preset "${removed.name}".`;
+    renderStage1PresetSelector(mode);
+  } catch (error) {
+    promptSplitSettings[mode === "split" ? "splitPresets" : "rewritePresets"] = backup;
+    stage1Error.textContent = `Could not delete preset: ${error.message || error}`;
+  }
+}
+
 function syncStage1SplitInputsFromSettings({ force = false } = {}) {
   if (stage1AutoRenderInput) {
     stage1AutoRenderInput.checked = !!promptSplitSettings.stage1AutoRender;
@@ -165,6 +394,7 @@ function syncStage1SplitInputsFromSettings({ force = false } = {}) {
       stage1SyncingSplitInputs = false;
     }
   }
+  refreshStage1PresetSelectors();
 }
 
 function saveStage1AutoRenderSetting() {
@@ -342,6 +572,8 @@ function setStage1Mode(nextMode, { focus = false } = {}) {
   stage1SplitFields.hidden = stage1Mode !== "split";
   if (stage1Mode === "split") {
     syncStage1SplitInputsFromSettings();
+  } else if (stage1Mode === "rewrite") {
+    renderStage1PresetSelector("rewrite");
   }
   if (open) {
     renderStage1Writers();
@@ -1445,6 +1677,34 @@ function setComposerFromSplitSource(sourcePrompt, blobs) {
   if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
 }
 
+function collectSplitSeriesPageVariants(group, gen) {
+  const partsHost = group.querySelector(":scope > .split-group-parts");
+  const expectedCount = Number(group.dataset.splitCount || partsHost?.dataset.splitCount || 0);
+  if (!partsHost || expectedCount < 2) return null;
+  const cards = [...partsHost.querySelectorAll(":scope > .job")]
+    .sort((a, b) => Number(a.dataset.splitIndex || 0) - Number(b.dataset.splitIndex || 0));
+  if (cards.length !== expectedCount) return null;
+  const variants = [];
+  for (let i = 0; i < expectedCount; i++) {
+    const card = cards[i];
+    if (Number(card.dataset.splitIndex) !== i + 1) return null;
+    if (card.dataset.state !== "done" || card.dataset.canHide === "false") return null;
+    const cell = card.querySelector(`.cell[data-gen="${CSS.escape(gen)}"]`);
+    if (!cell || cell.dataset.state !== "done") return null;
+    const anchors = [...cell.querySelectorAll('a[data-viewer-image="true"]:not([data-result-kind="text"])')]
+      .sort((a, b) => Number(a.dataset.imageIndex || 0) - Number(b.dataset.imageIndex || 0));
+    if (!anchors.length) return null;
+    const thumbs = anchors.map((a) => a.querySelector("img")?.src || a.href);
+    variants.push({
+      index: i + 1,
+      title: card.dataset.splitTitle || "",
+      jobId: card.dataset.jobId || "",
+      thumbs,
+    });
+  }
+  return variants;
+}
+
 function refreshSplitGroupSheets(group) {
   if (!group) return;
   const groupId = group.dataset.splitGroup || "";
@@ -1464,37 +1724,58 @@ function refreshSplitGroupSheets(group) {
     link.hidden = !ready;
   }
 
-  const showPerMaker = ready && makers.length >= 2;
+  const showPerMakerSheets = ready && makers.length >= 2;
   for (const maker of makers) {
-    const existing = maker.querySelector(":scope > .split-maker-sheets");
-    if (!showPerMaker) {
-      existing?.remove();
-      continue;
-    }
-    if (existing) continue;
     const gen = maker.dataset.gen || "";
-    if (!gen) continue;
-    const wrap = document.createElement("span");
-    wrap.className = "split-maker-sheets";
+    const existingSheets = maker.querySelector(":scope > .split-maker-sheets");
+    if (!showPerMakerSheets) {
+      existingSheets?.remove();
+    } else if (!existingSheets && gen) {
+      const wrap = document.createElement("span");
+      wrap.className = "split-maker-sheets";
 
-    const fullLink = document.createElement("a");
-    fullLink.className = "split-maker-sheet-full";
-    fullLink.href = apiUrl(`api/split-groups/${encodeURIComponent(groupId)}/contact-sheet?text=full&gen=${encodeURIComponent(gen)}`);
-    fullLink.target = "_blank";
-    fullLink.rel = "noopener";
-    fullLink.textContent = "sheet (full text)";
-    fullLink.title = `Open one PNG with all pages from ${genLabel(gen)} plus full prompts`;
+      const fullLink = document.createElement("a");
+      fullLink.className = "split-maker-sheet-full";
+      fullLink.href = apiUrl(`api/split-groups/${encodeURIComponent(groupId)}/contact-sheet?text=full&gen=${encodeURIComponent(gen)}`);
+      fullLink.target = "_blank";
+      fullLink.rel = "noopener";
+      fullLink.textContent = "sheet (full text)";
+      fullLink.title = `Open one PNG with all pages from ${genLabel(gen)} plus full prompts`;
 
-    const noTextLink = document.createElement("a");
-    noTextLink.className = "split-maker-sheet-notext";
-    noTextLink.href = apiUrl(`api/split-groups/${encodeURIComponent(groupId)}/contact-sheet?text=none&gen=${encodeURIComponent(gen)}`);
-    noTextLink.target = "_blank";
-    noTextLink.rel = "noopener";
-    noTextLink.textContent = "sheet (no text)";
-    noTextLink.title = `Open one PNG with all pages from ${genLabel(gen)} without full prompts`;
+      const noTextLink = document.createElement("a");
+      noTextLink.className = "split-maker-sheet-notext";
+      noTextLink.href = apiUrl(`api/split-groups/${encodeURIComponent(groupId)}/contact-sheet?text=none&gen=${encodeURIComponent(gen)}`);
+      noTextLink.target = "_blank";
+      noTextLink.rel = "noopener";
+      noTextLink.textContent = "sheet (no text)";
+      noTextLink.title = `Open one PNG with all pages from ${genLabel(gen)} without full prompts`;
 
-    wrap.append(fullLink, noTextLink);
-    maker.appendChild(wrap);
+      wrap.append(fullLink, noTextLink);
+      maker.appendChild(wrap);
+    }
+
+    const existingShare = maker.querySelector(":scope > .split-maker-series-share");
+    const canShareSeries = ready && !!gen && vibecodersAvailable
+      && !!collectSplitSeriesPageVariants(group, gen);
+    if (!canShareSeries) {
+      existingShare?.remove();
+    } else if (!existingShare) {
+      const shareBtn = document.createElement("button");
+      shareBtn.type = "button";
+      shareBtn.className = "split-maker-series-share";
+      shareBtn.dataset.vibecodersSeriesSend = "true";
+      shareBtn.dataset.splitGroup = groupId;
+      shareBtn.dataset.generator = gen;
+      shareBtn.addEventListener("click", () => {
+        const variants = collectSplitSeriesPageVariants(group, gen);
+        if (!variants) return;
+        sendSeriesToVibecoders(groupId, gen, variants);
+      });
+      paintVibecodersSeriesButton(shareBtn);
+      maker.appendChild(shareBtn);
+    } else {
+      paintVibecodersSeriesButton(existingShare);
+    }
   }
 }
 
@@ -1843,21 +2124,50 @@ stage1MakeDefaultBtn.addEventListener("click", () => {
 
 stage1RewriteInstruction.addEventListener("input", () => {
   stage1RewriteClearBtn.hidden = stage1RewriteInstruction.value.length === 0;
+  renderStage1PresetSelector("rewrite");
 });
 stage1RewriteClearBtn.addEventListener("click", () => {
   MultiImageTextEntry.replace(stage1RewriteInstruction, "");
   stage1RewriteClearBtn.hidden = true;
+  renderStage1PresetSelector("rewrite");
   stage1RewriteInstruction.focus();
 });
 
-stage1SplitInstruction.addEventListener("input", saveStage1SplitSettings);
+stage1SplitInstruction.addEventListener("input", () => {
+  saveStage1SplitSettings();
+  renderStage1PresetSelector("split");
+});
 stage1SplitStyle.addEventListener("input", saveStage1SplitSettings);
 stage1SplitDefaultBtn.addEventListener("click", () => {
   const def = promptSplitConfig?.defaultInstruction || "";
   MultiImageTextEntry.replace(stage1SplitInstruction, def);
   saveStage1SplitSettings();
+  renderStage1PresetSelector("split");
   stage1SplitInstruction.focus();
 });
+
+for (const mode of ["split", "rewrite"]) {
+  const dom = stage1PresetDom(mode);
+  dom.select?.addEventListener("change", () => applyStage1PresetSelection(mode));
+  dom.saveBtn?.addEventListener("click", () => openStage1PresetSaveBar(mode));
+  dom.deleteBtn?.addEventListener("click", () => deleteSelectedStage1PersonalPreset(mode));
+  dom.confirmBtn?.addEventListener("click", () => saveStage1PersonalPreset(mode));
+  dom.cancelBtn?.addEventListener("click", () => {
+    if (dom.bar) dom.bar.hidden = true;
+    stage1Error.textContent = "";
+  });
+  dom.nameInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      saveStage1PersonalPreset(mode);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      if (dom.bar) dom.bar.hidden = true;
+      stage1Error.textContent = "";
+    }
+  });
+}
+refreshStage1PresetSelectors();
 
 stage1RunBtn.addEventListener("click", startStage1Run);
 if (stage1AutoRenderInput) {

@@ -64,7 +64,7 @@ namespace MultiImageClient
                 });
             });
 
-            MapPublicShares(app, settings, auth, jobs, visibility, runner, vibecoders, environments);
+            MapPublicShares(app, settings, auth, jobs, visibility, runner, vibecoders, environments, community: community);
             MapShareLinks(app, settings, auth, jobs, visibility, environments, accountActivity);
             UiDiscordAccountEndpoints.Map(app, settings, auth, environments, accountActivity);
 

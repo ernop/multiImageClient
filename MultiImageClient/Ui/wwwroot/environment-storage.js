@@ -9,7 +9,7 @@
   if (env.nightFilter === false) hidden.push("#night-toggle", "#night-filter-preferences");
   if (!env.goalLoops) hidden.push("#goal-loops-link");
   if (!env.video) hidden.push("#image-viewer-video", "#video-dialog");
-  if (env.vibecodersSharing === false) hidden.push("#image-viewer-vibecoders");
+  if (env.vibecodersSharing === false) hidden.push("#image-viewer-vibecoders", "[data-vibecoders-series-send]");
   if (!env.promptRewrite) hidden.push("#prompt-advice", "[data-rewrite-model]", "#prompt-history-toggle", "#prompt-rewrite-history", "#prompt-advice-undo", "#character-write", ".prompt-limit-condense", "#prompt-split", "#stage1-bar", "#stage1-results", ".split-group-resplit", ".split-group-rerender");
   if (hidden.length) {
     const style = document.createElement("style"); style.textContent = hidden.join(",") + "{display:none!important}"; document.head.append(style);

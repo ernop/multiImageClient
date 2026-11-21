@@ -64,7 +64,7 @@ Historical published records retain anonymous access at their existing addresses
 Preview routes require the same authenticated sender who prepared the draft.
 
 On confirmation, recheck ownership, source visibility, snapshot equality, and destination identity.
-Fetch the selected original under the existing 10 MiB attachment limit.
+Fetch the selected original under Discord's per-file attachment limit (raised from 10 MiB to 20 MiB on 2026-11-20; see Multi-page split series sharing below).
 Claim the exact result in the durable Vibecoders send store.
 Then publish the stable page and persist the separate pending delivery record before calling Discord.
 Success marks the delivery record and the result claim sent.
@@ -390,3 +390,28 @@ A live test used synthetic content in the private test channel only.
 The application's daily registry created one thread and reused it for a second message.
 An 800×480 test card subsequently verified a visible image attachment.
 No private prompt was published during these checks.
+
+## Multi-page split series sharing — 2026-11-20
+
+Owner decisions (2026-11-20):
+
+1. **Unmodified max-resolution originals in the fewest balanced Discord messages:**
+   - Every completed split series (2–8 pages) exposes **share series to vibecoders** on each completed image generator's `.split-maker` heading (`prompt-pipeline.js`, hidden when Vibecoders sharing is disabled in the environment).
+   - `DiscordVibecoders.MaxAttachmentBytes` is raised to `20 MiB` (matching Discord's 2026-09-03 per-file limit), `MaxAttachmentsPerMessage = 10`, and `MaxRequestPayloadBytes = 24 MiB` (leaving safe multipart headroom beneath Discord's 25 MiB request ceiling).
+   - `DiscordVibecoders.PlanAttachmentBatches(...)` sends all 2–8 original images in **one Discord message** in the daily `#vibecoders` thread whenever their combined size fits under 24 MiB. When unmodified originals exceed 24 MiB, it automatically partitions into the fewest balanced consecutive Discord messages under 24 MiB (front-loading earlier batches on exact ties, e.g. Pages 1–4 then Pages 5–8), preserving exact page order and original bytes.
+   - Caption format (`UiPublicShares.SeriesCaption`): single-batch `{P} pages · [Read 1–{P}](<{publicUrl}>) · [Make your own](<{publicUrl}reuse>)`; multi-batch `Pages {a}–{b} of {P} · [Read 1–{P}](<{publicUrl}>) · [Make your own](<{publicUrl}reuse>)` (or `Page {a} of {P}` for a 1-page tail batch).
+   - Reject any single original over 20 MiB before confirmation; never silently downscale or recompress originals.
+2. **Per-page variant picker in the preview dialog:**
+   - For multi-variant generators (such as `grok-web` producing 4 images per page), `window.previewPublicSeriesShare(...)` in `public-share-dialog.js` lets the user select 1 image per page before confirming. Changing any page's choice aborts any in-flight preview and calls `POST /api/discord/vibecoders/prepare-series` with exact comma-separated `imageIndices`.
+   - Preparation measures each original one at a time (bounded RAM, no concurrent full-image buffering), plans Discord batches, and reserves a stable series page keyed by `series:{groupId}:{generator}:{indices}` without publishing it.
+   - Confirmation (`POST /api/discord/vibecoders` with `token` + `confirmed=true`) rechecks creator/owner permissions, visibility of every part job and image, snapshot equality, and Discord destination, claims `series:{groupId}` + `generator` + `imageIndex = 0` (`Kind = "series"`) in `UiDiscordVibecodersStore`, publishes the stable page, and sends each planned batch sequentially via `DiscordVibecodersClient.SendBatchAsync(...)`. Uncertain failure on any batch keeps the claim `pending` and blocks automatic retries.
+3. **Dedicated `/public/<token>/` 1-to-8 page series reader (chosen model only):**
+   - `UiPublicShareRecord.Series` (`UiPublicSeriesSnapshot`, omitted when null so existing single-job JSON stays byte-identical) stores only the chosen image model's selected page image per part `1..P`, plus source prompt, split plan notes, shared style note, model appended text, and recorded inputs.
+   - `UiPublicShares.SeriesHtml(...)` renders a fluid full-width, high-contrast (`#000` on light) **Page by page** reader with `← Prev` / `Next →` buttons, `1 / P` counter, numbered `1..P` jump strip, keyboard arrows (`ArrowLeft`/`ArrowRight`/`Home`/`End`), touch swipe, `#page-N` URL hash sync, neighbor preloading, collapsible spoiler-free per-page prompts, an **All pages** vertical-scroll toggle, graceful no-JS vertical fallback, an on-demand per-model series contact sheet at numeric slot `/public/<token>/asset/{inputs + pages}` (served through `PixelWorkGate` and `UiJobRunner.CreateSplitContactSheetAsync`, passing the existing `asset/[0-9]+` nginx/public-request rule with no nginx change), and **Make your own** (reusing the existing login + membership flow to load the original source prompt and inputs into the composer).
+   - CSP permits only the exact SHA-256 hash `UiPublicShares.SeriesReaderScriptHash` (combined with `ShareLinkLoginScriptHash` + `connect-src 'self'` on series login pages).
+   - Deleting/hiding any part job or image in the series hides the entire series public page and all its assets (HTTP 404).
+
+### Series sharing files & tests (2026-11-20)
+- `Implementation/DiscordVibecoders.cs`, `Implementation/UiDiscordVibecodersStore.cs`, `Implementation/UiPublicShares.cs`, `Workflows/UiWorkflow.PublicShares.cs`, `Workflows/UiWorkflow.Community.cs`
+- `Ui/wwwroot/public-share-dialog.js`, `Ui/wwwroot/prompt-pipeline.js`, `Ui/wwwroot/app.js`, `Ui/wwwroot/environment-storage.js`, `Ui/wwwroot/index.html`, `Ui/wwwroot/style.css`
+- `MultiImageClient.Tests/DiscordVibecodersTests.cs`, `MultiImageClient.Tests/PublicShareTests.cs`, `tools/test-public-share-dialog.cjs`, `tools/test-public-share-page.cjs`

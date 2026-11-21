@@ -9,7 +9,7 @@
   }
 })(typeof globalThis === "object" ? globalThis : this, function createPersonalConfigurationSchema() {
   const Format = "MultiImageClient personalized configuration";
-  const Version = 7;
+  const Version = 8;
   // Owner decision 2026-10-10: version 4 adds Ideogram 4.5 once to each saved
   // default list. The version records that the addition happened, so a later
   // removal stays removed. See docs/ideogram-45-support.md.
@@ -22,6 +22,9 @@
   // Version 7 (2026-11-20) adds promptTools.stage1AutoRender (boolean, default
   // false) to let Stage-1 Rewrite and Split multi-page send results directly
   // to the selected image models without waiting for the review step.
+  // Version 8 (2026-11-20) adds saved personal instruction presets under
+  // promptTools.splitPresets and promptTools.rewritePresets (arrays of
+  // { name, text }, initially empty).
   const PromptAssistantModelSlots = Object.freeze([
     "advice",
     "fleshOutPrimary",
@@ -125,6 +128,7 @@
     if (parsed.version === 4) parsed = migrateVersion4(parsed);
     if (parsed.version === 5) parsed = migrateVersion5(parsed);
     if (parsed.version === 6) parsed = migrateVersion6(parsed);
+    if (parsed.version === 7) parsed = migrateVersion7(parsed);
     if (parsed.version !== Version) {
       throw new Error(
         `stored personal configuration version ${String(parsed.version)} is unsupported; expected ${Version}`);
@@ -204,6 +208,24 @@
     };
   }
 
+  function migrateVersion7(raw) {
+    if (raw?.format !== Format || raw?.version !== 7 ||
+        !raw.promptTools || typeof raw.promptTools !== "object" || Array.isArray(raw.promptTools) ||
+        Object.hasOwn(raw.promptTools, "splitPresets") ||
+        Object.hasOwn(raw.promptTools, "rewritePresets")) {
+      throw new Error("invalid version 7 prompt tools");
+    }
+    return {
+      ...raw,
+      version: 8,
+      promptTools: {
+        ...raw.promptTools,
+        splitPresets: [],
+        rewritePresets: [],
+      },
+    };
+  }
+
   // A first visit can start on the goal page before the composer writes its
   // complete document. Preserve legacy browser fields during that migration.
   function saveGeneratorPreferences(storage, preferences) {
@@ -247,6 +269,8 @@
         splitStyleNote: "",
         models: defaultPromptAssistantModels(),
         stage1AutoRender: false,
+        splitPresets: [],
+        rewritePresets: [],
       },
       spelling: {
         enabled: storage.getItem("mic_mcphee_enabled") !== "false",
@@ -290,6 +314,7 @@
     migrateVersion4,
     migrateVersion5,
     migrateVersion6,
+    migrateVersion7,
     addVersion4DefaultKey,
     browserFields,
     saveGeneratorPreferences,

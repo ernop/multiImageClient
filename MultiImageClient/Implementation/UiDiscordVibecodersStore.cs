@@ -167,7 +167,7 @@ namespace MultiImageClient
                 throw new InvalidDataException(
                     $"Unsupported vibecoders send version {record.Version}; expected {CurrentVersion}.");
             }
-            if (record.Kind is not ("image" or "video")
+            if (record.Kind is not ("image" or "video" or "series")
                 || string.IsNullOrWhiteSpace(record.JobId)
                 || string.IsNullOrWhiteSpace(record.Generator)
                 || record.ImageIndex < 0

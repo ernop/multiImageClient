@@ -97,6 +97,7 @@ let videoGeneration = { available: false, availabilityProblem: "video configurat
 let setActiveJobVersion = 0;
 let setActiveJobController = null;
 let claudeAdvice = { available: false, availabilityProblem: "configuration not loaded" };
+let serverClaudeAdvice = { available: false, availabilityProblem: "configuration not loaded" };
 let promptCondenseConfig = { available: false, availabilityProblem: "configuration not loaded" };
 let promptSplitConfig = { available: false, availabilityProblem: "configuration not loaded" };
 let serverPromptCondense = { available: false, availabilityProblem: "configuration not loaded" };
@@ -573,7 +574,8 @@ async function loadConfig() {
   vibecodersAvailable = !!(cfg.vibecoders && cfg.vibecoders.available);
   fableBotAvailable = !!cfg.fableBot?.available;
   shareLinksAvailable = !!cfg.shareLinks?.available;
-  claudeAdvice = cfg.claudeAdvice || claudeAdvice;
+  serverClaudeAdvice = cfg.claudeAdvice || serverClaudeAdvice;
+  claudeAdvice = serverClaudeAdvice;
   serverPromptCondense = cfg.promptCondense || serverPromptCondense;
   serverPromptSplit = cfg.promptSplit || serverPromptSplit;
   promptAssistantModels = cfg.promptAssistantModels || [];
@@ -850,6 +852,12 @@ const promptSplitSettings = {
   instruction: storedPersonalField("promptTools")?.splitInstruction ?? "",
   styleNote: storedPersonalField("promptTools")?.splitStyleNote ?? "",
   stage1AutoRender: storedPersonalField("promptTools")?.stage1AutoRender === true,
+  splitPresets: Array.isArray(storedPersonalField("promptTools")?.splitPresets)
+    ? storedPersonalField("promptTools").splitPresets.map((p) => ({ name: p.name, text: p.text }))
+    : [],
+  rewritePresets: Array.isArray(storedPersonalField("promptTools")?.rewritePresets)
+    ? storedPersonalField("promptTools").rewritePresets.map((p) => ({ name: p.name, text: p.text }))
+    : [],
 };
 const promptToolModels = {
   ...PersonalConfigurationSchema.defaultPromptAssistantModels(),
@@ -921,6 +929,7 @@ function renderPromptAssistantModelSelectors() {
 
 function applyPromptAssistantModels() {
   if (!promptAssistantModels.length) {
+    claudeAdvice = serverClaudeAdvice;
     applyClaudeAdviceAvailability();
     promptCondenseConfig = serverPromptCondense;
     promptSplitConfig = serverPromptSplit;
@@ -931,6 +940,7 @@ function applyPromptAssistantModels() {
   }
   const adviceModel = resolvePromptAssistantModel("advice");
   claudeAdvice = {
+    ...serverClaudeAdvice,
     key: adviceModel.key,
     model: adviceModel.model,
     label: adviceModel.label,
@@ -1471,6 +1481,8 @@ function personalConfigurationFields() {
         splitStyleNote: promptSplitSettings.styleNote,
         models: { ...promptToolModels },
         stage1AutoRender: !!promptSplitSettings.stage1AutoRender,
+        splitPresets: promptSplitSettings.splitPresets.map((p) => ({ name: p.name, text: p.text })),
+        rewritePresets: promptSplitSettings.rewritePresets.map((p) => ({ name: p.name, text: p.text })),
       }),
       normalize: normalizeImportedPromptTools,
     },
@@ -1605,11 +1617,48 @@ function normalizeImportedPromptAssistantModels(raw) {
   return normalized;
 }
 
+function normalizeImportedInstructionPresets(raw, fieldName) {
+  if (!Array.isArray(raw)) {
+    throw new Error(`${fieldName} must be an array`);
+  }
+  if (raw.length > 20) {
+    throw new Error(`${fieldName} may contain at most 20 presets`);
+  }
+  const seenNames = new Set();
+  return raw.map((item, idx) => {
+    const label = `${fieldName}[${idx}]`;
+    const entry = requireConfigObject(item, label, ["name", "text"]);
+    const name = requireConfigString(entry.name, `${label}.name`, 60, false).trim().replace(/\s+/g, " ");
+    if (!name) {
+      throw new Error(`${label}.name must not be empty`);
+    }
+    const lower = name.toLowerCase();
+    if (seenNames.has(lower)) {
+      throw new Error(`${fieldName} contains duplicate preset name "${name}"`);
+    }
+    seenNames.add(lower);
+    const text = requireConfigString(entry.text, `${label}.text`, 4000, false);
+    if (!text.trim()) {
+      throw new Error(`${label}.text must not be blank`);
+    }
+    return { name, text };
+  });
+}
+
 function normalizeImportedPromptTools(raw) {
   const promptTools = requireConfigObject(
     raw,
     "promptTools",
-    ["claudeAdviceInstruction", "globalAppendText", "splitInstruction", "splitStyleNote", "models", "stage1AutoRender"]);
+    [
+      "claudeAdviceInstruction",
+      "globalAppendText",
+      "splitInstruction",
+      "splitStyleNote",
+      "models",
+      "stage1AutoRender",
+      "splitPresets",
+      "rewritePresets",
+    ]);
   return {
     globalAppendText: requireConfigString(promptTools.globalAppendText, "promptTools.globalAppendText", 16000, true),
     claudeAdviceInstruction: requireConfigString(
@@ -1621,6 +1670,8 @@ function normalizeImportedPromptTools(raw) {
     splitStyleNote: requireConfigString(promptTools.splitStyleNote, "promptTools.splitStyleNote", 2000, true),
     models: normalizeImportedPromptAssistantModels(promptTools.models),
     stage1AutoRender: requireConfigBoolean(promptTools.stage1AutoRender, "promptTools.stage1AutoRender"),
+    splitPresets: normalizeImportedInstructionPresets(promptTools.splitPresets, "promptTools.splitPresets"),
+    rewritePresets: normalizeImportedInstructionPresets(promptTools.rewritePresets, "promptTools.rewritePresets"),
   };
 }
 
@@ -1800,21 +1851,31 @@ function normalizeImportedVideoAudio(raw) {
 }
 
 function migratePersonalConfiguration(raw, targetVersion) {
-  const { migrateVersion2, migrateVersion3, migrateVersion4, migrateVersion5, migrateVersion6 } = PersonalConfigurationSchema;
+  const {
+    migrateVersion2,
+    migrateVersion3,
+    migrateVersion4,
+    migrateVersion5,
+    migrateVersion6,
+    migrateVersion7,
+  } = PersonalConfigurationSchema;
+  if (raw?.version === 7 && targetVersion === ConfigTransferVersion) {
+    return migrateVersion7(raw);
+  }
   if (raw?.version === 6 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion6(raw);
+    return migrateVersion7(migrateVersion6(raw));
   }
   if (raw?.version === 5 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion6(migrateVersion5(raw));
+    return migrateVersion7(migrateVersion6(migrateVersion5(raw)));
   }
   if (raw?.version === 4 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion6(migrateVersion5(migrateVersion4(raw)));
+    return migrateVersion7(migrateVersion6(migrateVersion5(migrateVersion4(raw))));
   }
   if (raw?.version === 3 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion6(migrateVersion5(migrateVersion4(migrateVersion3(raw))));
+    return migrateVersion7(migrateVersion6(migrateVersion5(migrateVersion4(migrateVersion3(raw)))));
   }
   if (raw?.version === 2 && targetVersion === ConfigTransferVersion) {
-    return migrateVersion6(migrateVersion5(migrateVersion4(migrateVersion3(migrateVersion2(raw)))));
+    return migrateVersion7(migrateVersion6(migrateVersion5(migrateVersion4(migrateVersion3(migrateVersion2(raw))))));
   }
   if (raw?.version !== 1 || targetVersion !== ConfigTransferVersion) {
     throw new Error(
@@ -1851,12 +1912,12 @@ function migratePersonalConfiguration(raw, targetVersion) {
   const portable = { ...raw };
   delete portable.gptImage2Guidance;
   delete portable.version;
-  return migrateVersion6(migrateVersion5(migrateVersion4(migrateVersion3({
+  return migrateVersion7(migrateVersion6(migrateVersion5(migrateVersion4(migrateVersion3({
     ...portable,
     version: 3,
     generatorPreferences: preferences,
     promptTools: { ...raw.promptTools, globalAppendText: "" },
-  }))));
+  })))));
 }
 
 function normalizeImportedPersonalConfiguration(raw) {
@@ -3764,6 +3825,73 @@ function refreshVibecodersButtons() {
   }
   for (const button of document.querySelectorAll("[data-vibecoders-send]")) {
     paintVibecodersButton(button);
+  }
+  for (const group of document.querySelectorAll(".split-group")) {
+    refreshSplitGroupSheets(group);
+  }
+  for (const button of document.querySelectorAll("[data-vibecoders-series-send]")) {
+    paintVibecodersSeriesButton(button);
+  }
+}
+
+function paintVibecodersSeriesButton(button) {
+  const groupId = button.dataset.splitGroup || "";
+  const generator = button.dataset.generator || "";
+  const key = vibecodersIdentity(`series:${groupId}`, generator, 0);
+  if (vibecodersPendingKeys.has(key)) {
+    button.disabled = true;
+    button.textContent = "check series in Discord";
+    button.title = "The series page may be public. Check Discord before sending again.";
+    return;
+  }
+  if (vibecodersMutation === key) {
+    button.disabled = true;
+    button.textContent = "reviewing series…";
+    button.title = "Review the preview before publishing or sending this series";
+    return;
+  }
+  if (vibecodersSentKeys.has(key)) {
+    button.disabled = true;
+    button.textContent = "sent series to vibecoders";
+    button.title = "This series was already sent to #vibecoders";
+    return;
+  }
+  if (vibecodersMutationError && vibecodersMutationError.key === key) {
+    button.disabled = false;
+    button.textContent = "series send failed";
+    button.title = vibecodersMutationError.message;
+    return;
+  }
+  button.disabled = vibecodersMutation !== null;
+  button.textContent = "share series to vibecoders";
+  button.title = `Preview and send all pages from ${genLabel(generator)} to #vibecoders`;
+}
+
+async function sendSeriesToVibecoders(groupId, generator, pageVariants) {
+  const claimJobId = `series:${groupId}`;
+  const key = vibecodersIdentity(claimJobId, generator, 0);
+  if (!vibecodersAvailable || vibecodersMutation || vibecodersSentKeys.has(key) || vibecodersPendingKeys.has(key)) return;
+  vibecodersMutation = key;
+  vibecodersMutationError = null;
+  refreshVibecodersButtons();
+  try {
+    const body = await previewPublicSeriesShare({
+      apiUrl,
+      groupId,
+      generator,
+      pageVariants,
+    });
+    if (body) {
+      vibecodersSentKeys.add(key);
+      if (body.version) vibecodersServerVersion = String(body.version);
+    }
+    vibecodersMutation = null;
+    refreshVibecodersButtons();
+  } catch (error) {
+    vibecodersMutation = null;
+    if (error.state === "pending") vibecodersPendingKeys.add(key);
+    vibecodersMutationError = { key, message: String(error) };
+    refreshVibecodersButtons();
   }
 }
 

@@ -12,9 +12,42 @@ const illustration = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height
     const page = await browser.newPage({ viewport: { width: 1100, height: 950 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    let posts = 0, preparations = 0, fail = false;
+    let posts = 0, preparations = 0, seriesPreparations = 0, fail = false;
+    const seenSeriesIndices = [];
     await page.route('https://share.test/**', async route => {
       const url = new URL(route.request().url());
+      if (url.pathname.endsWith('/prepare-series')) {
+        seriesPreparations++;
+        const postBody = route.request().postData() || '';
+        const match = postBody.match(/name="imageIndices"\r?\n\r?\n([^\r\n]+)/);
+        const indices = match ? match[1] : '0,0';
+        seenSeriesIndices.push(indices);
+        return route.fulfill({ json: {
+          token: 'b'.repeat(64),
+          kind: 'series',
+          groupId: 'grp1',
+          generator: 'gpt2',
+          generatorLabel: 'GPT Image 2',
+          pageCount: 2,
+          serverName: 'Test server',
+          channelName: 'vibecoders',
+          threadName: 'Daily Thursday, September 17, 2026 image thread',
+          publicUrl: 'https://share.test/shared/original/' + 'b'.repeat(64) + '/',
+          viewUrl: 'https://share.test/shared/original/' + 'b'.repeat(64) + '/',
+          pagePublished: false,
+          previewUrl: 'preview',
+          linkLabel: 'Read 1–2',
+          reuseLabel: 'Make your own',
+          totalBytes: 2400000,
+          inputCount: 0,
+          disclosure: 'Anyone with this link can see the source prompt, inputs, all 2 pages from GPT Image 2, their prompts, and the series contact sheet.',
+          batches: [{ startPage: 1, endPage: 2, count: 2, totalBytes: 2400000 }],
+          pages: [
+            { index: 1, title: 'Opening', jobId: 'j1', imageIndex: 0, bytes: 1200000, previewUrl: 'media.svg' },
+            { index: 2, title: 'Climax', jobId: 'j2', imageIndex: Number(indices.split(',')[1] || 0), bytes: 1200000, previewUrl: 'media.svg' },
+          ],
+        } });
+      }
       if (url.pathname.endsWith('/prepare')) {
         preparations++;
         return route.fulfill({ json: { token: 'a'.repeat(64), jobId: 'fixture', generator: 'gpt2', imageIndex: 0,
@@ -28,10 +61,14 @@ const illustration = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height
       if (url.pathname === '/api/discord/vibecoders') {
         posts++;
         assert.equal(route.request().headers()['x-mic-share'], '1');
-        assert.ok(route.request().postData().includes('name="confirmed"'));
+        const bodyText = route.request().postData() || '';
+        assert.ok(bodyText.includes('name="confirmed"'));
+        const isSeries = bodyText.includes('b'.repeat(64));
         return route.fulfill({ status: fail ? 502 : 200, json: fail
           ? { state: 'pending', error: 'The page is public. Check Discord.' }
-          : { state: 'sent', item: { jobId: 'fixture', generator: 'gpt2', imageIndex: 0 } } });
+          : { state: 'sent', item: isSeries
+            ? { kind: 'series', groupId: 'grp1', generator: 'gpt2' }
+            : { jobId: 'fixture', generator: 'gpt2', imageIndex: 0 } } });
       }
       if (url.pathname === '/media.svg') return route.fulfill({ contentType: 'image/svg+xml', body: illustration });
       if (url.pathname === '/preview') return route.fulfill({ contentType: 'text/html', body: '<h1>Shared prompt</h1><p>Fixture prompt, inputs, outputs, and contact sheet.</p>' });
@@ -76,7 +113,37 @@ const illustration = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height
     assert.equal(await page.evaluate(() => outcome), 'pending');
     assert.equal(posts, 2);
     assert.equal(preparations, 3);
+
+    // Multi-page series preview: multi-variant picker re-prepares with selected indices and confirms.
+    fail = false;
+    await page.evaluate(() => {
+      window.outcome = 'waiting';
+      previewPublicSeriesShare({
+        apiUrl: value => new URL(value, location.href).href,
+        groupId: 'grp1',
+        generator: 'gpt2',
+        pageVariants: [
+          { index: 1, title: 'Opening', jobId: 'j1', thumbs: ['media.svg'] },
+          { index: 2, title: 'Climax', jobId: 'j2', thumbs: ['media.svg', 'media.svg'] },
+        ],
+      }).then(value => { window.outcome = value || 'cancelled'; }).catch(error => { window.outcome = error.state; });
+    });
+    await page.waitForFunction(() => !document.querySelector('.share-confirm').disabled);
+    assert.equal(seriesPreparations, 1);
+    assert.equal(seenSeriesIndices[0], '0,0');
+    assert.equal(await page.locator('.share-series-picker').isVisible(), true);
+    assert.match(await page.locator('.share-batches').textContent(), /1 Discord message/);
+    assert.equal(await page.locator('.share-series-thumb').count(), 2);
+    // Switch page 2 to variant #2 and verify re-prepare sends 0,1.
+    await page.locator('.share-series-choice').nth(1).click();
+    await page.waitForFunction(() => !document.querySelector('.share-confirm').disabled);
+    assert.equal(seriesPreparations, 2);
+    assert.equal(seenSeriesIndices[1], '0,1');
+    await page.getByRole('button', { name: 'Make public & send' }).click();
+    await page.waitForFunction(() => outcome.state === 'sent');
+    assert.equal(posts, 3);
+
     assert.deepEqual(errors, []);
-    console.log('PASS: preview, concise caption, disclosure, public-page preview, cancel, exact confirmation, and uncertain-delivery blocking.');
+    console.log('PASS: preview, concise caption, disclosure, public-page preview, cancel, exact confirmation, uncertain-delivery blocking, and multi-page series picker.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

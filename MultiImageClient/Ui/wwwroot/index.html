@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261120-split-ar">
+<link rel="stylesheet" href="style.css?v=20261120-series-presets">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261102-mcphee-3-12-2">
 </head>
 <body class="composer-page">
@@ -157,7 +157,7 @@
       <button id="config-import-apply" type="button">import config</button>
     </div>
     <p class="settings-note" id="config-transfer-note">
-      Includes creating-as name, generator chooser, display/activity settings, prompt tools and Stage-1 auto-render, prompt assistant models, spelling dictionary/settings, inspiration library, viewer behavior, and media preferences. Excludes logins, cookies, jobs, favorites, characters, and view history.
+      Includes creating-as name, generator chooser, display/activity settings, prompt tools, Stage-1 instruction presets and auto-render, prompt assistant models, spelling dictionary/settings, inspiration library, viewer behavior, and media preferences. Excludes logins, cookies, jobs, favorites, characters, and view history.
     </p>
   </section>
 </div>
@@ -390,7 +390,17 @@
         <div id="stage1-rewrite-fields" hidden>
           <div class="stage1-field-head">
             <label for="stage1-rewrite-instruction"><strong>Editing instruction</strong> (optional — blank runs standard flesh-out)</label>
-            <button id="stage1-rewrite-clear" type="button" hidden>clear</button>
+            <div class="stage1-preset-controls">
+              <select id="stage1-rewrite-preset" class="stage1-preset-select" aria-label="Rewrite instruction preset"></select>
+              <button id="stage1-rewrite-preset-save" type="button">save preset</button>
+              <button id="stage1-rewrite-preset-delete" type="button" hidden>delete preset</button>
+              <button id="stage1-rewrite-clear" type="button" hidden>clear</button>
+            </div>
+          </div>
+          <div id="stage1-rewrite-preset-bar" class="stage1-preset-save-bar" hidden>
+            <input id="stage1-rewrite-preset-name" type="text" maxlength="60" placeholder="Preset name (for example: Dramatic 6-panel page)" aria-label="New rewrite preset name">
+            <button id="stage1-rewrite-preset-confirm" type="button">save</button>
+            <button id="stage1-rewrite-preset-cancel" type="button">cancel</button>
           </div>
           <textarea id="stage1-rewrite-instruction" rows="2" maxlength="4000"
             placeholder="Optional editing instruction; leave blank for standard flesh-out…"></textarea>
@@ -398,7 +408,17 @@
         <div id="stage1-split-fields" hidden>
           <div class="stage1-field-head">
             <label for="stage1-split-instruction"><strong id="stage1-split-instruction-label">Split instruction</strong></label>
-            <button id="stage1-split-default" type="button">use default</button>
+            <div class="stage1-preset-controls">
+              <select id="stage1-split-preset" class="stage1-preset-select" aria-label="Split instruction preset"></select>
+              <button id="stage1-split-preset-save" type="button">save preset</button>
+              <button id="stage1-split-preset-delete" type="button" hidden>delete preset</button>
+              <button id="stage1-split-default" type="button">use default</button>
+            </div>
+          </div>
+          <div id="stage1-split-preset-bar" class="stage1-preset-save-bar" hidden>
+            <input id="stage1-split-preset-name" type="text" maxlength="60" placeholder="Preset name (for example: 8-page fearless drama)" aria-label="New split preset name">
+            <button id="stage1-split-preset-confirm" type="button">save</button>
+            <button id="stage1-split-preset-cancel" type="button">cancel</button>
           </div>
           <textarea id="stage1-split-instruction" rows="3" maxlength="4000"></textarea>
           <div class="stage1-field-head">
@@ -964,7 +984,7 @@
 <script src="text-entry.js?v=20261103-replace-fit"></script>
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20261102-mcphee-3-12-2"></script>
-<script src="personal-config.js?v=20261120-stage1-auto"></script>
+<script src="personal-config.js?v=20261120-series-presets"></script>
 <script src="prompt-rewrites.js?v=20261119-models"></script>
 <script src="generator-toggle.js?v=20260910"></script>
 <script src="generator-chooser.js?v=20261119-arch"></script>
@@ -978,6 +998,8 @@
 <dialog id="public-share-dialog" aria-labelledby="public-share-title">
   <h2 id="public-share-title">Share to Discord</h2>
   <p class="share-destination"></p>
+  <div class="share-series-picker" hidden></div>
+  <p class="share-batches" hidden></p>
   <div class="share-post"><div class="share-media"></div><p class="share-caption"></p></div>
   <p class="share-disclosure"></p>
   <details hidden><summary>Public page preview</summary><iframe title="Public prompt page preview" sandbox="allow-same-origin"></iframe></details>
@@ -994,14 +1016,14 @@
   <p class="share-link-status" role="status"></p>
   <div class="share-actions"><button type="button" class="share-link-close">Close</button></div>
 </dialog>
-<script src="public-share-dialog.js?v=20260917-daily-threads"></script>
+<script src="public-share-dialog.js?v=20261120-series-share"></script>
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261026-prompt-condense"></script>
 <script src="prompt-characters.js?v=20261015-characters"></script>
-<script src="app.js?v=20261120-split-ar"></script>
+<script src="app.js?v=20261120-series-presets"></script>
 <script src="activity-center.js?v=20261119-pipeline"></script>
 <script src="sketch-composer.js?v=20261119-pipeline"></script>
 <script src="image-viewer.js?v=20261119-pipeline"></script>
-<script src="prompt-pipeline.js?v=20261120-split-ar"></script>
+<script src="prompt-pipeline.js?v=20261120-series-presets"></script>
 </body>
 </html>

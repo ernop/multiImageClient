@@ -416,6 +416,34 @@ public sealed class PromptSplitTests
         }
     }
 
+    [Fact]
+    public void SystemPromptAndBuiltinPresetsSupportStoryExpansionAlongsideLosslessDefault()
+    {
+        Assert.Contains("or when the user's instruction asks you to develop or expand the source across a target number of pages", PromptSplit.SystemPrompt);
+        Assert.Contains("Unless the user's instruction asks for a specific page count or story expansion, use the fewest images", PromptSplit.SystemPrompt);
+        Assert.Contains("When the user's instruction does ask you to develop a story", PromptSplit.SystemPrompt);
+        Assert.Contains("while preserving every detail from the source.", PromptSplit.SystemPrompt);
+
+        Assert.Equal(2, PromptSplit.BuiltinPresets.Count);
+        Assert.Equal("default", PromptSplit.BuiltinPresets[0].Id);
+        Assert.Equal(PromptSplit.DefaultInstruction, PromptSplit.BuiltinPresets[0].Text);
+        Assert.Equal("story-8-pages", PromptSplit.BuiltinPresets[1].Id);
+        Assert.Contains("8 pages", PromptSplit.BuiltinPresets[1].Text);
+        Assert.Contains("show, don't tell", PromptSplit.BuiltinPresets[1].Name);
+
+        var configJson = JsonSerializer.Serialize(PromptSplit.Config(new Settings()));
+        using var configDoc = JsonDocument.Parse(configJson);
+        var presets = configDoc.RootElement.GetProperty("presets");
+        Assert.Equal(2, presets.GetArrayLength());
+        Assert.Equal("story-8-pages", presets[1].GetProperty("id").GetString());
+
+        Assert.Equal(2, DirectedPromptRewrite.BuiltinPresets.Count);
+        Assert.Equal("default", DirectedPromptRewrite.BuiltinPresets[0].Id);
+        Assert.Equal("", DirectedPromptRewrite.BuiltinPresets[0].Text);
+        Assert.Equal("story-page", DirectedPromptRewrite.BuiltinPresets[1].Id);
+        Assert.Contains("show, don't tell", DirectedPromptRewrite.BuiltinPresets[1].Name);
+    }
+
     private static string CreateTempFolder()
     {
         var folder = Path.Combine(Path.GetTempPath(), "mic-split-tests", Guid.NewGuid().ToString("N"));

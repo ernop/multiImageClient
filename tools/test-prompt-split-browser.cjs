@@ -54,6 +54,18 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
           available: true, availabilityProblem: null, key: 'manager-claude-opus-5-5',
           model: 'claude-opus-5-5', label: 'Opus 5.5',
           defaultInstruction, maxImages: 8, maxInstructionChars: 4000, maxStyleNoteChars: 2000,
+          presets: [
+            { id: 'default', name: 'Faithful split (default)', text: defaultInstruction },
+            { id: 'story-8-pages', name: '8-page visual story (show, don\'t tell)', text: 'Develop this premise into an 8-page story with clear panels and dialogue.' },
+          ],
+        };
+        json.claudeAdvice = {
+          ...(json.claudeAdvice || {}),
+          available: true,
+          rewritePresets: [
+            { id: 'default', name: 'Standard flesh-out (default)', text: '' },
+            { id: 'story-page', name: 'Multi-panel story page (show, don\'t tell)', text: 'Turn this short premise into a rich single-page multi-panel visual story.' },
+          ],
         };
         if (!Array.isArray(json.promptAssistantModels) || json.promptAssistantModels.filter(m => m.available).length < 2) {
           json.promptAssistantModels = [
@@ -233,7 +245,7 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     assert.equal(await page.locator('#stage1-split-instruction').inputValue(), defaultInstruction);
     assert.equal(await page.evaluate(() => buildPersonalConfiguration().promptTools.splitInstruction), '');
 
-    // Portable configuration: round trip, version 4 migration, strict rejection.
+    // Portable configuration: round trip, version 4/6/7 migration, strict rejection.
     await page.evaluate(() => {
       const config = buildPersonalConfiguration();
       const normalized = normalizeImportedPersonalConfiguration(config);
@@ -244,12 +256,23 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
       delete old.promptTools.splitStyleNote;
       delete old.promptTools.models;
       delete old.promptTools.stage1AutoRender;
+      delete old.promptTools.splitPresets;
+      delete old.promptTools.rewritePresets;
       const migrated = normalizeImportedPersonalConfiguration(old).promptTools;
-      if (migrated.splitInstruction !== '' || migrated.splitStyleNote !== '' || migrated.models.split !== '' || migrated.stage1AutoRender !== false) throw Error('migration');
+      if (migrated.splitInstruction !== '' || migrated.splitStyleNote !== '' || migrated.models.split !== '' || migrated.stage1AutoRender !== false || migrated.splitPresets.length !== 0 || migrated.rewritePresets.length !== 0) throw Error('migration');
       const v6 = structuredClone(config);
       v6.version = 6;
       delete v6.promptTools.stage1AutoRender;
-      if (normalizeImportedPersonalConfiguration(v6).promptTools.stage1AutoRender !== false) throw Error('v6 migration');
+      delete v6.promptTools.splitPresets;
+      delete v6.promptTools.rewritePresets;
+      const fromV6 = normalizeImportedPersonalConfiguration(v6).promptTools;
+      if (fromV6.stage1AutoRender !== false || fromV6.splitPresets.length !== 0 || fromV6.rewritePresets.length !== 0) throw Error('v6 migration');
+      const v7 = structuredClone(config);
+      v7.version = 7;
+      delete v7.promptTools.splitPresets;
+      delete v7.promptTools.rewritePresets;
+      const fromV7 = normalizeImportedPersonalConfiguration(v7).promptTools;
+      if (fromV7.splitPresets.length !== 0 || fromV7.rewritePresets.length !== 0) throw Error('v7 migration');
       const changes = [
         c => { c.promptTools.splitInstruction = 42; },
         c => { c.promptTools.splitInstruction = 'x'.repeat(4001); },
@@ -258,10 +281,15 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
         c => { delete c.promptTools.models; },
         c => { delete c.promptTools.stage1AutoRender; },
         c => { c.promptTools.stage1AutoRender = 'yes'; },
+        c => { delete c.promptTools.splitPresets; },
+        c => { delete c.promptTools.rewritePresets; },
+        c => { c.promptTools.splitPresets = [{ name: '', text: 'x' }]; },
+        c => { c.promptTools.splitPresets = [{ name: 'A', text: 'x' }, { name: 'a', text: 'y' }]; },
+        c => { c.promptTools.rewritePresets = [{ name: 'A', text: 'x', extra: 1 }]; },
         c => { c.promptTools.models.advice = 'not-a-real-model'; },
         c => { c.promptTools.surprise = ''; },
         c => { c.version = 4; },
-        c => { c.version = 8; },
+        c => { c.version = 9; },
       ];
       for (const change of changes) {
         const invalid = structuredClone(config);
@@ -274,6 +302,8 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
       imported.promptTools.splitInstruction = 'Imported instruction.';
       imported.promptTools.splitStyleNote = 'Imported style.';
       imported.promptTools.stage1AutoRender = true;
+      imported.promptTools.splitPresets = [{ name: 'Imported Epic', text: 'Write an epic 8-page story.' }];
+      imported.promptTools.rewritePresets = [{ name: 'Imported Rewrite', text: 'Make a dramatic comic sheet.' }];
       el('config-import-json').value = JSON.stringify(imported);
     });
     const reloaded = page.waitForEvent('framenavigated');
@@ -282,11 +312,41 @@ const split = (index, exchangeId = 'fixture-exchange', groupId = 'fixturegrp1') 
     await page.waitForLoadState('load');
     await ready();
     assert.deepEqual(await page.evaluate(() => ({ ...promptSplitSettings })),
-      { instruction: 'Imported instruction.', styleNote: 'Imported style.', stage1AutoRender: true });
+      {
+        instruction: 'Imported instruction.',
+        styleNote: 'Imported style.',
+        stage1AutoRender: true,
+        splitPresets: [{ name: 'Imported Epic', text: 'Write an epic 8-page story.' }],
+        rewritePresets: [{ name: 'Imported Rewrite', text: 'Make a dramatic comic sheet.' }],
+      });
     await openSplitStage();
     assert.equal(await page.locator('#stage1-split-instruction').inputValue(), 'Imported instruction.');
     assert.equal(await page.locator('#stage1-auto-render').isChecked(), true);
-    // Reset auto-render back to false for the manual review assertions below.
+
+    // Built-in & personal presets for Split and Rewrite: select built-in, save custom, persist, delete.
+    await page.locator('#stage1-split-preset').selectOption('builtin:story-8-pages');
+    assert.match(await page.locator('#stage1-split-instruction').inputValue(), /8-page story/);
+    await page.locator('#stage1-split-instruction').fill('My fearless 8-page heroine arc with vivid dialogue.');
+    await page.locator('#stage1-split-preset-save').click();
+    await page.locator('#stage1-split-preset-name').fill('Heroine 8-page');
+    await page.locator('#stage1-split-preset-confirm').click();
+    assert.equal(await page.locator('#stage1-split-preset-delete').isVisible(), true);
+    assert.equal(await page.evaluate(() => promptSplitSettings.splitPresets.length), 2);
+    // Delete the newly added personal preset and verify clean removal.
+    await page.locator('#stage1-split-preset-delete').click();
+    assert.equal(await page.evaluate(() => promptSplitSettings.splitPresets.length), 1);
+
+    // Switch to Rewrite mode, verify built-in + imported personal presets work too.
+    await page.locator('#stage1-bar button[data-stage1-mode="rewrite"]').click();
+    await page.locator('#stage1-rewrite-preset').selectOption('builtin:story-page');
+    assert.match(await page.locator('#stage1-rewrite-instruction').inputValue(), /single-page multi-panel/);
+    await page.locator('#stage1-rewrite-preset').selectOption('personal:0');
+    assert.equal(await page.locator('#stage1-rewrite-instruction').inputValue(), 'Make a dramatic comic sheet.');
+    await page.locator('#stage1-rewrite-clear').click();
+    assert.equal(await page.locator('#stage1-rewrite-instruction').inputValue(), '');
+
+    // Return to Split mode and reset auto-render/defaults for the manual review assertions below.
+    await openSplitStage();
     await page.locator('#stage1-auto-render').uncheck();
     assert.equal(await page.evaluate(() => promptSplitSettings.stage1AutoRender), false);
     await page.locator('#stage1-split-default').click();

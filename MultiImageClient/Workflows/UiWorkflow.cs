@@ -509,6 +509,7 @@ namespace MultiImageClient
                         key = DirectedPromptRewrite.DefaultAdviceKey,
                         model = DirectedPromptRewrite.AdviceModel,
                         label = claudeAdviceLabel,
+                        rewritePresets = DirectedPromptRewrite.BuiltinPresets.Select(p => new { id = p.Id, name = p.Name, text = p.Text }),
                     },
                     promptRewrites = DirectedPromptRewrite.Models.Select(model =>
                     {

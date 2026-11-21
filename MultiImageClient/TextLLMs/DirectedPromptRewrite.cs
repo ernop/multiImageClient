@@ -35,6 +35,18 @@ namespace MultiImageClient
             + "Keep the composition readable and visually organized. "
             + "Return only the complete expanded prompt, without commentary or alternative proposals.";
 
+        public const string StoryPageInstruction =
+            "Develop this premise into a single detailed multi-panel visual story page (for example 4 to 6 clearly ordered panels in a readable comic grid). "
+            + "Do not merely repeat abstract themes or narrate what characters are thinking. "
+            + "Show character traits, conflict, humor, relationships, and change through concrete scenes, physical actions, body language, visual details, and turning points. "
+            + "Use pithy, well-written captions, dialogue, and speech bubbles alongside purposeful cinematography, varied camera angles, consistent character appearance across panels, and a surprising, satisfying payoff in the final panel.";
+
+        public static readonly IReadOnlyList<PromptInstructionPreset> BuiltinPresets = new[]
+        {
+            new PromptInstructionPreset("default", "Standard flesh-out (default)", ""),
+            new PromptInstructionPreset("story-page", "Multi-panel story page (show, don't tell)", StoryPageInstruction),
+        };
+
         // Condensing shortens the prompt only for selected targets over their
         // prompt limit. See docs/prompt-length-limits.md.
         public const string CondenseModel = SonnetModel;

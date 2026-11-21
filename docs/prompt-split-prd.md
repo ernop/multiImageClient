@@ -1,6 +1,22 @@
 # Splitting one prompt into several images
 
-Settled 2026-11-03. Updated 2026-11-10 (results group by image generator), 2026-11-19 (inline Stage-1 text step, parallel multi-writer splits up to 4 per account, explicit intermediate review tray with independent child image model selection and bail, feed split-group round-trip controls, and configurable writer models in personal configuration version 6), and **2026-11-20 (on-demand multi-page series contact sheets, copy-all-pages, OpenAI JSON user-message fix, expanded parallel split/rewrite concurrency, duplicate in-flight guard + cancel-running, optional Stage-1 direct auto-render persisted in personal configuration version 7, and shared series aspect ratio suggestions with per-card `Series AR` control)**.
+Settled 2026-11-03. Updated 2026-11-10 (results group by image generator), 2026-11-19 (inline Stage-1 text step, parallel multi-writer splits up to 4 per account, explicit intermediate review tray with independent child image model selection and bail, feed split-group round-trip controls, and configurable writer models in personal configuration version 6), and **2026-11-20 (on-demand multi-page series contact sheets, copy-all-pages, OpenAI JSON user-message fix, expanded parallel split/rewrite concurrency, duplicate in-flight guard + cancel-running, optional Stage-1 direct auto-render persisted in personal configuration version 7, shared series aspect ratio suggestions with per-card `Series AR` control, story-expansion support in `PromptSplit.SystemPrompt`, and built-in + personal instruction presets for both Split and Rewrite in personal configuration version 8)**.
+
+## Owner decisions (2026-11-20): story-expansion system prompt & built-in/personal instruction presets (personal config v8)
+
+1. **`PromptSplit.SystemPrompt` story-development allowance (`MultiImageClient/TextLLMs/PromptSplit.cs`):**
+   - Previously, `PromptSplit.SystemPrompt` forbade adding any story events, characters, or text not in the source and mandated using the fewest images—directly contradicting user instructions that ask the splitter to expand a short premise into an 8-page narrative comic.
+   - Updated `PromptSplit.SystemPrompt` to preserve lossless splitting and fewest-images behavior by default, while explicitly honoring story-development instructions (requested page count, invented scenes, visual storytelling beats, cinematography, dialogue, and captions) and still keeping every detail from the source, visual continuity prefaces, character limits, and daytime lighting defaults.
+2. **Built-in instruction presets for BOTH Stage-1 Split multi-page and Stage-1 Rewrite:**
+   - **Split multi-page (`PromptSplit.BuiltinPresets`, exposed in `/api/config` under `promptSplit.presets`):**
+     - `default` — **Faithful split (default)** (`PromptSplit.DefaultInstruction`)
+     - `story-8-pages` — **8-page visual story (show, don't tell)** (`PromptSplit.StoryCraftInstruction`: multi-page visual narrative craft up to 8 pages, concrete actions/cinematography/dialogue/captions instead of abstract summary)
+   - **Rewrite (`DirectedPromptRewrite.BuiltinPresets`, exposed in `/api/config` under `claudeAdvice.rewritePresets`):**
+     - `default` — **Standard flesh-out (default)** (empty custom instruction)
+     - `story-page` — **Multi-panel story page (show, don't tell)** (`DirectedPromptRewrite.StoryPageInstruction`: turns a short premise into one rich multi-panel comic/story page)
+3. **User-saved personal instruction presets (personal configuration schema version 8):**
+   - Inline preset selector, **save preset**, and **delete preset** controls sit directly beside `#stage1-split-instruction` (in Split mode) and `#stage1-rewrite-instruction` (in Rewrite mode), with an inline save-name bar for naming/overwriting presets without leaving the composer.
+   - Stored in `promptTools.splitPresets` and `promptTools.rewritePresets` (arrays of `{ name, text }`, up to 20 presets each, unique case-insensitive trimmed names 1–60 chars, non-blank text 1–4,000 chars) inside the canonical portable personal configuration document (`personal-config.js` schema version `8`, migrated from version `7` via `migrateVersion7` setting both arrays to `[]`, and verified in `Ui/tests/personal-config.test.js`, `tools/test-prompt-split-browser.cjs`, and `tools/test-global-append-preload.cjs`).
 
 ## Owner decision (2026-11-20): consistent series aspect ratio (`shape` + per-card `Series AR`)
 

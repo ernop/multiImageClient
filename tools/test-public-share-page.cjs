@@ -57,6 +57,54 @@ const illustration = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height
       assert.deepEqual(errors, []);
       await page.close();
     }
+
+    const seriesFixture = process.env.MIC_PUBLIC_SERIES_SHARE_HTML_FIXTURE;
+    if (seriesFixture) {
+      const seriesHtml = fs.readFileSync(seriesFixture, 'utf8');
+      const seriesUrl = 'https://share.test/shared/original/' + 'b'.repeat(64) + '/';
+      for (const viewport of [{ width: 1100, height: 950 }, { width: 390, height: 844 }]) {
+        const page = await browser.newPage({ viewport });
+        const errors = [];
+        page.on('pageerror', error => errors.push(error.message));
+        await page.route('https://share.test/**', async route => {
+          const url = new URL(route.request().url());
+          if (url.pathname.includes('/asset/')) {
+            return route.fulfill({ contentType: 'image/svg+xml', body: illustration });
+          }
+          return route.fulfill({ contentType: 'text/html', body: seriesHtml });
+        });
+        await page.goto(seriesUrl, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => document.querySelector('#reader-counter')?.textContent?.trim() === '1 / 3');
+        assert.equal(await page.locator('#reader-shell').isVisible(), true);
+        assert.equal(await page.locator('#all-pages').isVisible(), false);
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Series overflow at ${viewport.width}px`);
+        // Next button advances to page 2 and syncs #page-2 hash.
+        await page.locator('#reader-next').click();
+        assert.equal(new URL(page.url()).hash, '#page-2');
+        assert.equal(await page.locator('#reader-counter').textContent(), '2 / 3');
+        // Keyboard ArrowRight advances to page 3, ArrowLeft steps back to page 2.
+        await page.keyboard.press('ArrowRight');
+        assert.equal(new URL(page.url()).hash, '#page-3');
+        await page.keyboard.press('ArrowLeft');
+        assert.equal(new URL(page.url()).hash, '#page-2');
+        // Collapsible per-page prompt starts closed and opens on click.
+        assert.equal(await page.locator('#reader-prompt-details').evaluate(el => el.open), false);
+        await page.locator('#reader-prompt-summary').click();
+        assert.equal(await page.locator('#reader-prompt-details').evaluate(el => el.open), true);
+        assert.match(await page.locator('#reader-prompt-text').textContent(), /Page 2 prompt text/);
+        // Toggle All pages vertical view and back.
+        await page.locator('#mode-all').click();
+        assert.equal(await page.locator('#all-pages').isVisible(), true);
+        assert.equal(await page.locator('#reader-shell').isVisible(), false);
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Series all-pages overflow at ${viewport.width}px`);
+        await page.locator('#mode-page').click();
+        assert.equal(await page.locator('#reader-shell').isVisible(), true);
+        assert.equal(await page.locator('#all-pages').isVisible(), false);
+        assert.deepEqual(errors, []);
+        await page.close();
+      }
+      console.log('PASS: series public reader stepping, keyboard navigation, hash sync, all-pages toggle, and desktop/mobile layout.');
+    }
     console.log('PASS: anonymous image selection, delayed images, prompt navigation, originals, and desktop/mobile layout.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
