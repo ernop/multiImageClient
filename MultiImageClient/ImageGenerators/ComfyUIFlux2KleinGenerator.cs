@@ -17,6 +17,11 @@ namespace MultiImageClient
 {
     public sealed class ComfyUIFlux2KleinGenerator : IImageGenerator
     {
+        private static readonly SocketsHttpHandler SharedHandler = new()
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        };
+
         private readonly HttpClient _httpClient;
         private readonly SemaphoreSlim _semaphore;
         private readonly MultiClientRunStats _stats;
@@ -72,7 +77,7 @@ namespace MultiImageClient
             (_width, _height) = resolution.GetDimensions();
             _stats = stats;
             _semaphore = new SemaphoreSlim(Math.Max(1, maxConcurrency));
-            _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(Math.Min(_timeoutSeconds, 120)) };
+            _httpClient = new HttpClient(SharedHandler, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(Math.Min(_timeoutSeconds, 120)) };
             _diffusionModelName = diffusionModelName?.Trim() ?? "";
             _checkpointName = checkpointName?.Trim() ?? "";
             _vaeName = vaeName?.Trim() ?? "";

@@ -27,6 +27,11 @@ namespace MultiImageClient
         private const double StyleReferenceStrength = 0.6;
         private const long MaxAssetBytes = 75L * 1024 * 1024;
 
+        private static readonly SocketsHttpHandler SharedHandler = new()
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        };
+
         private readonly HttpClient _httpClient;
         private readonly SemaphoreSlim _semaphore;
         private readonly MultiClientRunStats _stats;
@@ -63,7 +68,7 @@ namespace MultiImageClient
             _name = name ?? "";
             _inputImagePath = inputImagePath;
             _semaphore = new SemaphoreSlim(maxConcurrency);
-            _httpClient = new HttpClient
+            _httpClient = new HttpClient(SharedHandler, disposeHandler: false)
             {
                 Timeout = TimeSpan.FromMinutes(6),
             };

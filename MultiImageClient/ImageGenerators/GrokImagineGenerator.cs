@@ -27,6 +27,11 @@ namespace MultiImageClient
         // and 2026-09-25). xAI publishes no limit for 1.0 edits or for 2.0.
         public const int LegacyModelMaxPromptChars = 16_000;
 
+        private static readonly HttpClient SharedHttpClient = new(new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        });
+
         private readonly SemaphoreSlim _semaphore;
         private readonly XAIGrokClient _client;
         private readonly HttpClient _httpClient;
@@ -82,7 +87,7 @@ namespace MultiImageClient
                 : XAIGrokClient.ModelGrokImagine;
 
             _client = new XAIGrokClient(apiKey, baseUrl: baseUrl);
-            _httpClient = new HttpClient();
+            _httpClient = SharedHttpClient;
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _stats = stats;
             _name = name ?? string.Empty;
@@ -306,7 +311,7 @@ namespace MultiImageClient
                 if (response.Data.Count > 1)
                 {
                     var multiImages = new List<CreatedBase64Image>();
-                    string multiContentType = null;
+                    string? multiContentType = null;
                     foreach (var item in response.Data)
                     {
                         if (item.RespectModeration == false) continue;
@@ -452,7 +457,8 @@ namespace MultiImageClient
             Exception? traceError = null;
             try
             {
-                response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, url));
+                using var request = new HttpRequestMessage(HttpMethod.Head, url);
+                response = await _httpClient.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
                     traceError = new HttpRequestException(

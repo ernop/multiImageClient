@@ -11,6 +11,11 @@ namespace BFLAPIClient
 {
     public class BFLClient
     {
+        private static readonly SocketsHttpHandler SharedHandler = new()
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        };
+
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
 
@@ -26,7 +31,7 @@ namespace BFLAPIClient
         public BFLClient(string apiKey, int defaultPollingIntervalMs = 2000)
         {
             _apiKey = apiKey;
-            _httpClient = new HttpClient();
+            _httpClient = new HttpClient(SharedHandler, disposeHandler: false);
             _httpClient.DefaultRequestHeaders.Add("x-key", _apiKey);
             DefaultPollingIntervalMs = defaultPollingIntervalMs;
         }
@@ -72,6 +77,7 @@ namespace BFLAPIClient
                     statusCode: response == null ? null : (int)response.StatusCode,
                     error: error,
                     metadata: new { operation = "poll-generation" });
+                response?.Dispose();
             }
         }
 
@@ -147,7 +153,7 @@ namespace BFLAPIClient
             {
                 NullValueHandling = NullValueHandling.Ignore
             });
-            var content = new StringContent(serialized, System.Text.Encoding.UTF8, "application/json");
+            using var content = new StringContent(serialized, System.Text.Encoding.UTF8, "application/json");
             var url = $"{BaseUrl}/v1/{endpoint}";
             var startedAtUtc = DateTime.UtcNow;
             HttpResponseMessage response = null;
@@ -178,6 +184,7 @@ namespace BFLAPIClient
                     statusCode: response == null ? null : (int)response.StatusCode,
                     error: error,
                     metadata: new { operation = "submit-generation", modelEndpoint = endpoint });
+                response?.Dispose();
             }
         }
 

@@ -1110,6 +1110,7 @@ namespace MultiImageClient
         private readonly string _historyRoot;
         private readonly object _indexLock = new();
         private readonly List<UiHistoryIndexEntry> _index = new();
+        private readonly Dictionary<string, int> _indexById = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<string, long> _archiveAccessTicks = new();
 
         // Global append-only envelope log for the polling transport: each
@@ -1168,7 +1169,11 @@ namespace MultiImageClient
             var scannedEntries = UiJobStorage.ScanIndex(_historyRoot, out var cacheHits, out var diskReads);
             foreach (var entry in scannedEntries.OrderBy(e => e.CreatedAt))
             {
-                lock (_indexLock) _index.Add(entry);
+                lock (_indexLock)
+                {
+                    _indexById[entry.Id] = _index.Count;
+                    _index.Add(entry);
+                }
 
                 if (entry.CreatedAt.ToLocalTime().Date == today)
                 {
@@ -1217,6 +1222,7 @@ namespace MultiImageClient
             storage.Initialize(job);
             lock (_indexLock)
             {
+                _indexById[job.Id] = _index.Count;
                 _index.Add(new UiHistoryIndexEntry
                 {
                     Id = job.Id,
@@ -1259,27 +1265,23 @@ namespace MultiImageClient
         {
             lock (_indexLock)
             {
-                for (var i = 0; i < _index.Count; i++)
+                if (!_indexById.TryGetValue(jobId, out var i))
                 {
-                    if (!string.Equals(_index[i].Id, jobId, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-                    var e = _index[i];
-                    _index[i] = new UiHistoryIndexEntry
-                    {
-                        Id = e.Id,
-                        FolderName = e.FolderName,
-                        CreatedAt = e.CreatedAt,
-                        CreatedBy = e.CreatedBy,
-                        CreatorLogin = e.CreatorLogin,
-                        SourceJobId = e.SourceJobId,
-                        SplitGroupId = e.SplitGroupId,
-                        InputImageCount = e.InputImageCount,
-                        Done = done,
-                    };
                     return;
                 }
+                var e = _index[i];
+                _index[i] = new UiHistoryIndexEntry
+                {
+                    Id = e.Id,
+                    FolderName = e.FolderName,
+                    CreatedAt = e.CreatedAt,
+                    CreatedBy = e.CreatedBy,
+                    CreatorLogin = e.CreatorLogin,
+                    SourceJobId = e.SourceJobId,
+                    SplitGroupId = e.SplitGroupId,
+                    InputImageCount = e.InputImageCount,
+                    Done = done,
+                };
             }
         }
 
@@ -1324,7 +1326,7 @@ namespace MultiImageClient
             UiHistoryIndexEntry? entry;
             lock (_indexLock)
             {
-                entry = _index.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.Ordinal));
+                entry = _indexById.TryGetValue(id, out var idx) ? _index[idx] : null;
             }
             if (entry == null)
             {
@@ -1493,7 +1495,7 @@ namespace MultiImageClient
             UiHistoryIndexEntry? entry;
             lock (_indexLock)
             {
-                entry = _index.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.Ordinal));
+                entry = _indexById.TryGetValue(id, out var idx) ? _index[idx] : null;
             }
             if (entry == null)
             {
@@ -1635,9 +1637,7 @@ namespace MultiImageClient
             job.AssignLegacyCreatorLogin(expectedCreatedBy, creatorLogin);
             lock (_indexLock)
             {
-                var index = _index.FindIndex(entry =>
-                    string.Equals(entry.Id, jobId, StringComparison.Ordinal));
-                if (index < 0)
+                if (!_indexById.TryGetValue(jobId, out var index))
                 {
                     throw new InvalidOperationException(
                         $"Job {jobId} is hydrated but missing from the history index.");
@@ -1693,8 +1693,7 @@ namespace MultiImageClient
                     UiJobStorage.RewritePersistedCreatorLogin(_historyRoot, entry.FolderName, from, to);
                 lock (_indexLock)
                 {
-                    var index = _index.FindIndex(item => string.Equals(item.Id, entry.Id, StringComparison.Ordinal));
-                    if (index < 0)
+                    if (!_indexById.TryGetValue(entry.Id, out var index))
                         throw new InvalidDataException($"Job {entry.Id} left the history index during login transfer.");
                     var current = _index[index];
                     if (!string.Equals(current.CreatorLogin, from, StringComparison.Ordinal)

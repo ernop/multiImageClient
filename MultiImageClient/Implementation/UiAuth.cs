@@ -56,6 +56,8 @@ namespace MultiImageClient
         // Per-IP failed-login throttle: after MaxFailures failures inside the
         // window, further attempts from that IP get rejected until it expires.
         private const int MaxFailuresPerWindow = 10;
+        public const int MaxTrackedFailureIps = 4096;
+        private readonly object _failurePruneLock = new();
         private static readonly TimeSpan FailureWindow = TimeSpan.FromMinutes(5);
         private readonly ConcurrentDictionary<string, (int Count, DateTime WindowStartUtc)> _failures = new();
 
@@ -548,13 +550,48 @@ namespace MultiImageClient
 
         private void RecordFailure(string clientIp)
         {
+            var now = DateTime.UtcNow;
+            if (_failures.Count >= MaxTrackedFailureIps && !_failures.ContainsKey(clientIp))
+            {
+                PruneFailures(now);
+            }
             _failures.AddOrUpdate(
                 clientIp,
-                _ => (1, DateTime.UtcNow),
-                (_, entry) => DateTime.UtcNow - entry.WindowStartUtc > FailureWindow
-                    ? (1, DateTime.UtcNow)
+                _ => (1, now),
+                (_, entry) => now - entry.WindowStartUtc > FailureWindow
+                    ? (1, now)
                     : (entry.Count + 1, entry.WindowStartUtc));
         }
+
+        private void PruneFailures(DateTime nowUtc)
+        {
+            lock (_failurePruneLock)
+            {
+                foreach (var pair in _failures)
+                {
+                    if (nowUtc - pair.Value.WindowStartUtc > FailureWindow)
+                    {
+                        _failures.TryRemove(pair.Key, out _);
+                    }
+                }
+                if (_failures.Count < MaxTrackedFailureIps)
+                {
+                    return;
+                }
+                var removeCount = Math.Max(1, _failures.Count - MaxTrackedFailureIps + 1);
+                var oldest = _failures
+                    .OrderBy(pair => pair.Value.WindowStartUtc)
+                    .Take(removeCount)
+                    .Select(pair => pair.Key)
+                    .ToList();
+                foreach (var key in oldest)
+                {
+                    _failures.TryRemove(key, out _);
+                }
+            }
+        }
+
+        public int TrackedFailureIpCount => _failures.Count;
 
         private sealed class AuthFile
         {

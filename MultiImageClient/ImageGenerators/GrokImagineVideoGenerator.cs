@@ -30,6 +30,14 @@ namespace MultiImageClient
     /// $0.05/s at 480p and $0.10/s at 720p. GetCost() reflects that estimate.
     public class GrokImagineVideoGenerator : IImageGenerator
     {
+        private static readonly HttpClient SharedHttpClient = new(new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        })
+        {
+            Timeout = TimeSpan.FromMinutes(5),
+        };
+
         private readonly SemaphoreSlim _semaphore;
         private readonly XAIGrokClient _client;
         private readonly HttpClient _httpClient;
@@ -64,7 +72,7 @@ namespace MultiImageClient
                 throw new ArgumentOutOfRangeException(nameof(durationSeconds), "xAI video duration must be 1-15 seconds.");
             }
             _client = new XAIGrokClient(apiKey, baseUrl: settings.XAIBaseUrl);
-            _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+            _httpClient = SharedHttpClient;
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _stats = stats;
             _settings = settings;

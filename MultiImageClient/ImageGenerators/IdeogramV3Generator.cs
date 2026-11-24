@@ -13,9 +13,14 @@ namespace IdeogramAPIClient
 {
     public class IdeogramV3Generator : IImageGenerator
     {
+        private static readonly HttpClient SharedHttpClient = new(new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        });
+
         private readonly SemaphoreSlim _semaphore;
         private readonly IdeogramClient _client;
-        private readonly HttpClient _httpClient = new HttpClient();
+        private readonly HttpClient _httpClient = SharedHttpClient;
         private readonly MultiClientRunStats _stats;
         private readonly IdeogramV3StyleType _styleType;
         private readonly IdeogramMagicPromptOption? _magicPromptOption;

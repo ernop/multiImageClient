@@ -127,13 +127,18 @@ namespace IdeogramAPIClient
                 && width > 0 && height > 0;
         }
 
+        private static readonly SocketsHttpHandler SharedHandler = new()
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        };
+
         public IdeogramClient(string apiKey)
-            : this(apiKey, new HttpClient())
+            : this(apiKey, new HttpClient(SharedHandler, disposeHandler: false))
         {
         }
 
         public IdeogramClient(string apiKey, TimeSpan timeout)
-            : this(apiKey, new HttpClient { Timeout = timeout })
+            : this(apiKey, new HttpClient(SharedHandler, disposeHandler: false) { Timeout = timeout })
         {
         }
 
@@ -157,7 +162,7 @@ namespace IdeogramAPIClient
                 Converters = new List<JsonConverter> { new StringEnumConverter() }
             });
 
-            var httpContent = new StringContent(jsonRequest, System.Text.Encoding.UTF8, "application/json");
+            using var httpContent = new StringContent(jsonRequest, System.Text.Encoding.UTF8, "application/json");
             const string endpoint = "/generate";
             var startedAtUtc = DateTime.UtcNow;
             HttpResponseMessage? response = null;
@@ -197,6 +202,7 @@ namespace IdeogramAPIClient
                     statusCode: response == null ? null : (int)response.StatusCode,
                     error: error,
                     metadata: new { operation = "generate-image", apiVersion = "legacy" });
+                response?.Dispose();
             }
         }
 
@@ -293,6 +299,7 @@ namespace IdeogramAPIClient
                         statusCode: response == null ? null : (int)response.StatusCode,
                         error: error,
                         metadata: new { operation = "generate-image", apiVersion = "v3" });
+                    response?.Dispose();
                 }
             }
         }
@@ -426,6 +433,7 @@ namespace IdeogramAPIClient
                     statusCode: response == null ? null : (int)response.StatusCode,
                     error: error,
                     metadata: new { operation, apiVersion = "v4" });
+                response?.Dispose();
             }
         }
 
@@ -471,7 +479,9 @@ namespace IdeogramAPIClient
                 traceRequest,
                 "generate-image",
                 request.NumImages ?? 1,
-                requireGenerationId: true);
+                requireGenerationId: true,
+                displayName: "Ideogram 4.5",
+                modelSlug: "ideogram-4-5");
         }
 
         /// Ideogram 4.5 Precise Edit. The edited image and each reference are
@@ -525,7 +535,9 @@ namespace IdeogramAPIClient
                 traceRequest,
                 "precise-edit-image",
                 request.NumImages ?? 1,
-                requireGenerationId: false);
+                requireGenerationId: false,
+                displayName: "Ideogram 4.5",
+                modelSlug: "ideogram-4-5");
         }
 
         public Task<IdeogramV45Response> GenerateImageV46Async(IdeogramV45GenerateRequest request)
@@ -568,7 +580,9 @@ namespace IdeogramAPIClient
                 traceRequest,
                 "generate-image",
                 request.NumImages ?? 1,
-                requireGenerationId: true);
+                requireGenerationId: true,
+                displayName: "Ideogram 4.6",
+                modelSlug: "ideogram-4-6");
         }
 
         public Task<IdeogramV45Response> PreciseEditImageV46Async(IdeogramV45PreciseEditRequest request)
@@ -620,7 +634,9 @@ namespace IdeogramAPIClient
                 traceRequest,
                 "precise-edit-image",
                 request.NumImages ?? 1,
-                requireGenerationId: false);
+                requireGenerationId: false,
+                displayName: "Ideogram 4.6",
+                modelSlug: "ideogram-4-6");
         }
 
         private async Task<IdeogramV45Response> PostV45WithDisposeAsync(
@@ -629,11 +645,13 @@ namespace IdeogramAPIClient
             object traceRequest,
             string operation,
             int expectedImageCount,
-            bool requireGenerationId)
+            bool requireGenerationId,
+            string displayName,
+            string modelSlug)
         {
             using (content)
             {
-                return await PostV45Async(endpoint, content, traceRequest, operation, expectedImageCount, requireGenerationId);
+                return await PostV45Async(endpoint, content, traceRequest, operation, expectedImageCount, requireGenerationId, displayName, modelSlug);
             }
         }
 
@@ -643,7 +661,9 @@ namespace IdeogramAPIClient
             object traceRequest,
             string operation,
             int expectedImageCount,
-            bool requireGenerationId)
+            bool requireGenerationId,
+            string displayName,
+            string modelSlug)
         {
             var startedAtUtc = DateTime.UtcNow;
             HttpResponseMessage? response = null;
@@ -669,22 +689,22 @@ namespace IdeogramAPIClient
                 catch (JsonException ex)
                 {
                     throw new InvalidDataException(
-                        $"Ideogram 4.5 response does not match the published contract: {ex.Message}",
+                        $"{displayName} response does not match the published contract: {ex.Message}",
                         ex);
                 }
                 if (parsed == null)
                 {
-                    throw new InvalidDataException("Ideogram 4.5 returned an empty response body.");
+                    throw new InvalidDataException($"{displayName} returned an empty response body.");
                 }
                 if (requireGenerationId && string.IsNullOrWhiteSpace(parsed.GenerationId))
                 {
-                    throw new InvalidDataException("Ideogram 4.5 Generate response has no generation_id.");
+                    throw new InvalidDataException($"{displayName} Generate response has no generation_id.");
                 }
                 var count = parsed.Data?.Count ?? 0;
                 if (count != expectedImageCount)
                 {
                     throw new InvalidDataException(
-                        $"Ideogram 4.5 returned {count} image entries for a request of {expectedImageCount}.");
+                        $"{displayName} returned {count} image entries for a request of {expectedImageCount}.");
                 }
 
                 return parsed;
@@ -706,7 +726,7 @@ namespace IdeogramAPIClient
                     response: responseContent,
                     statusCode: response == null ? null : (int)response.StatusCode,
                     error: error,
-                    metadata: new { operation, apiVersion = "v2", model = "ideogram-4-5" });
+                    metadata: new { operation, apiVersion = "v2", model = modelSlug });
                 response?.Dispose();
             }
         }
@@ -776,6 +796,7 @@ namespace IdeogramAPIClient
                         statusCode: response == null ? null : (int)response.StatusCode,
                         error: error,
                         metadata: new { operation = "describe-image" });
+                    response?.Dispose();
                 }
             }
         }

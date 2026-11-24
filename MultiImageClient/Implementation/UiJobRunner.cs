@@ -981,6 +981,14 @@ namespace MultiImageClient
 
         public bool IsAvailable(string key) => DescribeAvailabilityProblem(key) == null;
 
+        private static readonly HttpClient ComfyProbeHttpClient = new(new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(2),
+        };
+
         private string? DescribeComfyAvailability(ImageGeneratorApiType apiType)
         {
             var settingsProblem = ProviderKeyValidator.DescribeKeyProblem(apiType, _settings);
@@ -998,9 +1006,8 @@ namespace MultiImageClient
 
                 try
                 {
-                    using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
                     var url = $"{_settings.ComfyUIBaseUrl.TrimEnd('/')}/system_stats";
-                    using var response = client.GetAsync(url).GetAwaiter().GetResult();
+                    using var response = ComfyProbeHttpClient.GetAsync(url).GetAwaiter().GetResult();
                     _cachedComfyProbeProblem = response.IsSuccessStatusCode
                         ? null
                         : $"ComfyUI at {_settings.ComfyUIBaseUrl} returned HTTP {(int)response.StatusCode}";
@@ -2016,13 +2023,13 @@ namespace MultiImageClient
                 ImageGeneratorDescription = GeneratorPresentation.UiContactSheetLabel(key),
                 ContentType = "image/png",
             };
-            string firstImagePath = null;
-            byte[] firstImageBytes = null;
+            string? firstImagePath = null;
+            byte[]? firstImageBytes = null;
             var mediaType = "";
             decimal totalCost = 0m;
             long createMs = 0, downloadMs = 0;
-            string label = null;
-            string firstError = null;
+            string? label = null;
+            string? firstError = null;
 
             for (var attempt = 0; attempt < want; attempt++)
             {
@@ -3357,7 +3364,7 @@ namespace MultiImageClient
         // Minimal PNG/JPEG dimension reader for the display label. Returns "WxH",
         // or null for anything it doesn't recognize — no decode, no exceptions used
         // for control flow. PNG and JPEG cover every provider the UI shows.
-        private static string ReadImageSize(string path)
+        private static string? ReadImageSize(string path)
         {
             try
             {
@@ -3376,7 +3383,7 @@ namespace MultiImageClient
             }
         }
 
-        private static string ReadImageSize(byte[] b)
+        private static string? ReadImageSize(byte[] b)
         {
             if (b == null) return null;
 

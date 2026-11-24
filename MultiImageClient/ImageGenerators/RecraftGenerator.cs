@@ -20,6 +20,11 @@ namespace MultiImageClient
     {
         private SemaphoreSlim _recraftSemaphore;
         private RecraftClient _recraftClient;
+        private static readonly HttpClient SharedHttpClient = new(new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        });
+
         private HttpClient _httpClient;
         private MultiClientRunStats _stats;
         private static Random _Random = new Random();
@@ -139,7 +144,7 @@ namespace MultiImageClient
             _imageStrength = Math.Clamp(imageStrength, 0f, 1f);
             _recraftClient = new RecraftClient(apiKey);
             _recraftSemaphore = new SemaphoreSlim(maxConcurrency);
-            _httpClient = new HttpClient();
+            _httpClient = SharedHttpClient;
             _artistic_level = artistic_level.ToString() ?? "";
             // so actually, ""
 
@@ -453,7 +458,8 @@ namespace MultiImageClient
             Exception traceError = null;
             try
             {
-                response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, url));
+                using var request = new HttpRequestMessage(HttpMethod.Head, url);
+                response = await _httpClient.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
                     traceError = new HttpRequestException(

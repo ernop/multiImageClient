@@ -231,11 +231,19 @@ namespace MultiImageClient
                 DefaultTimeout = 5,
             };
             var connection = new SqliteConnection(builder.ToString());
-            connection.Open();
-            using var pragma = connection.CreateCommand();
-            pragma.CommandText = "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;";
-            pragma.ExecuteNonQuery();
-            return connection;
+            try
+            {
+                connection.Open();
+                using var pragma = connection.CreateCommand();
+                pragma.CommandText = "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;";
+                pragma.ExecuteNonQuery();
+                return connection;
+            }
+            catch
+            {
+                connection.Dispose();
+                throw;
+            }
         }
 
         private const string CreateHistoryIndexTableSql = @"

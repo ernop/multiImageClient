@@ -14,6 +14,14 @@ namespace MultiImageClient
 {
     public class GrokImagineEditGenerator : IImageGenerator
     {
+        private static readonly HttpClient SharedHttpClient = new(new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        })
+        {
+            Timeout = TimeSpan.FromMinutes(5),
+        };
+
         private readonly SemaphoreSlim _semaphore;
         private readonly XAIGrokClient _client;
         private readonly HttpClient _httpClient;
@@ -40,7 +48,7 @@ namespace MultiImageClient
             IReadOnlyList<string>? inputImages = null)
         {
             _client = new XAIGrokClient(apiKey, baseUrl: settings.XAIBaseUrl);
-            _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+            _httpClient = SharedHttpClient;
             _semaphore = new SemaphoreSlim(maxConcurrency);
             _stats = stats;
             _settings = settings;
@@ -249,7 +257,8 @@ namespace MultiImageClient
             Exception? traceError = null;
             try
             {
-                response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, first.Url));
+                using var request = new HttpRequestMessage(HttpMethod.Head, first.Url);
+                response = await _httpClient.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
                     traceError = new HttpRequestException(

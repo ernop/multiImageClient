@@ -762,11 +762,19 @@ namespace MultiImageClient
         private static SqliteConnection OpenConnection()
         {
             var connection = new SqliteConnection(_connectionString);
-            connection.Open();
-            using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=15000;";
-            command.ExecuteNonQuery();
-            return connection;
+            try
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=15000;";
+                command.ExecuteNonQuery();
+                return connection;
+            }
+            catch
+            {
+                connection.Dispose();
+                throw;
+            }
         }
 
         private static void CreateSchema(SqliteConnection connection)

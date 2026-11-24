@@ -6,6 +6,11 @@ namespace RecraftAPIClient
 {
     public class RecraftClient
     {
+        private static readonly SocketsHttpHandler SharedHandler = new()
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        };
+
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
         private const string _baseUrl = "https://external.api.recraft.ai/v1";
@@ -13,7 +18,7 @@ namespace RecraftAPIClient
         public RecraftClient(string apiKey)
         {
             _apiKey = apiKey;
-            _httpClient = new HttpClient();
+            _httpClient = new HttpClient(SharedHandler, disposeHandler: false);
             _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
         }
 
@@ -22,7 +27,7 @@ namespace RecraftAPIClient
         /// omits the field entirely and Recraft auto-selects a size from the prompt.
         /// style/substyle/artistic_level are V2/V3-only concepts — V4/V4.1 models
         /// reject or ignore them, so callers should pass "any"/empty for those.
-        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, string size, RecraftModel model = RecraftModel.recraftv3, string styleId = null, int n = 1, int? randomSeed = null)
+        public async Task<GenerationResponse> GenerateImageAsync(string prompt, string artistic_level, string substyle, string style, string size, RecraftModel model = RecraftModel.recraftv3, string? styleId = null, int n = 1, int? randomSeed = null)
         {
             var body = new Dictionary<string, object>
             {
@@ -67,7 +72,7 @@ namespace RecraftAPIClient
                 body["artistic_level"] = artistic_level;
             }
 
-            var content = new StringContent(
+            using var content = new StringContent(
                 JsonConvert.SerializeObject(body),
                 Encoding.UTF8,
                 "application/json"
@@ -248,6 +253,7 @@ namespace RecraftAPIClient
                     statusCode: response == null ? null : (int)response.StatusCode,
                     error: error,
                     metadata: new { operation });
+                response?.Dispose();
             }
         }
 

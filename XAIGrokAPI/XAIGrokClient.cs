@@ -47,6 +47,11 @@ namespace XAIGrokAPIClient
         public const string ModelGrokImaginePro = "grok-imagine-image-pro";
         public const string ModelGrokImagineVideo = "grok-imagine-video";
 
+        private static readonly SocketsHttpHandler SharedHandler = new()
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        };
+
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
         private readonly string _baseUrl;
@@ -59,7 +64,7 @@ namespace XAIGrokAPIClient
             }
             _apiKey = apiKey;
             _baseUrl = NormalizeBaseUrl(baseUrl);
-            _httpClient = httpClient ?? new HttpClient
+            _httpClient = httpClient ?? new HttpClient(SharedHandler, disposeHandler: false)
             {
                 Timeout = TimeSpan.FromMinutes(5),
             };

@@ -780,8 +780,16 @@ namespace MultiImageClient
                 Pooling = false,
             };
             var conn = new SqliteConnection(csb.ConnectionString);
-            conn.Open();
-            return conn;
+            try
+            {
+                conn.Open();
+                return conn;
+            }
+            catch
+            {
+                conn.Dispose();
+                throw;
+            }
         }
 
         private SqliteConnection OpenReadWrite()
@@ -794,11 +802,19 @@ namespace MultiImageClient
                 Pooling = false,
             };
             var conn = new SqliteConnection(csb.ConnectionString);
-            conn.Open();
-            using var pragma = conn.CreateCommand();
-            pragma.CommandText = "PRAGMA busy_timeout = 5000; PRAGMA journal_mode = DELETE;";
-            pragma.ExecuteNonQuery();
-            return conn;
+            try
+            {
+                conn.Open();
+                using var pragma = conn.CreateCommand();
+                pragma.CommandText = "PRAGMA busy_timeout = 5000; PRAGMA journal_mode = DELETE;";
+                pragma.ExecuteNonQuery();
+                return conn;
+            }
+            catch
+            {
+                conn.Dispose();
+                throw;
+            }
         }
 
         private static void VerifySchemaVersion(SqliteConnection conn)

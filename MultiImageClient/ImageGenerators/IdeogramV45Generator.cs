@@ -45,6 +45,7 @@ namespace IdeogramAPIClient
 
         private bool IsV46 => _apiType == ImageGeneratorApiType.IdeogramV46;
         private string DisplayVersion => IsV46 ? "Ideogram 4.6" : "Ideogram 4.5";
+        private string ModelSlug => IsV46 ? "ideogram-4-6" : "ideogram-4-5";
 
         /// size — a published preset (4.5: 1K/2K; 4.6: auto/auto_2k/auto_4k or
         ///   WIDTHxHEIGHT up to 4096x4096), or null/empty for Ideogram's
@@ -384,7 +385,7 @@ namespace IdeogramAPIClient
         {
             if (!Uri.TryCreate(item.Url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
             {
-                throw new InvalidDataException($"Ideogram 4.5 image {index} has no valid HTTPS URL.");
+                throw new InvalidDataException($"{DisplayVersion} image {index} has no valid HTTPS URL.");
             }
             var (expectedWidth, expectedHeight) = ParseResolution(item.Resolution, index);
 
@@ -400,22 +401,22 @@ namespace IdeogramAPIClient
                     // No status code on the exception: the billing and moderation
                     // classification applies to the generation call only.
                     throw new HttpRequestException(
-                        $"Ideogram 4.5 image {index} download returned HTTP {(int)response.StatusCode}.");
+                        $"{DisplayVersion} image {index} download returned HTTP {(int)response.StatusCode}.");
                 }
                 bytes = await response.Content.ReadAsByteArrayAsync();
                 var detected = IdeogramClient.DetectImageContentType(bytes)
-                    ?? throw new InvalidDataException($"Ideogram 4.5 image {index} is not PNG, JPEG, or WEBP.");
+                    ?? throw new InvalidDataException($"{DisplayVersion} image {index} is not PNG, JPEG, or WEBP.");
                 var declared = response.Content.Headers.ContentType?.MediaType;
                 if (!string.Equals(declared, detected, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidDataException(
-                        $"Ideogram 4.5 image {index} was served as '{declared}' but its bytes are {detected}.");
+                        $"{DisplayVersion} image {index} was served as '{declared}' but its bytes are {detected}.");
                 }
                 var info = Raster.Identify(bytes);
                 if (info.Width != expectedWidth || info.Height != expectedHeight)
                 {
                     throw new InvalidDataException(
-                        $"Ideogram 4.5 image {index} is {info.Width}x{info.Height}, but the response reported {item.Resolution}.");
+                        $"{DisplayVersion} image {index} is {info.Width}x{info.Height}, but the response reported {item.Resolution}.");
                 }
                 return (bytes, detected);
             }
@@ -443,12 +444,12 @@ namespace IdeogramAPIClient
                     },
                     statusCode: response == null ? null : (int)response.StatusCode,
                     error: traceError,
-                    metadata: new { operation = "image-download", model = "ideogram-4-5", imageIndex = index });
+                    metadata: new { operation = "image-download", model = ModelSlug, imageIndex = index });
                 response?.Dispose();
             }
         }
 
-        private static (int Width, int Height) ParseResolution(string resolution, int index)
+        private (int Width, int Height) ParseResolution(string resolution, int index)
         {
             var parts = (resolution ?? string.Empty).Split('x');
             if (parts.Length == 2
@@ -460,7 +461,7 @@ namespace IdeogramAPIClient
                 return (width, height);
             }
             throw new InvalidDataException(
-                $"Ideogram 4.5 image {index} has malformed resolution '{resolution}'.");
+                $"{DisplayVersion} image {index} has malformed resolution '{resolution}'.");
         }
 
         private TaskProcessResult Fail(

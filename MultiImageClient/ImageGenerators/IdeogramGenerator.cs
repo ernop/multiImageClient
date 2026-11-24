@@ -12,9 +12,14 @@ namespace MultiImageClient
 {
     public class IdeogramGenerator : IImageGenerator
     {
+        private static readonly HttpClient SharedHttpClient = new(new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        });
+
         private SemaphoreSlim _ideogramSemaphore;
         private IdeogramClient _ideogramClient;
-        private HttpClient _httpClient = new HttpClient();
+        private HttpClient _httpClient = SharedHttpClient;
         private IdeogramMagicPromptOption _magicPrompt;
         private IdeogramAspectRatio _aspectRatio;
         private IdeogramStyleType? _ideoGramStyleType;
@@ -221,7 +226,8 @@ namespace MultiImageClient
             Exception traceError = null;
             try
             {
-                response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, url));
+                using var request = new HttpRequestMessage(HttpMethod.Head, url);
+                response = await _httpClient.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
                     traceError = new HttpRequestException(

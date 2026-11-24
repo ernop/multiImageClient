@@ -89,8 +89,8 @@ namespace MultiImageClient
             var ids = new HashSet<string>(); var slugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var e in doc.Environments)
             {
-                if (e == null || !Regex.IsMatch(e.Id ?? "", "^[a-z][a-z0-9-]{0,23}$") || !ids.Add(e.Id)
-                    || !Regex.IsMatch(e.Slug ?? "", "^[a-z0-9][a-z0-9-]{0,63}$") || !slugs.Add(e.Slug)
+                if (e == null || string.IsNullOrEmpty(e.Id) || !Regex.IsMatch(e.Id, "^[a-z][a-z0-9-]{0,23}$") || !ids.Add(e.Id)
+                    || string.IsNullOrEmpty(e.Slug) || !Regex.IsMatch(e.Slug, "^[a-z0-9][a-z0-9-]{0,63}$") || !slugs.Add(e.Slug)
                     || string.IsNullOrWhiteSpace(e.Name) || e.Name.Length > 80 || e.Name.Any(char.IsControl)
                     || e.Members == null || e.Members.Count > 500 || e.Members.Any(string.IsNullOrWhiteSpace)
                     || e.Members.Distinct(StringComparer.Ordinal).Count() != e.Members.Count

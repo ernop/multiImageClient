@@ -2,8 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using IdeogramAPIClient;
 using Xunit;
 
 namespace MultiImageClient.Tests
@@ -160,6 +166,10 @@ namespace MultiImageClient.Tests
                 var attrs = reg2.ListAuthenticatedAttributions();
                 Assert.Contains(attrs, a => a.CreatorLogin == "newuser");
                 Assert.DoesNotContain(attrs, a => a.CreatorLogin == "olduser");
+                Assert.True(reg2.TryGetJobLocation("hist-001", out var day, out var live));
+                Assert.False(live);
+                Assert.False(string.IsNullOrWhiteSpace(day));
+                Assert.NotNull(reg2.Get("hist-001"));
             }
             finally
             {
@@ -168,6 +178,80 @@ namespace MultiImageClient.Tests
                     Directory.Delete(root, recursive: true);
                 }
             }
+        }
+
+        [Fact]
+        public void UiAuthFailedLoginTrackerStaysBoundedUnderDistinctIpFlood()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "mic-auth-cap-test-" + Guid.NewGuid().ToString("N")[..10]);
+            Directory.CreateDirectory(root);
+            try
+            {
+                var authPath = Path.Combine(root, "ui-auth.json");
+                var dummyHash = $"{UiAuth.PasswordHashPrefix}${UiAuth.Pbkdf2Iterations}$"
+                    + $"{Convert.ToBase64String(new byte[UiAuth.Pbkdf2SaltBytes])}$"
+                    + $"{Convert.ToBase64String(new byte[UiAuth.Pbkdf2HashBytes])}";
+                var doc = new
+                {
+                    version = UiAuth.AuthFileVersion,
+                    enabled = true,
+                    secret = new string('s', 40),
+                    accounts = new[]
+                    {
+                        new
+                        {
+                            username = "tester",
+                            passwordHash = dummyHash,
+                        },
+                    },
+                };
+                File.WriteAllText(authPath, JsonSerializer.Serialize(doc));
+                var auth = UiAuth.CreateFromSettings(new Settings { UiAuthFilePath = authPath });
+                Assert.NotNull(auth);
+
+                for (var i = 0; i < UiAuth.MaxTrackedFailureIps + 150; i++)
+                {
+                    auth!.TryLoginLink("invalid-token", $"10.0.{i / 256}.{i % 256}", out _, out _, out _);
+                }
+
+                Assert.InRange(auth!.TrackedFailureIpCount, 1, UiAuth.MaxTrackedFailureIps);
+            }
+            finally
+            {
+                if (Directory.Exists(root))
+                {
+                    Directory.Delete(root, recursive: true);
+                }
+            }
+        }
+
+        [Fact]
+        public async Task IdeogramV46ErrorsIdentifyVersion46InsteadOf45()
+        {
+            using var handler = new StaticJsonHandler(HttpStatusCode.OK, "{\"data\":[]}");
+            var client = new IdeogramClient("test-key", handler);
+            var ex = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                client.GenerateImageV46Async(new IdeogramV45GenerateRequest("a bright red cube")));
+            Assert.Contains("Ideogram 4.6", ex.Message);
+            Assert.DoesNotContain("Ideogram 4.5", ex.Message);
+        }
+
+        private sealed class StaticJsonHandler : HttpMessageHandler
+        {
+            private readonly HttpStatusCode _status;
+            private readonly string _body;
+
+            public StaticJsonHandler(HttpStatusCode status, string body)
+            {
+                _status = status;
+                _body = body;
+            }
+
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+                => Task.FromResult(new HttpResponseMessage(_status)
+                {
+                    Content = new StringContent(_body, Encoding.UTF8, "application/json"),
+                });
         }
 
         private static void WriteFakeJobFolder(

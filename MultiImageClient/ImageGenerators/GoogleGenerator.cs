@@ -13,6 +13,11 @@ namespace MultiImageClient
 {
     public class GoogleGenerator : IImageGenerator
     {
+        private static readonly SocketsHttpHandler SharedHandler = new()
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+        };
+
         private SemaphoreSlim _googleSemaphore;
         private HttpClient _httpClient;
         private string _apiKey;
@@ -64,7 +69,7 @@ namespace MultiImageClient
             // needs longer than that under load; a short timeout aborts a still-
             // running provider call and wastes the work. Ten minutes matches the
             // B2 client's ceiling and still fails closed if the socket dies.
-            _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            _httpClient = new HttpClient(SharedHandler, disposeHandler: false) { Timeout = TimeSpan.FromMinutes(10) };
             _name = string.IsNullOrEmpty(name) ? "" : name;
             _stats = stats;
             _apiType = apiType;

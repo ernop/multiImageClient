@@ -67,7 +67,7 @@ namespace MultiImageClient
             return thesePaths;
         }
 
-        private static byte[] ConvertBytesForAnnotatedVariants(byte[] imageBytes, string? contentType)
+        private static byte[] ConvertBytesForAnnotatedVariants(byte[] imageBytes, string contentType)
         {
             if (contentType == "image/png" || contentType == null)
             {
