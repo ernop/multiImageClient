@@ -127,7 +127,7 @@ async function replacementFits(page, prompt) {
   const before = await layout();
   assert.ok(before.top < 0, 'The prompt starts above the view: ' + JSON.stringify(before));
   await page.route('**/api/prompt/advice', route => route.fulfill({ json: { replacement: medium, exchangeId: 'text-entry-test' } }));
-  const button = await page.locator('[data-rewrite-model="claude-sonnet-5-5"]').boundingBox();
+  const button = await page.locator('[data-rewrite-model="claude-opus-5-5"]').boundingBox();
   await page.mouse.click(button.x + button.width / 2, button.y + button.height / 2);
   await page.waitForFunction(() => document.getElementById('prompt-rewrite-status').textContent === 'Expanded prompt applied.');
   await page.unroute('**/api/prompt/advice');

@@ -58,7 +58,7 @@ namespace MultiImageClient
     public static class PromptSplit
     {
         public const string Purpose = "split";
-        public const string ModelKey = ManagerCatalog.KeyClaudeOpus55;
+        public const string ModelKey = ManagerCatalog.KeyGemini4Neon;
         public const int MaxImages = 8;
         public const int MaxSourceChars = 100_000;
         public const int MaxInstructionChars = 4_000;

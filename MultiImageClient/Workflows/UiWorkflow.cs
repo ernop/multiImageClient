@@ -138,11 +138,11 @@ namespace MultiImageClient
                 visibility,
                 runner);
 
-            // User-directed prompt editing through Claude. The exact system
-            // prompt, instruction, source prompt, wire prompt, response, and
-            // outcome are persisted by UiCommunityStore for audit/history.
-            var claudeAdviceProblem = ProviderKeyValidator.DescribeTextKeyProblem(
-                nameof(settings.AnthropicApiKey), settings.AnthropicApiKey);
+            // User-directed prompt editing through the configured default model.
+            // The exact system prompt, instruction, source prompt, wire prompt,
+            // response, and outcome are persisted by UiCommunityStore for audit/history.
+            var claudeAdviceProblem = DirectedPromptRewrite.AvailabilityProblem(
+                DirectedPromptRewrite.AdviceModel, settings);
             var claudeAdviceLabel = ManagerCatalog.All.Single(m => m.Model == DirectedPromptRewrite.AdviceModel).Label;
 
             // Goal loops: manager-model-driven iterative design → render →
@@ -162,6 +162,7 @@ namespace MultiImageClient
             var promptArchive = new UiPromptArchive(
                 UiPromptArchive.ResolveDbPath(settings),
                 UiPromptArchive.ResolveInstanceId(settings));
+            var telemetry = new UiTelemetryStore(UiTelemetryStore.ResolveDirectory(settings));
             var allowEmptyArchiveCreator = auth == null || !auth.IsEnforced
                 || settings.UiEnvironmentController
                 || string.Equals(settings.UiEnvironmentId, "original", StringComparison.Ordinal);
@@ -217,7 +218,7 @@ namespace MultiImageClient
                         return;
                     }
                     try { await next(ctx); }
-                    finally { idleLifetime.Exit(ctx.Request.Path != "/healthz"); }
+                    finally { idleLifetime.Exit(ctx.Request.Path != "/healthz" && ctx.Request.Path != "/api/telemetry"); }
                 });
             var environments = string.IsNullOrWhiteSpace(settings.UiEnvironmentRegistryPath) ? null : new UiEnvironmentRegistry(settings.UiEnvironmentRegistryPath);
             if (environments != null) environments.Get(settings.UiEnvironmentId);
@@ -330,7 +331,7 @@ namespace MultiImageClient
                         }
                         if (path == "/" || path == "/index.html") accountActivity?.Record(user);
                         await next();
-                        if (ctx.Response.StatusCode < 300 && HttpMethods.IsPost(ctx.Request.Method)) accountActivity?.Record(user);
+                        if (ctx.Response.StatusCode < 300 && HttpMethods.IsPost(ctx.Request.Method) && path != "/api/telemetry") accountActivity?.Record(user);
                         return;
                     }
                     if (path.StartsWith("/api/", StringComparison.Ordinal))
@@ -642,6 +643,7 @@ namespace MultiImageClient
                     {
                         commit = UiBuildInfo.Commit,
                         commitDate = UiBuildInfo.CommitDate,
+                        builtAtUtc = UiBuildInfo.BuiltAtUtc,
                         commitUrl = UiBuildInfo.CommitUrl,
                     },
                     // Shared-site identity: when the access gate is on, the
@@ -2195,6 +2197,7 @@ namespace MultiImageClient
 
             MapCommunityRoutes(app, settings, auth, jobs, runner, visibility, favorites, community, vibecoders, environments, accountActivity);
             MapPromptArchiveRoutes(app, settings, auth, promptArchive);
+            MapTelemetryRoutes(app, auth, telemetry);
 
             Logger.Log($"UI server starting on {url}  (build {UiBuildInfo.Describe}, wwwroot: {wwwroot})");
             Console.WriteLine();

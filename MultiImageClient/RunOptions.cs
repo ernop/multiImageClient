@@ -630,7 +630,7 @@ namespace MultiImageClient
             Console.WriteLine("  --subject-synthesize NAME  Write a reusable description of NAME from local past prompts with --subject-model, save it as a character (replacing one with that name), and exit.");
             Console.WriteLine("  --subject-query NAMES Other names it went by, comma-separated, for --subject-search or --subject-synthesize.");
             Console.WriteLine("  --subject-kind KIND   character (default) | location | object | general.");
-            Console.WriteLine("  --subject-model KEY   Writer model catalog key (default manager-claude-opus-5-5; any goal-loop manager key).");
+            Console.WriteLine("  --subject-model KEY   Writer model catalog key (default manager-gemini-4-neon; any goal-loop manager key).");
             Console.WriteLine("  --subject-notes TEXT  Notes for the writer, treated as reliable evidence.");
         }
     }

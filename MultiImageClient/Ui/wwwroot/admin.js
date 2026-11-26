@@ -43,6 +43,10 @@ function detailsText() {
 }
 function date(value) { return value ? new Date(value).toLocaleString() : "Not recorded"; }
 async function load() {
+  if (!window.__micAdminTelemetryInit) {
+    window.__micAdminTelemetryInit = true;
+    window.MultiImageTelemetry?.init({ page: "admin", apiUrl: (p) => p });
+  }
   state = await api("api/control/state"); $("environments").replaceChildren();
   const destination = $("person-environment").value;
   const placeholder = node("option", "Select an environment"); placeholder.value = ""; placeholder.disabled = true;
@@ -51,7 +55,12 @@ async function load() {
     const option = node("option", env.name); option.value = env.id; $("person-environment").append(option);
   }
   $("person-environment").value = state.environments.some(env => env.id === destination) ? destination : "";
-  const catalog = (await api("api/config")).generators.filter(g => g.available);
+  const cfg = await api("api/config");
+  const buildNode = $("build-info");
+  if (buildNode && cfg.build && cfg.build.commit && window.MultiImageBuildBadge) {
+    window.MultiImageBuildBadge.render(buildNode, cfg.build);
+  }
+  const catalog = cfg.generators.filter(g => g.available);
   for (const env of state.environments) {
     const section = node("section"), heading = node("h3", env.name); section.append(heading);
     const provision = state.provisioning?.[env.id];

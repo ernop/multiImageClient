@@ -79,6 +79,12 @@
     </ItemGroup>
   </Target>
 
+  <Target Name="EmbedBuildTime" BeforeTargets="GetAssemblyVersion">
+    <ItemGroup>
+      <AssemblyMetadata Include="MicBuildTimeUtc" Value="$([System.DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))" />
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <None Update="settings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

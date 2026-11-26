@@ -3,6 +3,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const fmt = new Intl.NumberFormat("en-US");
+  window.MultiImageTelemetry?.init({ page: "archive", apiUrl: (p) => p });
 
   const state = {
     stats: null,
@@ -555,6 +556,15 @@
     });
 
     updateRandomLabels();
+
+    apiGet("api/config").then((cfg) => {
+      const buildNode = $("build-info");
+      if (buildNode && cfg?.build?.commit && window.MultiImageBuildBadge) {
+        window.MultiImageBuildBadge.render(buildNode, cfg.build);
+      }
+    }).catch((err) => {
+      console.error("Failed to load build info:", err);
+    });
 
     try {
       const stats = await apiGet("api/admin/prompt-archive/stats");

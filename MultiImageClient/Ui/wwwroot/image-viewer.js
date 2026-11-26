@@ -1051,6 +1051,14 @@ async function renderImageViewer() {
   }
 
   const version = ++imageViewerRenderVersion;
+  if (viewerTelemetrySession) {
+    const itemKey = `${imageViewerState.jobId}|${imageViewerState.generator}|${imageViewerState.imageIndex}`;
+    if (viewerTelemetrySession.lastKey && viewerTelemetrySession.lastKey !== itemKey) {
+      viewerTelemetrySession.navSteps++;
+    }
+    viewerTelemetrySession.lastKey = itemKey;
+    viewerTelemetrySession.itemsSeen.add(itemKey);
+  }
   scheduleImageViewerPreloadHud();
   // Queue the entire range now. Paint the selected item's own preview
   // while its original downloads alongside its neighbors.
@@ -1655,7 +1663,17 @@ window.addEventListener("popstate", () => {
   if (!imageViewer.hidden) closeImageViewer();
 });
 
+let viewerTelemetrySession = null;
+
 function openImageViewer(link) {
+  viewerTelemetrySession = {
+    openedAt: Date.now(),
+    itemsSeen: new Set(),
+    navSteps: 0,
+    actions: 0,
+    lastKey: "",
+  };
+  trackTelemetry("viewer.open", { gen: link.dataset.generator || "" });
   imageViewerFocusBeforeOpen =
     document.activeElement instanceof HTMLElement ? document.activeElement : null;
   // Clear while still hidden. The selected item's card thumb and chrome
@@ -1684,6 +1702,16 @@ function openImageViewer(link) {
 }
 
 function closeImageViewer() {
+  if (viewerTelemetrySession) {
+    const s = viewerTelemetrySession;
+    viewerTelemetrySession = null;
+    trackTelemetry("viewer.close", {
+      dwellMs: Math.max(0, Date.now() - s.openedAt),
+      itemsViewed: s.itemsSeen.size,
+      navSteps: s.navSteps,
+      actions: s.actions,
+    });
+  }
   hideImageViewerHelp();
   if (document.fullscreenElement === imageViewer) document.exitFullscreen();
   // Resolve the departed image's outer-page anchor BEFORE clearing state: the
@@ -1728,6 +1756,28 @@ function closeImageViewer() {
 
 // Document-level so result images inside archived day sections open the
 // viewer exactly like live ones.
+imageViewer.addEventListener("click", (event) => {
+  const btn = event.target instanceof Element ? event.target.closest("button") : null;
+  if (!btn || !btn.id) return;
+  const map = {
+    "image-viewer-favorite": "favorite",
+    "image-viewer-copy-prompt": "copy",
+    "image-viewer-video": "video",
+    "image-viewer-hide": "hide",
+    "image-viewer-share-link": "share_link",
+    "image-viewer-vibecoders": "vibecoders",
+    "image-viewer-fablebot": "fablebot",
+    "image-viewer-compare-toggle": "compare",
+    "image-viewer-set-active": "set_active",
+    "image-viewer-set-input": "set_input",
+  };
+  const action = map[btn.id];
+  if (action) {
+    if (viewerTelemetrySession) viewerTelemetrySession.actions++;
+    trackTelemetry("viewer.action", { action });
+  }
+});
+
 document.addEventListener("click", (event) => {
   const link = event.target.closest('a[data-viewer-image="true"]');
   if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;

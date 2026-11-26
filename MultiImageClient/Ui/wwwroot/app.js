@@ -15,6 +15,11 @@ const apiUrl = (path) => {
   return appBase + value.replace(/^\//, "");
 };
 
+function trackTelemetry(ev, data) {
+  window.MultiImageTelemetry?.track(ev, data);
+}
+window.MultiImageTelemetry?.init({ page: "composer", apiUrl });
+
 function imageUrlIsForeignOrigin(url) {
   try {
     return new URL(url, location.href).origin !== location.origin;
@@ -603,28 +608,13 @@ async function loadConfig() {
   loadCharacters().catch(showCharactersLoadError);
   initializeActivityConfig();
 
-  // Exact code identity of the running server, embedded at build time.
+  // Exact code identity and relative update age of the running server.
   // When the build carries a real hash it links to the commit in the public
   // repo (the page-wide no-referrer meta keeps the secret path out of the
   // outbound request).
   const buildNode = el("build-info");
-  if (buildNode && cfg.build && cfg.build.commit) {
-    const label = `build ${cfg.build.commit}`;
-    buildNode.textContent = "";
-    if (cfg.build.commitUrl) {
-      const a = document.createElement("a");
-      a.href = cfg.build.commitUrl;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.textContent = label;
-      buildNode.appendChild(a);
-    } else {
-      buildNode.textContent = label;
-    }
-    buildNode.title = (cfg.build.commitDate
-      ? `Commit the running server was built from: ${cfg.build.commit}, committed ${cfg.build.commitDate}`
-      : `Commit the running server was built from: ${cfg.build.commit}`)
-      + (cfg.build.commitUrl ? " — click to open the commit on GitHub" : "");
+  if (buildNode && cfg.build && cfg.build.commit && window.MultiImageBuildBadge) {
+    window.MultiImageBuildBadge.render(buildNode, cfg.build);
   }
 
   const fillSelect = (selectEl, entries) => {
@@ -4218,7 +4208,7 @@ function appendInputImages(form, items) {
   });
 }
 
-async function submit() {
+async function submit(via = "click") {
   sendError.textContent = "";
   const prompt = promptBox.value.trim();
   const promptRevision = promptRewrites.revision;
@@ -4286,6 +4276,21 @@ async function submit() {
     const body = await resp.json();
     if (!resp.ok) { sendError.textContent = body.error || `HTTP ${resp.status}`; return; }
     if (!describeOnly && user === currentUsername()) promptRewrites.submitted(prompt, promptRevision);
+    trackTelemetry("composer.generate", {
+      via,
+      genCount: gens.length,
+      describeOnly,
+      hasImage: inputImageItems.length > 0,
+      imgCount: inputImageItems.length,
+      shape: el("opt-shape").value,
+      detail: el("opt-detail").value,
+      quality: el("opt-quality").value,
+      n: Number(el("opt-n").value) || 1,
+      chars: effectivePrompt.length,
+      hasSketch: Boolean(sketchComposer),
+      condensed: Object.keys(condensedPrompts).length,
+      stage1Mode: typeof stage1Mode === "string" ? stage1Mode : "direct",
+    });
     ownedJobIds.add(body.id);
     addJobCard(
       body.id,
@@ -4307,11 +4312,95 @@ async function submit() {
   }
 }
 
-sendBtn.addEventListener("click", submit);
+sendBtn.addEventListener("click", () => submit("click"));
 promptBox.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
-    submit();
+    submit("ctrl_enter");
+  }
+});
+
+// Delegated usage telemetry for composer controls, characters, and feed actions.
+// Captures only action labels and counts, never prompt text or user content.
+document.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target.closest("button, a") : null;
+  if (!target) return;
+  const id = target.id || "";
+  if (id === "prompt-copy") { trackTelemetry("composer.prompt_action", { action: "copy", chars: promptBox.value.length }); return; }
+  if (id === "prompt-paste") { trackTelemetry("composer.prompt_action", { action: "paste" }); return; }
+  if (id === "prompt-select-all") { trackTelemetry("composer.prompt_action", { action: "select_all" }); return; }
+  if (id === "prompt-clear") { trackTelemetry("composer.prompt_action", { action: "clear", chars: promptBox.value.length }); return; }
+  if (id === "prompt-field-undo") { trackTelemetry("composer.prompt_action", { action: "undo" }); return; }
+  if (id === "mcphee-panel-toggle") { trackTelemetry("composer.tool", { tool: "spelling" }); return; }
+  if (id === "characters-toggle") { trackTelemetry("composer.tool", { tool: "characters", saved: characters.length }); return; }
+  if (id === "prompt-advice") { trackTelemetry("composer.tool", { tool: "advice_open" }); return; }
+  if (id === "prompt-history-toggle") { trackTelemetry("composer.tool", { tool: "history" }); return; }
+  if (id === "prompt-advice-undo") { trackTelemetry("composer.tool", { tool: "undo_edit" }); return; }
+  if (id === "inspiration-toggle") { trackTelemetry("composer.tool", { tool: "inspiration" }); return; }
+  if (id === "sketch-open") { trackTelemetry("composer.tool", { tool: "sketch" }); return; }
+  if (id === "input-library-toggle") { trackTelemetry("composer.tool", { tool: "input_library" }); return; }
+  if (id === "clear-image") { trackTelemetry("composer.tool", { tool: "clear_image" }); return; }
+  if (id === "settings-toggle") { trackTelemetry("composer.tool", { tool: "settings" }); return; }
+  if (id === "logs-toggle") { trackTelemetry("composer.tool", { tool: "logs" }); return; }
+  if (id === "activity-toggle") { trackTelemetry("composer.tool", { tool: "activity" }); return; }
+  if (id === "night-toggle") { trackTelemetry("composer.tool", { tool: "night_filter" }); return; }
+  if (id === "character-new") { trackTelemetry("character.action", { action: "new_open" }); return; }
+  if (id === "character-find") { trackTelemetry("character.action", { action: "find" }); return; }
+  if (id === "character-write-btn") { trackTelemetry("character.action", { action: "synthesize", model: characterModelSelect.value }); return; }
+  if (id === "character-save") { trackTelemetry("character.action", { action: "save" }); return; }
+  if (id === "character-delete") { trackTelemetry("character.action", { action: "delete" }); return; }
+  if (target.hasAttribute("data-rewrite-model")) {
+    trackTelemetry("composer.tool", { tool: "flesh_out", model: target.dataset.rewriteModel || "" });
+    return;
+  }
+  if (target.classList.contains("prompt-limit-condense")) {
+    trackTelemetry("composer.tool", { tool: "condense" });
+    return;
+  }
+  if (target.closest("#character-strip")) {
+    const action = target.classList.contains("undo") ? "strip_undo"
+      : target.classList.contains("all") ? "strip_describe_all"
+      : target.classList.contains("described") ? "strip_edit" : "strip_describe";
+    trackTelemetry("character.action", { action });
+    return;
+  }
+  if (target.closest("#characters-list")) {
+    const label = (target.textContent || "").trim().toLowerCase();
+    if (label === "insert" || label === "edit") {
+      trackTelemetry("character.action", { action: label === "insert" ? "insert" : "edit_open" });
+    }
+    return;
+  }
+  if (target.closest("#user-filters")) { trackTelemetry("feed.action", { action: "filter_user" }); return; }
+  if (target.closest("#favorites-bar")) { trackTelemetry("feed.action", { action: "filter_favorites" }); return; }
+  if (target.closest("#jobs, #archive, #favorites-gallery")) {
+    if (target.classList.contains("set-active") || target.classList.contains("job-set-active")) {
+      trackTelemetry("feed.action", { action: "set_active" });
+    } else if (target.classList.contains("copy-prompt")) {
+      trackTelemetry("feed.action", { action: "copy" });
+    } else if (target.classList.contains("favorite-btn") || target.classList.contains("prompt-favorite")) {
+      trackTelemetry("feed.action", { action: "favorite" });
+    } else if (target.classList.contains("share-link-btn")) {
+      trackTelemetry("feed.action", { action: "share_link" });
+    } else if (target.classList.contains("vibecoders-btn")) {
+      trackTelemetry("feed.action", { action: "vibecoders" });
+    } else if (target.classList.contains("archive-day-toggle")) {
+      trackTelemetry("feed.action", { action: "archive_day" });
+    } else if (target.classList.contains("split-group-source-btn")) {
+      trackTelemetry("feed.action", { action: "split_source" });
+    } else if (target.classList.contains("split-group-resplit")) {
+      trackTelemetry("feed.action", { action: "split_resplit" });
+    } else if (target.classList.contains("split-group-rerender")) {
+      trackTelemetry("feed.action", { action: "split_rerender" });
+    } else if (target.classList.contains("split-group-set-source")) {
+      trackTelemetry("feed.action", { action: "split_set_source" });
+    } else if (target.classList.contains("split-group-copy-all")) {
+      trackTelemetry("feed.action", { action: "split_copy_all" });
+    } else if (target.classList.contains("split-group-sheet-link") || target.closest(".split-maker-sheets")) {
+      trackTelemetry("feed.action", { action: "split_sheet" });
+    } else if (target.classList.contains("split-maker-series-share")) {
+      trackTelemetry("feed.action", { action: "split_series_share" });
+    }
   }
 });
 
@@ -4485,7 +4574,7 @@ function applyClaudeEdit(text, exchangeId) {
 }
 
 function applyClaudeAdviceAvailability() {
-  const label = claudeAdvice.label || "Opus 5.5";
+  const label = claudeAdvice.label || "Gemini 4 Neon";
   promptAdviceBtn.textContent = `prompt advice · ${label}`;
   promptAdviceBtn.disabled = !claudeAdvice.available;
   const titleEl = el("claude-advice-title");
@@ -6335,6 +6424,10 @@ async function adoptRestartedServerProcess() {
   jobsPollCursor = 0;
   // The replay is history, as on a fresh load: no own-job notifications.
   jobActivityHydrated = false;
+  const buildNode = el("build-info");
+  if (buildNode && cfg.build && cfg.build.commit && window.MultiImageBuildBadge) {
+    window.MultiImageBuildBadge.render(buildNode, cfg.build);
+  }
   restartLogsForNewServerProcess();
   return true;
 }

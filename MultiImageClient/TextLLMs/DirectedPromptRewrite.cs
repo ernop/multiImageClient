@@ -13,16 +13,17 @@ namespace MultiImageClient
 {
     public static class DirectedPromptRewrite
     {
+        public const string NeonModel = "gemini-4-neon";
         public const string OpusModel = "claude-opus-5-5";
         public const string SonnetModel = "claude-sonnet-5-5";
-        public const string DefaultAdviceKey = ManagerCatalog.KeyClaudeOpus55;
-        public const string DefaultFleshOutPrimaryKey = ManagerCatalog.KeyClaudeOpus55;
-        public const string DefaultFleshOutSecondaryKey = ManagerCatalog.KeyClaudeSonnet55;
-        public const string DefaultCondenseKey = ManagerCatalog.KeyClaudeSonnet55;
+        public const string DefaultAdviceKey = ManagerCatalog.KeyGemini4Neon;
+        public const string DefaultFleshOutPrimaryKey = ManagerCatalog.KeyGemini4Neon;
+        public const string DefaultFleshOutSecondaryKey = ManagerCatalog.KeyClaudeOpus55;
+        public const string DefaultCondenseKey = ManagerCatalog.KeyGemini4Neon;
         // Default two quick-button models for flesh-out; any model in
         // ManagerCatalog.All may be chosen locally in Settings (2026-11-19).
-        public static readonly IReadOnlyList<string> Models = new[] { OpusModel, SonnetModel };
-        public const string AdviceModel = OpusModel;
+        public static readonly IReadOnlyList<string> Models = new[] { NeonModel, OpusModel };
+        public const string AdviceModel = NeonModel;
         public const string Instruction =
             "Carefully consider the user's intent and flesh it out very well. "
             + "The replacement text will be sent to intelligent image-generation endpoints. "
@@ -49,7 +50,7 @@ namespace MultiImageClient
 
         // Condensing shortens the prompt only for selected targets over their
         // prompt limit. See docs/prompt-length-limits.md.
-        public const string CondenseModel = SonnetModel;
+        public const string CondenseModel = NeonModel;
         public const string CondensePurpose = "condense";
 
         // Models count characters poorly, so the request aims 10% under the

@@ -9,15 +9,17 @@ namespace MultiImageClient;
 public sealed class DirectedPromptRewriteTests
 {
     [Fact]
-    public void DefaultsStayOpusAndSonnetAndEveryCatalogModelResolves()
+    public void DefaultsUseGemini4NeonAndEveryCatalogModelResolves()
     {
-        Assert.Equal(new[] { "claude-opus-5-5", "claude-sonnet-5-5" }, DirectedPromptRewrite.Models);
-        Assert.Equal("claude-opus-5-5", DirectedPromptRewrite.AdviceModel);
-        Assert.Equal("claude-sonnet-5-5", DirectedPromptRewrite.CondenseModel);
-        Assert.Equal(ManagerCatalog.KeyClaudeOpus55, DirectedPromptRewrite.DefaultAdviceKey);
-        Assert.Equal(ManagerCatalog.KeyClaudeOpus55, DirectedPromptRewrite.DefaultFleshOutPrimaryKey);
-        Assert.Equal(ManagerCatalog.KeyClaudeSonnet55, DirectedPromptRewrite.DefaultFleshOutSecondaryKey);
-        Assert.Equal(ManagerCatalog.KeyClaudeSonnet55, DirectedPromptRewrite.DefaultCondenseKey);
+        Assert.Equal(new[] { "gemini-4-neon", "claude-opus-5-5" }, DirectedPromptRewrite.Models);
+        Assert.Equal("gemini-4-neon", DirectedPromptRewrite.AdviceModel);
+        Assert.Equal("gemini-4-neon", DirectedPromptRewrite.CondenseModel);
+        Assert.Equal(ManagerCatalog.KeyGemini4Neon, DirectedPromptRewrite.DefaultAdviceKey);
+        Assert.Equal(ManagerCatalog.KeyGemini4Neon, DirectedPromptRewrite.DefaultFleshOutPrimaryKey);
+        Assert.Equal(ManagerCatalog.KeyClaudeOpus55, DirectedPromptRewrite.DefaultFleshOutSecondaryKey);
+        Assert.Equal(ManagerCatalog.KeyGemini4Neon, DirectedPromptRewrite.DefaultCondenseKey);
+        Assert.Equal(ManagerCatalog.KeyGemini4Neon, PromptSplit.ModelKey);
+        Assert.Equal(ManagerCatalog.KeyGemini4Neon, PromptSubjectSynthesis.DefaultModelKey);
 
         foreach (var entry in ManagerCatalog.All)
         {
@@ -56,7 +58,7 @@ public sealed class DirectedPromptRewriteTests
 
     [Fact]
     public void EveryDefaultRewriteModelHasAShortCatalogLabel()
-        => Assert.Equal(new[] { "Opus 5.5", "Sonnet 5.5" },
+        => Assert.Equal(new[] { "Gemini 4 Neon", "Opus 5.5" },
             DirectedPromptRewrite.Models.Select(model => ManagerCatalog.All.Single(m => m.Model == model).Label));
 
     [Fact]

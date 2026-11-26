@@ -185,7 +185,7 @@ namespace MultiImageClient
         public const string KeyGrok46 = "manager-grok-4.6";
 
         // Preselected in the goal form's manager selector when available.
-        public const string DefaultKey = KeyClaudeSonnet55;
+        public const string DefaultKey = KeyGemini4Neon;
 
         // developers.openai.com/api/docs/guides/images-vision (2026-09-04):
         // 512 MB total payload, 1,500 images, 30,000 patches per image after

@@ -292,9 +292,9 @@
             <button id="characters-toggle" type="button" aria-expanded="false" aria-controls="characters-panel"
               title="Saved people, pets, places, and things you can drop into any prompt">characters<span id="characters-count"></span></button>
             <button id="prompt-advice" type="button"
-              title="Give the configured model your own editing instruction, with this exact prompt appended as source text">prompt advice · Opus 5.5</button>
+              title="Give the configured model your own editing instruction, with this exact prompt appended as source text">prompt advice · Gemini 4 Neon</button>
+            <button type="button" data-rewrite-model="gemini-4-neon" disabled>flesh out · Gemini 4 Neon</button>
             <button type="button" data-rewrite-model="claude-opus-5-5" disabled>flesh out · Opus 5.5</button>
-            <button type="button" data-rewrite-model="claude-sonnet-5-5" disabled>flesh out · Sonnet 5.5</button>
             <button id="prompt-split" type="button" disabled>consider splitting into multiple images</button>
             <button id="prompt-history-toggle" type="button" aria-expanded="false"
               aria-controls="prompt-rewrite-history">prompt history</button>
@@ -428,7 +428,7 @@
             placeholder="Shared visual style, characters, lighting, or palette applied across every part…"></textarea>
         </div>
         <div id="stage1-actions">
-          <button id="stage1-run" type="button" class="primary">Split with Opus 5.5</button>
+          <button id="stage1-run" type="button" class="primary">Split with Gemini 4 Neon</button>
           <label id="stage1-auto-render-label" for="stage1-auto-render"
             title="Skip waiting for the review step: automatically send each finished rewrite or split directly to the selected image models below">
             <input id="stage1-auto-render" type="checkbox">
@@ -1020,10 +1020,12 @@
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261026-prompt-condense"></script>
 <script src="prompt-characters.js?v=20261015-characters"></script>
-<script src="app.js?v=20261120-series-presets"></script>
+<script src="build-badge.js?v=20261126-build-telemetry"></script>
+<script src="telemetry.js?v=20261126-build-telemetry"></script>
+<script src="app.js?v=20261126-build-telemetry"></script>
 <script src="activity-center.js?v=20261119-pipeline"></script>
 <script src="sketch-composer.js?v=20261119-pipeline"></script>
-<script src="image-viewer.js?v=20261119-pipeline"></script>
-<script src="prompt-pipeline.js?v=20261120-series-presets"></script>
+<script src="image-viewer.js?v=20261126-build-telemetry"></script>
+<script src="prompt-pipeline.js?v=20261126-build-telemetry"></script>
 </body>
 </html>

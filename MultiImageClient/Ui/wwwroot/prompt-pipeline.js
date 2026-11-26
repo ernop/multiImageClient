@@ -104,7 +104,7 @@ function stage1DefaultModelEntry(mode) {
     return {
       key: promptSplitConfig.key || promptSplitConfig.model || "",
       model: promptSplitConfig.model || "",
-      label: promptSplitConfig.label || "Opus 5.5",
+      label: promptSplitConfig.label || "Gemini 4 Neon",
       available: !!promptSplitConfig.available,
       availabilityProblem: promptSplitConfig.availabilityProblem || null,
     };
@@ -112,7 +112,7 @@ function stage1DefaultModelEntry(mode) {
   return {
     key: claudeAdvice.key || claudeAdvice.model || "",
     model: claudeAdvice.model || "",
-    label: claudeAdvice.label || "Opus 5.5",
+    label: claudeAdvice.label || "Gemini 4 Neon",
     available: !!claudeAdvice.available,
     availabilityProblem: claudeAdvice.availabilityProblem || null,
   };
@@ -263,6 +263,7 @@ function applyStage1PresetSelection(mode) {
   if (!dom.select || !dom.textarea) return;
   const val = dom.select.value;
   if (val === "__custom__") return;
+  trackTelemetry("stage1.preset", { mode, kind: val.startsWith("builtin:") ? "builtin" : "personal" });
   let nextText = null;
   if (val.startsWith("builtin:")) {
     const id = val.slice("builtin:".length);
@@ -400,6 +401,7 @@ function syncStage1SplitInputsFromSettings({ force = false } = {}) {
 function saveStage1AutoRenderSetting() {
   if (!stage1AutoRenderInput) return;
   promptSplitSettings.stage1AutoRender = !!stage1AutoRenderInput.checked;
+  trackTelemetry("stage1.auto_render", { enabled: promptSplitSettings.stage1AutoRender });
   try {
     persistPersonalConfigurationSnapshot();
     stage1Error.textContent = "";
@@ -559,6 +561,9 @@ function renderStage1ActionRow() {
 
 function setStage1Mode(nextMode, { focus = false } = {}) {
   if (!["direct", "rewrite", "split"].includes(nextMode)) return;
+  if (stage1Mode !== nextMode) {
+    trackTelemetry("stage1.mode", { mode: nextMode });
+  }
   stage1Mode = nextMode;
   stage1Error.textContent = "";
   for (const tab of stage1Bar.querySelectorAll("[data-stage1-mode]")) {
@@ -589,7 +594,7 @@ function setStage1Mode(nextMode, { focus = false } = {}) {
 // Called by app.js whenever config or prompt assistant models change.
 function applyPromptSplitAvailability() {
   const available = !!promptSplitConfig?.available || stage1AvailableWriterOptions("split").length > 0;
-  const label = promptSplitConfig?.label || "Opus 5.5";
+  const label = promptSplitConfig?.label || "Gemini 4 Neon";
   if (promptSplitBtn) {
     promptSplitBtn.disabled = !available;
     promptSplitBtn.title = available
@@ -1070,6 +1075,13 @@ async function renderStage1Card(cardState, { auto = false } = {}) {
       const shapeTag = splitOpts.shape && splitOpts.shape !== "auto"
         ? ` · ${stage1ShapeLabel(splitOpts.shape, cardState.images.length > 0)}`
         : "";
+      trackTelemetry("stage1.card_action", {
+        mode: "split",
+        action: auto ? "auto_render" : "render",
+        genCount: gens.length,
+        parts: body.jobs.length,
+        shape: splitOpts.shape || "auto",
+      });
       cardState.renderHistory.push(
         `${body.jobs.length} parts${shapeTag} × ${gens.map(genLabel).join(", ")}`);
       setStage1CardActionStatus(
@@ -1112,6 +1124,12 @@ async function renderStage1Card(cardState, { auto = false } = {}) {
           ownerId: body.ownerId || "",
           canHide: authInfo.localVisibilityManagement === true || !!authInfo.user,
         });
+      trackTelemetry("stage1.card_action", {
+        mode: cardState.kind,
+        action: auto ? "auto_render" : "render",
+        genCount: gens.length,
+        parts: 1,
+      });
       cardState.renderHistory.push(`1 job × ${gens.map(genLabel).join(", ")}`);
       const unsplitNote = cardState.kind === "split" ? "Model recommended 1 image; auto-started unsplit job" : "Auto-started job";
       setStage1CardActionStatus(
@@ -1189,7 +1207,10 @@ function paintStage1Card(cardState) {
     retryBtn.type = "button";
     retryBtn.className = "stage1-card-retry";
     retryBtn.textContent = cardState.kind === "split" ? "retry split" : "retry rewrite";
-    retryBtn.addEventListener("click", () => runStage1Card(cardState));
+    retryBtn.addEventListener("click", () => {
+      trackTelemetry("stage1.card_action", { mode: cardState.kind, action: "retry" });
+      runStage1Card(cardState);
+    });
     headRight.appendChild(retryBtn);
   }
   const bailBtn = document.createElement("button");
@@ -1197,7 +1218,10 @@ function paintStage1Card(cardState) {
   bailBtn.className = "stage1-card-bail";
   bailBtn.textContent = "Bail";
   bailBtn.title = "Discard this text step result without generating images";
-  bailBtn.addEventListener("click", () => removeStage1Card(cardState));
+  bailBtn.addEventListener("click", () => {
+    trackTelemetry("stage1.card_action", { mode: cardState.kind, action: "bail", rendered: cardState.renderHistory.length > 0 });
+    removeStage1Card(cardState);
+  });
   headRight.appendChild(bailBtn);
 
   head.append(title, badge, headRight);
@@ -1352,6 +1376,7 @@ function paintStage1Card(cardState) {
     useBtn.className = "stage1-card-use-prompt";
     useBtn.textContent = "Use in prompt";
     useBtn.addEventListener("click", () => {
+      trackTelemetry("stage1.card_action", { mode: "rewrite", action: "use_in_composer" });
       applyClaudeEdit(cardState.rewriteText, cardState.exchangeId);
       setStage1CardActionStatus(cardState, "Loaded into the prompt box. Use undo edit under the prompt to revert.", "done");
       promptBox.focus();
@@ -1479,6 +1504,13 @@ async function runStage1Card(cardState) {
       paintStage1Card(cardState);
       updateStage1TrayHeader();
     }
+    trackTelemetry("stage1.card_done", {
+      mode: cardState.kind,
+      model: cardState.modelKey || "",
+      status: cardState.status,
+      durMs: Math.max(0, Date.now() - cardState.startedAt),
+      parts: cardState.plan?.imageCount ?? (cardState.status === "ready" ? 1 : 0),
+    });
     promptRewrites.refreshHistory();
   }
   if (cardState.status === "ready"
@@ -1628,6 +1660,15 @@ function startStage1Run() {
     created.unshift(cardState);
   }
 
+  trackTelemetry("stage1.run", {
+    mode,
+    writerCount: created.length,
+    firstModel: created[0]?.modelKey || "",
+    autoRender,
+    chars: prompt.length,
+    hasImage: capturedImages.length > 0,
+    genCount: initialGens.length,
+  });
   stage1ResultsSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
   for (const cardState of created) {
     runStage1Card(cardState);

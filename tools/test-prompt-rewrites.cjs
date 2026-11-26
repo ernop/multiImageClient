@@ -14,7 +14,7 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  window.controls = createPromptRewrites({apiUrl:p=>p, promptBox:prompt,
  username:()=>document.getElementById('username-input').value,
  applyPrompt:(t,id)=>{prompt.value=t;window.appliedExchange=id;prompt.dispatchEvent(new Event('input'))}});
- controls.configure([{model:'claude-opus-5-5',label:'Opus 5.5',available:true},{model:'claude-sonnet-5-5',label:'Sonnet 5.5',available:true}]);
+ controls.configure([{model:'gemini-4-neon',label:'Gemini 4 Neon',available:true},{model:'claude-opus-5-5',label:'Opus 5.5',available:true}]);
  </script>`;
  await page.route('https://rewrite.test/**', async route=> {
   const path = new URL(route.request().url()).pathname;
@@ -44,10 +44,10 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  });
  await page.goto('https://rewrite.test/');
  assert.deepEqual(await page.locator('[data-rewrite-model]').evaluateAll(b=>b.map(x=>[x.dataset.rewriteModel,x.textContent])),
-  [['claude-opus-5-5','flesh out · Opus 5.5'],['claude-sonnet-5-5','flesh out · Sonnet 5.5']]);
- await page.getByRole('button',{name:'flesh out · Opus 5.5',exact:true}).click();
+  [['gemini-4-neon','flesh out · Gemini 4 Neon'],['claude-opus-5-5','flesh out · Opus 5.5']]);
+ await page.getByRole('button',{name:'flesh out · Gemini 4 Neon',exact:true}).click();
  await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent==='Expanded prompt applied.');
- assert((await page.locator('#prompt').inputValue()).includes('claude-opus-5-5'));
+ assert((await page.locator('#prompt').inputValue()).includes('gemini-4-neon'));
  assert(await page.locator('#prompt-rewrite-history').isHidden());
  assert.equal(await page.locator('.prompt-rewrite-exchange').count(),0);
  assert.equal(historyLoads,0);
@@ -64,25 +64,25 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  await page.locator('#prompt').fill('A newer draft');
  await page.evaluate(r=>controls.submitted('A newer draft',r),acceptedRevision);
  assert(await page.locator('#prompt').evaluate(e=>e.classList.contains('prompt-not-submitted')));
- await page.getByRole('button',{name:'flesh out · Sonnet 5.5',exact:true}).click();
+ await page.getByRole('button',{name:'flesh out · Opus 5.5',exact:true}).click();
  await page.waitForFunction(()=>document.querySelectorAll('.prompt-rewrite-exchange').length===2);
  await page.locator('.prompt-rewrite-exchange').last().getByRole('button',{name:'restore this version'}).first().click();
  await page.waitForFunction(()=>document.querySelectorAll('.prompt-rewrite-exchange').length===3);
  assert((await page.locator('#prompt').inputValue()).includes('A botanical library inside'));
  assert.equal(await page.evaluate(()=>window.appliedExchange),null);
- assert(records[0].originalPrompt.includes('claude-sonnet-5-5'));
+ assert(records[0].originalPrompt.includes('claude-opus-5-5'));
  await page.locator('#prompt-history-toggle').click();
  assert(await page.locator('#prompt-rewrite-history').isHidden());
  const loadsWhileClosed = historyLoads;
  let release; hold=new Promise(resolve=>release=resolve);
- await page.getByRole('button',{name:'flesh out · Opus 5.5',exact:true}).click();
- await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent==='Opus 5.5 is expanding the prompt…');
+ await page.getByRole('button',{name:'flesh out · Gemini 4 Neon',exact:true}).click();
+ await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent==='Gemini 4 Neon is expanding the prompt…');
  await page.locator('#prompt').fill('My edit during the request');
  release(); hold=null;
  await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent.includes('changed during'));
  assert.equal(await page.locator('#prompt').inputValue(),'My edit during the request');
  fail=true;
- await page.getByRole('button',{name:'flesh out · Sonnet 5.5',exact:true}).click();
+ await page.getByRole('button',{name:'flesh out · Opus 5.5',exact:true}).click();
  await page.waitForFunction(()=>document.getElementById('prompt-rewrite-status').textContent.includes('refused'));
  assert.equal(await page.locator('#prompt').inputValue(),'My edit during the request');
  assert.equal(historyLoads,loadsWhileClosed);
@@ -106,7 +106,7 @@ const root = require('path').resolve(__dirname, '../MultiImageClient/Ui/wwwroot'
  await page.locator('#username-input').fill('Bob');
  assert(await page.locator('#prompt-rewrite-history').isHidden());
  assert.equal(await page.locator('.prompt-rewrite-exchange').count(),0);
- assert.deepEqual([...new Set(calls)].sort(),['claude-opus-5-5','claude-sonnet-5-5','restore']);
+ assert.deepEqual([...new Set(calls)].sort(),['claude-opus-5-5','gemini-4-neon','restore']);
  console.log('PASS: in-place rewrite without opening history, undo identity, history only from its button, restore preservation, stale reply, failure, pagination, mobile control layout, identity clearing.');
  await browser.close();
 })().catch(error=>{console.error(error);process.exit(1)});

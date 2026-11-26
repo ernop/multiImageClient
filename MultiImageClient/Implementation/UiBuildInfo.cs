@@ -16,6 +16,7 @@ namespace MultiImageClient
 
         public static string Commit { get; }
         public static string CommitDate { get; }
+        public static string BuiltAtUtc { get; }
 
         /// Link to the exact commit in the public repo, or null when the
         /// build carries no git identity (untracked-build).
@@ -34,6 +35,9 @@ namespace MultiImageClient
             CommitDate = asm
                 .GetCustomAttributes<AssemblyMetadataAttribute>()
                 .FirstOrDefault(a => a.Key == "MicCommitDate")?.Value ?? "";
+            BuiltAtUtc = asm
+                .GetCustomAttributes<AssemblyMetadataAttribute>()
+                .FirstOrDefault(a => a.Key == "MicBuildTimeUtc")?.Value ?? "";
 
             // git describe may append "-dirty"; the link targets the hash
             // itself (the page then can't show uncommitted local edits, which

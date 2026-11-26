@@ -33,9 +33,9 @@ namespace MultiImageClient.Tests
         }
 
         [Fact]
-        public void DefaultManagerIsSonnet55()
+        public void DefaultManagerIsGemini4Neon()
         {
-            Assert.Equal(ManagerCatalog.KeyClaudeSonnet55, ManagerCatalog.DefaultKey);
+            Assert.Equal(ManagerCatalog.KeyGemini4Neon, ManagerCatalog.DefaultKey);
             Assert.NotNull(ManagerCatalog.Find(ManagerCatalog.DefaultKey));
         }
 

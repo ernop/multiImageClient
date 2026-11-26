@@ -47,7 +47,7 @@ write one consistent description from them.
    - **find in my prompts** lists matching past prompts with the text around
      the name. It makes no model call.
    - **write it from my prompts** sends those prompts and optional notes to
-     the selected writer (default Opus 5.5) and saves the result.
+     the selected writer (default Gemini 4 Neon; updated 2026-11-26 from Opus 5.5) and saves the result.
      It asks before replacing a description that is already filled in.
    - **delete** asks first. Prompts keep their text.
    - Closing or switching characters with unsaved edits asks first.

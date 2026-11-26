@@ -62,3 +62,12 @@ Prompt advice, both flesh-out quick buttons, over-limit condensing, prompt split
 - **Single target catalog (`UiTargetCatalog`)**: `MultiImageClient/Implementation/UiTargetCatalog.cs` holds every UI image, video, describe, and analysis target's display name, contact-sheet provider, scheduler lane, billing account, capability flags, prompt limits, multi-input limit, default extra text, and `/api/config` metadata. `GeneratorPresentation`, `UiTargetScheduler`, `ProviderActionHints`, `UiJobRunner`, `UiWorkflow`, and `app.js` (via `/api/config` `maxInputImages` and `defaultExtraText`) derive from it instead of maintaining parallel switch tables and hardcoded JS arrays.
 - **Modularized core files**: split `UiJobs.cs` into `UiJobs.cs` (job model/records), `UiJobStorage.cs` (persistence, card cache, registry), `UiShapeMapping.cs` (geometry/detail mapping), and `UiJobRunner.cs` (execution). Split `UiWorkflow.cs` routes into partial files `UiWorkflow.GoalLoops.cs`, `UiWorkflow.PromptTools.cs`, and `UiWorkflow.Community.cs` alongside existing partials.
 - **UI help text**: updated `#opts-help-panel`, `#paste-zone`, and `#multi-input-hint` to reflect GPT Image 2.6, Ideogram 4.6 (2K/4K + Precise Edit), FLUX 3 / Klein (1K/2K/4K + multi-reference), and Recraft V4.1 Flash V2 (text-only), and trimmed redundant explanatory paragraphs across `index.html`, `generator-chooser.js`, and `goal.html`.
+
+## Default text and manager model update — 2026-11-26
+
+Owner decision (2026-11-26): every internal text/manager default now uses **Gemini 4 Neon** (`manager-gemini-4-neon`, `gemini-4-neon`) while remaining selectable from `ManagerCatalog.All`:
+
+- Goal-loop default manager (`ManagerCatalog.DefaultKey`): `manager-gemini-4-neon` (was `manager-claude-sonnet-5-5`).
+- Prompt advice (`DirectedPromptRewrite.DefaultAdviceKey`), primary flesh-out (`DefaultFleshOutPrimaryKey`), over-limit condense (`DefaultCondenseKey`), multi-page split (`PromptSplit.ModelKey`), and character writer (`PromptSubjectSynthesis.DefaultModelKey`): `manager-gemini-4-neon`.
+- Secondary flesh-out quick button (`DefaultFleshOutSecondaryKey`): `manager-claude-opus-5-5` so the two quick buttons offer distinct model families (`Gemini 4 Neon` and `Opus 5.5`).
+- Fixed `UiWorkflow.cs` `claudeAdviceProblem` to check `DirectedPromptRewrite.AvailabilityProblem(DirectedPromptRewrite.AdviceModel, settings)` instead of hardcoding `AnthropicApiKey`.

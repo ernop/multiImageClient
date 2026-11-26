@@ -13,6 +13,7 @@ const apiUrl = (path) => {
   return appBase + value.replace(/^\//, "");
 };
 const el = (id) => document.getElementById(id);
+window.MultiImageTelemetry?.init({ page: "goal", apiUrl });
 const UsernameKey = "mic_username";
 
 function applyEnvironmentBranding() {
@@ -184,6 +185,10 @@ function updateCriticCount() {
 
 async function loadConfig() {
   config = await fetchJson("api/config");
+  const buildNode = el("build-info");
+  if (buildNode && config.build && config.build.commit && window.MultiImageBuildBadge) {
+    window.MultiImageBuildBadge.render(buildNode, config.build);
+  }
   generators = config.generators;
   authInfo = config.auth || { enabled: false };
   generatorEndpointConfiguration = config.generatorEndpointConfiguration;
@@ -300,6 +305,16 @@ el("goal-form").addEventListener("submit", async (event) => {
   try {
     appendLocalCreator(form);
     const body = await fetchJson("api/goal-loops", { method: "POST", body: form });
+    window.MultiImageTelemetry?.track("goal.start", {
+      manager: el("goal-manager").value,
+      genCount: generatorKeys.length,
+      criticCount: criticKeys.length,
+      maxTurns: Number(el("goal-max-turns").value) || 0,
+      maxCandidates: Number(el("goal-max-candidates")?.value) || 0,
+      samples: Number(el("goal-samples")?.value) || 0,
+      goalKind: el("goal-kind").value,
+      chars: submittedGoal.length,
+    });
     if (el("goal-text").value === submittedGoal) {
       el("goal-text").value = "";
       el("goal-text").dispatchEvent(new Event("input", { bubbles: true }));

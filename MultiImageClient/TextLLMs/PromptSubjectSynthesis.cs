@@ -52,7 +52,7 @@ namespace MultiImageClient
 
     public static class PromptSubjectSynthesis
     {
-        public const string DefaultModelKey = ManagerCatalog.KeyClaudeOpus55;
+        public const string DefaultModelKey = ManagerCatalog.KeyGemini4Neon;
         public const int MaxMatchedPrompts = 40;
         public const int MaxPromptCorpusChars = 48000;
         public const int MaxSinglePromptChars = 3000;
