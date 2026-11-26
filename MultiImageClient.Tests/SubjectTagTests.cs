@@ -175,6 +175,86 @@ public sealed class SubjectTagTests
         Assert.NotNull(again);
     }
 
+    [Fact]
+    public void SubjectTagImageMetadataPersistsAcrossEditsAndCleansUpOnDelete()
+    {
+        using var tmp = new TempFolder();
+        var store = new UiCommunityStore(tmp.Settings());
+        var created = store.SaveSubjectTag(
+            "login:alice", "Alice", "", "Ernie", "character", "", "manual",
+            "a cheerful man with short gray-flecked hair and glasses", "", null, "", 1000);
+        Assert.Equal("", created.ImageFile);
+        Assert.Equal(0, created.ImageWidth);
+
+        var (withImg, prev1) = store.UpdateSubjectTagImage(
+            "login:alice", created.Id, "ernie-abc123.png", "image/png", 512, 768, 2000);
+        Assert.Equal("", prev1);
+        Assert.Equal("ernie-abc123.png", withImg.ImageFile);
+        Assert.Equal("image/png", withImg.ImageMime);
+        Assert.Equal(512, withImg.ImageWidth);
+        Assert.Equal(768, withImg.ImageHeight);
+
+        // Editing text description preserves the saved reference photo.
+        var edited = store.SaveSubjectTag(
+            "login:alice", "Alice", created.Id, "Ernie", "character", "", "manual",
+            "a cheerful man in his 40s with glasses and a blue jacket", "", null, "", 3000);
+        Assert.Equal("ernie-abc123.png", edited.ImageFile);
+        Assert.Equal(512, edited.ImageWidth);
+
+        // Replacing returns old file for cleanup.
+        var (replaced, prev2) = store.UpdateSubjectTagImage(
+            "login:alice", created.Id, "ernie-def456.jpg", "image/jpeg", 800, 600, 4000);
+        Assert.Equal("ernie-abc123.png", prev2);
+        Assert.Equal("ernie-def456.jpg", replaced.ImageFile);
+
+        // Path traversal filenames fail closed.
+        Assert.Throws<InvalidDataException>(() => store.UpdateSubjectTagImage(
+            "login:alice", created.Id, "../escape.png", "image/png", 100, 100, 4500));
+
+        // Deleting returns the current image filename for disk cleanup.
+        Assert.True(store.DeleteSubjectTagReturningImage("login:alice", created.Id, out var deletedFile));
+        Assert.Equal("ernie-def456.jpg", deletedFile);
+        Assert.Null(store.GetSubjectTagById("login:alice", created.Id));
+    }
+
+    [Fact]
+    public void SearchAllHistoryIncludesPromptArchiveOnlyWhenPassed()
+    {
+        using var tmp = new TempFolder();
+        var settings = tmp.Settings();
+        var community = new UiCommunityStore(settings);
+
+        // Create a separate saves folder with one prompt mentioning Ernie, sync it to an archive DB.
+        var archiveSaves = System.IO.Path.Combine(tmp.Path, "archive-source");
+        var jobDir = System.IO.Path.Combine(archiveSaves, "UiHistory", "job-ernie-1");
+        Directory.CreateDirectory(jobDir);
+        File.WriteAllText(
+            System.IO.Path.Combine(jobDir, "job.json"),
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                Id = "job-ernie-1",
+                Prompt = "Ernie wearing a vintage leather jacket sipping espresso in Paris",
+                CreatorLogin = "",
+                CreatedAt = new DateTime(2025, 6, 15, 12, 0, 0, DateTimeKind.Utc),
+                GeneratorKeys = new[] { "gpt-image-2" },
+            }));
+        var archiveDbPath = System.IO.Path.Combine(tmp.Path, "prompt-archive.sqlite3");
+        var archive = new UiPromptArchive(archiveDbPath, "local");
+        archive.SyncFromInstance(archiveSaves, allowEmptyCreator: true);
+
+        // Without archive (non-admin member scope): finds nothing in empty live registry.
+        var withoutArchive = PromptSubjectSynthesis.SearchAllHistory(
+            settings, "Ernie", "", null, community, null, PromptSubjectSearchScope.LocalOwner, promptArchive: null);
+        Assert.Empty(withoutArchive);
+
+        // With archive (owner/admin): finds the archived prompt.
+        var withArchive = PromptSubjectSynthesis.SearchAllHistory(
+            settings, "Ernie", "", null, community, null, PromptSubjectSearchScope.LocalOwner, promptArchive: archive);
+        var match = Assert.Single(withArchive);
+        Assert.Equal("prompt_archive", match.Source);
+        Assert.Contains("vintage leather jacket", match.Prompt);
+    }
+
     private sealed class FakeWriter : IManagerChatClient
     {
         private readonly string _reply;

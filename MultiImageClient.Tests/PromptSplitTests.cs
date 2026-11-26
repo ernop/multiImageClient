@@ -444,6 +444,54 @@ public sealed class PromptSplitTests
         Assert.Contains("show, don't tell", DirectedPromptRewrite.BuiltinPresets[1].Name);
     }
 
+    [Fact]
+    public void ResolveSubmissionAppliesAndValidatesEditedPartPrompts()
+    {
+        WithStore(store =>
+        {
+            var id = Save(store, Alice, Source, TwoPartReply);
+            var edited = new[]
+            {
+                "Ink style. Edited part one prompt with bright daylight.",
+                "Ink style. Edited part two prompt with bright daylight.",
+            };
+            var (_, resolved) = PromptSplit.ResolveSubmission(
+                id,
+                Source,
+                new[] { UiJobRunner.KeyRecraftV3 },
+                Extra(UiJobRunner.KeyRecraftV3, ""),
+                imageAttached: false,
+                lookupId => store.ReadClaudePromptExchanges(Alice, 1, exchangeId: lookupId).SingleOrDefault(),
+                editedPartPrompts: edited);
+            Assert.Equal(2, resolved.ImageCount);
+            Assert.Equal("Panels 1 to 4", resolved.Parts[0].Title);
+            Assert.Equal(edited[0], resolved.Parts[0].Prompt);
+            Assert.Equal("Panels 5 to 8", resolved.Parts[1].Title);
+            Assert.Equal(edited[1], resolved.Parts[1].Prompt);
+
+            var wrongCount = Assert.Throws<InvalidDataException>(() => PromptSplit.ResolveSubmission(
+                id, Source, new[] { UiJobRunner.KeyRecraftV3 }, Extra(UiJobRunner.KeyRecraftV3, ""),
+                imageAttached: false,
+                lookupId => store.ReadClaudePromptExchanges(Alice, 1, exchangeId: lookupId).SingleOrDefault(),
+                editedPartPrompts: new[] { "Only one" }));
+            Assert.Contains("must have 2 entries", wrongCount.Message);
+
+            var blankPart = Assert.Throws<InvalidDataException>(() => PromptSplit.ResolveSubmission(
+                id, Source, new[] { UiJobRunner.KeyRecraftV3 }, Extra(UiJobRunner.KeyRecraftV3, ""),
+                imageAttached: false,
+                lookupId => store.ReadClaudePromptExchanges(Alice, 1, exchangeId: lookupId).SingleOrDefault(),
+                editedPartPrompts: new[] { edited[0], "   " }));
+            Assert.Contains("Part 2 prompt must not be empty", blankPart.Message);
+
+            var overLimit = Assert.Throws<InvalidDataException>(() => PromptSplit.ResolveSubmission(
+                id, Source, new[] { UiJobRunner.KeyRecraftV3 }, Extra(UiJobRunner.KeyRecraftV3, ""),
+                imageAttached: false,
+                lookupId => store.ReadClaudePromptExchanges(Alice, 1, exchangeId: lookupId).SingleOrDefault(),
+                editedPartPrompts: new[] { new string('a', 1100), edited[1] }));
+            Assert.Contains("at most 1,000 fit", overLimit.Message);
+        });
+    }
+
     private static string CreateTempFolder()
     {
         var folder = Path.Combine(Path.GetTempPath(), "mic-split-tests", Guid.NewGuid().ToString("N"));

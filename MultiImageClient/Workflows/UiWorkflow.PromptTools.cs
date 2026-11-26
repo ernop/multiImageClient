@@ -30,7 +30,8 @@ namespace MultiImageClient
             UiAuth? auth,
             UiJobRegistry jobs,
             UiVisibilityStore visibility,
-            UiCommunityStore community)
+            UiCommunityStore community,
+            UiPromptArchive promptArchive)
         {
             app.MapPost("/api/prompt/advice", async (HttpRequest request) =>
             {
@@ -560,6 +561,40 @@ namespace MultiImageClient
                 });
             });
 
+            // Reads one saved prompt-rewrite exchange owned by the caller so
+            // Stage-1 rewrite review cards can hydrate across page reloads.
+            app.MapGet("/api/prompt/exchange/{exchangeId}", (string exchangeId, string? user, HttpContext ctx) =>
+            {
+                ctx.Response.Headers.CacheControl = "no-store";
+                var cleanId = (exchangeId ?? "").Trim();
+                if (cleanId.Length == 0 || cleanId.Length > 80)
+                    return Results.BadRequest(new { error = "Exchange id is invalid." });
+                var authUser = ctx.Items["micUser"] as string ?? "";
+                if (!TryResolveCreatorName(user, authUser, community, out var actorDisplay, out var identityError))
+                {
+                    return Results.BadRequest(new { error = identityError });
+                }
+                var identityKey = PromptExchangeIdentityKey(authUser, actorDisplay);
+                var exchange = community.ReadClaudePromptExchanges(identityKey, 1, exchangeId: cleanId).SingleOrDefault();
+                if (exchange == null || exchange.Purpose.Length > 0)
+                {
+                    return Results.NotFound(new { error = $"Prompt exchange {cleanId} was not found." });
+                }
+                return Results.Json(new
+                {
+                    exchangeId = exchange.Id,
+                    status = exchange.Status,
+                    model = exchange.Model,
+                    modelKey = ManagerCatalog.FindByModel(exchange.Model)?.Key ?? "",
+                    modelLabel = PromptSplit.ModelLabel(exchange.Model),
+                    sourcePrompt = exchange.OriginalPrompt,
+                    instruction = exchange.Instruction,
+                    resultPrompt = exchange.ResultPrompt,
+                    error = exchange.Error,
+                    createdAtUnixMs = exchange.RequestedAtUnixMs,
+                });
+            });
+
             app.MapGet("/api/prompt/advice/history", (
                 string? user,
                 int? limit,
@@ -603,6 +638,35 @@ namespace MultiImageClient
                 });
             });
 
+            const long MaxCharacterImageBytes = 10L * 1024 * 1024;
+            var characterImagesDir = Path.Combine(settings.ImageDownloadBaseFolder, "UiCharacterImages");
+
+            static string RasterExtension(RasterFormat format) => format switch
+            {
+                RasterFormat.Png => ".png",
+                RasterFormat.Jpeg => ".jpg",
+                RasterFormat.Webp => ".webp",
+                RasterFormat.Gif => ".gif",
+                RasterFormat.Bmp => ".bmp",
+                _ => throw new InvalidDataException($"Unsupported image format '{format}'."),
+            };
+
+            static void TryDeleteCharacterImageFile(string dir, string? fileName)
+            {
+                if (string.IsNullOrWhiteSpace(fileName)) return;
+                if (fileName.IndexOfAny(new[] { '/', '\\' }) >= 0 || fileName.Contains("..", StringComparison.Ordinal))
+                    return;
+                var fullPath = Path.Combine(dir, fileName);
+                try
+                {
+                    if (File.Exists(fullPath)) File.Delete(fullPath);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"UI character image cleanup failed for '{fileName}': {ex.Message}");
+                }
+            }
+
             static object SerializeSubjectTag(UiSubjectTagRecord record) => new
             {
                 id = record.Id,
@@ -614,6 +678,12 @@ namespace MultiImageClient
                 sourceSummary = record.SourceSummary,
                 matchedPromptsCount = record.MatchedPromptsCount,
                 updatedAtUnixMs = record.UpdatedAtUnixMs,
+                hasImage = record.ImageFile.Length > 0,
+                imageUrl = record.ImageFile.Length > 0
+                    ? $"api/prompt/subjects/{Uri.EscapeDataString(record.Id)}/image?v={record.UpdatedAtUnixMs}"
+                    : "",
+                imageWidth = record.ImageWidth,
+                imageHeight = record.ImageHeight,
             };
 
             static object SerializeMatchedPrompts(IEnumerable<UiSubjectTagMatchedPrompt> matches) => matches.Select(m => new
@@ -649,11 +719,12 @@ namespace MultiImageClient
             {
                 var form = await request.ReadFormAsync();
                 var identity = CharacterIdentity(request.HttpContext);
+                var archiveForCaller = IsPromptArchiveAdmin(request.HttpContext, auth) ? promptArchive : null;
                 try
                 {
                     var matches = PromptSubjectSynthesis.SearchAllHistory(
                         settings, form["name"].ToString(), form["query"].ToString(),
-                        jobs, community, visibility, identity.Scope);
+                        jobs, community, visibility, identity.Scope, archiveForCaller);
                     return Results.Json(new { matches = SerializeMatchedPrompts(matches) });
                 }
                 catch (InvalidDataException ex)
@@ -666,6 +737,7 @@ namespace MultiImageClient
             {
                 var form = await request.ReadFormAsync();
                 var identity = CharacterIdentity(request.HttpContext);
+                var archiveForCaller = IsPromptArchiveAdmin(request.HttpContext, auth) ? promptArchive : null;
                 var id = form["id"].ToString();
                 var name = form["name"].ToString();
                 var kind = form["kind"].ToString();
@@ -695,7 +767,7 @@ namespace MultiImageClient
                         throw new InvalidDataException($"You already have a character named {existingByName.Name}. Edit that one instead.");
                     }
                     var matches = PromptSubjectSynthesis.SearchAllHistory(
-                        settings, name, query, jobs, community, visibility, identity.Scope);
+                        settings, name, query, jobs, community, visibility, identity.Scope, archiveForCaller);
                     var synthesized = await PromptSubjectSynthesis.SynthesizeSubjectAsync(
                         settings, name, kind, query, form["model"].ToString(), matches,
                         form["notes"].ToString(), ct: request.HttpContext.RequestAborted);
@@ -765,16 +837,170 @@ namespace MultiImageClient
                 }
             });
 
+            app.MapGet("/api/prompt/subjects/{id}/image", (string id, HttpContext ctx) =>
+            {
+                var identity = CharacterIdentity(ctx);
+                var record = community.GetSubjectTagById(identity.IdentityKey, id);
+                if (record == null || record.ImageFile.Length == 0)
+                {
+                    return Results.NotFound(new { error = "This character has no reference photo." });
+                }
+                if (record.ImageFile.IndexOfAny(new[] { '/', '\\' }) >= 0
+                    || record.ImageFile.Contains("..", StringComparison.Ordinal))
+                {
+                    return Results.NotFound(new { error = "This character has no reference photo." });
+                }
+                var fullPath = Path.Combine(characterImagesDir, record.ImageFile);
+                if (!File.Exists(fullPath))
+                {
+                    return Results.NotFound(new { error = "Character reference photo file is missing." });
+                }
+                ctx.Response.Headers.CacheControl = "private, max-age=3600";
+                ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+                return Results.File(fullPath, record.ImageMime);
+            });
+
+            app.MapPost("/api/prompt/subjects/{id}/image", async (string id, HttpRequest request) =>
+            {
+                var identity = CharacterIdentity(request.HttpContext);
+                var existing = community.GetSubjectTagById(identity.IdentityKey, id);
+                if (existing == null)
+                {
+                    return Results.NotFound(new { error = "That character no longer exists." });
+                }
+                if (!request.HasFormContentType)
+                {
+                    return Results.BadRequest(new { error = "Upload a photo as multipart form data under the 'image' field." });
+                }
+                var form = await request.ReadFormAsync();
+                var file = form.Files["image"];
+                if (file == null || file.Length == 0)
+                {
+                    return Results.BadRequest(new { error = "Choose an image file to upload." });
+                }
+                if (file.Length > MaxCharacterImageBytes)
+                {
+                    return Results.BadRequest(new { error = $"Character photo must be {MaxCharacterImageBytes / (1024 * 1024)} MiB or smaller." });
+                }
+                byte[] bytes;
+                using (var ms = new MemoryStream((int)Math.Min(file.Length, MaxCharacterImageBytes)))
+                using (var stream = file.OpenReadStream())
+                {
+                    var buffer = new byte[64 * 1024];
+                    long total = 0;
+                    int read;
+                    while ((read = await stream.ReadAsync(buffer, request.HttpContext.RequestAborted)) > 0)
+                    {
+                        total += read;
+                        if (total > MaxCharacterImageBytes)
+                        {
+                            return Results.BadRequest(new { error = $"Character photo must be {MaxCharacterImageBytes / (1024 * 1024)} MiB or smaller." });
+                        }
+                        ms.Write(buffer, 0, read);
+                    }
+                    bytes = ms.ToArray();
+                }
+                RasterInfo info;
+                try
+                {
+                    info = Raster.Identify(bytes);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or ArgumentException)
+                {
+                    return Results.BadRequest(new { error = $"Could not read that image: {ex.Message}" });
+                }
+                var ext = RasterExtension(info.Format);
+                var newFileName = $"{existing.Id}-{Guid.NewGuid():N}"[..Math.Min(existing.Id.Length + 13, 45)] + ext;
+                Directory.CreateDirectory(characterImagesDir);
+                if (!OperatingSystem.IsWindows())
+                {
+                    try
+                    {
+                        File.SetUnixFileMode(
+                            characterImagesDir,
+                            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                    }
+                    catch { }
+                }
+                var targetPath = Path.Combine(characterImagesDir, newFileName);
+                var tempPath = targetPath + ".tmp";
+                try
+                {
+                    await File.WriteAllBytesAsync(tempPath, bytes, request.HttpContext.RequestAborted);
+                    if (!OperatingSystem.IsWindows())
+                    {
+                        File.SetUnixFileMode(tempPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                    }
+                    File.Move(tempPath, targetPath, overwrite: true);
+                }
+                catch
+                {
+                    try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+                    throw;
+                }
+                try
+                {
+                    var (updated, previousFile) = community.UpdateSubjectTagImage(
+                        identity.IdentityKey,
+                        existing.Id,
+                        newFileName,
+                        info.MimeType,
+                        info.Width,
+                        info.Height,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    if (previousFile.Length > 0 && !string.Equals(previousFile, newFileName, StringComparison.Ordinal))
+                    {
+                        TryDeleteCharacterImageFile(characterImagesDir, previousFile);
+                    }
+                    Logger.Log($"UI character '{updated.Name}' reference photo updated ({info.Width}x{info.Height} {info.MimeType}) for '{identity.Actor}'.");
+                    return Results.Json(new { subject = SerializeSubjectTag(updated) });
+                }
+                catch (InvalidDataException ex)
+                {
+                    TryDeleteCharacterImageFile(characterImagesDir, newFileName);
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+                catch
+                {
+                    TryDeleteCharacterImageFile(characterImagesDir, newFileName);
+                    throw;
+                }
+            });
+
+            app.MapPost("/api/prompt/subjects/{id}/image/delete", (string id, HttpContext ctx) =>
+            {
+                var identity = CharacterIdentity(ctx);
+                try
+                {
+                    var (updated, previousFile) = community.UpdateSubjectTagImage(
+                        identity.IdentityKey,
+                        id,
+                        "",
+                        "",
+                        0,
+                        0,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    TryDeleteCharacterImageFile(characterImagesDir, previousFile);
+                    Logger.Log($"UI character '{updated.Name}' reference photo removed for '{identity.Actor}'.");
+                    return Results.Json(new { subject = SerializeSubjectTag(updated) });
+                }
+                catch (InvalidDataException ex)
+                {
+                    return Results.BadRequest(new { error = ex.Message });
+                }
+            });
+
             app.MapPost("/api/prompt/subjects/delete", async (HttpRequest request) =>
             {
                 var form = await request.ReadFormAsync();
                 var identity = CharacterIdentity(request.HttpContext);
                 try
                 {
-                    if (!community.DeleteSubjectTag(identity.IdentityKey, form["id"].ToString()))
+                    if (!community.DeleteSubjectTagReturningImage(identity.IdentityKey, form["id"].ToString(), out var previousFile))
                     {
                         return Results.NotFound(new { error = "That character no longer exists." });
                     }
+                    TryDeleteCharacterImageFile(characterImagesDir, previousFile);
                     Logger.Log($"UI character {form["id"]} deleted by '{identity.Actor}'.");
                     return Results.Json(new { deleted = true });
                 }

@@ -322,5 +322,16 @@ namespace MultiImageClient.Tests
             else root[field] = null;
             Assert.Throws<InvalidDataException>(() => Parse(root, true));
         }
+
+        [Fact]
+        public void CriticContractRepairMessageExplainsParseErrorWithoutSteering()
+        {
+            const string parseError = "critiques[0].goalMet must be a JSON boolean.";
+            var message = UiGoalLoopPursuit.CriticContractRepairMessage(parseError);
+            Assert.Contains(parseError, message);
+            Assert.Contains("JSON", message);
+            Assert.Contains("server contract", message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("make the", message, StringComparison.OrdinalIgnoreCase);
+        }
     }
 }

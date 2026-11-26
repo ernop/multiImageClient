@@ -1,4 +1,21 @@
-# Characters PRD (2026-10-15)
+# Characters PRD (2026-10-15, updated 2026-11-26)
+
+## Owner decisions (2026-11-26): `@Name` send-time expansion, optional reference photos, quick-create, and owner prompt-archive synthesis
+
+1. **`@Name` inline autocomplete and send-time expansion (`prompt-characters.js`, `app.js`, `prompt-pipeline.js`, `prompt-rewrites.js`):**
+   - Typing `@` in `#prompt` opens `#character-autocomplete` (supports single- and multi-word names such as `@Ernie` and `@Jing Li`, Up/Down/Enter/Tab/Escape + mouse click, shows optional thumbnail and `photo` badge, ignores email addresses like `user@Ernie.com`).
+   - `#prompt` keeps the short `@Name` tag readable while send-time expansion (`PromptCharacters.expandAtTags`) runs automatically across direct **Generate**, Stage-1 **Rewrite** and **Split multi-page**, **prompt advice**, quick **flesh out**, and live **prompt-length limit checks** / **condense**.
+   - First `@Name` expands to `Name (<description>)` (possessives become `Name's (<description>)`; an already-parenthesized `@Name (...)` keeps the user's text); repeated `@Name` tags in the same prompt strip `@` so the description never duplicates.
+   - `#character-strip` shows `@Name ✓ auto-expands`, a toggleable `Name photo on/off` pill when a reference photo exists, and `expand @Name` to materialize traits inline in `#prompt` (with `undo`) for one-off tweaks. Plain unprefixed mentions keep the existing `describe <name>` workflow.
+2. **Optional reference photo per character (`UiCommunityStore`, `UiWorkflow.PromptTools.cs`, `app.js`):**
+   - Stored on disk under `saves/UiCharacterImages/<id>-<rand>.<ext>` (never as SQLite BLOBs, respecting shared-site RAM budgets), indexed by `image_file`, `image_mime`, `image_width`, `image_height` columns on `ui_subject_tags`.
+   - Validated via `Raster.Identify` (PNG/JPEG/WebP/GIF/BMP, max 10 MiB, pixel cap enforced). Editing text preserves the saved photo; replacing or deleting the character cleans up the old file on disk.
+   - Routes (all owner-scoped to `CharacterIdentity`): `GET /api/prompt/subjects/{id}/image`, `POST /api/prompt/subjects/{id}/image`, `POST /api/prompt/subjects/{id}/image/delete`.
+   - `#character-form` supports file upload, one-click **use composer image**, staged photos on brand-new characters before saving, and removal.
+   - Enabled `@Character` photos auto-attach on send (direct `Generate` and Stage-1 runs), respecting `maxInputImages` (failing closed with a clear error if total images exceed the cap) and updating image-dependent generator compatibility checks.
+3. **One-click quick-create and owner prompt-archive search:**
+   - `#characters-panel` opens with `#character-quick-form` (`name` + **create & write · Gemini 4 Neon**) to synthesize and save a character in one step.
+   - When the caller is owner/admin (`IsPromptArchiveAdmin`), `PromptSubjectSynthesis.SearchAllHistory` also searches `UiPromptArchive` (`prompt-archive.sqlite3`) so synthesis draws on the owner's full multi-year prompt history. Non-admin shared-site accounts never receive `promptArchive` access.
 
 Supersedes the 2026-10-14 "dynamic prompt tagging and subject synthesis" draft
 from [PR #16](https://github.com/ernop/multiImageClient/pull/16). The API paths

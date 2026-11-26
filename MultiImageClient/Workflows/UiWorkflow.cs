@@ -315,6 +315,7 @@ namespace MultiImageClient
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/advice", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/condense", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/split", StringComparison.OrdinalIgnoreCase))
+                                || (!policy.PromptRewrite && path.StartsWith("/api/prompt/exchange/", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.PromptRewrite && path.StartsWith("/api/prompt/subjects/synthesize", StringComparison.OrdinalIgnoreCase))
                                 || (!policy.AllowVibecoders && path.StartsWith("/api/discord/vibecoders", StringComparison.OrdinalIgnoreCase)))))
                         {
@@ -1114,6 +1115,28 @@ namespace MultiImageClient
                             request.HttpContext.Items["micUser"] as string ?? "",
                             createdBy);
                         var splitSourceJobId = form["splitSourceJobId"].ToString().Trim();
+                        List<string>? splitEditedPrompts = null;
+                        var rawEditedPrompts = form["splitEditedPrompts"].ToString().Trim();
+                        if (rawEditedPrompts.Length > 0)
+                        {
+                            try
+                            {
+                                using var editedDoc = JsonDocument.Parse(rawEditedPrompts);
+                                if (editedDoc.RootElement.ValueKind != JsonValueKind.Array)
+                                    throw new InvalidDataException("splitEditedPrompts must be a JSON array of strings.");
+                                splitEditedPrompts = new List<string>(editedDoc.RootElement.GetArrayLength());
+                                foreach (var item in editedDoc.RootElement.EnumerateArray())
+                                {
+                                    if (item.ValueKind != JsonValueKind.String)
+                                        throw new InvalidDataException("Each entry in splitEditedPrompts must be a string.");
+                                    splitEditedPrompts.Add(item.GetString() ?? "");
+                                }
+                            }
+                            catch (JsonException ex)
+                            {
+                                throw new InvalidDataException($"splitEditedPrompts is not valid JSON: {ex.Message}");
+                            }
+                        }
                         var resolved = PromptSplit.ResolveSubmission(
                             splitExchangeId,
                             prompt,
@@ -1141,7 +1164,8 @@ namespace MultiImageClient
                                     }
                                 }
                                 return null;
-                            });
+                            },
+                            splitEditedPrompts);
                         splitPlan = resolved.Plan;
                         splitModel = resolved.Exchange.Model;
                     }
@@ -1590,7 +1614,7 @@ namespace MultiImageClient
                 }
             });
 
-            MapPromptToolRoutes(app, settings, auth, jobs, visibility, community);
+            MapPromptToolRoutes(app, settings, auth, jobs, visibility, community, promptArchive);
 
             // Cursor-based poll for ALL job events. Deliberately NOT a
             // persistent stream: browsers cap plain-HTTP/1.1 at ~6 connections

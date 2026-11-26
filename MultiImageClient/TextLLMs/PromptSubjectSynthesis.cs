@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -155,7 +156,8 @@ namespace MultiImageClient
             UiJobRegistry? jobs,
             UiCommunityStore community,
             UiVisibilityStore? visibility,
-            PromptSubjectSearchScope scope)
+            PromptSubjectSearchScope scope,
+            UiPromptArchive? promptArchive = null)
         {
             var terms = ExtractSearchTerms(name, searchQuery);
             var perSourceLimit = MaxMatchedPrompts * 2;
@@ -178,6 +180,10 @@ namespace MultiImageClient
             {
                 rawCandidates.AddRange(SearchGenerationArchive(settings, terms, visibility, perSourceLimit));
                 rawCandidates.AddRange(SearchPromptFiles(settings, terms, perSourceLimit));
+            }
+            if (promptArchive != null && promptArchive.Exists)
+            {
+                rawCandidates.AddRange(SearchPromptArchive(promptArchive, terms, perSourceLimit));
             }
 
             // A name found only inside a longer word ("Jing" in "Beijing")
@@ -227,6 +233,40 @@ namespace MultiImageClient
                 .Take(MaxMatchedPrompts)
                 .Select(entry => entry.Item)
                 .ToList();
+        }
+
+        private static List<UiSubjectTagMatchedPrompt> SearchPromptArchive(
+            UiPromptArchive archive,
+            IReadOnlyList<string> terms,
+            int perTermLimit)
+        {
+            var matches = new List<UiSubjectTagMatchedPrompt>();
+            var pageSize = Math.Clamp(perTermLimit, 1, 100);
+            foreach (var term in terms)
+            {
+                var cleaned = term.Replace("\"", "").Trim();
+                if (cleaned.Length == 0) continue;
+                var query = cleaned.Contains(' ', StringComparison.Ordinal)
+                    ? $"\"{cleaned}\""
+                    : cleaned;
+                var result = archive.Search(
+                    new UiPromptArchiveFilter(Query: query),
+                    sort: "newest",
+                    page: 1,
+                    pageSize: pageSize);
+                foreach (var item in result.Items)
+                {
+                    if (string.IsNullOrWhiteSpace(item.PromptText)) continue;
+                    matches.Add(new UiSubjectTagMatchedPrompt
+                    {
+                        Source = "prompt_archive",
+                        RecordId = item.Id.ToString(CultureInfo.InvariantCulture),
+                        CreatedAtUtc = item.LastSeenUtc ?? item.FirstSeenUtc ?? "",
+                        Prompt = item.PromptText,
+                    });
+                }
+            }
+            return matches;
         }
 
         public static async Task<PromptSubjectSynthesisResult> SynthesizeSubjectAsync(

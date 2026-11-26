@@ -4,6 +4,12 @@ Status: **implemented 2026-09-04** in the `--ui` web app. This document is the
 durable statement of the requirement, the settled decisions, and where each
 part lives in code.
 
+## Non-directive manager boundary and critic contract repair — 2026-11-26
+
+- **Standing product principle (owner decision, 2026-11-26):** Goal loops must not preemptively steer the manager model toward goal-specific strategies or task-type modes (such as specialized optimization rules). The manager model owns deciding how to reach the user's goal. The application's job is solely to give managers and critics honest, clear, organized information and reliable execution.
+- **Default manager:** `ManagerCatalog.DefaultKey` is `manager-gemini-4-neon` (Gemini 4 Neon), while all models in `ManagerCatalog.All` remain selectable.
+- **Single critic contract repair (`AskOneCriticAsync`):** When a critic returns a JSON contract violation (`ParseError != null`, never on a provider stop/refusal), the runner records the rejected entry and issues one automatic contract-repair retry (`UiGoalLoopPursuit.CriticContractRepairMessage`) on the same supplied images before failing the step. Previously, a single critic `goalMet` / schema slip failed the entire loop immediately (observed on production loop `cd0ff159b297` at turn 9).
+
 ## Implicit creator identity — 2026-09-20
 
 The goal-loop form has no creator-name field, identity chip, or change-name link.

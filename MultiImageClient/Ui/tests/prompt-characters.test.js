@@ -62,3 +62,52 @@ test("insert places the name at the selection and describes it only once", () =>
 test("name words feed the spell checker", () => {
   assert.deepEqual(characters.nameWords(cast).sort(), ["biscuit", "courtyard", "grandma's", "jing", "li"]);
 });
+
+test("@Name tags expand once at send time, strip repeated @, and respect possessives", () => {
+  const expanded = characters.expandAtTags(
+    "@Biscuit's leash while @Jing Li walks beside @Biscuit and @jing.",
+    cast);
+  assert.equal(expanded.changed, true);
+  assert.equal(
+    expanded.text,
+    "Biscuit's (a small cream Shiba Inu with a red collar) leash while " +
+      "Jing Li (a tall man with a gray beard) walks beside Biscuit and " +
+      "jing (a woman in her early 30s with round silver glasses).");
+  assert.deepEqual(expanded.expanded.map((c) => c.id), ["biscuit", "jing-li", "jing"]);
+});
+
+test("@Name ignores email addresses and preserves existing parenthetical descriptions", () => {
+  const email = characters.expandAtTags("Send mail to hello@Jing.com right now", cast);
+  assert.equal(email.changed, false);
+  assert.equal(email.text, "Send mail to hello@Jing.com right now");
+  assert.deepEqual(email.expanded, []);
+
+  const already = characters.expandAtTags("@Jing (wearing a space suit) waves to @Jing", cast);
+  assert.equal(already.changed, true);
+  assert.equal(already.text, "Jing (wearing a space suit) waves to Jing");
+  assert.deepEqual(already.expanded.map((c) => c.id), ["jing"]);
+});
+
+test("autocompleteContext detects @ prefix, multi-word names, and closes once unrelated text follows", () => {
+  const all = characters.autocompleteContext("A portrait of @", 15, cast);
+  assert.ok(all);
+  assert.equal(all.start, 14);
+  assert.equal(all.matches.length, 4);
+
+  const multi = characters.autocompleteContext("Photo of @jing l", 16, cast);
+  assert.ok(multi);
+  assert.deepEqual(multi.matches.map((c) => c.id), ["jing-li"]);
+
+  const applied = characters.applyAutocomplete("Photo of @jing l", multi.start, multi.end, multi.matches[0]);
+  assert.equal(applied.text, "Photo of @Jing Li ");
+  assert.equal(applied.caret, applied.text.length);
+
+  assert.equal(characters.autocompleteContext("email@jing", 10, cast), null);
+  assert.equal(characters.autocompleteContext("@Jing walks down the street", 27, cast), null);
+});
+
+test("insertAtTag inserts compact @Name with word spacing", () => {
+  const res = characters.insertAtTag("A photo of", 10, 10, cast, "biscuit");
+  assert.equal(res.text, "A photo of @Biscuit ");
+  assert.equal(res.caret, res.text.length);
+});

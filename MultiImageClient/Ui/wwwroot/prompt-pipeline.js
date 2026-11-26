@@ -5,6 +5,8 @@
 
 const Stage1MaxWriters = 4;
 const Stage1MaxPersonalPresets = 20;
+const Stage1TrayStorageKey = "mic_stage1_tray_v1";
+const Stage1TrayMaxSaved = 8;
 
 const promptSplitBtn = el("prompt-split");
 const stage1Bar = el("stage1-bar");
@@ -583,6 +585,13 @@ function setStage1Mode(nextMode, { focus = false } = {}) {
   if (open) {
     renderStage1Writers();
   }
+  if (promptBox) {
+    promptBox.placeholder = stage1Mode === "split"
+      ? "Prompt… (Ctrl+Enter to split)"
+      : stage1Mode === "rewrite"
+        ? "Prompt… (Ctrl+Enter to rewrite)"
+        : "Prompt… (Ctrl+Enter to send)";
+  }
   renderStage1ActionRow();
   if (focus) {
     stage1Bar.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -647,7 +656,230 @@ function removeStage1Card(cardState) {
   const idx = stage1Cards.indexOf(cardState);
   if (idx >= 0) stage1Cards.splice(idx, 1);
   updateStage1TrayHeader();
+  saveStage1TraySnapshot();
 }
+
+function splitCardHasPartEdits(cardState) {
+  if (!isMultiPartSplitCard(cardState) || !Array.isArray(cardState.originalPartPrompts)) {
+    return false;
+  }
+  return cardState.plan.images.some(
+    (part, idx) => part.prompt !== (cardState.originalPartPrompts[idx] ?? part.prompt));
+}
+
+function saveStage1TraySnapshot() {
+  try {
+    const items = [];
+    for (const card of stage1Cards) {
+      if (card.status !== "ready" || !card.exchangeId) continue;
+      if (card.images.length > 0 && !card.sourceJobId) continue;
+      const editedPartPrompts = splitCardHasPartEdits(card)
+        ? card.plan.images.map((part) => part.prompt)
+        : null;
+      items.push({
+        kind: card.kind,
+        exchangeId: card.exchangeId,
+        sourceJobId: card.sourceJobId || "",
+        modelKey: card.modelKey || "",
+        modelLabel: card.modelLabel || "",
+        selectedGens: [...card.selectedGens],
+        requestedShape: card.requestedShape || "auto",
+        selectedShape: card.selectedShape || null,
+        shapeCustomized: !!card.shapeCustomized,
+        editedPartPrompts,
+        rewriteText: card.kind === "rewrite" ? card.rewriteText : null,
+      });
+      if (items.length >= Stage1TrayMaxSaved) break;
+    }
+    if (!items.length) {
+      sessionStorage.removeItem(Stage1TrayStorageKey);
+    } else {
+      sessionStorage.setItem(Stage1TrayStorageKey, JSON.stringify(items));
+    }
+  } catch {
+    // Ignore storage quota errors.
+  }
+}
+
+function createReadySplitCardState(record, {
+  blobs = [],
+  initialGens = null,
+  sourceJobId = "",
+  requestedShape = null,
+  selectedShape = null,
+  shapeCustomized = false,
+  editedPartPrompts = null,
+  fallbackModelLabel = "",
+} = {}) {
+  const composerShape = requestedShape || el("opt-shape")?.value || "auto";
+  const resolvedGens = Array.isArray(initialGens)
+    ? initialGens
+    : checkedGeneratorKeys().filter((key) => !isDescribeGenKey(key));
+  const originalPartPrompts = record.images.map((part) => part.prompt);
+  const clonedImages = record.images.map((part, idx) => ({
+    ...part,
+    prompt: Array.isArray(editedPartPrompts)
+      && editedPartPrompts.length === record.images.length
+      && typeof editedPartPrompts[idx] === "string"
+      ? editedPartPrompts[idx]
+      : part.prompt,
+  }));
+  const resolvedSelectedShape = selectedShape && isKnownShapeKey(selectedShape)
+    ? selectedShape
+    : resolveInitialSeriesShape(composerShape, blobs.length > 0, record.suggestedShape);
+  return {
+    id: `s1-${++stage1CardSeq}`,
+    kind: "split",
+    modelKey: record.modelKey || record.model || "",
+    modelLabel: record.modelLabel || fallbackModelLabel || record.model || "Split",
+    user: currentUsername(),
+    sourcePrompt: record.sourcePrompt || "",
+    revision: null,
+    instruction: record.instruction || "",
+    styleNote: record.styleNote || "",
+    images: blobs.map((blob, idx) => ({ file: blob, name: `input${idx}.png` })),
+    selectedGens: new Set(resolvedGens),
+    requestedShape: composerShape,
+    selectedShape: resolvedSelectedShape,
+    shapeCustomized: !!shapeCustomized,
+    status: "ready",
+    plan: {
+      exchangeId: record.exchangeId,
+      model: record.model,
+      modelLabel: record.modelLabel || fallbackModelLabel || record.model || "Split",
+      imageCount: record.imageCount,
+      reason: record.reason || "",
+      suggestedShape: record.suggestedShape || null,
+      images: clonedImages,
+    },
+    originalPartPrompts,
+    rewriteText: "",
+    exchangeId: record.exchangeId,
+    sourceJobId: sourceJobId || "",
+    error: null,
+    rendering: false,
+    renderHistory: [],
+    canRetry: false,
+    startedAt: Date.now(),
+    controller: null,
+    timer: 0,
+    el: null,
+    pickerHost: null,
+  };
+}
+
+let stage1TrayHydrated = false;
+async function hydrateSavedStage1Tray() {
+  if (stage1TrayHydrated) return;
+  stage1TrayHydrated = true;
+  let saved;
+  try {
+    const raw = sessionStorage.getItem(Stage1TrayStorageKey);
+    if (!raw) return;
+    saved = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(saved) || !saved.length) return;
+  const availableGenKeys = new Set(
+    generators.filter((g) => g.kind !== "describe" && g.available).map((g) => g.key));
+  const fallbackGens = checkedGeneratorKeys().filter((key) => !isDescribeGenKey(key));
+  for (let i = Math.min(saved.length, Stage1TrayMaxSaved) - 1; i >= 0; i--) {
+    const entry = saved[i];
+    if (!entry || typeof entry.exchangeId !== "string" || !entry.exchangeId) continue;
+    if (stage1Cards.some((card) => card.kind === entry.kind && card.exchangeId === entry.exchangeId)) {
+      continue;
+    }
+    const restoredGens = Array.isArray(entry.selectedGens)
+      ? entry.selectedGens.filter((key) => availableGenKeys.has(key))
+      : [];
+    const chosenGens = restoredGens.length ? restoredGens : fallbackGens;
+    try {
+      if (entry.kind === "split") {
+        const [record, blobs] = await Promise.all([
+          fetchSplitExchangeRecord(entry.exchangeId, entry.sourceJobId || ""),
+          entry.sourceJobId ? fetchPrimaryJobInputBlobs(entry.sourceJobId).catch(() => []) : Promise.resolve([]),
+        ]);
+        if (record.status !== "succeeded" || !Array.isArray(record.images) || !record.images.length) continue;
+        const cardState = createReadySplitCardState(record, {
+          blobs,
+          initialGens: chosenGens,
+          sourceJobId: entry.sourceJobId || "",
+          requestedShape: entry.requestedShape || "auto",
+          selectedShape: entry.selectedShape || null,
+          shapeCustomized: !!entry.shapeCustomized,
+          editedPartPrompts: entry.editedPartPrompts,
+          fallbackModelLabel: entry.modelLabel || "",
+        });
+        addStage1Card(cardState);
+      } else if (entry.kind === "rewrite") {
+        const resp = await fetch(apiUrl(`api/prompt/exchange/${encodeURIComponent(entry.exchangeId)}`));
+        if (!resp.ok) continue;
+        const record = await resp.json();
+        if (record.status !== "succeeded") continue;
+        const cardState = {
+          id: `s1-${++stage1CardSeq}`,
+          kind: "rewrite",
+          modelKey: record.modelKey || record.model || entry.modelKey || "",
+          modelLabel: record.modelLabel || entry.modelLabel || record.model || "Rewrite",
+          user: currentUsername(),
+          sourcePrompt: record.sourcePrompt || "",
+          revision: null,
+          instruction: record.instruction || "",
+          styleNote: "",
+          images: [],
+          selectedGens: new Set(chosenGens),
+          requestedShape: "auto",
+          selectedShape: null,
+          shapeCustomized: false,
+          status: "ready",
+          plan: null,
+          originalPartPrompts: null,
+          rewriteText: typeof entry.rewriteText === "string"
+            ? entry.rewriteText
+            : (record.resultPrompt || ""),
+          exchangeId: record.exchangeId,
+          sourceJobId: "",
+          error: null,
+          rendering: false,
+          renderHistory: [],
+          canRetry: false,
+          startedAt: Date.now(),
+          controller: null,
+          timer: 0,
+          el: null,
+          pickerHost: null,
+        };
+        addStage1Card(cardState);
+      }
+    } catch {
+      // Drop entries whose server exchange is no longer reachable.
+    }
+  }
+  saveStage1TraySnapshot();
+}
+
+window.openSavedSplitInStage1 = async function openSavedSplitInStage1(exchangeId) {
+  if (!exchangeId) throw new Error("Saved split has no exchange id.");
+  const existing = stage1Cards.find((card) => card.kind === "split" && card.exchangeId === exchangeId);
+  if (existing?.el) {
+    existing.el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+  const record = await fetchSplitExchangeRecord(exchangeId, "");
+  if (record.status !== "succeeded" || !Array.isArray(record.images) || record.images.length < 2) {
+    throw new Error("This saved split has no multi-part plan to open.");
+  }
+  const cardState = createReadySplitCardState(record);
+  addStage1Card(cardState);
+  saveStage1TraySnapshot();
+  trackTelemetry("stage1.card_action", {
+    mode: "split",
+    action: "open_from_history",
+    parts: record.imageCount,
+  });
+  stage1ResultsSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
 
 function stage1AvailableShapes() {
   if (Array.isArray(shapeOptions) && shapeOptions.length > 0) {
@@ -828,6 +1060,7 @@ function refreshStage1CardPicker(cardState) {
         else cardState.selectedGens.delete(gen.key);
         pill.classList.toggle("checked", input.checked);
         refreshStage1CardRenderState(cardState);
+        saveStage1TraySnapshot();
       });
       const text = document.createElement("span");
       text.textContent = genLabel(gen.key);
@@ -863,11 +1096,18 @@ function refreshStage1CardRenderState(cardState) {
   if (renderBtn) {
     const count = cardState.selectedGens.size;
     const busy = cardState.rendering;
-    renderBtn.disabled = busy || count === 0;
+    const hasEmptyPart = isMultiPartSplitCard(cardState)
+      && cardState.plan.images.some((part) => !String(part.prompt || "").trim());
+    const hasEmptyRewrite = cardState.kind === "rewrite" && !String(cardState.rewriteText || "").trim();
+    renderBtn.disabled = busy || count === 0 || hasEmptyPart || hasEmptyRewrite;
     if (busy) {
       renderBtn.textContent = cardState.kind === "split" && cardState.plan?.imageCount >= 2
         ? `Starting ${cardState.plan.imageCount} jobs…`
         : "Starting job…";
+    } else if (hasEmptyPart) {
+      renderBtn.textContent = "Fill every part prompt to render";
+    } else if (hasEmptyRewrite) {
+      renderBtn.textContent = "Rewrite prompt is empty";
     } else if (cardState.kind === "split" && cardState.plan?.imageCount >= 2) {
       renderBtn.textContent = count > 0
         ? `Render ${cardState.plan.imageCount} parts × ${count} model${count === 1 ? "" : "s"}`
@@ -930,6 +1170,7 @@ function buildStage1SeriesArRow(cardState) {
     cardState.shapeCustomized = true;
     note.textContent = seriesShapeNoteText(cardState);
     refreshStage1CardPicker(cardState);
+    saveStage1TraySnapshot();
   });
 
   label.append(heading, select);
@@ -962,6 +1203,7 @@ function buildStage1ChildPicker(cardState) {
     cardState.selectedGens = new Set(
       checkedGeneratorKeys().filter((key) => !isDescribeGenKey(key)));
     refreshStage1CardPicker(cardState);
+    saveStage1TraySnapshot();
   });
 
   const sotaBtn = document.createElement("button");
@@ -973,6 +1215,7 @@ function buildStage1ChildPicker(cardState) {
       .map((g) => g.key);
     cardState.selectedGens = new Set(sotaKeys);
     refreshStage1CardPicker(cardState);
+    saveStage1TraySnapshot();
   });
 
   const noneBtn = document.createElement("button");
@@ -981,6 +1224,7 @@ function buildStage1ChildPicker(cardState) {
   noneBtn.addEventListener("click", () => {
     cardState.selectedGens.clear();
     refreshStage1CardPicker(cardState);
+    saveStage1TraySnapshot();
   });
 
   quick.append(syncBtn, sotaBtn, noneBtn);
@@ -1044,6 +1288,10 @@ async function renderStage1Card(cardState, { auto = false } = {}) {
       form.append("n", "1");
       form.append("generatorExtraTexts", JSON.stringify(generatorExtraTextsFor(gens)));
       form.append("splitExchangeId", cardState.plan.exchangeId);
+      const editedParts = splitCardHasPartEdits(cardState);
+      if (editedParts) {
+        form.append("splitEditedPrompts", JSON.stringify(cardState.plan.images.map((part) => part.prompt)));
+      }
       if (cardState.sourceJobId) {
         form.append("splitSourceJobId", cardState.sourceJobId);
       }
@@ -1053,7 +1301,7 @@ async function renderStage1Card(cardState, { auto = false } = {}) {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
       if (user === currentUsername() && cardState.revision !== null) {
-        promptRewrites.submitted(cardState.sourcePrompt, cardState.revision);
+        promptRewrites.submitted(cardState.rawPrompt || cardState.sourcePrompt, cardState.revision);
       }
       for (const job of body.jobs) {
         ownedJobIds.add(job.id);
@@ -1081,6 +1329,7 @@ async function renderStage1Card(cardState, { auto = false } = {}) {
         genCount: gens.length,
         parts: body.jobs.length,
         shape: splitOpts.shape || "auto",
+        edited: editedParts,
       });
       cardState.renderHistory.push(
         `${body.jobs.length} parts${shapeTag} × ${gens.map(genLabel).join(", ")}`);
@@ -1296,17 +1545,52 @@ function paintStage1Card(cardState) {
     body.appendChild(reasonEl);
 
     if (cardState.plan.imageCount >= 2) {
+      if (!Array.isArray(cardState.originalPartPrompts)
+          || cardState.originalPartPrompts.length !== cardState.plan.images.length) {
+        cardState.originalPartPrompts = cardState.plan.images.map((part) => part.prompt);
+      }
       const partsWrap = document.createElement("div");
       partsWrap.className = "stage1-parts";
       cardState.plan.images.forEach((part, idx) => {
+        const originalText = cardState.originalPartPrompts[idx] ?? part.prompt;
         const partBox = document.createElement("div");
         partBox.className = "stage1-part";
         const partHead = document.createElement("div");
         partHead.className = "stage1-part-head";
-        partHead.textContent = `part ${idx + 1} of ${cardState.plan.imageCount} · ${part.title}`;
-        const partPrompt = document.createElement("p");
+        const partTitle = document.createElement("span");
+        partTitle.textContent = `part ${idx + 1} of ${cardState.plan.imageCount} · ${part.title}`;
+        const partMeta = document.createElement("span");
+        partMeta.className = "stage1-part-meta";
+        const partChars = document.createElement("span");
+        partChars.className = "stage1-part-chars";
+        partChars.textContent = `${part.prompt.length.toLocaleString()} chars`;
+        const resetBtn = document.createElement("button");
+        resetBtn.type = "button";
+        resetBtn.className = "stage1-part-reset";
+        resetBtn.textContent = "reset";
+        resetBtn.title = "Restore this part's prompt from the model's split output";
+        resetBtn.hidden = part.prompt === originalText;
+        partMeta.append(partChars, resetBtn);
+        partHead.append(partTitle, partMeta);
+
+        const partPrompt = document.createElement("textarea");
         partPrompt.className = "stage1-part-prompt";
-        partPrompt.textContent = part.prompt;
+        partPrompt.rows = Math.min(6, Math.max(3, Math.ceil((part.prompt.length || 1) / 95)));
+        partPrompt.value = part.prompt;
+        partPrompt.setAttribute("aria-label", `Part ${idx + 1} of ${cardState.plan.imageCount}: ${part.title}`);
+        const syncPartEdit = () => {
+          part.prompt = partPrompt.value;
+          partChars.textContent = `${part.prompt.length.toLocaleString()} chars`;
+          resetBtn.hidden = part.prompt === originalText;
+          refreshStage1CardRenderState(cardState);
+          saveStage1TraySnapshot();
+        };
+        partPrompt.addEventListener("input", syncPartEdit);
+        resetBtn.addEventListener("click", () => {
+          partPrompt.value = originalText;
+          syncPartEdit();
+          partPrompt.focus();
+        });
         partBox.append(partHead, partPrompt);
         partsWrap.appendChild(partBox);
       });
@@ -1327,6 +1611,7 @@ function paintStage1Card(cardState) {
       cardState.rewriteText = textarea.value;
       badge.textContent = `${cardState.rewriteText.length.toLocaleString()} chars`;
       refreshStage1CardRenderState(cardState);
+      saveStage1TraySnapshot();
     });
     body.appendChild(textarea);
   }
@@ -1449,6 +1734,9 @@ async function runStage1Card(cardState) {
         throw failure;
       }
       cardState.plan = body;
+      cardState.originalPartPrompts = Array.isArray(body.images)
+        ? body.images.map((part) => part.prompt)
+        : null;
       cardState.exchangeId = body.exchangeId;
       cardState.modelLabel = body.modelLabel || cardState.modelLabel;
       if (body.imageCount >= 2) {
@@ -1503,6 +1791,7 @@ async function runStage1Card(cardState) {
     if (cardState.el?.isConnected) {
       paintStage1Card(cardState);
       updateStage1TrayHeader();
+      if (cardState.status === "ready") saveStage1TraySnapshot();
     }
     trackTelemetry("stage1.card_done", {
       mode: cardState.kind,
@@ -1544,13 +1833,14 @@ function addStage1Card(cardState) {
   updateStage1TrayHeader();
 }
 
-function startStage1Run() {
+async function startStage1Run(via = "click") {
+  const triggerVia = typeof via === "string" && via ? via : "click";
   stage1Error.textContent = "";
   const mode = stage1Mode;
   if (mode !== "split" && mode !== "rewrite") return;
 
-  const prompt = promptBox.value.trim();
-  if (!prompt) {
+  const rawPrompt = promptBox.value.trim();
+  if (!rawPrompt) {
     stage1Error.textContent = "Write a prompt first.";
     return;
   }
@@ -1587,7 +1877,17 @@ function startStage1Run() {
     return;
   }
 
-  const capturedImages = [...inputImageItems];
+  let resolved;
+  try {
+    resolved = typeof resolveComposerSubmission === "function"
+      ? await resolveComposerSubmission(promptBox.value)
+      : { prompt: rawPrompt, images: [...inputImageItems], expandedCharacters: [], attachedCharacterPhotos: 0 };
+  } catch (err) {
+    stage1Error.textContent = err instanceof Error ? err.message : String(err);
+    return;
+  }
+  const prompt = resolved.prompt;
+  const capturedImages = resolved.images;
   const capturedOptions = currentOutputOptions(true);
   const requestedShape = capturedOptions.shape || "auto";
 
@@ -1630,6 +1930,7 @@ function startStage1Run() {
       modelKey: writer.key || writer.model,
       modelLabel: writer.label,
       user,
+      rawPrompt,
       sourcePrompt: prompt,
       revision,
       instruction,
@@ -1643,6 +1944,7 @@ function startStage1Run() {
       shapeCustomized: false,
       status: "running",
       plan: null,
+      originalPartPrompts: null,
       rewriteText: "",
       exchangeId: "",
       sourceJobId: "",
@@ -1662,6 +1964,7 @@ function startStage1Run() {
 
   trackTelemetry("stage1.run", {
     mode,
+    via: triggerVia,
     writerCount: created.length,
     firstModel: created[0]?.modelKey || "",
     autoRender,
@@ -2069,46 +2372,15 @@ function enhanceSplitGroupHeader(group, split, card) {
         .map((node) => node.dataset.gen)
         .filter((key) => key && generators.some((g) => g.key === key && g.available));
       const initialGens = composerGens.length ? composerGens : groupGens;
-      const composerShape = el("opt-shape")?.value || "auto";
-      const cardState = {
-        id: `s1-${++stage1CardSeq}`,
-        kind: "split",
-        modelKey: record.modelKey || record.model || "",
-        modelLabel: record.modelLabel || split.modelLabel,
-        user: currentUsername(),
-        sourcePrompt: record.sourcePrompt,
-        revision: null,
-        instruction: record.instruction || "",
-        styleNote: record.styleNote || "",
-        images: blobs.map((blob, idx) => ({ file: blob, name: `input${idx}.png` })),
-        selectedGens: new Set(initialGens),
-        requestedShape: composerShape,
-        selectedShape: resolveInitialSeriesShape(composerShape, blobs.length > 0, record.suggestedShape),
-        shapeCustomized: false,
-        status: "ready",
-        plan: {
-          exchangeId: record.exchangeId,
-          model: record.model,
-          modelLabel: record.modelLabel || split.modelLabel,
-          imageCount: record.imageCount,
-          reason: record.reason || split.reason,
-          suggestedShape: record.suggestedShape || null,
-          images: record.images,
-        },
-        rewriteText: "",
-        exchangeId: record.exchangeId,
+      const cardState = createReadySplitCardState(record, {
+        blobs,
+        initialGens,
         sourceJobId: primaryJobId || "",
-        error: null,
-        rendering: false,
-        renderHistory: [],
-        canRetry: false,
-        startedAt: Date.now(),
-        controller: null,
-        timer: 0,
-        el: null,
-        pickerHost: null,
-      };
+        fallbackModelLabel: split.modelLabel,
+      });
+      if (!cardState.plan.reason && split.reason) cardState.plan.reason = split.reason;
       addStage1Card(cardState);
+      saveStage1TraySnapshot();
       stage1ResultsSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (error) {
       showGroupError(`Could not open saved split plan: ${error.message || error}`);
@@ -2210,7 +2482,15 @@ for (const mode of ["split", "rewrite"]) {
 }
 refreshStage1PresetSelectors();
 
-stage1RunBtn.addEventListener("click", startStage1Run);
+stage1RunBtn.addEventListener("click", () => startStage1Run("click"));
+for (const stage1Field of [stage1RewriteInstruction, stage1SplitInstruction, stage1SplitStyle]) {
+  stage1Field?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      startStage1Run("ctrl_enter");
+    }
+  });
+}
 if (stage1AutoRenderInput) {
   stage1AutoRenderInput.addEventListener("change", saveStage1AutoRenderSetting);
 }

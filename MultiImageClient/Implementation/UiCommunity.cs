@@ -143,6 +143,10 @@ namespace MultiImageClient
         public string RawResponse { get; init; } = "";
         public long CreatedAtUnixMs { get; init; }
         public long UpdatedAtUnixMs { get; init; }
+        public string ImageFile { get; init; } = "";
+        public string ImageMime { get; init; } = "";
+        public int ImageWidth { get; init; }
+        public int ImageHeight { get; init; }
     }
 
     /// SQLite source of truth for low-volume shared-site social activity and
@@ -304,6 +308,10 @@ namespace MultiImageClient
                     "endpoint_configurations_json",
                     "TEXT NOT NULL DEFAULT '[]'");
                 EnsureColumn(connection, "ui_claude_prompt_exchanges", "purpose", "TEXT NOT NULL DEFAULT ''");
+                EnsureColumn(connection, "ui_subject_tags", "image_file", "TEXT NOT NULL DEFAULT ''");
+                EnsureColumn(connection, "ui_subject_tags", "image_mime", "TEXT NOT NULL DEFAULT ''");
+                EnsureColumn(connection, "ui_subject_tags", "image_width", "INTEGER NOT NULL DEFAULT 0");
+                EnsureColumn(connection, "ui_subject_tags", "image_height", "INTEGER NOT NULL DEFAULT 0");
             }
         }
 
@@ -873,22 +881,32 @@ namespace MultiImageClient
 
                 var isNew = id.Length == 0;
                 long createdAtUnixMs = nowUnixMs;
+                string existingImageFile = "";
+                string existingImageMime = "";
+                int existingImageWidth = 0;
+                int existingImageHeight = 0;
                 if (!isNew)
                 {
                     using var existing = connection.CreateCommand();
                     existing.Transaction = transaction;
                     existing.CommandText =
                         """
-                        SELECT created_at_unix_ms FROM ui_subject_tags
+                        SELECT created_at_unix_ms, image_file, image_mime, image_width, image_height
+                        FROM ui_subject_tags
                         WHERE identity_key = $identity AND id = $id;
                         """;
                     existing.Parameters.AddWithValue("$identity", identityKey);
                     existing.Parameters.AddWithValue("$id", id);
-                    if (existing.ExecuteScalar() is not long created)
+                    using var existingReader = existing.ExecuteReader();
+                    if (!existingReader.Read())
                     {
                         throw new InvalidDataException("That character no longer exists.");
                     }
-                    createdAtUnixMs = created;
+                    createdAtUnixMs = existingReader.GetInt64(0);
+                    existingImageFile = existingReader.GetString(1);
+                    existingImageMime = existingReader.GetString(2);
+                    existingImageWidth = existingReader.GetInt32(3);
+                    existingImageHeight = existingReader.GetInt32(4);
                 }
                 else
                 {
@@ -967,6 +985,10 @@ namespace MultiImageClient
                     RawResponse = rawResponse,
                     CreatedAtUnixMs = createdAtUnixMs,
                     UpdatedAtUnixMs = nowUnixMs,
+                    ImageFile = existingImageFile,
+                    ImageMime = existingImageMime,
+                    ImageWidth = existingImageWidth,
+                    ImageHeight = existingImageHeight,
                 };
             }
         }
@@ -986,7 +1008,8 @@ namespace MultiImageClient
             id, identity_key, actor_display, name, normalized_name,
             subject_kind, search_query, model, description,
             source_summary, matched_prompts_count, matched_prompts_json,
-            raw_response, created_at_unix_ms, updated_at_unix_ms
+            raw_response, created_at_unix_ms, updated_at_unix_ms,
+            image_file, image_mime, image_width, image_height
             """;
 
         public List<UiSubjectTagRecord> ListSubjectTags(string identityKey)
@@ -1044,7 +1067,112 @@ namespace MultiImageClient
             }
         }
 
+        public (UiSubjectTagRecord Updated, string PreviousImageFile) UpdateSubjectTagImage(
+            string identityKey,
+            string id,
+            string imageFile,
+            string imageMime,
+            int imageWidth,
+            int imageHeight,
+            long nowUnixMs)
+        {
+            identityKey = RequireSubjectIdentity(identityKey);
+            id = (id ?? "").Trim();
+            if (id.Length == 0)
+            {
+                throw new InvalidDataException("Updating a character photo requires its exact id.");
+            }
+            imageFile = (imageFile ?? "").Trim();
+            imageMime = (imageMime ?? "").Trim();
+            if (imageFile.Length > 0)
+            {
+                if (imageFile.IndexOfAny(new[] { '/', '\\' }) >= 0 || imageFile.Contains("..", StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException("Character photo filename must not include directory paths.");
+                }
+                if (imageMime.Length == 0 || imageWidth <= 0 || imageHeight <= 0)
+                {
+                    throw new InvalidDataException("Character photo requires valid mime type and dimensions.");
+                }
+            }
+            else
+            {
+                imageMime = "";
+                imageWidth = 0;
+                imageHeight = 0;
+            }
+
+            lock (_sync)
+            {
+                using var connection = OpenConnection();
+                using var transaction = connection.BeginTransaction();
+                string previousImageFile;
+                using (var find = connection.CreateCommand())
+                {
+                    find.Transaction = transaction;
+                    find.CommandText =
+                        "SELECT image_file FROM ui_subject_tags WHERE identity_key = $identity AND id = $id;";
+                    find.Parameters.AddWithValue("$identity", identityKey);
+                    find.Parameters.AddWithValue("$id", id);
+                    if (find.ExecuteScalar() is not string prev)
+                    {
+                        throw new InvalidDataException("That character no longer exists.");
+                    }
+                    previousImageFile = prev;
+                }
+                using (var update = connection.CreateCommand())
+                {
+                    update.Transaction = transaction;
+                    update.CommandText =
+                        """
+                        UPDATE ui_subject_tags SET
+                            image_file = $file,
+                            image_mime = $mime,
+                            image_width = $width,
+                            image_height = $height,
+                            updated_at_unix_ms = $updated
+                        WHERE identity_key = $identity AND id = $id;
+                        """;
+                    update.Parameters.AddWithValue("$file", imageFile);
+                    update.Parameters.AddWithValue("$mime", imageMime);
+                    update.Parameters.AddWithValue("$width", imageWidth);
+                    update.Parameters.AddWithValue("$height", imageHeight);
+                    update.Parameters.AddWithValue("$updated", nowUnixMs);
+                    update.Parameters.AddWithValue("$identity", identityKey);
+                    update.Parameters.AddWithValue("$id", id);
+                    if (update.ExecuteNonQuery() != 1)
+                    {
+                        throw new InvalidOperationException("Updating character reference photo changed no row.");
+                    }
+                }
+                UiSubjectTagRecord updated;
+                using (var read = connection.CreateCommand())
+                {
+                    read.Transaction = transaction;
+                    read.CommandText =
+                        $"""
+                        SELECT {SubjectTagColumns}
+                        FROM ui_subject_tags
+                        WHERE identity_key = $identity AND id = $id;
+                        """;
+                    read.Parameters.AddWithValue("$identity", identityKey);
+                    read.Parameters.AddWithValue("$id", id);
+                    using var reader = read.ExecuteReader();
+                    if (!reader.Read())
+                    {
+                        throw new InvalidOperationException("Updated character row could not be read back.");
+                    }
+                    updated = ReadSubjectTagRow(reader);
+                }
+                transaction.Commit();
+                return (updated, previousImageFile);
+            }
+        }
+
         public bool DeleteSubjectTag(string identityKey, string id)
+            => DeleteSubjectTagReturningImage(identityKey, id, out _);
+
+        public bool DeleteSubjectTagReturningImage(string identityKey, string id, out string previousImageFile)
         {
             identityKey = RequireSubjectIdentity(identityKey);
             id = (id ?? "").Trim();
@@ -1052,15 +1180,32 @@ namespace MultiImageClient
             {
                 throw new InvalidDataException("Deleting a character requires its exact id.");
             }
+            previousImageFile = "";
             lock (_sync)
             {
                 using var connection = OpenConnection();
+                using var transaction = connection.BeginTransaction();
+                using (var find = connection.CreateCommand())
+                {
+                    find.Transaction = transaction;
+                    find.CommandText =
+                        "SELECT image_file FROM ui_subject_tags WHERE identity_key = $identity AND id = $id;";
+                    find.Parameters.AddWithValue("$identity", identityKey);
+                    find.Parameters.AddWithValue("$id", id);
+                    if (find.ExecuteScalar() is string existingFile)
+                    {
+                        previousImageFile = existingFile;
+                    }
+                }
                 using var command = connection.CreateCommand();
+                command.Transaction = transaction;
                 command.CommandText =
                     "DELETE FROM ui_subject_tags WHERE identity_key = $identity AND id = $id;";
                 command.Parameters.AddWithValue("$identity", identityKey);
                 command.Parameters.AddWithValue("$id", id);
-                return command.ExecuteNonQuery() > 0;
+                var deleted = command.ExecuteNonQuery() > 0;
+                transaction.Commit();
+                return deleted;
             }
         }
 
@@ -1183,6 +1328,10 @@ namespace MultiImageClient
                 RawResponse = reader.GetString(12),
                 CreatedAtUnixMs = reader.GetInt64(13),
                 UpdatedAtUnixMs = reader.GetInt64(14),
+                ImageFile = reader.GetString(15),
+                ImageMime = reader.GetString(16),
+                ImageWidth = reader.GetInt32(17),
+                ImageHeight = reader.GetInt32(18),
             };
         }
 

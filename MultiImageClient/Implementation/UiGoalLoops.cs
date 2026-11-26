@@ -3548,80 +3548,91 @@ namespace MultiImageClient
                 }
             }
 
-            ManagerChatReply reply;
-            await _managerCalls.WaitAsync(ct);
-            try
-            {
-                reply = await client.CompleteAsync(
-                    state.Loop.ProtocolVersion >= 9 ? UiGoalLoopSampling.CriticSystemPrompt
-                        : state.Loop.ProtocolVersion >= 8 ? UiGoalLoopFanout.CriticSystemPrompt
-                        : state.Loop.ProtocolVersion >= 7 ? UiGoalLoopPursuit.CriticSystemPrompt : UiGoalLoopProtocol.CriticSystemPrompt,
-                    new List<ManagerChatMessage> { new() { Role = "user", Text = text, Images = images } },
-                    ct);
-            }
-            finally
-            {
-                _managerCalls.Release();
-            }
+            var systemPrompt = state.Loop.ProtocolVersion >= 9 ? UiGoalLoopSampling.CriticSystemPrompt
+                : state.Loop.ProtocolVersion >= 8 ? UiGoalLoopFanout.CriticSystemPrompt
+                : state.Loop.ProtocolVersion >= 7 ? UiGoalLoopPursuit.CriticSystemPrompt : UiGoalLoopProtocol.CriticSystemPrompt;
 
-            var data = new UiGoalLoopCriticData
-            {
-                Index = critic.Index,
-                Key = critic.Key,
-                Label = critic.Label,
-                Model = reply.Model,
-                ProviderReasoning = string.IsNullOrWhiteSpace(reply.ProviderReasoning) ? null : reply.ProviderReasoning,
-                InputTokens = reply.InputTokens,
-                OutputTokens = reply.OutputTokens,
-                CostUsd = ManagerCatalog.EstimateCostUsd(definition, reply.InputTokens, reply.OutputTokens, DateTimeOffset.UtcNow),
-                ProviderStop = string.IsNullOrWhiteSpace(reply.ProviderStop) ? null : reply.ProviderStop,
-                RequestBytes = reply.RequestBytes,
-            };
+            var messages = new List<ManagerChatMessage> { new() { Role = "user", Text = text, Images = images } };
             string? error = null;
-            if (data.ProviderStop != null)
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                error = $"{critic.Label} (critic {critic.Index + 1}) did not answer — {data.ProviderStop}";
-            }
-            else
-            {
+                ManagerChatReply reply;
+                await _managerCalls.WaitAsync(ct);
                 try
                 {
-                    List<UiGoalCriterion>? rubric;
-                    lock (state.Lock) rubric = state.Loop.ProtocolVersion >= 7
-                        ? UiGoalLoopPursuit.Rubric(state.Entries) ?? throw new InvalidDataException("missing pursuit rubric") : null;
-                    data.Parsed = UiGoalLoopProtocol.ParseCritiqueReply(reply.Text, shown, rubric, state.Loop.ProtocolVersion);
-                    if (rubric != null) UiGoalLoopPursuit.ValidateCriticContext(data.Parsed, okResults);
+                    reply = await client.CompleteAsync(systemPrompt, messages, ct);
                 }
-                catch (InvalidDataException ex)
+                finally
                 {
-                    data.ParseError = ex.Message;
-                    error = $"{critic.Label} (critic {critic.Index + 1}): {ex.Message}";
+                    _managerCalls.Release();
                 }
-            }
-            lock (state.Lock)
-            {
-                AppendEntryLocked(state, new UiGoalLoopEntry
+
+                var data = new UiGoalLoopCriticData
                 {
-                    Turn = turn,
-                    Kind = UiGoalLoopKinds.Critique,
-                    From = UiGoalLoopParties.Critic,
-                    To = UiGoalLoopParties.System,
-                    Ms = reply.Ms,
-                    Text = reply.Text,
-                    Error = error,
-                    Critic = data,
-                    WireRequest = reply.RedactedRequest,
-                    WireResponse = reply.RawResponse,
-                });
-            }
-            if (error == null)
-            {
-                Logger.Log($"[goal #{loop.Id}] critic {critic.Index + 1} ({definition.Model}) turn {turn}:"
-                    + string.Concat(data.Parsed!.Critiques.Select(c => $" {c.Variant}/{c.Source}={c.Score:0.#}")));
-            }
-            else
-            {
+                    Index = critic.Index,
+                    Key = critic.Key,
+                    Label = critic.Label,
+                    Model = reply.Model,
+                    ProviderReasoning = string.IsNullOrWhiteSpace(reply.ProviderReasoning) ? null : reply.ProviderReasoning,
+                    InputTokens = reply.InputTokens,
+                    OutputTokens = reply.OutputTokens,
+                    CostUsd = ManagerCatalog.EstimateCostUsd(definition, reply.InputTokens, reply.OutputTokens, DateTimeOffset.UtcNow),
+                    ProviderStop = string.IsNullOrWhiteSpace(reply.ProviderStop) ? null : reply.ProviderStop,
+                    RequestBytes = reply.RequestBytes,
+                };
+                error = null;
+                if (data.ProviderStop != null)
+                {
+                    error = $"{critic.Label} (critic {critic.Index + 1}) did not answer — {data.ProviderStop}";
+                }
+                else
+                {
+                    try
+                    {
+                        List<UiGoalCriterion>? rubric;
+                        lock (state.Lock) rubric = state.Loop.ProtocolVersion >= 7
+                            ? UiGoalLoopPursuit.Rubric(state.Entries) ?? throw new InvalidDataException("missing pursuit rubric") : null;
+                        data.Parsed = UiGoalLoopProtocol.ParseCritiqueReply(reply.Text, shown, rubric, state.Loop.ProtocolVersion);
+                        if (rubric != null) UiGoalLoopPursuit.ValidateCriticContext(data.Parsed, okResults);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        data.ParseError = ex.Message;
+                        error = $"{critic.Label} (critic {critic.Index + 1}): {ex.Message}";
+                    }
+                }
+                lock (state.Lock)
+                {
+                    AppendEntryLocked(state, new UiGoalLoopEntry
+                    {
+                        Turn = turn,
+                        Kind = UiGoalLoopKinds.Critique,
+                        From = UiGoalLoopParties.Critic,
+                        To = UiGoalLoopParties.System,
+                        Ms = reply.Ms,
+                        Text = reply.Text,
+                        Error = error,
+                        Critic = data,
+                        WireRequest = reply.RedactedRequest,
+                        WireResponse = reply.RawResponse,
+                    });
+                }
+                if (error == null)
+                {
+                    Logger.Log($"[goal #{loop.Id}] critic {critic.Index + 1} ({definition.Model}) turn {turn}:"
+                        + string.Concat(data.Parsed!.Critiques.Select(c => $" {c.Variant}/{c.Source}={c.Score:0.#}")));
+                    return null;
+                }
                 Logger.Log($"[goal #{loop.Id}] critic {critic.Index + 1} ({definition.Model}) turn {turn} failed: {error}");
+                // One automatic contract repair on JSON schema slips (never on provider stops/refusals).
+                if (attempt == 0 && data.ParseError != null && data.ProviderStop == null && !string.IsNullOrWhiteSpace(reply.Text))
+                {
+                    Logger.Log($"[goal #{loop.Id}] critic {critic.Index + 1} ({definition.Model}) turn {turn}: requesting contract repair");
+                    messages.Add(new ManagerChatMessage { Role = "assistant", Text = reply.Text });
+                    messages.Add(new ManagerChatMessage { Role = "user", Text = UiGoalLoopPursuit.CriticContractRepairMessage(data.ParseError) });
+                    continue;
+                }
+                return error;
             }
             return error;
         }

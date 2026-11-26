@@ -698,23 +698,26 @@ function updateGeneratorCompatibility() {
   // is the AR-override gap on targets that actually consume the image
   // (Recraft image-to-image can't override output AR). Multi-image jobs do
   // not lock generator chips: non-gpt2 targets simply receive image 0.
-  const hasImage = hasInputImages();
-  const gainedFirstImage = hasImage && !compatibilityPreviouslyHadImage;
-  compatibilityPreviouslyHadImage = hasImage;
+  const manualHasImage = hasInputImages();
+  const effectiveImageCount = inputImageItems.length
+    + (typeof activeCharacterPhotoSubjects === "function" ? activeCharacterPhotoSubjects().length : 0);
+  const hasImage = effectiveImageCount > 0;
+  const gainedFirstImage = manualHasImage && !compatibilityPreviouslyHadImage;
+  compatibilityPreviouslyHadImage = manualHasImage;
   gensRow.classList.toggle("has-image", hasImage);
-  describeRow.classList.toggle("has-image", hasImage);
+  describeRow.classList.toggle("has-image", manualHasImage);
   // Without an attached image there is nothing to describe, so the whole
   // describe section disappears rather than showing a row of disabled chips.
   // (Any checked describe chips are unchecked below via requiresImage.)
   const showDescribeSection = generatorPreferences?.showDescribeSection !== false;
-  describeSection.hidden = !showDescribeSection || !hasImage || describeRow.children.length === 0;
+  describeSection.hidden = !showDescribeSection || !manualHasImage || describeRow.children.length === 0;
   for (const btn of document.querySelectorAll("#gen-controls .image-only-action")) {
     btn.hidden = !hasImage;
   }
   // A composition sketch is attached (tracked by exact File identity from
   // the sketch dialog). Media targets that were live-tested as NOT following
   // sketches stay selectable but turn amber with an explanatory tooltip.
-  const sketchAttached = hasImage && sketchIsAttached();
+  const sketchAttached = manualHasImage && sketchIsAttached();
   for (const cb of allGeneratorInputs()) {
     const providerAvailable = cb.dataset.available === "true";
     const imageCapable = cb.dataset.imageCapable === "true";
@@ -779,17 +782,17 @@ function updateGeneratorCompatibility() {
         cb.value,
         `${genLabel(cb.value)} doesn't accept input images — it will run from the prompt text only; the attached image is NOT sent to it`);
     }
-    else if (hasImage && inputImageItems.length > 1 && !generatorAcceptsMultipleInputs(cb.value) && imageCapable && !isDescribe)
+    else if (hasImage && effectiveImageCount > 1 && !generatorAcceptsMultipleInputs(cb.value) && imageCapable && !isDescribe)
     {
       label.title = generatorChooserTitle(
         cb.value,
-        `${genLabel(cb.value)} will receive only the first of ${inputImageItems.length} attached images (multi-image edit models receive all)`);
+        `${genLabel(cb.value)} will receive only the first of ${effectiveImageCount} attached images (multi-image edit models receive all)`);
     }
-    else if (hasImage && inputImageItems.length > 1 && isDescribe)
+    else if (hasImage && effectiveImageCount > 1 && isDescribe)
     {
       label.title = generatorChooserTitle(
         cb.value,
-        `${genLabel(cb.value)} will describe each of the ${inputImageItems.length} attached images separately`);
+        `${genLabel(cb.value)} will describe each of the ${effectiveImageCount} attached images separately`);
     }
     else
     {
@@ -1032,16 +1035,21 @@ function condensationFor(generator, prompt, extraText, imageAttached) {
 }
 
 function updatePromptLimitNotice() {
-  const imageAttached = hasInputImages();
+  const effectivePrompt = typeof effectiveComposerPromptText === "function"
+    ? effectiveComposerPromptText(promptBox.value)
+    : promptBox.value;
+  const imageAttached = typeof effectiveHasInputImages === "function"
+    ? effectiveHasInputImages(promptBox.value)
+    : hasInputImages();
   const groups = new Map();
   for (const cb of gensRow.querySelectorAll("input:checked")) {
     const generator = generators.find((g) => g.key === cb.value);
     if (!generator) continue;
     const extraText = combinedEndpointExtraText(generator.key);
     const imageSent = imageAttached && generator.imageCapable;
-    const full = MultiImagePromptLimits.check(generator, promptBox.value, extraText, imageSent);
+    const full = MultiImagePromptLimits.check(generator, effectivePrompt, extraText, imageSent);
     if (!full) continue;
-    const used = condensationFor(generator, promptBox.value, extraText, imageAttached);
+    const used = condensationFor(generator, effectivePrompt, extraText, imageAttached);
     const status = used ? { action: "condensed", unit: "characters", ...used.condensed } : full;
     const id = used
       ? `condensed ${used.condensation.exchangeId} ${status.max} ${status.count}`
@@ -1181,7 +1189,9 @@ async function condensePromptFor(keys, fresh) {
     usernameInput.focus();
     return;
   }
-  const prompt = promptBox.value;
+  const prompt = typeof effectiveComposerPromptText === "function"
+    ? effectiveComposerPromptText(promptBox.value)
+    : promptBox.value;
   const sourcePrompt = MultiImagePromptLimits.sentPrompt(prompt);
   const extraTexts = {};
   for (const key of keys) {
@@ -1194,7 +1204,9 @@ async function condensePromptFor(keys, fresh) {
     model: promptCondenseConfig.key || promptCondenseConfig.model || "",
     generators: keys.join(","),
     generatorExtraTexts: JSON.stringify(extraTexts),
-    imageAttached: String(hasInputImages()),
+    imageAttached: String(typeof effectiveHasInputImages === "function"
+      ? effectiveHasInputImages(promptBox.value)
+      : hasInputImages()),
     fresh: String(fresh),
   });
   promptCondensing = { keys: new Set(keys) };
@@ -1215,7 +1227,10 @@ async function condensePromptFor(keys, fresh) {
       modelLabel: body.modelLabel,
     };
     for (const key of keys) promptCondensations.set(key, condensation);
-    if (MultiImagePromptLimits.sentPrompt(promptBox.value) !== sourcePrompt) {
+    const latestEffective = typeof effectiveComposerPromptText === "function"
+      ? effectiveComposerPromptText(promptBox.value)
+      : promptBox.value;
+    if (MultiImagePromptLimits.sentPrompt(latestEffective) !== sourcePrompt) {
       promptCondenseNote = {
         keys: new Set(keys),
         text: `The prompt changed while ${body.modelLabel} condensed it, so the condensed prompt ` +
@@ -2310,6 +2325,9 @@ function renderInputThumbs() {
   clearBtn.hidden = !hasImage;
   multiInputHint.hidden = inputImageItems.length < 2;
   pasteZone.classList.toggle("has-image", hasImage);
+  if (typeof refreshCharacterPhotoComposerButton === "function") {
+    refreshCharacterPhotoComposerButton();
+  }
   updateShapeOptionLabel();
   updateGeneratorCompatibility();
   updatePromptLimitNotice();
@@ -4215,23 +4233,32 @@ async function submit(via = "click") {
   const gens = checkedGeneratorKeys();
   if (gens.length === 0) { sendError.textContent = "pick at least one generator"; return; }
   const describeOnly = gens.every(isDescribeGenKey);
-  // A describe-only job may omit the prompt: the standard describe instruction
-  // is used instead (the server enforces the same substitution), so the card
-  // shows exactly the instruction that went out.
-  let effectivePrompt = prompt;
-  if (!prompt) {
-    if (!describeOnly) { sendError.textContent = "prompt is empty"; return; }
-    effectivePrompt = describeConfig.defaultInstruction;
-    if (!effectivePrompt) { sendError.textContent = "prompt is empty"; return; }
-  }
-  if (gens.some(isDescribeGenKey) && !hasInputImages()) {
-    sendError.textContent = "describe endpoints need an attached image";
-    return;
-  }
   const user = currentUsername();
   if (!user) {
     sendError.textContent = "choose a username first (top of the page) — everything here is created under a name";
     usernameInput.focus();
+    return;
+  }
+
+  let resolved;
+  try {
+    resolved = await resolveComposerSubmission(promptBox.value);
+  } catch (err) {
+    sendError.textContent = err instanceof Error ? err.message : String(err);
+    return;
+  }
+  // A describe-only job may omit the prompt: the standard describe instruction
+  // is used instead (the server enforces the same substitution), so the card
+  // shows exactly the instruction that went out.
+  let effectivePrompt = resolved.prompt;
+  const submissionImages = resolved.images;
+  if (!effectivePrompt) {
+    if (!describeOnly) { sendError.textContent = "prompt is empty"; return; }
+    effectivePrompt = describeConfig.defaultInstruction;
+    if (!effectivePrompt) { sendError.textContent = "prompt is empty"; return; }
+  }
+  if (gens.some(isDescribeGenKey) && submissionImages.length === 0) {
+    sendError.textContent = "describe endpoints need an attached image";
     return;
   }
 
@@ -4258,7 +4285,7 @@ async function submit(via = "click") {
   for (const key of gens) {
     const generator = generators.find((g) => g.key === key);
     const used = generator &&
-      condensationFor(generator, effectivePrompt, generatorExtraTexts[key] || "", hasInputImages());
+      condensationFor(generator, effectivePrompt, generatorExtraTexts[key] || "", submissionImages.length > 0);
     if (used) condensedPrompts[key] = used.condensation.exchangeId;
   }
   if (Object.keys(condensedPrompts).length > 0) {
@@ -4268,7 +4295,7 @@ async function submit(via = "click") {
   if (sketchComposer) {
     form.append("sketchComposer", JSON.stringify(sketchComposer));
   }
-  appendInputImages(form, inputImageItems);
+  appendInputImages(form, submissionImages);
 
   sendBtn.disabled = true;
   try {
@@ -4280,8 +4307,10 @@ async function submit(via = "click") {
       via,
       genCount: gens.length,
       describeOnly,
-      hasImage: inputImageItems.length > 0,
-      imgCount: inputImageItems.length,
+      hasImage: submissionImages.length > 0,
+      imgCount: submissionImages.length,
+      charTags: resolved.expandedCharacters.length,
+      charPhotos: resolved.attachedCharacterPhotos,
       shape: el("opt-shape").value,
       detail: el("opt-detail").value,
       quality: el("opt-quality").value,
@@ -4296,9 +4325,9 @@ async function submit(via = "click") {
       body.id,
       effectivePrompt,
       gens,
-      inputImageItems.length > 0,
+      submissionImages.length > 0,
       Date.now(),
-      inputImageItems.length,
+      submissionImages.length,
       {
         user: body.user || user,
         originalUser: body.originalUser || body.user || user,
@@ -4314,8 +4343,17 @@ async function submit(via = "click") {
 
 sendBtn.addEventListener("click", () => submit("click"));
 promptBox.addEventListener("keydown", (e) => {
+  if (typeof handleCharacterAutocompleteKeydown === "function" && handleCharacterAutocompleteKeydown(e)) {
+    return;
+  }
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
+    if (typeof stage1Mode === "string"
+        && (stage1Mode === "rewrite" || stage1Mode === "split")
+        && typeof startStage1Run === "function") {
+      startStage1Run("ctrl_enter");
+      return;
+    }
     submit("ctrl_enter");
   }
 });
@@ -4556,9 +4594,14 @@ const claudeAdviceStatus = el("claude-advice-status");
 const claudeAdviceHistory = el("claude-advice-history");
 const claudeAdviceHistoryList = el("claude-advice-history-list");
 let claudeAdviceOriginalPrompt = "";
+let claudeAdviceRawPrompt = "";
 let claudeAdviceHistoryLoaded = false;
 const promptRewrites = window.createPromptRewrites({
-  apiUrl, promptBox, username: currentUsername, applyPrompt: applyClaudeEdit,
+  apiUrl,
+  promptBox,
+  username: currentUsername,
+  applyPrompt: applyClaudeEdit,
+  resolvePrompt: (raw) => effectiveComposerPromptText(raw),
 });
 let promptAdviceExchangeId = null;
 const DefaultClaudeAdviceInstruction =
@@ -4652,13 +4695,14 @@ async function loadClaudeAdviceHistory() {
 }
 
 function openClaudeAdvice() {
-  const original = promptBox.value;
-  if (!original.trim()) {
+  const raw = promptBox.value;
+  if (!raw.trim()) {
     sendError.textContent = "prompt is empty";
     return;
   }
   sendError.textContent = "";
-  claudeAdviceOriginalPrompt = original;
+  claudeAdviceRawPrompt = raw;
+  claudeAdviceOriginalPrompt = effectiveComposerPromptText(raw);
   claudeAdviceInstruction.value =
     storedPersonalField("promptTools")?.claudeAdviceInstruction ||
     localStorage.getItem(ClaudeAdviceInstructionKey) ||
@@ -4694,6 +4738,7 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
     return;
   }
   const original = claudeAdviceOriginalPrompt;
+  const rawOriginal = claudeAdviceRawPrompt;
   const actor = currentUsername();
   const sourceRevision = promptRewrites.revision;
   claudeAdviceSubmit.disabled = true;
@@ -4715,7 +4760,7 @@ claudeAdviceForm.addEventListener("submit", async (event) => {
       throw failure;
     }
     if (actor !== currentUsername()) { claudeAdviceDialog.close(); return; }
-    if (promptBox.value === original && sourceRevision === promptRewrites.revision) {
+    if (promptBox.value === rawOriginal && sourceRevision === promptRewrites.revision) {
       applyClaudeEdit(body.replacement, body.exchangeId);
       el("prompt-rewrite-status").textContent = "";
     } else {
@@ -4754,16 +4799,23 @@ promptAdviceUndoBtn.addEventListener("click", async () => {
 
 // ---------- Characters: saved descriptions for recurring people, places, and things ----------
 
-// A character is a name plus a short description. Typing a saved name in the
-// prompt shows it in the strip under the prompt; "describe" adds the
-// description once, after the first mention. Characters belong to the signed-in
-// account, not to the "creating as" name. See docs/prompt-subject-tags-prd.md.
+// A character is a name plus a short visual description and an optional
+// reference photo. Typing @Name in the prompt opens inline autocomplete and
+// auto-expands at send time (plus attaches the reference photo if enabled);
+// plain names still offer one-click "describe" in the strip under the prompt.
+// Characters belong to the signed-in account, not to the "creating as" name.
+// See docs/prompt-subject-tags-prd.md.
 const PromptCharacters = window.MultiImagePromptCharacters;
+const characterAutocomplete = el("character-autocomplete");
 const characterStrip = el("character-strip");
 const charactersToggleBtn = el("characters-toggle");
 const charactersPanel = el("characters-panel");
 const charactersCount = el("characters-count");
 const charactersListEl = el("characters-list");
+const characterQuickForm = el("character-quick-form");
+const characterQuickNameInput = el("character-quick-name");
+const characterQuickBtn = el("character-quick-btn");
+const characterQuickStatus = el("character-quick-status");
 const characterNewBtn = el("character-new");
 const characterForm = el("character-form");
 const characterFormTitle = el("character-form-title");
@@ -4773,6 +4825,12 @@ const characterQueryInput = el("character-query");
 const characterDescriptionInput = el("character-description");
 const characterNotesInput = el("character-notes");
 const characterModelSelect = el("character-model");
+const characterPhotoPreview = el("character-photo-preview");
+const characterPhotoFileInput = el("character-photo-file");
+const characterPhotoUploadBtn = el("character-photo-upload");
+const characterPhotoFromComposerBtn = el("character-photo-from-composer");
+const characterPhotoRemoveBtn = el("character-photo-remove");
+const characterPhotoMeta = el("character-photo-meta");
 const characterFindBtn = el("character-find");
 const characterWriteBtn = el("character-write-btn");
 const characterSaveBtn = el("character-save");
@@ -4783,6 +4841,7 @@ const characterMatches = el("character-matches");
 const characterMatchesSummary = el("character-matches-summary");
 const characterMatchesList = el("character-matches-list");
 const CharacterKindLabels = { character: "character", location: "place", object: "thing", general: "other" };
+const MaxCharacterPhotoCacheEntries = 16;
 
 let charactersCatalog = { defaultModel: "", models: [] };
 let characters = [];
@@ -4794,10 +4853,128 @@ let characterBusy = false;
 // holds the text this feature produced.
 let characterUndo = null;
 let mcpheeCharacterWords = [];
+// Character ids whose saved reference photo is toggled off for this session.
+const disabledCharacterPhotos = new Set();
+// Bounded FIFO cache of fetched character reference photo blobs keyed by imageUrl.
+const characterPhotoBlobCache = new Map();
+// Staged reference photo for an unsaved new character (uploaded right after save).
+let pendingCharacterPhoto = null;
+// Active @ autocomplete state when the popup is open.
+let characterAcState = null;
+
+function effectiveComposerPromptText(raw = promptBox.value) {
+  const value = String(raw || "");
+  if (!characters.length || !PromptCharacters?.expandAtTags) return value;
+  return PromptCharacters.expandAtTags(value, characters).text;
+}
+
+function activeCharacterPhotoSubjects(raw = promptBox.value) {
+  if (!characters.length || !PromptCharacters?.expandAtTags) return [];
+  const expanded = PromptCharacters.expandAtTags(String(raw || ""), characters);
+  return expanded.expanded.filter(
+    (c) => c.hasImage && c.imageUrl && !disabledCharacterPhotos.has(c.id));
+}
+
+function effectiveHasInputImages(raw = promptBox.value) {
+  return inputImageItems.length > 0 || activeCharacterPhotoSubjects(raw).length > 0;
+}
+
+async function fetchCharacterPhotoBlob(character) {
+  const url = character.imageUrl;
+  const cached = characterPhotoBlobCache.get(url);
+  if (cached) return cached;
+  const resp = await fetch(apiUrl(url));
+  if (resp.status === 401) { location.reload(); throw new Error("Sign in again."); }
+  if (!resp.ok) {
+    throw new Error(`Could not load @${character.name}'s reference photo (HTTP ${resp.status}).`);
+  }
+  const blob = await resp.blob();
+  if (!blob.type.startsWith("image/")) {
+    throw new Error(`@${character.name}'s reference photo returned unexpected type ${blob.type || "unknown"}.`);
+  }
+  if (characterPhotoBlobCache.size >= MaxCharacterPhotoCacheEntries) {
+    const oldestKey = characterPhotoBlobCache.keys().next().value;
+    if (oldestKey) characterPhotoBlobCache.delete(oldestKey);
+  }
+  characterPhotoBlobCache.set(url, blob);
+  return blob;
+}
+
+async function resolveComposerSubmission(raw = promptBox.value) {
+  const rawText = String(raw || "");
+  const expanded = characters.length && PromptCharacters?.expandAtTags
+    ? PromptCharacters.expandAtTags(rawText, characters)
+    : { text: rawText, changed: false, expanded: [] };
+  const photoSubjects = expanded.expanded.filter(
+    (c) => c.hasImage && c.imageUrl && !disabledCharacterPhotos.has(c.id));
+  const images = [...inputImageItems];
+  if (images.length + photoSubjects.length > maxInputImages) {
+    throw new Error(
+      `${images.length} attached image(s) plus ${photoSubjects.length} character photo(s) exceed the ${maxInputImages}-image limit. ` +
+      "Turn off a character photo chip below the prompt or remove an attached image.");
+  }
+  for (const subject of photoSubjects) {
+    const blob = await fetchCharacterPhotoBlob(subject);
+    const ext = blob.type === "image/jpeg" ? ".jpg"
+      : blob.type === "image/webp" ? ".webp"
+      : blob.type === "image/gif" ? ".gif"
+      : blob.type === "image/bmp" ? ".bmp"
+      : ".png";
+    const slug = subject.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "character";
+    images.push({ file: blob, name: `${slug}-ref${ext}` });
+  }
+  return {
+    prompt: expanded.text.trim(),
+    rawPrompt: rawText.trim(),
+    expandedCharacters: expanded.expanded,
+    images,
+    attachedCharacterPhotos: photoSubjects.length,
+  };
+}
+
+function clearPendingCharacterPhoto() {
+  if (pendingCharacterPhoto?.previewUrl) {
+    URL.revokeObjectURL(pendingCharacterPhoto.previewUrl);
+  }
+  pendingCharacterPhoto = null;
+}
+
+function refreshCharacterPhotoComposerButton() {
+  if (!characterPhotoFromComposerBtn) return;
+  const hasComposerImg = inputImageItems.length > 0;
+  characterPhotoFromComposerBtn.disabled = characterBusy || !hasComposerImg;
+  characterPhotoFromComposerBtn.title = hasComposerImg
+    ? "Save the first image currently attached in the composer as this character's reference photo"
+    : "Attach or paste an image in the composer first to use it here";
+}
+
+function renderCharacterPhotoState(character) {
+  if (!characterPhotoPreview) return;
+  if (pendingCharacterPhoto) {
+    characterPhotoPreview.src = pendingCharacterPhoto.previewUrl;
+    characterPhotoPreview.hidden = false;
+    characterPhotoRemoveBtn.hidden = false;
+    characterPhotoMeta.textContent = "Ready — will attach when you save.";
+  } else if (character?.hasImage && character.imageUrl) {
+    characterPhotoPreview.src = apiUrl(character.imageUrl);
+    characterPhotoPreview.hidden = false;
+    characterPhotoRemoveBtn.hidden = false;
+    characterPhotoMeta.textContent = character.imageWidth && character.imageHeight
+      ? `${character.imageWidth}×${character.imageHeight}`
+      : "Saved";
+  } else {
+    characterPhotoPreview.removeAttribute("src");
+    characterPhotoPreview.hidden = true;
+    characterPhotoRemoveBtn.hidden = true;
+    characterPhotoMeta.textContent = "None";
+  }
+  refreshCharacterPhotoComposerButton();
+}
 
 function configureCharacters(catalog) {
   charactersCatalog = catalog;
   characterNameInput.maxLength = catalog.maxNameChars;
+  characterQuickNameInput.maxLength = catalog.maxNameChars;
   characterQueryInput.maxLength = catalog.maxQueryChars;
   characterDescriptionInput.maxLength = catalog.maxDescriptionChars;
   characterNotesInput.maxLength = catalog.maxNotesChars;
@@ -4820,6 +4997,15 @@ function configureCharacters(catalog) {
   characterWriteBtn.title = preferred
     ? "Read your past prompts that mention this name and write one description from them"
     : "No writer model has an API key in settings.json";
+  if (characterQuickBtn) {
+    characterQuickBtn.disabled = characterBusy || !preferred;
+    characterQuickBtn.textContent = preferred
+      ? `create & write · ${preferred.label}`
+      : "create & write";
+    characterQuickBtn.title = preferred
+      ? `Search your history and write a character description with ${preferred.label}`
+      : "No writer model has an API key in settings.json";
+  }
 }
 
 async function charactersRequest(path, fields) {
@@ -4831,13 +5017,33 @@ async function charactersRequest(path, fields) {
   return body;
 }
 
+async function uploadCharacterPhotoBlob(characterId, blob, filename = "reference.png") {
+  const form = new FormData();
+  form.append("image", blob, filename || "reference.png");
+  const resp = await fetch(apiUrl(`api/prompt/subjects/${encodeURIComponent(characterId)}/image`), {
+    method: "POST",
+    body: form,
+  });
+  if (resp.status === 401) { location.reload(); throw new Error("Sign in again."); }
+  const body = await resp.json();
+  if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+  return body;
+}
+
 async function loadCharacters() {
   const body = await charactersRequest("api/prompt/subjects");
   characters = body.subjects;
   charactersLoaded = true;
+  // Drop cached blobs for URLs that no longer exist.
+  const activeUrls = new Set(characters.map((c) => c.imageUrl).filter(Boolean));
+  for (const key of [...characterPhotoBlobCache.keys()]) {
+    if (!activeUrls.has(key)) characterPhotoBlobCache.delete(key);
+  }
   syncCharacterNamesToMcphee();
   renderCharacterList();
   renderCharacterStrip();
+  updatePromptLimitNotice();
+  if (!characterAutocomplete.hidden) renderCharacterAutocomplete();
 }
 
 function showCharactersLoadError(err) {
@@ -4888,10 +5094,137 @@ function describeAllCharactersInPrompt() {
   if (result.changed) setPromptFromCharacters(result.text, Math.min(caret, result.text.length));
 }
 
-function insertCharacterInPrompt(id) {
-  const result = PromptCharacters.insertCharacter(
+function expandAtCharacterInline(id) {
+  const target = characterById(id);
+  if (!target) return;
+  const caret = promptBox.selectionEnd ?? promptBox.value.length;
+  const result = PromptCharacters.expandAtTags(promptBox.value, [target]);
+  if (result.changed) {
+    trackTelemetry("character.action", { action: "at_expand_inline" });
+    setPromptFromCharacters(result.text, Math.min(caret, result.text.length));
+  }
+}
+
+function insertAtTagInPrompt(id) {
+  const result = PromptCharacters.insertAtTag(
     promptBox.value, promptBox.selectionStart, promptBox.selectionEnd, characters, id);
-  if (result.changed) setPromptFromCharacters(result.text, result.caret);
+  if (result.changed) {
+    trackTelemetry("character.action", { action: "insert_at_tag" });
+    setPromptFromCharacters(result.text, result.caret);
+  }
+}
+
+function closeCharacterAutocomplete() {
+  characterAcState = null;
+  if (!characterAutocomplete) return;
+  characterAutocomplete.hidden = true;
+  characterAutocomplete.replaceChildren();
+}
+
+function acceptCharacterAutocomplete(index) {
+  if (!characterAcState || !characterAcState.matches.length) return;
+  const chosen = characterAcState.matches[index] || characterAcState.matches[0];
+  const applied = PromptCharacters.applyAutocomplete(
+    promptBox.value, characterAcState.start, characterAcState.end, chosen);
+  closeCharacterAutocomplete();
+  promptBox.value = applied.text;
+  promptBox.focus();
+  promptBox.setSelectionRange(applied.caret, applied.caret);
+  promptBox.dispatchEvent(new Event("input", { bubbles: true }));
+  if (mcpheeCtl) mcpheeCtl.refresh();
+  if (mcpheePanel && !mcpheePanelContainer.hidden) mcpheePanel.refresh();
+  updatePromptLimitNotice();
+  trackTelemetry("character.action", { action: "at_pick", hasImage: Boolean(chosen.hasImage) });
+}
+
+function paintCharacterAutocompleteItems() {
+  if (!characterAcState || !characterAutocomplete) return;
+  characterAutocomplete.replaceChildren();
+  const visible = characterAcState.matches.slice(0, 8);
+  visible.forEach((character, idx) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.role = "option";
+    btn.className = idx === characterAcState.activeIndex ? "character-ac-item active" : "character-ac-item";
+    btn.setAttribute("aria-selected", String(idx === characterAcState.activeIndex));
+    if (character.hasImage && character.imageUrl) {
+      const thumb = document.createElement("img");
+      thumb.className = "character-ac-thumb";
+      thumb.src = apiUrl(character.imageUrl);
+      thumb.alt = "";
+      btn.appendChild(thumb);
+    }
+    const name = document.createElement("span");
+    name.className = "character-ac-name";
+    name.textContent = `@${character.name}`;
+    const desc = document.createElement("span");
+    desc.className = "character-ac-desc";
+    desc.textContent = character.description;
+    btn.append(name, desc);
+    if (character.hasImage) {
+      const badge = document.createElement("span");
+      badge.className = "character-ac-photo-badge";
+      badge.textContent = "photo";
+      btn.appendChild(badge);
+    }
+    btn.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      acceptCharacterAutocomplete(idx);
+    });
+    characterAutocomplete.appendChild(btn);
+  });
+  characterAutocomplete.hidden = visible.length === 0;
+}
+
+function renderCharacterAutocomplete() {
+  if (!characterAutocomplete || !PromptCharacters?.autocompleteContext) return;
+  if (document.activeElement !== promptBox
+      || promptBox.selectionStart !== promptBox.selectionEnd
+      || !characters.length) {
+    closeCharacterAutocomplete();
+    return;
+  }
+  const ctx = PromptCharacters.autocompleteContext(promptBox.value, promptBox.selectionStart, characters);
+  if (!ctx || !ctx.matches.length) {
+    closeCharacterAutocomplete();
+    return;
+  }
+  const maxIndex = Math.min(ctx.matches.length, 8) - 1;
+  const activeIndex = characterAcState && characterAcState.start === ctx.start
+    ? Math.min(characterAcState.activeIndex, maxIndex)
+    : 0;
+  characterAcState = { ...ctx, matches: ctx.matches.slice(0, 8), activeIndex };
+  paintCharacterAutocompleteItems();
+}
+
+function handleCharacterAutocompleteKeydown(event) {
+  if (!characterAcState || characterAutocomplete.hidden || !characterAcState.matches.length) {
+    return false;
+  }
+  const count = characterAcState.matches.length;
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    characterAcState.activeIndex = (characterAcState.activeIndex + 1) % count;
+    paintCharacterAutocompleteItems();
+    return true;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    characterAcState.activeIndex = (characterAcState.activeIndex - 1 + count) % count;
+    paintCharacterAutocompleteItems();
+    return true;
+  }
+  if ((event.key === "Enter" && !event.ctrlKey && !event.metaKey) || event.key === "Tab") {
+    event.preventDefault();
+    acceptCharacterAutocomplete(characterAcState.activeIndex);
+    return true;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeCharacterAutocomplete();
+    return true;
+  }
+  return false;
 }
 
 function stripButton(text, title, onClick, className = "") {
@@ -4904,8 +5237,15 @@ function stripButton(text, title, onClick, className = "") {
   return btn;
 }
 
+let lastActiveCharacterPhotoCount = 0;
+
 function renderCharacterStrip() {
   const entries = PromptCharacters.summarize(PromptCharacters.findMentions(promptBox.value, characters));
+  const activePhotoCount = activeCharacterPhotoSubjects(promptBox.value).length;
+  if (activePhotoCount !== lastActiveCharacterPhotoCount) {
+    lastActiveCharacterPhotoCount = activePhotoCount;
+    updateGeneratorCompatibility();
+  }
   const undoValid = characterUndo && promptBox.value === characterUndo.after;
   if (!undoValid) characterUndo = null;
   characterStrip.replaceChildren();
@@ -4919,7 +5259,39 @@ function renderCharacterStrip() {
   characterStrip.appendChild(label);
   for (const entry of entries) {
     const name = entry.character.name;
-    if (entry.described) {
+    if (entry.hasAtTag) {
+      characterStrip.appendChild(stripButton(
+        `@${name} ✓ auto-expands`,
+        `Sends "${name} (${entry.character.description})". Select to edit ${name}.`,
+        () => openCharacterEditor(entry.characterId),
+        "character-chip at-active"));
+      if (entry.character.hasImage) {
+        const photoEnabled = !disabledCharacterPhotos.has(entry.characterId);
+        characterStrip.appendChild(stripButton(
+          photoEnabled ? `${name} photo on` : `${name} photo off`,
+          photoEnabled
+            ? `Reference photo for ${name} will auto-attach on send. Click to turn off for this session.`
+            : `Reference photo for ${name} is off. Click to auto-attach it on send.`,
+          () => {
+            if (disabledCharacterPhotos.has(entry.characterId)) {
+              disabledCharacterPhotos.delete(entry.characterId);
+            } else {
+              disabledCharacterPhotos.add(entry.characterId);
+            }
+            trackTelemetry("character.action", { action: "photo_toggle", enabled: !disabledCharacterPhotos.has(entry.characterId) });
+            renderCharacterStrip();
+            updatePromptLimitNotice();
+          },
+          photoEnabled ? "character-chip photo-on" : "character-chip photo-off"));
+      }
+      if (!entry.described) {
+        characterStrip.appendChild(stripButton(
+          `expand @${name}`,
+          `Replace @${name} with "${name} (${entry.character.description})" in the prompt box so you can edit traits for this run`,
+          () => expandAtCharacterInline(entry.characterId),
+          "character-chip expand-inline"));
+      }
+    } else if (entry.described) {
       characterStrip.appendChild(stripButton(`${name} ✓`,
         `This prompt already describes ${name}. Select to open ${name} in your characters.`,
         () => openCharacterEditor(entry.characterId), "character-chip described"));
@@ -4929,7 +5301,7 @@ function renderCharacterStrip() {
         () => describeCharacterInPrompt(entry.characterId), "character-chip"));
     }
   }
-  const pending = entries.filter((e) => !e.described).length;
+  const pending = entries.filter((e) => !e.hasAtTag && !e.described).length;
   if (pending >= 2) {
     characterStrip.appendChild(stripButton(`describe all ${pending}`,
       "Add each character's description after its first mention",
@@ -4957,7 +5329,7 @@ function renderCharacterList() {
   if (!characters.length) {
     const empty = document.createElement("p");
     empty.className = "characters-empty";
-    empty.textContent = "No characters yet. Select new character, give it a name, and describe its look once.";
+    empty.textContent = "No characters yet. Type a name above to create one from your history, or select new character.";
     charactersListEl.appendChild(empty);
     return;
   }
@@ -4965,9 +5337,16 @@ function renderCharacterList() {
     const row = document.createElement("div");
     row.className = "character-row";
     if (character.id === editingCharacterId) row.classList.add("editing");
+    if (character.hasImage && character.imageUrl) {
+      const thumb = document.createElement("img");
+      thumb.className = "character-row-thumb";
+      thumb.src = apiUrl(character.imageUrl);
+      thumb.alt = "";
+      row.appendChild(thumb);
+    }
     const name = document.createElement("strong");
     name.className = "character-row-name";
-    name.textContent = character.name;
+    name.textContent = `@${character.name}`;
     const kind = document.createElement("span");
     kind.className = "character-row-kind";
     kind.textContent = CharacterKindLabels[character.kind];
@@ -4976,8 +5355,8 @@ function renderCharacterList() {
     desc.textContent = character.description;
     desc.title = character.description;
     row.append(name, kind, desc,
-      stripButton("insert", `Insert ${character.name} at the cursor in the prompt`,
-        () => insertCharacterInPrompt(character.id)),
+      stripButton("insert @tag", `Insert @${character.name} at the cursor (auto-expands on send)`,
+        () => insertAtTagInPrompt(character.id)),
       stripButton("edit", `Edit ${character.name}`, () => openCharacterEditor(character.id)));
     charactersListEl.appendChild(row);
   }
@@ -4986,7 +5365,7 @@ function renderCharacterList() {
 function characterFormValues() {
   return JSON.stringify([
     characterNameInput.value, characterKindSelect.value, characterQueryInput.value,
-    characterDescriptionInput.value, characterNotesInput.value,
+    characterDescriptionInput.value, characterNotesInput.value, Boolean(pendingCharacterPhoto),
   ]);
 }
 
@@ -5000,9 +5379,16 @@ function setCharacterStatus(text, kind = "") {
   characterStatus.className = kind;
 }
 
+function setCharacterQuickStatus(text, kind = "") {
+  if (!characterQuickStatus) return;
+  characterQuickStatus.textContent = text;
+  characterQuickStatus.className = kind;
+}
+
 function fillCharacterForm(character) {
+  clearPendingCharacterPhoto();
   editingCharacterId = character ? character.id : "";
-  characterFormTitle.textContent = character ? `Edit ${character.name}` : "New character";
+  characterFormTitle.textContent = character ? `Edit @${character.name}` : "New character";
   characterNameInput.value = character ? character.name : "";
   characterKindSelect.value = character ? character.kind : "character";
   characterQueryInput.value = character ? character.searchQuery : "";
@@ -5011,6 +5397,7 @@ function fillCharacterForm(character) {
   characterDescriptionInput.dispatchEvent(new Event("input", { bubbles: true }));
   characterDeleteBtn.hidden = !character;
   characterMatches.hidden = true;
+  renderCharacterPhotoState(character);
   characterFormSnapshot = characterFormValues();
 }
 
@@ -5019,6 +5406,7 @@ function setCharactersPanelOpen(open) {
   charactersToggleBtn.setAttribute("aria-expanded", String(open));
   if (open) {
     loadCharacters().catch(showCharactersLoadError);
+    refreshCharacterPhotoComposerButton();
   }
 }
 
@@ -5034,6 +5422,7 @@ function openCharacterEditor(id) {
 }
 
 function closeCharacterEditor() {
+  clearPendingCharacterPhoto();
   characterForm.hidden = true;
   editingCharacterId = "";
   characterFormSnapshot = "";
@@ -5042,8 +5431,13 @@ function closeCharacterEditor() {
 
 function setCharacterBusy(busy) {
   characterBusy = busy;
-  for (const btn of [characterFindBtn, characterSaveBtn, characterDeleteBtn]) btn.disabled = busy;
-  characterWriteBtn.disabled = busy || !charactersCatalog.models.some((m) => !m.availabilityProblem);
+  const hasWriter = charactersCatalog.models.some((m) => !m.availabilityProblem);
+  for (const btn of [characterFindBtn, characterSaveBtn, characterDeleteBtn, characterPhotoUploadBtn, characterPhotoRemoveBtn]) {
+    if (btn) btn.disabled = busy;
+  }
+  characterWriteBtn.disabled = busy || !hasWriter;
+  if (characterQuickBtn) characterQuickBtn.disabled = busy || !hasWriter;
+  refreshCharacterPhotoComposerButton();
 }
 
 function renderCharacterMatches(name, matches) {
@@ -5055,7 +5449,7 @@ function renderCharacterMatches(name, matches) {
     const li = document.createElement("li");
     const when = document.createElement("span");
     when.className = "character-match-date";
-    when.textContent = match.createdAtUtc ? String(match.createdAtUtc).slice(0, 10) : "prompt file";
+    when.textContent = match.createdAtUtc ? String(match.createdAtUtc).slice(0, 10) : (match.source || "prompt");
     const text = document.createElement("span");
     text.className = "character-match-text";
     const at = match.prompt.toLowerCase().indexOf(name.toLowerCase());
@@ -5067,10 +5461,130 @@ function renderCharacterMatches(name, matches) {
   characterMatches.hidden = false;
 }
 
+async function applyCharacterPhotoBlob(blob, filename, telemetryAction) {
+  if (!blob) return;
+  if (!editingCharacterId) {
+    clearPendingCharacterPhoto();
+    pendingCharacterPhoto = {
+      blob,
+      name: filename || "reference.png",
+      previewUrl: URL.createObjectURL(blob),
+    };
+    renderCharacterPhotoState(null);
+    setCharacterStatus("Photo staged. Select save to keep it with this character.", "ok");
+    return;
+  }
+  setCharacterBusy(true);
+  setCharacterStatus("Saving reference photo…");
+  try {
+    const body = await uploadCharacterPhotoBlob(editingCharacterId, blob, filename);
+    await loadCharacters();
+    fillCharacterForm(characterById(body.subject.id));
+    renderCharacterList();
+    trackTelemetry("character.action", { action: telemetryAction });
+    setCharacterStatus(`Reference photo saved for @${body.subject.name}.`, "ok");
+  } catch (err) {
+    setCharacterStatus(err.message || String(err), "error");
+  } finally {
+    setCharacterBusy(false);
+  }
+}
+
 charactersToggleBtn.addEventListener("click", () => setCharactersPanelOpen(charactersPanel.hidden));
 characterNewBtn.addEventListener("click", () => openCharacterEditor(""));
 characterCancelBtn.addEventListener("click", () => {
   if (confirmDiscardCharacterForm()) closeCharacterEditor();
+});
+
+characterPhotoUploadBtn?.addEventListener("click", () => {
+  if (characterBusy) return;
+  characterPhotoFileInput.value = "";
+  characterPhotoFileInput.click();
+});
+
+characterPhotoFileInput?.addEventListener("change", async () => {
+  const file = characterPhotoFileInput.files?.[0];
+  if (!file) return;
+  await applyCharacterPhotoBlob(file, file.name, "photo_upload");
+});
+
+characterPhotoFromComposerBtn?.addEventListener("click", async () => {
+  if (characterBusy || !inputImageItems.length) return;
+  const first = inputImageItems[0];
+  await applyCharacterPhotoBlob(first.file, first.file?.name || "composer-ref.png", "photo_from_composer");
+});
+
+characterPhotoRemoveBtn?.addEventListener("click", async () => {
+  if (characterBusy) return;
+  if (pendingCharacterPhoto) {
+    clearPendingCharacterPhoto();
+    renderCharacterPhotoState(editingCharacterId ? characterById(editingCharacterId) : null);
+    setCharacterStatus("Removed staged photo.");
+    return;
+  }
+  if (!editingCharacterId) return;
+  setCharacterBusy(true);
+  setCharacterStatus("Removing reference photo…");
+  try {
+    const body = await charactersRequest(`api/prompt/subjects/${encodeURIComponent(editingCharacterId)}/image/delete`, {});
+    await loadCharacters();
+    fillCharacterForm(characterById(body.subject.id));
+    renderCharacterList();
+    trackTelemetry("character.action", { action: "photo_delete" });
+    setCharacterStatus(`Removed reference photo for @${body.subject.name}.`, "ok");
+  } catch (err) {
+    setCharacterStatus(err.message || String(err), "error");
+  } finally {
+    setCharacterBusy(false);
+  }
+});
+
+characterQuickForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (characterBusy) return;
+  const name = characterQuickNameInput.value.trim().replace(/^@+/, "");
+  if (!name) {
+    setCharacterQuickStatus("Type a character name first.", "error");
+    characterQuickNameInput.focus();
+    return;
+  }
+  const modelKey = characterModelSelect.value || charactersCatalog.defaultModel;
+  const modelLabel = characterModelSelect.selectedOptions[0]?.textContent || "The writer";
+  setCharacterBusy(true);
+  setCharacterQuickStatus(`${modelLabel} is searching your history for ${name}…`);
+  try {
+    const body = await charactersRequest("api/prompt/subjects/synthesize", {
+      id: "",
+      name,
+      kind: "character",
+      query: "",
+      model: modelKey,
+      notes: "",
+    });
+    characterQuickNameInput.value = "";
+    await loadCharacters();
+    fillCharacterForm(characterById(body.subject.id));
+    characterForm.hidden = false;
+    renderCharacterList();
+    if (body.matches.length) renderCharacterMatches(body.subject.name, body.matches);
+    trackTelemetry("character.action", { action: "quick_create", matched: body.subject.matchedPromptsCount });
+    setCharacterQuickStatus(`Created @${body.subject.name}. Type @${body.subject.name} in any prompt.`, "ok");
+    setCharacterStatus(
+      `Saved from ${body.subject.matchedPromptsCount} past prompt(s). You can tweak the text or attach a reference photo below.`,
+      "ok");
+  } catch (err) {
+    setCharacterQuickStatus(err.message || String(err), "error");
+    // Open the editor prefilled with the name so the user can add notes or a manual description.
+    if (confirmDiscardCharacterForm()) {
+      fillCharacterForm(null);
+      characterNameInput.value = name;
+      characterForm.hidden = false;
+      characterDescriptionInput.focus();
+      setCharacterStatus(err.message || String(err), "error");
+    }
+  } finally {
+    setCharacterBusy(false);
+  }
 });
 
 characterFindBtn.addEventListener("click", async () => {
@@ -5097,6 +5611,7 @@ characterWriteBtn.addEventListener("click", async () => {
   if (characterDescriptionInput.value.trim()
     && !window.confirm(`Replace the description of ${name} with a new one written from your prompts?`)) return;
   const modelLabel = characterModelSelect.selectedOptions[0]?.textContent || "The writer";
+  const stagedPhoto = pendingCharacterPhoto ? { blob: pendingCharacterPhoto.blob, name: pendingCharacterPhoto.name } : null;
   setCharacterBusy(true);
   characterWriteBtn.textContent = "writing…";
   setCharacterStatus(`${modelLabel} is reading your prompts about ${name}…`);
@@ -5109,6 +5624,10 @@ characterWriteBtn.addEventListener("click", async () => {
       model: characterModelSelect.value,
       notes: characterNotesInput.value,
     });
+    if (stagedPhoto) {
+      await uploadCharacterPhotoBlob(body.subject.id, stagedPhoto.blob, stagedPhoto.name);
+      clearPendingCharacterPhoto();
+    }
     await loadCharacters();
     fillCharacterForm(characterById(body.subject.id));
     renderCharacterList();
@@ -5132,16 +5651,21 @@ characterForm.addEventListener("submit", async (event) => {
   const description = characterDescriptionInput.value.trim();
   if (!name) { setCharacterStatus("Give the character a name.", "error"); characterNameInput.focus(); return; }
   if (!description) { setCharacterStatus("Describe the character, or select write it from my prompts.", "error"); characterDescriptionInput.focus(); return; }
+  const stagedPhoto = pendingCharacterPhoto ? { blob: pendingCharacterPhoto.blob, name: pendingCharacterPhoto.name } : null;
   setCharacterBusy(true);
   try {
     const body = await charactersRequest("api/prompt/subjects", {
       id: editingCharacterId, name, kind: characterKindSelect.value,
       query: characterQueryInput.value, description,
     });
+    if (stagedPhoto) {
+      await uploadCharacterPhotoBlob(body.subject.id, stagedPhoto.blob, stagedPhoto.name);
+      clearPendingCharacterPhoto();
+    }
     await loadCharacters();
     fillCharacterForm(characterById(body.subject.id));
     renderCharacterList();
-    setCharacterStatus(`Saved ${body.subject.name}.`, "ok");
+    setCharacterStatus(`Saved @${body.subject.name}.`, "ok");
   } catch (err) {
     setCharacterStatus(err.message, "error");
   } finally {
@@ -5156,6 +5680,7 @@ characterDeleteBtn.addEventListener("click", async () => {
   setCharacterBusy(true);
   try {
     await charactersRequest("api/prompt/subjects/delete", { id: character.id });
+    disabledCharacterPhotos.delete(character.id);
     closeCharacterEditor();
     await loadCharacters();
   } catch (err) {
@@ -5165,7 +5690,17 @@ characterDeleteBtn.addEventListener("click", async () => {
   }
 });
 
-promptBox.addEventListener("input", renderCharacterStrip);
+promptBox.addEventListener("input", () => {
+  renderCharacterStrip();
+  renderCharacterAutocomplete();
+});
+promptBox.addEventListener("click", renderCharacterAutocomplete);
+promptBox.addEventListener("keyup", (event) => {
+  if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "Home" || event.key === "End") {
+    renderCharacterAutocomplete();
+  }
+});
+promptBox.addEventListener("blur", closeCharacterAutocomplete);
 
 // ---------- McPhee: local writing checks, corrections panel, and fixes ----------
 
@@ -7264,6 +7799,9 @@ function refreshEvery(ms, refresh) {
 function bootComposerPage() {
   loadConfig()
     .then(async () => {
+      if (typeof hydrateSavedStage1Tray === "function") {
+        hydrateSavedStage1Tray();
+      }
       await pollProfiles(true);
       await pollJobEvents();
       pollActivity();

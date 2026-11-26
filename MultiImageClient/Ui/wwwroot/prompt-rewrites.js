@@ -1,7 +1,7 @@
 "use strict";
 
 // History stays on disk. Each browser page holds at most 20 complete exchanges.
-window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyPrompt }) {
+window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyPrompt, resolvePrompt }) {
   const panel = document.getElementById("prompt-rewrite-history");
   const list = document.getElementById("prompt-rewrite-list");
   const status = document.getElementById("prompt-rewrite-status");
@@ -94,8 +94,9 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
   }
 
   // A split's result holds one prompt per image, so its parts have no
-  // restore button. Each part's job card has set active instead.
-  function splitParts(resultPrompt) {
+  // restore button. Each part's job card has set active instead, and a
+  // multi-part split can reopen directly in Stage 1 without re-running the LLM.
+  function splitParts(resultPrompt, exchange) {
     let plan;
     try {
       plan = JSON.parse(resultPrompt);
@@ -104,11 +105,35 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
       failure.textContent = `The saved split could not be read: ${error.message}`;
       return [failure];
     }
+    const headerRow = document.createElement("div");
+    headerRow.className = "prompt-split-history-bar";
     const reason = document.createElement("p");
     reason.textContent = plan.imageCount === 1
       ? `Recommended one image. ${plan.reason}`
       : `Recommended ${plan.imageCount} images. ${plan.reason}`;
-    return [reason, ...plan.images.map((part, index) => {
+    headerRow.appendChild(reason);
+    if (plan.imageCount >= 2 && exchange?.id && typeof window.openSavedSplitInStage1 === "function") {
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "prompt-split-open-stage1";
+      openBtn.textContent = "open in Stage 1";
+      openBtn.title = "Open this saved split plan in Stage 1 to edit or render without calling the text model again";
+      openBtn.addEventListener("click", async () => {
+        openBtn.disabled = true;
+        const prev = openBtn.textContent;
+        openBtn.textContent = "opening…";
+        try {
+          await window.openSavedSplitInStage1(exchange.id);
+        } catch (error) {
+          status.textContent = `Could not open split in Stage 1: ${error.message || error}`;
+        } finally {
+          openBtn.textContent = prev;
+          openBtn.disabled = false;
+        }
+      });
+      headerRow.appendChild(openBtn);
+    }
+    return [headerRow, ...plan.images.map((part, index) => {
       const section = document.createElement("section");
       const heading = document.createElement("div");
       heading.className = "prompt-version-heading";
@@ -151,7 +176,7 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
         article.append(heading, version(exchange.originalPrompt,
           split ? "Split source · exact prompt" : "Before this change · exact source", exchange.id, "original"));
         if (exchange.status === "succeeded" && split) {
-          article.append(...splitParts(exchange.resultPrompt));
+          article.append(...splitParts(exchange.resultPrompt, exchange));
         } else if (exchange.status === "succeeded") {
           article.append(version(exchange.resultPrompt,
             condensed ? "Condensed prompt · the prompt box kept the full prompt" : "Replacement", exchange.id, "result"));
@@ -200,8 +225,11 @@ window.createPromptRewrites = function ({ apiUrl, promptBox, username, applyProm
       ? "Restoring saved text…"
       : `${entry?.label || model} is expanding the prompt…`;
     try {
+      const sentPrompt = model === "restore"
+        ? original
+        : (typeof resolvePrompt === "function" ? resolvePrompt(original) : original);
       const form = new URLSearchParams();
-      Object.entries({ model, prompt: original, user: actor, ...extra }).forEach(([key, value]) => form.append(key, value));
+      Object.entries({ model, prompt: sentPrompt, user: actor, ...extra }).forEach(([key, value]) => form.append(key, value));
       const body = await readResponse(await fetch(apiUrl("api/prompt/advice"), { method: "POST", body: form }));
       if (actor !== username()) return;
       if (promptBox.value === original && sourceRevision === revision) {

@@ -266,6 +266,12 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
                 + "Record minor accepted tradeoffs and optional improvements in findings.uncertainty. "
                 + "If material gaps remain, choose render or an evidenced plateau instead of achieved.";
 
+        public static string CriticContractRepairMessage(string parseError)
+            => "The previous critique reply was rejected by the server contract: " + parseError
+                + "\nReturn a corrected JSON critique for the exact same supplied images. "
+                + "Preserve your honest visual observations and scores; do not erase real defects merely to pass validation. "
+                + "Set goalMet to true only when every required criterion has status \"met\".";
+
         public static void ParseManager(JsonElement root, UiGoalLoopManagerReply reply, bool reviewing, int protocolVersion = 7)
         {
             reply.Rubric = Read<List<UiGoalCriterion>>(root, "rubric");

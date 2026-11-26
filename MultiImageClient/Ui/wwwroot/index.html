@@ -8,7 +8,7 @@
 <meta name="referrer" content="no-referrer">
 <script src="environment.js"></script>
 <title>MultiImageClient</title>
-<link rel="stylesheet" href="style.css?v=20261120-series-presets">
+<link rel="stylesheet" href="style.css?v=20261126-pipeline-characters">
 <link rel="stylesheet" href="mcphee/mcphee.css?v=20261102-mcphee-3-12-2">
 </head>
 <body class="composer-page">
@@ -262,6 +262,7 @@
       <div id="compose-right">
         <textarea id="prompt" rows="8" data-text-draft="composer-prompt"
           placeholder="Prompt… (Ctrl+Enter to send)"></textarea>
+        <div id="character-autocomplete" hidden role="listbox" aria-label="Character suggestions"></div>
         <div id="prompt-field-actions" aria-label="Prompt text actions">
           <button id="prompt-copy" type="button" disabled
             title="Copy all text in the prompt box to the clipboard">copy</button>
@@ -311,7 +312,13 @@
         <h2>Characters</h2>
         <button id="character-new" type="button">new character</button>
       </div>
-      <p class="characters-intro">Type a saved name in the prompt, then click <strong>describe</strong> below it to insert its description.</p>
+      <p class="characters-intro">Type <strong>@Name</strong> in any prompt to auto-expand its description and optional reference photo on send, or type the plain name and select <strong>describe</strong>.</p>
+      <form id="character-quick-form" autocomplete="off">
+        <input id="character-quick-name" type="text" maxlength="80"
+          placeholder="Quick create from your past prompts (e.g. Ernie)…" aria-label="Quick create character name">
+        <button id="character-quick-btn" type="submit" class="primary">create &amp; write</button>
+        <span id="character-quick-status" role="status" aria-live="polite"></span>
+      </form>
       <div id="characters-list"></div>
       <form id="character-form" hidden autocomplete="off">
         <h3 id="character-form-title">New character</h3>
@@ -336,6 +343,22 @@
             placeholder="e.g. a small cream Shiba Inu with a red collar and a curled tail"></textarea>
         </label>
         <p class="character-hint">Reads after the name in parentheses: Biscuit (a small cream Shiba Inu…).</p>
+        <div id="character-photo-section">
+          <div class="character-photo-head">
+            <strong>Reference photo (optional)</strong>
+            <span class="character-photo-note">Auto-attaches when you type @Name in a prompt.</span>
+          </div>
+          <div class="character-photo-body">
+            <img id="character-photo-preview" alt="Character reference photo" hidden>
+            <div class="character-photo-controls">
+              <input id="character-photo-file" type="file" accept="image/*" hidden>
+              <button id="character-photo-upload" type="button">upload photo</button>
+              <button id="character-photo-from-composer" type="button">use composer image</button>
+              <button id="character-photo-remove" type="button" hidden>remove photo</button>
+              <span id="character-photo-meta"></span>
+            </div>
+          </div>
+        </div>
         <div class="character-form-row">
           <button id="character-find" type="button"
             title="List your past prompts that mention this name or its other names">find in my prompts</button>
@@ -985,7 +1008,7 @@
 <script src="mcphee/vendor/typo/typo.min.js"></script>
 <script src="mcphee/mcphee.js?v=20261102-mcphee-3-12-2"></script>
 <script src="personal-config.js?v=20261120-series-presets"></script>
-<script src="prompt-rewrites.js?v=20261119-models"></script>
+<script src="prompt-rewrites.js?v=20261126-pipeline-characters"></script>
 <script src="generator-toggle.js?v=20260910"></script>
 <script src="generator-chooser.js?v=20261119-arch"></script>
     <div id="global-append-control" hidden>
@@ -1019,13 +1042,13 @@
 <script src="public-share-dialog.js?v=20261120-series-share"></script>
 <script src="share-link-dialog.js?v=20261006-share-links"></script>
 <script src="prompt-limits.js?v=20261026-prompt-condense"></script>
-<script src="prompt-characters.js?v=20261015-characters"></script>
+<script src="prompt-characters.js?v=20261126-pipeline-characters"></script>
 <script src="build-badge.js?v=20261126-build-telemetry"></script>
 <script src="telemetry.js?v=20261126-build-telemetry"></script>
-<script src="app.js?v=20261126-build-telemetry"></script>
+<script src="app.js?v=20261126-pipeline-characters"></script>
 <script src="activity-center.js?v=20261119-pipeline"></script>
 <script src="sketch-composer.js?v=20261119-pipeline"></script>
 <script src="image-viewer.js?v=20261126-build-telemetry"></script>
-<script src="prompt-pipeline.js?v=20261126-build-telemetry"></script>
+<script src="prompt-pipeline.js?v=20261126-pipeline-characters"></script>
 </body>
 </html>

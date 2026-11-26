@@ -580,15 +580,17 @@ namespace MultiImageClient
 
         // Verifies a split job submission against the user's stored plan.
         // readExchange returns the exchange only when it belongs to the
-        // submitting user. Every part must fit every target's prompt limit
-        // with the current endpoint extra text.
+        // submitting user. Optional editedPartPrompts lets the user tweak
+        // individual part prompts before rendering while keeping exact split
+        // metadata and full per-target prompt-limit validation.
         public static (UiClaudePromptExchangeRecord Exchange, PromptSplitPlan Plan) ResolveSubmission(
             string exchangeId,
             string prompt,
             IReadOnlyList<string> keys,
             IReadOnlyDictionary<string, string> extraTexts,
             bool imageAttached,
-            Func<string, UiClaudePromptExchangeRecord?> readExchange)
+            Func<string, UiClaudePromptExchangeRecord?> readExchange,
+            IReadOnlyList<string>? editedPartPrompts = null)
         {
             var exchange = readExchange(exchangeId)
                 ?? throw new InvalidDataException($"Split {exchangeId} is not one of your saved prompt versions.");
@@ -608,6 +610,29 @@ namespace MultiImageClient
             if (plan.ImageCount < 2)
             {
                 throw new InvalidDataException($"Split {exchangeId} recommends one image, so there is nothing to split.");
+            }
+            if (editedPartPrompts != null)
+            {
+                if (editedPartPrompts.Count != plan.Parts.Count)
+                {
+                    throw new InvalidDataException(
+                        $"Edited split prompts must have {plan.Parts.Count} entries, matching the saved split plan.");
+                }
+                var updatedParts = new List<PromptSplitPart>(plan.Parts.Count);
+                for (var i = 0; i < plan.Parts.Count; i++)
+                {
+                    var text = UiJobRunner.PromptFromFormField(editedPartPrompts[i]);
+                    if (text.Length == 0)
+                    {
+                        throw new InvalidDataException($"Part {i + 1} prompt must not be empty.");
+                    }
+                    if (text.Length > MaxPartChars)
+                    {
+                        throw new InvalidDataException($"Part {i + 1} prompt exceeds {MaxPartChars:N0} characters.");
+                    }
+                    updatedParts.Add(new PromptSplitPart(plan.Parts[i].Title, text));
+                }
+                plan = new PromptSplitPlan(plan.ImageCount, plan.Reason, updatedParts, plan.SuggestedShape);
             }
             ValidateTargets(keys);
             for (var i = 0; i < plan.Parts.Count; i++)
