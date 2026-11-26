@@ -377,6 +377,7 @@ namespace MultiImageClientTests
                 WriteArchivedSplitPart("arch-p2", 2, "Part two", "Second archived page.");
 
                 // Seed a synthetic v1 SQLite cache (schema_version = 1, no split_group_id column)
+                GenerationArchive.EnsureSqliteAvailable();
                 var cachePath = UiHistoryIndexCache.CachePath(historyRoot);
                 using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder
                 {

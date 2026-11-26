@@ -1,4 +1,4 @@
-﻿# MultiImageClient - Agent Entry Point
+# MultiImageClient - Agent Entry Point
 
 Start here. Read this file and the linked documents before doing anything.
 
@@ -95,18 +95,21 @@ machine hosting them. A request to commit and push, including the Cursor
 diff-tab commit-and-push action, means: commit, run the
 [deploy/README.md](deploy/README.md) release gate, push the requested branch,
 restart the local `--ui` with `tools/restart-local-ui.sh`, and — when that
-push updated `origin/master` — redeploy the original
-(`multiimageclient-ui.service`) through `deploy/agent-redeploy.sh`, then
-Vibecoders through `deploy/update-vibecoders.sh`. Since 2026-10-11 (owner
-decision), publishing always means both instances at the same commit; never
-release one alone. Since 2026-11-08 (owner instruction), a task that ends
-with a verified change runs this sequence without a separate request. Never
-deploy or restart a neighboring site, vhost, or service. Since 2026-10-12, `agent-redeploy.sh` stops before publishing when
-the root-owned `/usr/local/sbin/multiimageclient-update` or its root-owned
-idle checker `/usr/local/lib/multiimageclient-update/check-unfinished-work.py`
-differs from `deploy/update-shared-host.sh` or
-`deploy/check-unfinished-work.py`. Rerun `deploy/install-agent-deploy.sh` as
-root, then rerun the release. The helper must never run a file that the
+push updated `origin/master` — redeploy both instances (via `.github/workflows/ci.yml`'s
+`release` job on `production-tpbeta` with `TPBETA_MIC_RELEASE_SSH_KEY`, or
+from the workstation via `deploy/agent-redeploy.sh` then
+`/usr/local/lib/multiimageclient-update/update-vibecoders.sh`). Since
+2026-10-11 (owner decision), publishing always means both instances at the same
+commit; never release one alone. Since 2026-11-08 (owner instruction), a task
+that ends with a verified change runs this sequence without a separate request.
+Never deploy or restart a neighboring site, vhost, or service. Since 2026-10-12
+(extended 2026-11-26 to Vibecoders), `agent-redeploy.sh` stops before
+publishing when any root-owned installed helper
+(`/usr/local/sbin/multiimageclient-update` or
+`/usr/local/lib/multiimageclient-update/{check-unfinished-work.py,create-environment.py,update-vibecoders.sh}`)
+differs from the repository, and `update-vibecoders.sh` checks its copies
+before mutating Vibecoders. Rerun `deploy/install-agent-deploy.sh` as root,
+then rerun the release. Root release steps must never run a file that the
 deploy user can edit; `deploy/test_release_helper.py` checks this. See
 [deploy/README.md](deploy/README.md).
 

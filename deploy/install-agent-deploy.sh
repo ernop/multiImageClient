@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Root installer: copies the update helper to a fixed path and grants the
-# deploy user passwordless sudo for THAT PATH ONLY. After this one interactive
-# sudo, agents can finish deploys with `sudo -n /usr/local/sbin/multiimageclient-update`.
-# Rerun it whenever deploy/update-shared-host.sh or deploy/check-unfinished-work.py
-# changes; agent-redeploy.sh refuses to release while an installed copy differs
-# from the repository.
+# Root installer: copies the update helpers to fixed root-owned paths and grants
+# the deploy user passwordless sudo for /usr/local/sbin/multiimageclient-update
+# ONLY. After this one interactive sudo, agents can finish original deploys with
+# `sudo -n /usr/local/sbin/multiimageclient-update`, and root release callers
+# run the root-owned /usr/local/lib/multiimageclient-update/update-vibecoders.sh.
+# Rerun it whenever deploy/update-shared-host.sh, deploy/check-unfinished-work.py,
+# deploy/create-environment.py, or deploy/update-vibecoders.sh changes;
+# agent-redeploy.sh and update-vibecoders.sh refuse to release while an installed
+# copy differs from the repository.
 #
 # From the current development workstation:
 #   ssh tpbeta-root \
@@ -21,18 +24,25 @@ owner_home=$(getent passwd "$owner" | cut -d: -f6)
 
 src_update="$owner_home/multiImageClient/deploy/update-shared-host.sh"
 src_checker="$owner_home/multiImageClient/deploy/check-unfinished-work.py"
+src_env_tool="$owner_home/multiImageClient/deploy/create-environment.py"
+src_vibecoders="$owner_home/multiImageClient/deploy/update-vibecoders.sh"
 [[ -f $src_update ]] || die "missing $src_update — git pull the repo first"
 [[ -f $src_checker ]] || die "missing $src_checker — git pull the repo first"
+[[ -f $src_env_tool ]] || die "missing $src_env_tool — git pull the repo first"
+[[ -f $src_vibecoders ]] || die "missing $src_vibecoders — git pull the repo first"
 
-# sudoers lets the deploy user run this file as root, so it must be a
-# root-owned copy. Running a file that the deploy user can edit would give
-# that user unrestricted root. The helper runs the idle checker as root, so
-# the checker is a root-owned copy too. It goes in first, so an interrupted
-# install never leaves a new helper without its checker.
+# Every file run as root must be a root-owned copy that the deploy user cannot
+# edit. Running a file that the deploy user can edit would give that user
+# unrestricted root. Install Python dependencies before the shell callers so an
+# interrupted install never leaves a new caller without its tools.
 helper=/usr/local/sbin/multiimageclient-update
 checker=/usr/local/lib/multiimageclient-update/check-unfinished-work.py
+env_tool=/usr/local/lib/multiimageclient-update/create-environment.py
+vibecoders=/usr/local/lib/multiimageclient-update/update-vibecoders.sh
 install -d -o root -g root -m 0755 "$(dirname "$checker")"
 install -o root -g root -m 0644 "$src_checker" "$checker"
+install -o root -g root -m 0644 "$src_env_tool" "$env_tool"
+install -o root -g root -m 0755 "$src_vibecoders" "$vibecoders"
 install -o root -g root -m 0755 "$src_update" "$helper"
 
 sudoers_file=/etc/sudoers.d/multiimageclient-agent-deploy
@@ -53,7 +63,9 @@ sudo -u "$owner" -H sudo -n -l | sed 's/^[[:space:]]*//' \
     || die "NOPASSWD for $helper did not take effect for $owner"
 
 printf '\nInstalled.\n'
-printf '  helper:  %s\n' "$helper"
-printf '  checker: %s\n' "$checker"
-printf '  sudoers: %s\n' "$sudoers_file"
-printf '  agent:   bash ~/multiImageClient/deploy/agent-redeploy.sh\n'
+printf '  helper:     %s\n' "$helper"
+printf '  checker:    %s\n' "$checker"
+printf '  env_tool:   %s\n' "$env_tool"
+printf '  vibecoders: %s\n' "$vibecoders"
+printf '  sudoers:    %s\n' "$sudoers_file"
+printf '  agent:      bash ~/multiImageClient/deploy/agent-redeploy.sh\n'

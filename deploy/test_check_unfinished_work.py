@@ -105,14 +105,18 @@ class UnitStateTests(unittest.TestCase):
             base = Path(root) / "saves"
             settings = Path(root) / "settings.json"
             settings.write_text(json.dumps({"ImageDownloadBaseFolder": str(base)}), encoding="utf-8")
-            started_monotonic = int((time.monotonic() - 600) * 1_000_000)
-            write_job(base, "running", [accepted], time.time() - 30)
-            write_job(base, "earlier-process", [accepted], time.time() - 3600)
+            now_wall = 1_700_000_000.0
+            now_monotonic = 3_600.0
+            started_monotonic = int((now_monotonic - 600) * 1_000_000)
+            write_job(base, "running", [accepted], now_wall - 30)
+            write_job(base, "earlier-process", [accepted], now_wall - 3600)
             write_loop(base, "loop", json.dumps({"status": "running"}))
             values = {"LoadState": "loaded", "ActiveState": "active",
                       "Environment": f"MULTIIMAGECLIENT_SETTINGS={settings}",
                       "ExecMainStartTimestampMonotonic": str(started_monotonic)}
-            with patch.object(unfinished, "show", self.fake_show(values)):
+            with patch.object(unfinished, "show", self.fake_show(values)), \
+                    patch.object(unfinished.time, "monotonic", return_value=now_monotonic), \
+                    patch.object(unfinished.time, "time", return_value=now_wall):
                 self.assertEqual(unfinished.unit_status("multiimageclient-ui"),
                                  (False, "multiimageclient-ui: 1 unfinished job(s), 1 running goal loop(s)"))
 

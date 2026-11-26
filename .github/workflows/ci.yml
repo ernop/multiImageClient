@@ -4,19 +4,31 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      wait_minutes:
+        description: "Minutes to wait for busy instances (0 fails immediately with exit 75)"
+        required: false
+        default: "0"
+        type: string
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: ci-verify-${{ github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -24,9 +36,9 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 22
+          node-version: "22"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -41,3 +53,64 @@ jobs:
 
       - name: Release build
         run: dotnet build MultiImageClient.sln -c Release --no-restore
+
+  release:
+    if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    environment:
+      name: production-tpbeta
+    concurrency:
+      group: mic-production-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Refuse an outdated revision
+        run: |
+          test "$(git rev-parse HEAD)" = "$(git ls-remote origin refs/heads/master | cut -f1)"
+
+      - name: Write dedicated release identity
+        env:
+          TPBETA_MIC_RELEASE_SSH_KEY: ${{ secrets.TPBETA_MIC_RELEASE_SSH_KEY }}
+        run: |
+          umask 077
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          key = os.environ.get('TPBETA_MIC_RELEASE_SSH_KEY', '')
+          if not key.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n'):
+              raise SystemExit('TPBETA_MIC_RELEASE_SSH_KEY is missing or invalid')
+          Path('/tmp/mic-release-key').write_text(key.rstrip('\n') + '\n', encoding='utf-8')
+          PY
+          ssh-keygen -y -f /tmp/mic-release-key > /dev/null
+
+      - name: Release original and Vibecoders instances
+        env:
+          WAIT_MINUTES: ${{ inputs.wait_minutes || '0' }}
+        run: |
+          if [[ ! "$WAIT_MINUTES" =~ ^[0-9]{1,4}$ ]]; then
+            echo "ERROR: wait_minutes must be 0-9999 digits" >&2
+            exit 2
+          fi
+          if [[ "$WAIT_MINUTES" == "0" ]]; then
+            remote_cmd="release"
+          else
+            remote_cmd="release --wait-minutes ${WAIT_MINUTES}"
+          fi
+          ssh -T \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile=deploy/known_hosts \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=6 \
+            -i /tmp/mic-release-key \
+            root@146.190.147.109 "$remote_cmd"
+
+      - name: Remove release identity
+        if: always()
+        run: rm -f /tmp/mic-release-key

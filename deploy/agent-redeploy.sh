@@ -34,6 +34,8 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 staging="$HOME/multiimageclient-publish-staging"
 helper=/usr/local/sbin/multiimageclient-update
 checker=/usr/local/lib/multiimageclient-update/check-unfinished-work.py
+env_tool=/usr/local/lib/multiimageclient-update/create-environment.py
+vibecoders=/usr/local/lib/multiimageclient-update/update-vibecoders.sh
 
 [[ -d $repo/.git ]] || die "repo not found at $repo"
 [[ -x $dotnet ]] || die "dotnet not found at $dotnet — install .NET 10 SDK"
@@ -55,13 +57,17 @@ cd "$repo"
 git pull --ff-only
 git log -1 --oneline
 
-# The helper and its idle checker are root-owned copies, so repository changes
-# to either take effect only after root reinstalls them. Never release through
-# a stale copy.
+# The release helpers are root-owned copies, so repository changes to any of
+# them take effect only after root reinstalls them. Never release through a
+# stale copy.
 cmp -s "$helper" "$repo/deploy/update-shared-host.sh" \
     || die "$helper differs from deploy/update-shared-host.sh — as root run: bash $repo/deploy/install-agent-deploy.sh, then rerun this script"
 cmp -s "$checker" "$repo/deploy/check-unfinished-work.py" \
     || die "$checker differs from deploy/check-unfinished-work.py — as root run: bash $repo/deploy/install-agent-deploy.sh, then rerun this script"
+cmp -s "$env_tool" "$repo/deploy/create-environment.py" \
+    || die "$env_tool differs from deploy/create-environment.py — as root run: bash $repo/deploy/install-agent-deploy.sh, then rerun this script"
+cmp -s "$vibecoders" "$repo/deploy/update-vibecoders.sh" \
+    || die "$vibecoders differs from deploy/update-vibecoders.sh — as root run: bash $repo/deploy/install-agent-deploy.sh, then rerun this script"
 
 rm -rf "$staging"
 # Publishing competes with running jobs on the shared host, and every release
@@ -77,4 +83,4 @@ run_helper busy-check --wait-minutes "$wait_minutes"
 
 run_helper --wait-minutes "$wait_minutes"
 
-printf 'Original updated. Next release step, as root: bash %s/deploy/update-vibecoders.sh [--wait-minutes N]\n' "$repo"
+printf 'Original updated. Next release step, as root: %s [--wait-minutes N]\n' "$vibecoders"

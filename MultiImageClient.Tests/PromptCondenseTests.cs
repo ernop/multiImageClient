@@ -319,6 +319,7 @@ public sealed class PromptCondenseTests
         var folder = CreateTempFolder();
         try
         {
+            GenerationArchive.EnsureSqliteAvailable();
             using (var connection = new SqliteConnection($"Data Source={Path.Combine(folder, "community.sqlite3")};Pooling=False"))
             {
                 connection.Open();

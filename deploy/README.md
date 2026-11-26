@@ -65,8 +65,13 @@ Restart after workstation .NET upgrades, then verify `/api/config` and `/api/sta
 
 ## Routine production release
 
-This repository currently has no hosted `.github/workflows` pipeline. The
-release gate is the local equivalent (or run `bash tools/release-gate.sh` to execute all checks plus the clean-worktree Release build in one command):
+`.github/workflows/ci.yml` runs the verification gate (`tools/release-gate.sh --skip-worktree-release` plus `dotnet build -c Release`) on pushes, pull requests, and `workflow_dispatch`.
+On `master` pushes and `workflow_dispatch`, the `release` job runs after `verify` passes.
+It uses the `production-tpbeta` environment secret `TPBETA_MIC_RELEASE_SSH_KEY` and pinned `deploy/known_hosts` to invoke the forced command `/usr/local/sbin/multiimageclient-release` on `146.190.147.109`.
+That command releases both the original (AVE) and Vibecoders instances from `origin/master`.
+Use `workflow_dispatch` with `wait_minutes` to wait for busy instances instead of exiting with status 75.
+
+Run the local release gate before pushing (or run `bash tools/release-gate.sh` to execute all checks plus the clean-worktree Release build in one command):
 
 ```bash
 node --check MultiImageClient/Ui/wwwroot/app.js
@@ -87,8 +92,7 @@ wt=$(mktemp -d) && git worktree add -q --detach "$wt" HEAD &&
   (cd "$wt" && dotnet build MultiImageClient.sln -c Release); git worktree remove --force "$wt"
 ```
 
-Push the intended commit to GitHub only after those checks pass. From the
-current development workstation, release that commit with:
+Push the intended commit to GitHub only after those checks pass. When releasing manually from the home workstation instead of GitHub Actions, run:
 
 ```bash
 ssh tpbeta-root \
@@ -137,7 +141,7 @@ The owner requires releases to wait until both instances have no running work.
 A restart kills in-flight jobs and goal loops.
 `deploy/check-unfinished-work.py` decides from each instance's files on disk.
 It sends no HTTP request, so a sleeping original stays asleep.
-The update helper runs a root-owned copy of it; see
+The update helpers run a root-owned copy of it; see
 [the helper installation](#passwordless-redeploy-helper-installation).
 
 - A job is unfinished when its `events.jsonl` changed after the current
@@ -170,7 +174,7 @@ Release gently, waiting up to two hours for each step:
 ssh tpbeta-root \
   'sudo -u tparkour -H bash /home/tparkour/multiImageClient/deploy/agent-redeploy.sh --wait-minutes 120'
 ssh tpbeta-root \
-  'bash /home/tparkour/multiImageClient/deploy/update-vibecoders.sh --wait-minutes 120'
+  '/usr/local/lib/multiimageclient-update/update-vibecoders.sh --wait-minutes 120'
 ```
 
 Run the second command only after the first succeeds and passes the checks above.
@@ -178,11 +182,12 @@ Run the second command only after the first succeeds and passes the checks above
 ## Updating Vibecoders (every release)
 
 Since 2026-10-11, publishing always means both instances. After the original
-passes the checks above, install the same build into Vibecoders:
+passes the checks above, install the same build into Vibecoders using the
+root-owned copy installed by `deploy/install-agent-deploy.sh`:
 
 ```bash
 ssh tpbeta-root \
-  'bash /home/tparkour/multiImageClient/deploy/update-vibecoders.sh'
+  '/usr/local/lib/multiimageclient-update/update-vibecoders.sh'
 ```
 
 `update-shared-host.sh` deletes `~/multiimageclient-publish-staging` after installing the original service.
@@ -195,7 +200,7 @@ The script performs these steps and prints no private path:
    The [release idle gate](#release-idle-gate-2026-10-12) defines unfinished work.
    Rerun it after that work finishes, or add `--wait-minutes N`.
    The release stays incomplete until it succeeds.
-2. It runs `create-environment.py update --id vibecoders-ai-generation --publish /opt/multiimageclient`.
+2. It runs the root-owned `create-environment.py update --id vibecoders-ai-generation --publish /opt/multiimageclient`.
    That command restarts only the Vibecoders service and waits for its loopback `/healthz`.
    It deletes the replaced build during the swap, even when the new build fails to start.
    Before staging, it writes the `gc-heap-limit.conf` drop-in: 62.5% of the unit's live `MemoryHigh` (2026-10-12).
@@ -244,8 +249,8 @@ The install script keeps older runtimes and SDKs beside the new ones.
 ## Passwordless redeploy helper installation
 
 After the shared site is installed, give the deploy user **one** interactive
-sudo to install a locked-down helper. Forever after, agents can redeploy
-without a password or TTY:
+sudo to install locked-down root-owned helpers. Forever after, agents can
+redeploy without a password or TTY:
 
 ```bash
 # One-time helper installation as root:
@@ -260,22 +265,22 @@ ssh tpbeta-root \
 That grants `NOPASSWD` only for `/usr/local/sbin/multiimageclient-update`
 (rsync staging → `/opt`, force-restart the unit, plus the read-only
 `busy-check` and `disk-report` modes). The installer copies
-`update-shared-host.sh` there as a root-owned file. The helper runs the
-release idle checker as root, so the installer also copies
-`deploy/check-unfinished-work.py` to
-`/usr/local/lib/multiimageclient-update/check-unfinished-work.py` as a
-root-owned file. The helper must never run a file that the deploy user can
-edit; that would give the deploy user passwordless root.
-`deploy/test_release_helper.py` checks this rule. The installer checks the
-sudo grant without running the helper, so it never deploys a staged build.
+`update-shared-host.sh` there as a root-owned file. Since 2026-11-26, it also
+copies `deploy/check-unfinished-work.py`, `deploy/create-environment.py`, and
+`deploy/update-vibecoders.sh` into `/usr/local/lib/multiimageclient-update/` as
+root-owned files. Root release steps must never execute a file that the deploy
+user can edit; that would give the deploy user unrestricted root.
+`deploy/test_release_helper.py` checks this rule for both original and
+Vibecoders helpers. The installer checks the sudo grant without running the
+helper, so it never deploys a staged build.
 
-`agent-redeploy.sh` stops before publishing when either installed copy differs
-from the pulled `deploy/update-shared-host.sh` or
-`deploy/check-unfinished-work.py` (2026-10-12). Rerun the installer as root
-with the command above, then rerun the release. The 2026-10-12 log review
-found the installed helper unchanged since 2026-08-04. It lacked the socket
-handling and the `disk-report` mode, so `multiimageclient-update disk-report`
-would run a full deploy whenever a staged build exists.
+`agent-redeploy.sh` stops before publishing when any of those four installed
+copies differs from the repository, and `update-vibecoders.sh` checks its three
+copies before mutating Vibecoders. Rerun the installer as root with the command
+above, then rerun the release. The 2026-10-12 log review found the installed
+helper unchanged since 2026-08-04. It lacked the socket handling and the
+`disk-report` mode, so `multiimageclient-update disk-report` would run a full
+deploy whenever a staged build exists.
 
 ## Setup steps
 
