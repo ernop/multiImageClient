@@ -287,7 +287,7 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
                 var evaluationIndex = 0;
                 foreach (var e in reply.Evaluations())
                 {
-                    ValidateComponents(e.Evaluation.Components, reply.Rubric, e.Evaluation.GoalMet);
+                    ValidateComponents(e.Evaluation.Components, reply.Rubric, e.Evaluation.GoalMet, $"evaluations[{evaluationIndex}].components");
                     Require(e.Evaluation.ExperimentAssessment, $"evaluations[{evaluationIndex}].experimentAssessment");
                     evaluationIndex++;
                 }
@@ -316,17 +316,17 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
                     var c = reply.Plan.Candidates[i];
                     var path = $"plan.candidates[{i}]";
                     if (!UiGoalLoopVariants.IsValid(c.Variant, fanout ? 8 : protocolVersion)) throw new JsonException("unknown candidate identifier");
-                    OneOf(c.Scope, "full", "component");
+                    OneOf(c.Scope, path + ".scope", "full", "component");
                     if (c.Scope == "component") Require(c.ComponentGoal, path + ".componentGoal");
-                    if (c.Quality != null) OneOf(c.Quality, "low", "medium", "high", "xhigh", "max");
-                    if (c.Detail != null) OneOf(c.Detail, "standard", "high", "max");
+                    if (c.Quality != null) OneOf(c.Quality, path + ".quality", "low", "medium", "high", "xhigh", "max");
+                    if (c.Detail != null) OneOf(c.Detail, path + ".detail", "standard", "high", "max");
                     if (c.Sources != null)
                     {
                         Strings(c.Sources, 1, 8, path + ".sources");
                         if (c.Sources.Distinct().Count() != c.Sources.Count || c.Sources.Any(s => !UiGoalLoopSources.IsValid(s)))
                             throw new JsonException("candidate sources must be distinct source letters");
                     }
-                    OneOf(c.Mode, "pursue", "explore", "simplify", "rebuild", "verify");
+                    OneOf(c.Mode, path + ".mode", "pursue", "explore", "simplify", "rebuild", "verify");
                     Require(c.Question, path + ".question");
                     Require(c.Expected, path + ".expected");
                     Strings(c.Changes, 0, 12, path + ".changes");
@@ -345,7 +345,7 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
             else
             {
                 reply.Completion = Read<UiGoalCompletion>(root, "completion");
-                OneOf(reply.Completion.Outcome, "achieved", "plateau");
+                OneOf(reply.Completion.Outcome, "completion.outcome", "achieved", "plateau");
                 Require(reply.Completion.Rationale, "completion.rationale");
                 Strings(reply.Completion.RemainingGaps, 0, 12, "completion.remainingGaps");
                 if (reply.Completion.EvidenceTurns == null || reply.Completion.EvidenceTurns.Count < 2 || reply.Completion.EvidenceTurns.Count > 30
@@ -358,17 +358,19 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
             => item.TryGetProperty("components", out var value) && value.ValueKind != JsonValueKind.Null
                 ? value.Deserialize<List<UiGoalComponent>>(UiGoalLoopJson.Options) : null;
 
-        public static void ValidateComponents(List<UiGoalComponent>? components, List<UiGoalCriterion> rubric, bool goalMet)
+        public static void ValidateComponents(List<UiGoalComponent>? components, List<UiGoalCriterion> rubric, bool goalMet,
+            string pathPrefix = "components")
         {
             if (components == null || components.Any(c => c == null) || components.Count != rubric.Count
                 || components.Select(c => c.Criterion).Distinct().Count() != rubric.Count)
-                throw new JsonException("components must contain each rubric criterion exactly once");
+                throw new JsonException($"{pathPrefix} must contain each rubric criterion exactly once");
             for (var i = 0; i < components.Count; i++)
             {
                 var c = components[i];
-                if (!rubric.Any(r => r.Id == c.Criterion)) throw new JsonException("unknown component criterion");
-                OneOf(c.Status, "met", "partial", "missing", "uncertain");
-                OneOf(c.Confidence, "low", "medium", "high"); Require(c.Evidence, $"components[{i}].evidence");
+                if (!rubric.Any(r => r.Id == c.Criterion)) throw new JsonException($"unknown component criterion '{c.Criterion}' in {pathPrefix}[{i}].criterion");
+                OneOf(c.Status, $"{pathPrefix}[{i}].status", "met", "partial", "missing", "uncertain");
+                OneOf(c.Confidence, $"{pathPrefix}[{i}].confidence", "low", "medium", "high");
+                Require(c.Evidence, $"{pathPrefix}[{i}].evidence");
             }
             if (goalMet && rubric.Where(r => r.Importance == "required")
                 .Any(r => components.Single(c => c.Criterion == r.Id).Status != "met"))
@@ -464,7 +466,7 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
                 Require(r.Id, $"rubric[{i}].id");
                 Require(r.Description, $"rubric[{i}].description");
                 Require(r.Basis, $"rubric[{i}].basis");
-                OneOf(r.Importance, "required", "preference", "context");
+                OneOf(r.Importance, $"rubric[{i}].importance", "required", "preference", "context");
             }
             if (!rubric.Any(r => r.Importance == "required")) throw new JsonException("rubric needs a required outcome");
         }
@@ -477,9 +479,9 @@ Use rubricConcerns='none' when the goal interpretation needs no correction.
                 throw new JsonException($"{path} must contain {(allowEmpty ? 0 : 1)}-2000 characters; received {value.Length}"
                     + (value.Length > 0 && string.IsNullOrWhiteSpace(value) ? " whitespace characters" : " characters"));
         }
-        private static void OneOf(string value, params string[] choices)
+        private static void OneOf(string value, string path, params string[] choices)
         {
-            if (!choices.Contains(value)) throw new JsonException($"invalid pursuit value '{value}'");
+            if (!choices.Contains(value)) throw new JsonException($"{path} must be one of {string.Join(", ", choices)}; received '{value}'");
         }
         private static void Strings(List<string>? values, int min, int max, string path)
         {

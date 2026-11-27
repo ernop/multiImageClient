@@ -86,5 +86,43 @@ namespace MultiImageClient.Tests
             root["plan"]!["objective"] = new string('x', 2000);
             Assert.Equal(2000, Parse(root).Plan!.Objective.Length);
         }
+
+        [Fact]
+        public void InvalidCandidateModeNamesFieldAllowedValuesAndReceivedValue()
+        {
+            var root = GoalLoopFanoutTests.Payload(2);
+            root["plan"]!["candidates"]![1]!["mode"] = "branch";
+            var error = Assert.Throws<InvalidDataException>(() => Parse(root));
+            Assert.Contains("plan.candidates[1].mode", error.Message);
+            Assert.Contains("pursue, explore, simplify, rebuild, verify", error.Message);
+            Assert.Contains("received 'branch'", error.Message);
+        }
+
+        [Fact]
+        public void InvalidCandidateDecisionActionAndRubricImportanceIdentifyFieldAndChoices()
+        {
+            var review = GoalLoopFanoutTests.Payload(1, review: true);
+            review["candidateDecisions"]![0]!["action"] = "explore";
+            var shown = new[] { new UiGoalLoopRenderKey("c1", "A"), new UiGoalLoopRenderKey("c2", "A"), new UiGoalLoopRenderKey("c3", "A") };
+            var actionError = Assert.Throws<InvalidDataException>(() =>
+                UiGoalLoopProtocol.ParseManagerReply(review.ToJsonString(), true, 8, shownRenders: shown));
+            Assert.Contains("candidateDecisions[0].action", actionError.Message);
+            Assert.Contains("pursue, branch, hold, drop", actionError.Message);
+            Assert.Contains("received 'explore'", actionError.Message);
+
+            var badRubric = GoalLoopFanoutTests.Payload(1);
+            badRubric["rubric"]![2]!["importance"] = "optional";
+            var rubricError = Assert.Throws<InvalidDataException>(() => Parse(badRubric));
+            Assert.Contains("rubric[2].importance", rubricError.Message);
+            Assert.Contains("required, preference, context", rubricError.Message);
+            Assert.Contains("received 'optional'", rubricError.Message);
+        }
+
+        [Fact]
+        public void FanoutPromptDistinguishesCandidateActionsFromCandidateModes()
+        {
+            Assert.Contains("candidateDecisions[].action, never in plan.candidates[].mode", UiGoalLoopFanout.ManagerSystemPrompt);
+            Assert.Contains("candidateDecisions[].action, never in plan.candidates[].mode", UiGoalLoopSampling.ManagerSystemPrompt);
+        }
     }
 }

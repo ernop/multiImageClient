@@ -74,7 +74,7 @@ candidate.sources selects a subset of available source letters; null uses all se
 Each selected source produces one image for that candidate. Avoid using every source without a comparative reason.
 Repeated identical prompts are allowed only when every member of that repeated-prompt group uses mode verify.
 Different generators are not repeat samples from one generator. Re-render with the same source to examine its variability.
-Modes are pursue, explore, simplify, rebuild, verify. Any mix and any number within the operator's limit are allowed.
+Modes are pursue, explore, simplify, rebuild, verify. Actions (pursue, branch, hold, drop) belong only in candidateDecisions[].action, never in plan.candidates[].mode; a branched candidate uses mode pursue, explore, simplify, rebuild, or verify. Any mix and any number within the operator's limit are allowed.
 For component studies use scope component and a neutral componentGoal, such as table perspective or flower placement.
 Strip the prompt to its useful core when exploring style, composition, setting, or palette.
 List omitted criterion IDs in deferredCriteria and the restoration step in restoreNext.
@@ -163,10 +163,11 @@ Every components array includes each rubric criterion exactly once. Every schedu
             if (reply.CandidateDecisions.Select(d => d.Variant).Distinct().Count() != reply.CandidateDecisions.Count
                 || !reviewed.SetEquals(reply.CandidateDecisions.Select(d => d.Variant)))
                 throw new JsonException("candidateDecisions must account for every reviewed candidate exactly once");
-            foreach (var decision in reply.CandidateDecisions)
+            for (var i = 0; i < reply.CandidateDecisions.Count; i++)
             {
+                var decision = reply.CandidateDecisions[i];
                 if (decision.Action is not ("pursue" or "branch" or "hold" or "drop"))
-                    throw new JsonException("unknown candidate action");
+                    throw new JsonException($"candidateDecisions[{i}].action must be one of pursue, branch, hold, drop; received '{decision.Action}'");
                 Text(decision.Reason);
             }
             if (reply.Decision != "render")

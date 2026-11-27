@@ -4,11 +4,12 @@ Status: **implemented 2026-09-04** in the `--ui` web app. This document is the
 durable statement of the requirement, the settled decisions, and where each
 part lives in code.
 
-## Non-directive manager boundary and critic contract repair — 2026-11-26
+## Non-directive manager boundary and contract repair — 2026-11-26
 
 - **Standing product principle (owner decision, 2026-11-26):** Goal loops must not preemptively steer the manager model toward goal-specific strategies or task-type modes (such as specialized optimization rules). The manager model owns deciding how to reach the user's goal. The application's job is solely to give managers and critics honest, clear, organized information and reliable execution.
 - **Default manager:** `ManagerCatalog.DefaultKey` is `manager-gemini-4-neon` (Gemini 4 Neon), while all models in `ManagerCatalog.All` remain selectable.
 - **Single critic contract repair (`AskOneCriticAsync`):** When a critic returns a JSON contract violation (`ParseError != null`, never on a provider stop/refusal), the runner records the rejected entry and issues one automatic contract-repair retry (`UiGoalLoopPursuit.CriticContractRepairMessage`) on the same supplied images before failing the step. Previously, a single critic `goalMet` / schema slip failed the entire loop immediately (observed on production loop `cd0ff159b297` at turn 9).
+- **Field-named enum errors, action/mode schema clarity, and single manager contract repair (`AskManagerAsync`):** Observed on Vibecoders (build `765f96bf87ab`), Gemini 4 Neon emitted `"mode": "branch"` inside `plan.candidates[]` after choosing `"action": "branch"` in `candidateDecisions[]`, and `UiGoalLoopPursuit.OneOf` rejected it with an opaque `"invalid pursuit value 'branch'"` naming neither field nor allowed choices. `UiGoalLoopFanout.ManagerSystemPrompt` now explicitly states that `pursue`/`branch`/`hold`/`drop` belong only in `candidateDecisions[].action`, never in `plan.candidates[].mode`. Every enum validation in `UiGoalLoopPursuit.OneOf` and `UiGoalLoopFanout.ParseReply` now reports the exact JSON field path, allowed values, and received value (for example, `plan.candidates[0].mode must be one of pursue, explore, simplify, rebuild, verify; received 'branch'`). For protocol 7+ manager replies, `AskManagerAsync` now matches `AskOneCriticAsync`: on a JSON contract violation (`ParseError != null`, never on a provider stop/refusal), it records the rejected entry verbatim and issues one automatic `ContractRepairMessage` retry on the same supplied images before failing the step. Validation still never rewrites rejected replies or substitutes a plan.
 
 ## Implicit creator identity — 2026-09-20
 

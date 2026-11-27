@@ -799,7 +799,7 @@ namespace MultiImageClient
                     var evaluation = ParseEvaluation(item);
                     if (rubric != null)
                     {
-                        UiGoalLoopPursuit.ValidateComponents(evaluation.Components, rubric, evaluation.GoalMet);
+                        UiGoalLoopPursuit.ValidateComponents(evaluation.Components, rubric, evaluation.GoalMet, $"critiques[{reply.Critiques.Count}].components");
                         RequireString(item, "experimentAssessment");
                     }
                     reply.Critiques.Add(new UiGoalLoopCritiqueItem
@@ -3149,76 +3149,91 @@ namespace MultiImageClient
                     .ToList();
             }
 
-            ManagerChatReply reply;
-            await _managerCalls.WaitAsync(ct);
-            try
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                Logger.Log($"[goal #{loop.Id}] asking {definition.Model} ({history.Count} message(s) in history, turn {step.Turn})");
-                reply = await client.CompleteAsync(loop.SystemPrompt, history, ct);
-            }
-            finally
-            {
-                _managerCalls.Release();
-            }
-
-            var data = new UiGoalLoopManagerData
-            {
-                FeedbackThroughEntry = UiGoalLoopFeedback.Revision(snapshot),
-                Model = reply.Model,
-                ProviderReasoning = string.IsNullOrWhiteSpace(reply.ProviderReasoning) ? null : reply.ProviderReasoning,
-                InputTokens = reply.InputTokens,
-                OutputTokens = reply.OutputTokens,
-                CostUsd = ManagerCatalog.EstimateCostUsd(definition, reply.InputTokens, reply.OutputTokens, DateTimeOffset.UtcNow),
-                ProviderStop = string.IsNullOrWhiteSpace(reply.ProviderStop) ? null : reply.ProviderStop,
-                RequestBytes = reply.RequestBytes,
-            };
-            string? error = null;
-            if (data.ProviderStop != null)
-            {
-                // The provider itself declared the reply abnormal (refusal,
-                // safety block, length cut-off). Record that statement as the
-                // step error; never parse a refused or truncated body as a
-                // design, and never switch managers on the user's behalf.
-                error = $"the manager did not answer — {data.ProviderStop}";
-            }
-            else
-            {
+                ManagerChatReply reply;
+                await _managerCalls.WaitAsync(ct);
                 try
                 {
-                    data.Parsed = UiGoalLoopProtocol.ParseManagerReply(reply.Text, expectEvaluation, loop.ProtocolVersion, permitDone, shownRenders);
-                    if (loop.ProtocolVersion >= 7) UiGoalLoopPursuit.ValidateContext(data.Parsed, snapshot, step.Turn, loop);
+                    Logger.Log($"[goal #{loop.Id}] asking {definition.Model} ({history.Count} message(s) in history, turn {step.Turn})");
+                    reply = await client.CompleteAsync(loop.SystemPrompt, history, ct);
                 }
-                catch (InvalidDataException ex)
+                finally
                 {
-                    data.ParseError = ex.Message;
-                    error = ex.Message;
+                    _managerCalls.Release();
                 }
-            }
-            var entry = new UiGoalLoopEntry
-            {
-                Turn = step.Turn,
-                Kind = step.Kind == UiGoalLoopStepKind.AskManagerDesign ? UiGoalLoopKinds.Design : UiGoalLoopKinds.Review,
-                From = UiGoalLoopParties.Manager,
-                To = UiGoalLoopParties.System,
-                Ms = reply.Ms,
-                Text = reply.Text,
-                Error = error,
-                Manager = data,
-                WireRequest = reply.RedactedRequest,
-                WireResponse = reply.RawResponse,
-            };
-            lock (state.Lock)
-            {
-                AppendEntryLocked(state, entry);
-            }
-            SetActivity(state, "");
-            if (error != null)
-            {
+
+                var data = new UiGoalLoopManagerData
+                {
+                    FeedbackThroughEntry = UiGoalLoopFeedback.Revision(snapshot),
+                    Model = reply.Model,
+                    ProviderReasoning = string.IsNullOrWhiteSpace(reply.ProviderReasoning) ? null : reply.ProviderReasoning,
+                    InputTokens = reply.InputTokens,
+                    OutputTokens = reply.OutputTokens,
+                    CostUsd = ManagerCatalog.EstimateCostUsd(definition, reply.InputTokens, reply.OutputTokens, DateTimeOffset.UtcNow),
+                    ProviderStop = string.IsNullOrWhiteSpace(reply.ProviderStop) ? null : reply.ProviderStop,
+                    RequestBytes = reply.RequestBytes,
+                };
+                string? error = null;
+                if (data.ProviderStop != null)
+                {
+                    // The provider itself declared the reply abnormal (refusal,
+                    // safety block, length cut-off). Record that statement as the
+                    // step error; never parse a refused or truncated body as a
+                    // design, and never switch managers on the user's behalf.
+                    error = $"the manager did not answer — {data.ProviderStop}";
+                }
+                else
+                {
+                    try
+                    {
+                        data.Parsed = UiGoalLoopProtocol.ParseManagerReply(reply.Text, expectEvaluation, loop.ProtocolVersion, permitDone, shownRenders);
+                        if (loop.ProtocolVersion >= 7) UiGoalLoopPursuit.ValidateContext(data.Parsed, snapshot, step.Turn, loop);
+                    }
+                    catch (InvalidDataException ex)
+                    {
+                        data.ParseError = ex.Message;
+                        error = ex.Message;
+                    }
+                }
+                var entry = new UiGoalLoopEntry
+                {
+                    Turn = step.Turn,
+                    Kind = step.Kind == UiGoalLoopStepKind.AskManagerDesign ? UiGoalLoopKinds.Design : UiGoalLoopKinds.Review,
+                    From = UiGoalLoopParties.Manager,
+                    To = UiGoalLoopParties.System,
+                    Ms = reply.Ms,
+                    Text = reply.Text,
+                    Error = error,
+                    Manager = data,
+                    WireRequest = reply.RedactedRequest,
+                    WireResponse = reply.RawResponse,
+                };
+                lock (state.Lock)
+                {
+                    AppendEntryLocked(state, entry);
+                }
+                if (error == null)
+                {
+                    SetActivity(state, "");
+                    Logger.Log($"[goal #{loop.Id}] manager turn {step.Turn}: decision={data.Parsed!.Decision}"
+                        + string.Concat(data.Parsed.Evaluations().Select(s =>
+                            $" {s.Variant ?? "score"}{(s.Source != null ? $"/{s.Source}" : "")}={s.Evaluation.Score:0.#}")));
+                    return;
+                }
+                // One automatic contract repair on protocol 7+ JSON schema slips (never on provider stops/refusals).
+                if (attempt == 0 && loop.ProtocolVersion >= 7 && data.ParseError != null && data.ProviderStop == null
+                    && !string.IsNullOrWhiteSpace(reply.Text))
+                {
+                    Logger.Log($"[goal #{loop.Id}] manager turn {step.Turn}: requesting contract repair after {data.ParseError}");
+                    SetActivity(state, $"repairing {loop.ManagerLabel} JSON contract");
+                    history.Add(new ManagerChatMessage { Role = "assistant", Text = reply.Text });
+                    history.Add(new ManagerChatMessage { Role = "user", Text = UiGoalLoopPursuit.ContractRepairMessage(entry) });
+                    continue;
+                }
+                SetActivity(state, "");
                 throw new InvalidDataException(error);
             }
-            Logger.Log($"[goal #{loop.Id}] manager turn {step.Turn}: decision={data.Parsed!.Decision}"
-                + string.Concat(data.Parsed.Evaluations().Select(s =>
-                    $" {s.Variant ?? "score"}{(s.Source != null ? $"/{s.Source}" : "")}={s.Evaluation.Score:0.#}")));
         }
 
         // Writes the review request for a turn whose renders are all on
