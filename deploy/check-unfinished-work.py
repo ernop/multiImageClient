@@ -7,10 +7,10 @@ sends no request, so a sleeping socket-activated service stays asleep. Output
 names units and counts only, never private paths.
 
 A job is unfinished when its events.jsonl changed after the current process
-started and holds no job-done event. A job from an earlier process cannot still
-run; the server closes it as interrupted when it loads it. A goal loop is
-unfinished while its loop.json says running, because every process start marks
-loops left running by an earlier process as stopped.
+started and holds neither a job-done nor a job-deleted event. A job from an
+earlier process cannot still run; the server closes it as interrupted when it
+loads it. A goal loop is unfinished while its loop.json says running, because
+every process start marks loops left running by an earlier process as stopped.
 
 Exit status: 0 when every unit is idle; 75 (EX_TEMPFAIL) while any unit is
 busy after --wait-minutes, so callers can tell it from sudo's own failures;
@@ -58,7 +58,7 @@ def has_job_done(events):
                 # A line still being appended, or one cut off by a crash, is
                 # not a job-done record. Missing job-done keeps the job unfinished.
                 continue
-            if isinstance(record, dict) and record.get("type") == "job-done":
+            if isinstance(record, dict) and record.get("type") in ("job-done", "job-deleted"):
                 return True
     return False
 

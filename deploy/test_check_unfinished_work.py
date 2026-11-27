@@ -30,6 +30,7 @@ def write_loop(base, loop_id, text):
 accepted = json.dumps({"type": "accepted", "gens": ["gpt2"]})
 done = json.dumps({"type": "job-done"})
 interrupted = json.dumps({"type": "job-done", "interrupted": True})
+deleted = json.dumps({"type": "job-deleted"})
 
 
 class UnfinishedWorkTests(unittest.TestCase):
@@ -39,6 +40,7 @@ class UnfinishedWorkTests(unittest.TestCase):
             write_job(base, "running", [accepted], started + 60)
             write_job(base, "finished", [accepted, done], started + 60)
             write_job(base, "closed-at-load", [accepted, interrupted], started + 60)
+            write_job(base, "deleted-tombstone", [deleted], started + 60)
             # An earlier process cannot still run this job.
             write_job(base, "earlier-process", [accepted], started - 60)
             self.assertEqual(unfinished.unfinished_work(base, started), (1, 0))
